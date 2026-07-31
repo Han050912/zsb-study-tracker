@@ -172,6 +172,29 @@ export const useAppStore = defineStore('app', {
       const s = this.subjects.find(x => x.id === subjectId)
       if (s) { s.chapters.push({ id: uid(), name, topics: [] }); this.save() }
     },
+    /** 向章节添加知识点（小标题） */
+    addTopic(subjectId: string, chapterId: string, topic: string) {
+      const ch = this.subjects.find(x => x.id === subjectId)?.chapters.find(c => c.id === chapterId)
+      if (ch && !ch.topics.includes(topic)) { ch.topics.push(topic); this.save() }
+    },
+    removeTopic(subjectId: string, chapterId: string, topic: string) {
+      const s = this.subjects.find(x => x.id === subjectId)
+      const ch = s?.chapters.find(c => c.id === chapterId)
+      if (s && ch) {
+        ch.topics = ch.topics.filter(t => t !== topic)
+        delete s.mastery[topic]
+        this.save()
+      }
+    },
+    removeChapter(subjectId: string, chapterId: string) {
+      const s = this.subjects.find(x => x.id === subjectId)
+      if (s) {
+        const ch = s.chapters.find(c => c.id === chapterId)
+        if (ch) for (const t of ch.topics) delete s.mastery[t]
+        s.chapters = s.chapters.filter(c => c.id !== chapterId)
+        this.save()
+      }
+    },
 
     saveNote(note: Partial<Note> & { subjectId: string }) {
       if (note.id) {

@@ -143,6 +143,26 @@ function addChapter() {
   if (!newChapter.value.trim()) return
   store.addChapter(props.subjectId, newChapter.value.trim())
   newChapter.value = ''
+  toast('章节已添加，展开后可添加知识点')
+}
+
+// ---- 知识点（小标题）管理 ----
+const newTopic = ref<Record<string, string>>({})
+function addTopic(chapterId: string) {
+  const t = (newTopic.value[chapterId] || '').trim()
+  if (!t) return
+  store.addTopic(props.subjectId, chapterId, t)
+  newTopic.value[chapterId] = ''
+  toast('知识点已添加')
+}
+function removeTopic(chapterId: string, topic: string) {
+  store.removeTopic(props.subjectId, chapterId, topic)
+  toast('已删除')
+}
+function removeChapter(chapterId: string) {
+  if (!window.confirm('删除该章节及其全部知识点？')) return
+  store.removeChapter(props.subjectId, chapterId)
+  toast('章节已删除')
 }
 
 const expanded = ref<Record<string, boolean>>({})
@@ -189,13 +209,25 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
           <div v-for="ch in subject.chapters" :key="ch.id" class="border border-slate-100 dark:border-slate-700 rounded-xl overflow-hidden">
             <button class="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50"
               @click="expanded[ch.id] = !expanded[ch.id]">
-              <span>{{ ch.name }}</span>
-              <span class="text-slate-400 text-xs">{{ expanded[ch.id] ? '▲' : '▼' }}</span>
+              <span>{{ ch.name }}<span class="text-xs text-slate-400 ml-1.5">{{ ch.topics.length }} 个知识点</span></span>
+              <span class="flex items-center gap-2">
+                <span class="text-red-400 text-xs hover:underline" @click.stop="removeChapter(ch.id)">删除</span>
+                <span class="text-slate-400 text-xs">{{ expanded[ch.id] ? '▲' : '▼' }}</span>
+              </span>
             </button>
             <div v-if="expanded[ch.id]" class="px-3 pb-2 space-y-1.5">
-              <div v-for="topic in ch.topics" :key="topic" class="flex items-center justify-between text-sm py-0.5">
-                <span class="text-slate-600 dark:text-slate-300">{{ topic }}</span>
+              <div v-if="!ch.topics.length" class="text-xs text-slate-400 py-1">暂无知识点，在下方添加小标题后可评估掌握度</div>
+              <div v-for="topic in ch.topics" :key="topic" class="flex items-center justify-between text-sm py-0.5 group">
+                <span class="text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                  {{ topic }}
+                  <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" title="删除知识点" @click="removeTopic(ch.id, topic)">×</button>
+                </span>
                 <StarRating :model-value="subject.mastery[topic] || 0" @update:model-value="v => store.setMastery(subject.id, topic, v)" />
+              </div>
+              <!-- 添加知识点 -->
+              <div class="flex gap-2 pt-1">
+                <input v-model="newTopic[ch.id]" class="input !py-1 !text-xs" placeholder="添加知识点小标题，如：洛必达法则" @keyup.enter="addTopic(ch.id)" />
+                <button class="btn-ghost !py-1 !text-xs shrink-0" @click="addTopic(ch.id)">+ 添加</button>
               </div>
             </div>
           </div>
