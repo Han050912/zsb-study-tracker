@@ -1,0 +1,193 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { useAppStore } from '../stores/app'
+import { useChart, chartTextColor } from '../composables/useChart'
+import { formatMinutes } from '../utils/date'
+import { MOODS } from '../data/defaults'
+import dayjs from 'dayjs'
+
+const store = useAppStore()
+const range = ref<7 | 30>(7)
+
+const days = computed(() => Array.from({ length: range.value }, (_, i) =>
+  dayjs().subtract(range.value - 1 - i, 'day').format('YYYY-MM-DD')))
+
+// ---- 学习时长 ----
+const { el: timeEl } = useChart(() => ({
+  grid: { left: 44, right: 16, top: 20, bottom: 24 },
+  xAxis: { type: 'category', data: days.value.map(d => d.slice(5)), axisLabel: { color: chartTextColor(), fontSize: 10 } },
+  yAxis: { type: 'value', name: '分钟', axisLabel: { color: chartTextColor() } },
+  series: [
+    { type: 'bar', data: days.value.map(d => store.minutesByDate[d] || 0), itemStyle: { color: '#3b82f6', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 20 },
+    { type: 'line', smooth: true, data: days.value.map(d => store.minutesByDate[d] || 0), lineStyle: { color: '#93c5fd' }, itemStyle: { color: '#93c5fd' } }
+  ],
+  tooltip: { trigger: 'axis' }
+}), [days])
+
+// ---- 科目占比 ----
+const subjectMinutes = computed(() => {
+  const map: Record<string, number> = {}
+  for (const r of store.records) map[r.subjectId] = (map[r.subjectId] || 0) + r.minutes
+  return store.subjects.filter(s => map[s.id]).map(s => ({ name: s.name, value: map[s.id], itemStyle: { color: s.color } }))
+})
+const { el: pieEl } = useChart(() => ({
+  series: [{
+    type: 'pie', radius: ['45%', '70%'],
+    label: { color: chartTextColor(), fontSize: 11, formatter: '{b}\n{d}%' },
+    data: subjectMinutes.value
+  }],
+  tooltip: { trigger: 'item', formatter: (p: any) => `${p.name}：${formatMinutes(p.value)}` }
+}), [subjectMinutes])
+
+// ---- 正确率趋势 ----
+const { el: accEl } = useChart(() => {
+  const series = store.subjects.map(s => {
+    const sessions = store.problemSessions.filter(p => p.subjectId === s.id)
+    const byDate: Record<string, { t: number; c: number }> = {}
+    for (const p of sessions) {
+      byDate[p.date] = byDate[p.date] || { t: 0, c: 0 }
+      byDate[p.date].t += p.total; byDate[p.date].c += p.correct
+    }
+    return {
+      name: s.name, type: 'line' as const, smooth: true,
+      data: days.value.map(d => byDate[d] ? Math.round(byDate[d].c / byDate[d].t * 100) : null),
+      connectNulls: true, lineStyle: { color: s.color }, itemStyle: { color: s.color }
+    }
+  })
+  return {
+    grid: { left: 40, right: 16, top: 30, bottom: 24 },
+    legend: { textStyle: { color: chartTextColor(), fontSize: 10 } },
+    xAxis: { type: 'category', data: days.value.map(d => d.slice(5)), axisLabel: { color: chartTextColor(), fontSize: 10 } },
+    yAxis: { type: 'value', max: 100, name: '%', axisLabel: { color: chartTextColor() } },
+    series,
+    tooltip: { trigger: 'axis' }
+  }
+}, [days])
+
+// ---- 题型分布 ----
+const typeStats = computed(() => {
+  const t = { choice: 0, blank: 0, calc: 0, proof: 0 }
+  for (const p of store.problemSessions) {
+    t.choice += p.types.choice; t.blank += p.types.blank; t.calc += p.types.calc; t.proof += p.types.proof
+  }
+  return [
+    { name: '选择题', value: t.choice }, { name: '填空题', value: t.blank },
+    { name: '计算题', value: t.calc }, { name: '证明题', value: t.proof }
+  ].filter(x => x.value > 0)
+})
+const { el: typeEl } = useChart(() => ({
+  series: [{ type: 'pie', radius: '60%', label: { color: chartTextColor(), fontSize: 11 }, data: typeStats.value,
+    itemStyle: { color: (p: any) => ['#3b82f6', '#10b981', '#f59e0b', '#a855f7'][p.dataIndex] } }],
+  tooltip: { trigger: 'item' }
+}), [typeStats])
+
+// ---- 专注分析 ----
+const { el: pomoEl } = useChart(() => ({
+  grid: { left: 40, right: 40, top: 30, bottom: 24 },
+  legend: { textStyle: { color: chartTextColor(), fontSize: 10 } },
+  xAxis: { type: 'category', data: days.value.map(d => d.slice(5)), axisLabel: { color: chartTextColor(), fontSize: 10 } },
+  yAxis: [
+    { type: 'value', name: '番茄数', axisLabel: { color: chartTextColor() } },
+    { type: 'value', name: '分钟', axisLabel: { color: chartTextColor() } }
+  ],
+  series: [
+    { name: '番茄数', type: 'bar', data: days.value.map(d => store.pomodoro.daily[d]?.count || 0), itemStyle: { color: '#f97316', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 16 },
+    { name: '专注分钟', type: 'line', yAxisIndex: 1, smooth: true, data: days.value.map(d => store.pomodoro.daily[d]?.minutes || 0), lineStyle: { color: '#fdba74' }, itemStyle: { color: '#fdba74' } }
+  ],
+  tooltip: { trigger: 'axis' }
+}), [days])
+
+// ---- 情绪曲线 ----
+const { el: moodEl } = useChart(() => {
+  const moodScore: Record<string, number> = {}
+  MOODS.forEach((m, i) => moodScore[m] = MOODS.length - i)
+  const data = days.value.map(d => {
+    const s = store.summaries[d]
+    return s?.mood ? moodScore[s.mood] : null
+  })
+  const labels = days.value.map(d => store.summaries[d]?.mood || '')
+  return {
+    grid: { left: 40, right: 16, top: 20, bottom: 24 },
+    xAxis: { type: 'category', data: days.value.map(d => d.slice(5)), axisLabel: { color: chartTextColor(), fontSize: 10 } },
+    yAxis: { type: 'value', min: 0, max: MOODS.length, axisLabel: { show: false } },
+    series: [{
+      type: 'line', smooth: true, data, connectNulls: true,
+      lineStyle: { color: '#ec4899' }, itemStyle: { color: '#ec4899' },
+      label: { show: true, fontSize: 9, color: chartTextColor(), formatter: (p: any) => labels[p.dataIndex].split(' ')[0] || '' }
+    }],
+    tooltip: { trigger: 'axis', formatter: (p: any) => `${days.value[p[0].dataIndex]}<br>心情：${labels[p[0].dataIndex] || '未记录'}` }
+  }
+}, [days])
+
+// ---- 周报 ----
+const report = computed(() => {
+  const weekDays = Array.from({ length: 7 }, (_, i) => dayjs().subtract(6 - i, 'day').format('YYYY-MM-DD'))
+  const min = weekDays.reduce((s, d) => s + (store.minutesByDate[d] || 0), 0)
+  const problems = store.problemSessions.filter(p => weekDays.includes(p.date))
+  const pTotal = problems.reduce((s, p) => s + p.total, 0)
+  const pCorrect = problems.reduce((s, p) => s + p.correct, 0)
+  const pomo = weekDays.reduce((s, d) => s + (store.pomodoro.daily[d]?.count || 0), 0)
+  const studyDays = weekDays.filter(d => (store.minutesByDate[d] || 0) > 0).length
+  const points = store.gamification.pointsLog.filter(l => weekDays.includes(l.date)).reduce((s, l) => s + l.points, 0)
+  return { min, pTotal, acc: pTotal ? Math.round(pCorrect / pTotal * 100) : null, pomo, studyDays, points }
+})
+</script>
+
+<template>
+  <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
+    <div class="flex items-center justify-between">
+      <h1 class="page-title">📊 数据统计中心</h1>
+      <div class="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
+        <button class="btn !py-1 !text-xs" :class="range === 7 ? 'bg-white dark:bg-slate-700 shadow-sm' : ''" @click="range = 7">近7天</button>
+        <button class="btn !py-1 !text-xs" :class="range === 30 ? 'bg-white dark:bg-slate-700 shadow-sm' : ''" @click="range = 30">近30天</button>
+      </div>
+    </div>
+
+    <!-- 周报卡片 -->
+    <div class="card bg-gradient-to-r from-primary-500 to-indigo-600 !text-white border-0">
+      <div class="text-sm font-semibold mb-2">📈 本周学习报告</div>
+      <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
+        <div><div class="text-lg font-black">{{ formatMinutes(report.min) }}</div><div class="text-[10px] opacity-80">总时长</div></div>
+        <div><div class="text-lg font-black">{{ report.studyDays }}/7</div><div class="text-[10px] opacity-80">学习天数</div></div>
+        <div><div class="text-lg font-black">{{ report.pTotal }}</div><div class="text-[10px] opacity-80">刷题</div></div>
+        <div><div class="text-lg font-black">{{ report.acc === null ? '—' : report.acc + '%' }}</div><div class="text-[10px] opacity-80">正确率</div></div>
+        <div><div class="text-lg font-black">{{ report.pomo }}</div><div class="text-[10px] opacity-80">番茄钟</div></div>
+        <div><div class="text-lg font-black">+{{ report.points }}</div><div class="text-[10px] opacity-80">积分</div></div>
+      </div>
+      <p class="text-xs opacity-80 mt-2">截图即可保存本周报告 📸</p>
+    </div>
+
+    <div class="card">
+      <div class="section-title">⏱ 学习时长（近{{ range }}天）</div>
+      <div ref="timeEl" class="h-60"></div>
+    </div>
+
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="card">
+        <div class="section-title">🍩 科目时长占比</div>
+        <div v-if="subjectMinutes.length" ref="pieEl" class="h-56"></div>
+        <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
+      </div>
+      <div class="card">
+        <div class="section-title">✏️ 题型分布（累计 {{ store.totalProblems }} 题）</div>
+        <div v-if="typeStats.length" ref="typeEl" class="h-56"></div>
+        <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">📈 各科目正确率趋势</div>
+      <div ref="accEl" class="h-56"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">🍅 专注力分析</div>
+      <div ref="pomoEl" class="h-56"></div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">😊 情绪曲线</div>
+      <div ref="moodEl" class="h-48"></div>
+    </div>
+  </div>
+</template>

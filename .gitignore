@@ -1,0 +1,74 @@
+# ===== 依赖 =====
+node_modules/
+
+# ===== 构建产物 =====
+dist/
+dist-ssr/
+*.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+
+# ===== 测试覆盖率 =====
+coverage/
+.nyc_output/
+
+# ===== 环境变量（可能含密钥/令牌/个人信息）=====
+# 密钥、令牌、账号密码、API 凭据等一律不提交
+.env
+.env.*
+!.env.example
+*.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+
+# ===== 个人信息 / 隐私数据 =====
+# 本地用户数据、备份、导出文件（可能含学习数据等个人信息）
+*.db
+*.sqlite
+*.sqlite3
+data/
+backup/
+export/
+*.json.bak
+*.backup
+
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===== 系统文件 =====
+.vscode-server/
+.vs/
+.ssh/
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# ===== 日志 =====
+logs/
+*.log
+
+# ===== 临时文件 =====
+tmp/
+temp/
+*.tmp
+.cache/
+
+# ===== 工具/IDE 工作目录 =====
+.codebuddy/

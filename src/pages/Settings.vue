@@ -1,0 +1,197 @@
+<script setup lang="ts">
+import { computed, inject, ref } from 'vue'
+import { useAppStore } from '../stores/app'
+import Modal from '../components/Modal.vue'
+
+const store = useAppStore()
+const toast = inject<(m: string) => void>('toast', () => {})
+const s = computed(() => store.settings)
+
+function update(key: string, value: any) {
+  store.updateSettings({ [key]: value })
+}
+
+function applyTheme(t: string) {
+  update('theme', t)
+  const dark = t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  document.documentElement.classList.toggle('dark', dark)
+}
+
+async function toggleReminder(v: boolean) {
+  if (v && 'Notification' in window) {
+    const perm = await Notification.requestPermission()
+    if (perm !== 'granted') { toast('通知权限被拒绝'); return }
+  }
+  update('reminderEnabled', v)
+  toast(v ? '已开启每日提醒（保持页面打开有效）' : '已关闭提醒')
+}
+
+// ---- 数据管理 ----
+function exportData() {
+  const blob = new Blob([store.exportJSON()], { type: 'application/json' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `专升本学习数据_${new Date().toISOString().slice(0, 10)}.json`
+  a.click()
+  URL.revokeObjectURL(a.href)
+  toast('数据已导出')
+}
+
+const importFile = ref<HTMLInputElement>()
+function onImport(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  const reader = new FileReader()
+  reader.onload = () => {
+    if (store.importJSON(reader.result as string)) {
+      toast('导入成功！')
+      setTimeout(() => location.reload(), 800)
+    } else toast('导入失败：文件格式不正确')
+  }
+  reader.readAsText(file)
+}
+
+const showClearConfirm = ref(false)
+const clearText = ref('')
+function clearAll() {
+  if (clearText.value !== '确认清除') return
+  store.clearAll()
+  showClearConfirm.value = false
+  toast('数据已清除')
+  setTimeout(() => location.reload(), 800)
+}
+
+// ---- 自定义科目 ----
+const showSubject = ref(false)
+const subForm = ref({ name: '', icon: '📘', color: '#8b5cf6', weight: 20 })
+function addSubject() {
+  if (!subForm.value.name.trim()) return
+  store.addSubject({ ...subForm.value })
+  showSubject.value = false
+  subForm.value = { name: '', icon: '📘', color: '#8b5cf6', weight: 20 }
+  toast('科目已添加')
+}
+
+// ---- 名言管理 ----
+const newQuote = ref('')
+function addQuote() {
+  if (!newQuote.value.trim()) return
+  store.settings.quotes.push(newQuote.value.trim())
+  newQuote.value = ''
+  store.save()
+}
+</script>
+
+<template>
+  <div class="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
+    <h1 class="page-title">⚙️ 设置</h1>
+
+    <!-- 基本信息 -->
+    <div class="card space-y-3">
+      <div class="section-title">👤 基本信息</div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">昵称</label><input :value="s.userName" class="input" @change="update('userName', ($event.target as HTMLInputElement).value)" /></div>
+        <div><label class="label">专升本考试日期</label><input type="date" :value="s.examDate" class="input" @change="update('examDate', ($event.target as HTMLInputElement).value)" /></div>
+      </div>
+    </div>
+
+    <!-- 每日目标 -->
+    <div class="card space-y-3">
+      <div class="section-title">🎯 每日目标</div>
+      <div class="grid grid-cols-3 gap-3">
+        <div><label class="label">学习时长（分钟）</label><input type="number" :value="s.dailyGoalMinutes" class="input" @change="update('dailyGoalMinutes', Number(($event.target as HTMLInputElement).value))" /></div>
+        <div><label class="label">单词量</label><input type="number" :value="s.wordGoal" class="input" @change="update('wordGoal', Number(($event.target as HTMLInputElement).value))" /></div>
+        <div><label class="label">做题量</label><input type="number" :value="s.problemGoal" class="input" @change="update('problemGoal', Number(($event.target as HTMLInputElement).value))" /></div>
+      </div>
+    </div>
+
+    <!-- 科目管理 -->
+    <div class="card space-y-3">
+      <div class="flex items-center justify-between">
+        <div class="section-title !mb-0">📚 科目管理</div>
+        <button class="btn-primary !py-1.5 !text-xs" @click="showSubject = true">+ 扩展科目</button>
+      </div>
+      <div class="space-y-2">
+        <div v-for="sub in store.subjects" :key="sub.id" class="flex items-center gap-2 text-sm">
+          <span class="w-3 h-3 rounded-full" :style="{ background: sub.color }"></span>
+          <span>{{ sub.icon }} {{ sub.name }}</span>
+          <span class="text-xs text-slate-400">权重 {{ sub.weight }}%</span>
+          <span v-if="sub.builtin" class="text-[10px] text-slate-400">（内置）</span>
+          <button v-else class="ml-auto text-xs text-red-400" @click="confirm(`删除「${sub.name}」及其学习记录？`) && store.removeSubject(sub.id)">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 外观 -->
+    <div class="card space-y-3">
+      <div class="section-title">🎨 外观与提醒</div>
+      <div class="flex gap-2">
+        <button v-for="t in [{ k: 'light', l: '☀️ 浅色' }, { k: 'dark', l: '🌙 深色' }, { k: 'auto', l: '🖥 跟随系统' }]"
+          :key="t.k" class="btn flex-1" :class="s.theme === t.k ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="applyTheme(t.k)">{{ t.l }}</button>
+      </div>
+      <div class="flex items-center justify-between">
+        <span class="text-sm">每日学习提醒</span>
+        <div class="flex items-center gap-2">
+          <input type="time" :value="s.reminderTime" class="input !w-auto !py-1" @change="update('reminderTime', ($event.target as HTMLInputElement).value)" />
+          <button class="btn !text-xs" :class="s.reminderEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+            @click="toggleReminder(!s.reminderEnabled)">{{ s.reminderEnabled ? '已开启' : '已关闭' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 名言 -->
+    <div class="card space-y-3">
+      <div class="section-title">📜 自定义励志名言</div>
+      <div class="flex gap-2">
+        <input v-model="newQuote" class="input" placeholder="写一句激励自己的话…" @keyup.enter="addQuote" />
+        <button class="btn-ghost shrink-0" @click="addQuote">添加</button>
+      </div>
+      <div class="space-y-1 max-h-40 overflow-y-auto">
+        <div v-for="(q, i) in s.quotes" :key="i" class="flex items-center gap-2 text-xs group">
+          <span class="flex-1 text-slate-500 dark:text-slate-400">{{ q }}</span>
+          <button class="opacity-0 group-hover:opacity-100 text-red-400" @click="s.quotes.splice(i, 1); store.save()">×</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 数据管理 -->
+    <div class="card space-y-3">
+      <div class="section-title">💾 数据管理</div>
+      <div class="text-xs text-slate-400">本地存储用量：{{ store.storageUsage }} / 约 5MB</div>
+      <div class="flex gap-2 flex-wrap">
+        <button class="btn-primary" @click="exportData">📤 导出 JSON 备份</button>
+        <button class="btn-ghost" @click="importFile?.click()">📥 导入数据</button>
+        <input ref="importFile" type="file" accept=".json" class="hidden" @change="onImport" />
+        <button class="btn-danger" @click="showClearConfirm = true; clearText = ''">🗑 清除全部数据</button>
+      </div>
+    </div>
+
+    <!-- 扩展科目弹窗 -->
+    <Modal title="添加扩展科目" :show="showSubject" @close="showSubject = false">
+      <div class="space-y-3">
+        <div><label class="label">科目名称</label><input v-model="subForm.name" class="input" placeholder="如：计算机基础、政治、专业课" /></div>
+        <div class="grid grid-cols-3 gap-2">
+          <div><label class="label">图标 emoji</label><input v-model="subForm.icon" class="input" maxlength="4" /></div>
+          <div><label class="label">颜色</label><input v-model="subForm.color" type="color" class="input !p-1 h-9" /></div>
+          <div><label class="label">考核权重%</label><input v-model.number="subForm.weight" type="number" min="1" max="100" class="input" /></div>
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn-ghost" @click="showSubject = false">取消</button>
+        <button class="btn-primary" @click="addSubject">添加</button>
+      </template>
+    </Modal>
+
+    <!-- 清除确认 -->
+    <Modal title="⚠️ 危险操作" :show="showClearConfirm" @close="showClearConfirm = false">
+      <p class="text-sm text-slate-500">此操作将永久删除所有学习记录、笔记、错题、习惯数据，<b class="text-red-500">不可恢复</b>！建议先导出备份。</p>
+      <p class="text-sm mt-3">请输入「<b>确认清除</b>」以继续：</p>
+      <input v-model="clearText" class="input mt-2" placeholder="确认清除" />
+      <template #footer>
+        <button class="btn-ghost" @click="showClearConfirm = false">取消</button>
+        <button class="btn-danger" :disabled="clearText !== '确认清除'" @click="clearAll">永久清除</button>
+      </template>
+    </Modal>
+  </div>
+</template>

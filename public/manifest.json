@@ -1,0 +1,17 @@
+{
+  "name": "专升本学习助手",
+  "short_name": "升本助手",
+  "description": "专升本每日学习总结记录工具",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#3b82f6",
+  "icons": [
+    {
+      "src": "./vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

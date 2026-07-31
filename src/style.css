@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .card {
+    @apply bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 p-4;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer select-none;
+  }
+  .btn-primary {
+    @apply btn bg-primary-500 text-white hover:bg-primary-600 active:bg-primary-700;
+  }
+  .btn-ghost {
+    @apply btn bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600;
+  }
+  .btn-danger {
+    @apply btn bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-400;
+  }
+  .input {
+    @apply w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary-300 dark:text-slate-100;
+  }
+  .label {
+    @apply block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1;
+  }
+  .page-title {
+    @apply text-xl font-bold text-slate-800 dark:text-slate-100;
+  }
+  .section-title {
+    @apply text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2;
+  }
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  @apply bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { @apply bg-slate-300 dark:bg-slate-600 rounded-full; }
+
+@keyframes pop {
+  0% { transform: scale(0.5); opacity: 0; }
+  70% { transform: scale(1.1); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-pop { animation: pop 0.4s ease forwards; }
+
+@keyframes confetti-fall {
+  0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
+}
