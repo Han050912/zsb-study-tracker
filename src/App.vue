@@ -20,6 +20,7 @@ const NAV = [
   { path: '/habits', icon: '✅', label: '习惯' },
   { path: '/rewards', icon: '🏆', label: '成就' },
   { path: '/materials', icon: '📚', label: '资料' },
+  { path: '/account', icon: '👤', label: '我的' },
   { path: '/settings', icon: '⚙️', label: '设置' }
 ]
 const mobileNav = computed(() => [NAV[0], NAV[1], NAV[2], NAV[3], NAV[4], NAV[10]])
@@ -55,13 +56,15 @@ function scheduleReminder() {
 }
 
 const isPomodoro = computed(() => route.path === '/pomodoro')
-const showOnboarding = computed(() => !store.settings.onboarded)
+const isAuthPage = computed(() => route.path === '/login')
+const hideNav = computed(() => isPomodoro.value || isAuthPage.value)
+const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboarded)
 </script>
 
 <template>
   <div class="min-h-screen">
     <!-- 桌面侧边栏 -->
-    <aside v-if="!isPomodoro" class="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col bg-white dark:bg-slate-800 border-r border-slate-100 dark:border-slate-700 z-30">
+    <aside v-if="!hideNav" class="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col bg-white dark:bg-slate-800 border-r border-slate-100 dark:border-slate-700 z-30">
       <div class="px-5 py-5">
         <div class="text-lg font-bold text-primary-600 dark:text-primary-400">🎓 专升本助手</div>
         <div class="text-xs text-slate-400 mt-1">{{ store.settings.userName }} · {{ store.level.name }}学者</div>
@@ -83,7 +86,7 @@ const showOnboarding = computed(() => !store.settings.onboarded)
     </aside>
 
     <!-- 主内容 -->
-    <main :class="isPomodoro ? '' : 'md:pl-56 pb-20 md:pb-6'">
+    <main :class="hideNav ? '' : 'md:pl-56 pb-20 md:pb-6'">
       <RouterView v-slot="{ Component }">
         <Transition name="fade" mode="out-in">
           <component :is="Component" />
@@ -92,7 +95,7 @@ const showOnboarding = computed(() => !store.settings.onboarded)
     </main>
 
     <!-- 移动端底部导航 -->
-    <nav v-if="!isPomodoro" class="md:hidden fixed bottom-0 inset-x-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 z-30 flex justify-around py-1.5" style="padding-bottom: env(safe-area-inset-bottom)">
+    <nav v-if="!hideNav" class="md:hidden fixed bottom-0 inset-x-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 z-30 flex justify-around py-1.5" style="padding-bottom: env(safe-area-inset-bottom)">
       <RouterLink v-for="item in mobileNav" :key="item.path" :to="item.path"
         class="flex flex-col items-center px-2 py-1 text-[10px] rounded-lg"
         :class="route.path === item.path || (item.path !== '/' && route.path.startsWith(item.path))

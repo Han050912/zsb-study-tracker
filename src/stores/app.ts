@@ -1,28 +1,18 @@
 import { defineStore } from 'pinia'
 import { createDefaultState, ACHIEVEMENTS, LEVELS } from '../data/defaults'
 import { today, yesterday, uid, daysBetween } from '../utils/date'
+import { loadCurrentUserPayload, saveCurrentUserPayload } from '../services/auth'
 import type {
   AppState, StudyRecord, ProblemSession, ErrorQuestion, ExamRecord,
   Note, DailySummary, Habit, Material, Subject, Todo
 } from '../types'
 
-const STORAGE_KEY = 'zsb-study-tracker-v1'
-
-function loadState(): AppState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      return { ...createDefaultState(), ...parsed }
-    }
-  } catch (e) {
-    console.error('读取本地数据失败', e)
-  }
-  return createDefaultState()
-}
+/** 旧版本地存储键（用于首次登录时迁移历史数据） */
+const LEGACY_KEY = 'zsb-study-tracker-v1'
 
 export const useAppStore = defineStore('app', {
-  state: (): AppState => loadState(),
+  // 初始为默认空数据；登录后通过 hydrate() 从 SQLite 载入该用户的数据
+  state: (): AppState => createDefaultState(),
 
   getters: {
     subjectMap(): Record<string, Subject> {
@@ -58,7 +48,7 @@ export const useAppStore = defineStore('app', {
       return d >= 0 ? d : null
     },
     storageUsage(): string {
-      const raw = localStorage.getItem(STORAGE_KEY) || ''
+      const raw = loadCurrentUserPayload()?.payload || ''
       const bytes = new Blob([raw]).size
       if (bytes < 1024) return bytes + ' B'
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
@@ -73,15 +63,42 @@ export const useAppStore = defineStore('app', {
   },
 
   actions: {
+    /** 持久化当前用户数据到 SQLite（user_data 表） */
     save() {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.$state))
-      } catch (e: any) {
-        if (e?.name === 'QuotaExceededError') {
-          alert('本地存储空间不足！请导出备份后清理部分数据（如错题图片）。')
-        }
-        console.error(e)
+        saveCurrentUserPayload(JSON.stringify(this.$state))
+      } catch (e) {
+        console.error('保存数据失败', e)
       }
+    },
+
+    /** 登录后调用：从 SQLite 载入该用户的历史数据；无数据则尝试迁移旧版 localStorage 数据 */
+    hydrate() {
+      const row = loadCurrentUserPayload()
+      if (row) {
+        try {
+          this.$patch({ ...createDefaultState(), ...JSON.parse(row.payload) })
+        } catch (e) {
+          console.error('解析用户数据失败', e)
+        }
+        return
+      }
+      // 新用户：检测并迁移旧版本地数据
+      const legacy = localStorage.getItem(LEGACY_KEY)
+      if (legacy) {
+        try {
+          this.$patch({ ...createDefaultState(), ...JSON.parse(legacy) })
+          this.save()
+          localStorage.removeItem(LEGACY_KEY)
+        } catch (e) {
+          console.error('迁移历史数据失败', e)
+        }
+      }
+    },
+
+    /** 退出登录/切换账号时重置为空白数据 */
+    resetState() {
+      this.$patch(createDefaultState())
     },
 
     /** 增加积分并记录日志 */
@@ -338,9 +355,7 @@ export const useAppStore = defineStore('app', {
       }
     },
     clearAll() {
-      const fresh = createDefaultState()
-      this.$patch(fresh)
-      localStorage.removeItem(STORAGE_KEY)
+      this.$patch(createDefaultState())
       this.save()
     }
   }

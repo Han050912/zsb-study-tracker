@@ -1,7 +1,9 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { defineAsyncComponent } from 'vue'
+import { isLoggedIn } from '../services/auth'
 
 const routes = [
+  { path: '/login', name: 'login', component: defineAsyncComponent(() => import('../pages/Login.vue')), meta: { title: '登录' } },
   { path: '/', name: 'dashboard', component: defineAsyncComponent(() => import('../pages/Dashboard.vue')), meta: { title: '首页' } },
   { path: '/math', name: 'math', component: defineAsyncComponent(() => import('../pages/Math.vue')), meta: { title: '高等数学' } },
   { path: '/english', name: 'english', component: defineAsyncComponent(() => import('../pages/English.vue')), meta: { title: '英语' } },
@@ -14,12 +16,19 @@ const routes = [
   { path: '/statistics', name: 'statistics', component: defineAsyncComponent(() => import('../pages/Statistics.vue')), meta: { title: '数据统计' } },
   { path: '/rewards', name: 'rewards', component: defineAsyncComponent(() => import('../pages/Rewards.vue')), meta: { title: '成就激励' } },
   { path: '/materials', name: 'materials', component: defineAsyncComponent(() => import('../pages/Materials.vue')), meta: { title: '资料库' } },
+  { path: '/account', name: 'account', component: defineAsyncComponent(() => import('../pages/Account.vue')), meta: { title: '个人中心' } },
   { path: '/settings', name: 'settings', component: defineAsyncComponent(() => import('../pages/Settings.vue')), meta: { title: '设置' } }
 ]
 
 export const router = createRouter({
   history: createWebHashHistory(),
   routes
+})
+
+// 登录守卫：未登录访问任意页面跳转登录页；已登录访问登录页跳转首页
+router.beforeEach((to) => {
+  if (!isLoggedIn.value && to.path !== '/login') return '/login'
+  if (isLoggedIn.value && to.path === '/login') return '/'
 })
 
 router.afterEach((to) => {

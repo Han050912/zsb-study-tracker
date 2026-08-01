@@ -13,10 +13,12 @@
     "echarts": "^5.5.1",
     "katex": "^0.16.11",
     "pinia": "^2.2.6",
+    "sql.js": "^1.14.1",
     "vue": "^3.5.13",
     "vue-router": "^4.4.5"
   },
   "devDependencies": {
+    "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-vue": "^5.2.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
