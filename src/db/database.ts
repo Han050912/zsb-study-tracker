@@ -13,14 +13,25 @@ const DB_KEY = 'database'
 
 let db: Database | null = null
 
-// ---------- IndexedDB 极简封装 ----------
+// ---------- IndexedDB 封装（缓存单一连接，避免频繁建连/泄漏） ----------
+let idbConn: Promise<IDBDatabase> | null = null
+
 function idbOpen(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (idbConn) return idbConn
+  idbConn = new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(IDB_NAME, 1)
     req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE)
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    req.onsuccess = () => {
+      const conn = req.result
+      // 数据库升级/其他标签页关闭时，释放连接便于后续重新建立
+      conn.onversionchange = () => { conn.close(); idbConn = null }
+      conn.onclose = () => { idbConn = null }
+      resolve(conn)
+    }
+    req.onerror = () => { idbConn = null; reject(req.error) }
+    req.onblocked = () => { idbConn = null; reject(new Error('IndexedDB 被占用，无法打开')) }
   })
+  return idbConn
 }
 
 async function idbGet(key: string): Promise<Uint8Array | null> {
@@ -45,7 +56,16 @@ async function idbPut(key: string, value: Uint8Array): Promise<void> {
 export async function initDatabase(): Promise<void> {
   if (db) return
   const SQL = await initSqlJs({ locateFile: () => wasmUrl })
-  const saved = await idbGet(DB_KEY).catch(() => null)
+
+  // 读取失败绝不能当作“无数据”，否则下方 persistDb() 会用空库覆盖原有数据
+  let saved: Uint8Array | null = null
+  try {
+    saved = await idbGet(DB_KEY)
+  } catch (e) {
+    console.error('读取本地数据库失败', e)
+    throw new Error('无法读取本地数据库，请检查浏览器存储权限或隐私模式设置')
+  }
+
   db = saved ? new SQL.Database(saved) : new SQL.Database()
   db.run(`
     CREATE TABLE IF NOT EXISTS users (
@@ -69,19 +89,96 @@ function getDb(): Database {
   return db
 }
 
-/** 将内存中的 SQLite 文件写回 IndexedDB（防抖） */
+/**
+ * 将内存中的 SQLite 文件写回 IndexedDB（防抖合并）。
+ * - 跟踪单一 pending 写入：新调用复用同一 Promise，避免被 clearTimeout 取消后挂死。
+ * - 写入失败会 reject，调用方应感知并提示用户（本应用离线依赖 IndexedDB）。
+ */
 let persistTimer: ReturnType<typeof setTimeout> | null = null
+let pendingPromise: Promise<void> | null = null
+let pendingResolve: (() => void) | null = null
+let pendingReject: ((e: unknown) => void) | null = null
+
+function settlePending() {
+  pendingPromise = null
+  pendingResolve = null
+  pendingReject = null
+  persistTimer = null
+}
+
+async function doPersist(): Promise<void> {
+  await idbPut(DB_KEY, getDb().export())
+}
+
 export function persistDb(): Promise<void> {
-  return new Promise((resolve) => {
+  if (pendingPromise && pendingResolve && pendingReject) {
+    // 已有待执行的写入：重置计时器并复用同一 Promise
     if (persistTimer) clearTimeout(persistTimer)
     persistTimer = setTimeout(async () => {
+      const resolve = pendingResolve!
+      const reject = pendingReject!
       try {
-        await idbPut(DB_KEY, getDb().export())
+        await doPersist()
+        resolve()
       } catch (e) {
         console.error('数据库持久化失败', e)
+        reject(e)
+      } finally {
+        settlePending()
       }
-      resolve()
     }, 200)
+    return pendingPromise
+  }
+
+  pendingPromise = new Promise<void>((resolve, reject) => {
+    pendingResolve = resolve
+    pendingReject = reject
+    persistTimer = setTimeout(async () => {
+      try {
+        await doPersist()
+        resolve()
+      } catch (e) {
+        console.error('数据库持久化失败', e)
+        reject(e)
+      } finally {
+        settlePending()
+      }
+    }, 200)
+  })
+  return pendingPromise
+}
+
+/** 立即写入（跳过防抖），失败时抛错。用于页面卸载前尽力保存。 */
+export async function flushDb(): Promise<void> {
+  if (!db) return
+  if (persistTimer) clearTimeout(persistTimer)
+  const reject = pendingReject
+  settlePending()
+  try {
+    await doPersist()
+  } catch (e) {
+    reject?.(e)
+    throw e
+  }
+}
+
+// 页面卸载/切后台前尽力 flush，避免最后 200ms 防抖窗口内的改动丢失
+if (typeof window !== 'undefined') {
+  const onHide = () => {
+    if (!db) return
+    try {
+      // export 是同步的；put 请求排队后在页面关闭时浏览器通常仍会处理
+      const conn = idbConn as Promise<IDBDatabase> | null
+      if (conn) {
+        conn.then(c => {
+          try { c.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE).put(db!.export(), DB_KEY) } catch { /* 忽略 */ }
+        }).catch(() => { /* 忽略 */ })
+      }
+    } catch { /* 卸载阶段尽力而为 */ }
+  }
+  window.addEventListener('beforeunload', onHide)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') onHide()
   })
 }
 
@@ -113,10 +210,16 @@ export function findUserById(id: string): UserRow | null {
   return { id: String(uid), username: String(un), password_hash: String(ph), salt: String(salt), created_at: Number(ca) }
 }
 
+/** 插入用户；用户名冲突（UNIQUE 约束）时抛出友好错误。 */
 export function insertUser(user: UserRow): void {
-  getDb().run('INSERT INTO users (id, username, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?)',
-    [user.id, user.username, user.password_hash, user.salt, user.created_at])
-  persistDb()
+  try {
+    getDb().run('INSERT INTO users (id, username, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?)',
+      [user.id, user.username, user.password_hash, user.salt, user.created_at])
+  } catch (e) {
+    if (String(e).includes('UNIQUE constraint failed')) throw new Error('该用户名已被注册')
+    throw e
+  }
+  persistDb().catch(() => { /* 注册流程中由 save 触发提示 */ })
 }
 
 export function countUsers(): number {
@@ -136,10 +239,10 @@ export function saveUserData(userId: string, payload: string): void {
     `INSERT INTO user_data (user_id, payload, updated_at) VALUES (?, ?, ?)
      ON CONFLICT(user_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`,
     [userId, payload, Date.now()])
-  persistDb()
+  persistDb().catch(e => console.error('保存用户数据失败', e))
 }
 
 export function deleteUserData(userId: string): void {
   getDb().run('DELETE FROM user_data WHERE user_id = ?', [userId])
-  persistDb()
+  persistDb().catch(e => console.error('删除用户数据失败', e))
 }

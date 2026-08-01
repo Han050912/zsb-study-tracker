@@ -45,22 +45,32 @@ const stats = computed(() => {
 })
 
 function doLogout(switchAccount = false) {
-  const tip = switchAccount ? '切换账号？当前数据已保存。' : '确认退出登录？数据已保存在本地数据库。'
+  const tip = switchAccount ? '切换账号？当前数据将被保存。' : '确认退出登录？数据将被保存到本地数据库。'
   if (!window.confirm(tip)) return
-  store.save()
+  if (!store.save()) {
+    toast('保存失败，请稍后再试')
+    return
+  }
   logout()
   store.resetState()
   router.replace('/login')
 }
 
 function exportBackup() {
-  const blob = new Blob([store.exportJSON()], { type: 'application/json' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `zsb-backup-${user.value?.username}-${new Date().toISOString().slice(0, 10)}.json`
-  a.click()
-  URL.revokeObjectURL(a.href)
-  toast('备份已导出')
+  try {
+    const blob = new Blob([store.exportJSON()], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `zsb-backup-${user.value?.username}-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+    toast('备份已导出')
+  } catch (e) {
+    console.error('导出备份失败', e)
+    toast('导出失败，请重试')
+  }
 }
 </script>
 

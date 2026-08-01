@@ -13,12 +13,13 @@ async function bootstrap() {
   await initDatabase()
 
   const app = createApp(App)
-  app.use(createPinia())
+  const pinia = createPinia()
+  app.use(pinia)
 
-  // 2. 恢复登录状态；已登录则预载该用户的历史数据
+  // 2. 恢复登录状态；已登录则预载该用户的历史数据（显式传入 pinia 实例）
   const user = restoreSession()
   if (user) {
-    useAppStore().hydrate()
+    useAppStore(pinia).hydrate()
   }
 
   app.use(router)

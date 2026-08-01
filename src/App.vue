@@ -23,7 +23,11 @@ const NAV = [
   { path: '/account', icon: '👤', label: '我的' },
   { path: '/settings', icon: '⚙️', label: '设置' }
 ]
-const mobileNav = computed(() => [NAV[0], NAV[1], NAV[2], NAV[3], NAV[4], NAV[10]])
+// 移动端底部导航：按路径选取，避免 NAV 顺序变化导致索引错位
+const mobileNav = computed(() => {
+  const pick = (path: string) => NAV.find(n => n.path === path)!
+  return ['/', '/math', '/english', '/pomodoro', '/daily-summary', '/settings'].map(pick)
+})
 
 // ---- Toast 全局服务 ----
 const toastRef = ref<InstanceType<typeof Toast>>()

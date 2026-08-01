@@ -63,12 +63,15 @@ export const useAppStore = defineStore('app', {
   },
 
   actions: {
-    /** 持久化当前用户数据到 SQLite（user_data 表） */
-    save() {
+    /** 持久化当前用户数据到 SQLite（user_data 表）。返回是否成功，失败时给出用户提示。 */
+    save(): boolean {
       try {
         saveCurrentUserPayload(JSON.stringify(this.$state))
+        return true
       } catch (e) {
         console.error('保存数据失败', e)
+        alert('保存失败，请检查浏览器存储空间（可能为隐私模式或存储已满）')
+        return false
       }
     },
 
@@ -77,7 +80,7 @@ export const useAppStore = defineStore('app', {
       const row = loadCurrentUserPayload()
       if (row) {
         try {
-          this.$patch({ ...createDefaultState(), ...JSON.parse(row.payload) })
+          this.$patch({ ...createDefaultState(), ...(JSON.parse(row.payload) as Partial<AppState>) })
         } catch (e) {
           console.error('解析用户数据失败', e)
         }
@@ -87,9 +90,13 @@ export const useAppStore = defineStore('app', {
       const legacy = localStorage.getItem(LEGACY_KEY)
       if (legacy) {
         try {
-          this.$patch({ ...createDefaultState(), ...JSON.parse(legacy) })
-          this.save()
-          localStorage.removeItem(LEGACY_KEY)
+          this.$patch({ ...createDefaultState(), ...(JSON.parse(legacy) as Partial<AppState>) })
+          // 仅在确认保存成功后才删除旧数据，避免迁移失败导致旧数据被清空
+          if (this.save()) {
+            localStorage.removeItem(LEGACY_KEY)
+          } else {
+            console.error('历史数据迁移失败，已保留旧版本地数据')
+          }
         } catch (e) {
           console.error('迁移历史数据失败', e)
         }

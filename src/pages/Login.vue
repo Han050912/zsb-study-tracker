@@ -17,6 +17,7 @@ const loading = ref(false)
 function switchMode(m: 'login' | 'register') {
   mode.value = m
   errorMsg.value = ''
+  password.value = ''
   confirmPassword.value = ''
 }
 
@@ -33,9 +34,9 @@ async function submit() {
   loading.value = true
   try {
     if (mode.value === 'login') {
-      await login(username.value, password.value)
+      await login(username.value.trim(), password.value)
     } else {
-      await register(username.value, password.value)
+      await register(username.value.trim(), password.value)
     }
     // 登录/注册成功后载入该用户的历史数据（含旧版数据迁移）
     store.hydrate()
@@ -76,13 +77,13 @@ async function submit() {
           </div>
           <div>
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">密码</label>
-            <input v-model="password" type="password" class="input"
+            <input v-model="password" type="password" class="input" maxlength="128"
               :placeholder="mode === 'register' ? '至少 6 位' : '请输入密码'"
               :autocomplete="mode === 'register' ? 'new-password' : 'current-password'" />
           </div>
           <div v-if="mode === 'register'">
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">确认密码</label>
-            <input v-model="confirmPassword" type="password" class="input" placeholder="再次输入密码" autocomplete="new-password" />
+            <input v-model="confirmPassword" type="password" class="input" maxlength="128" placeholder="再次输入密码" autocomplete="new-password" />
           </div>
 
           <!-- 错误提示 -->

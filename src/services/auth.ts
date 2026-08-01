@@ -35,6 +35,10 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 async function hashPassword(password: string, saltHex: string): Promise<string> {
+  // WebCrypto 仅在安全上下文（HTTPS 或 localhost）可用；HTTP 部署时给出友好提示
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('当前环境不支持加密功能，请使用 HTTPS 或 localhost 访问本页面')
+  }
   const enc = new TextEncoder()
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
   const bits = await crypto.subtle.deriveBits(
@@ -77,6 +81,7 @@ export async function register(username: string, password: string): Promise<Sess
   if (username.length < 2) throw new Error('用户名至少 2 个字符')
   if (username.length > 20) throw new Error('用户名最多 20 个字符')
   if (password.length < 6) throw new Error('密码至少 6 位')
+  if (password.length > 128) throw new Error('密码最多 128 位')
   if (findUserByName(username)) throw new Error('该用户名已被注册')
 
   const salt = randomSalt()
@@ -87,6 +92,7 @@ export async function register(username: string, password: string): Promise<Sess
     salt,
     created_at: Date.now()
   }
+  // 并发注册同名时 insertUser 会抛“该用户名已被注册”，已在 db 层转换为友好提示
   insertUser(row)
   const user = toSessionUser(row)
   setSession(user)

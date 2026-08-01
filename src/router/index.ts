@@ -25,10 +25,10 @@ export const router = createRouter({
   routes
 })
 
-// 登录守卫：未登录访问任意页面跳转登录页；已登录访问登录页跳转首页
+// 登录守卫：未登录访问任意页面跳转登录页；已登录访问登录页跳转首页（按路由名判断，避免路径硬编码）
 router.beforeEach((to) => {
-  if (!isLoggedIn.value && to.path !== '/login') return '/login'
-  if (isLoggedIn.value && to.path === '/login') return '/'
+  if (!isLoggedIn.value && to.name !== 'login') return { name: 'login' }
+  if (isLoggedIn.value && to.name === 'login') return { name: 'dashboard' }
 })
 
 router.afterEach((to) => {
