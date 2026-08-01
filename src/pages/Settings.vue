@@ -17,10 +17,22 @@ function applyTheme(t: string) {
   document.documentElement.classList.toggle('dark', dark)
 }
 
+const notifSupported = typeof window !== 'undefined' && 'Notification' in window
+const notifPermission = ref(notifSupported ? Notification.permission : 'unsupported')
+
 async function toggleReminder(v: boolean) {
-  if (v && 'Notification' in window) {
-    const perm = await Notification.requestPermission()
-    if (perm !== 'granted') { toast('通知权限被拒绝'); return }
+  if (v && notifSupported) {
+    let perm = Notification.permission
+    if (perm === 'default') perm = await Notification.requestPermission()
+    notifPermission.value = perm
+    if (perm !== 'granted') {
+      if (perm === 'denied') {
+        toast('通知权限已被拒绝，请在浏览器地址栏左侧的站点设置中手动开启通知')
+      } else {
+        toast('未授权通知权限，无法开启提醒')
+      }
+      return
+    }
   }
   update('reminderEnabled', v)
   toast(v ? '已开启每日提醒（保持页面打开有效）' : '已关闭提醒')
@@ -138,6 +150,12 @@ function addQuote() {
             @click="toggleReminder(!s.reminderEnabled)">{{ s.reminderEnabled ? '已开启' : '已关闭' }}</button>
         </div>
       </div>
+      <p v-if="!notifSupported" class="text-xs text-amber-500">当前浏览器不支持通知功能，无法使用每日提醒。</p>
+      <p v-else-if="notifPermission === 'denied'" class="text-xs text-red-500">
+        通知权限已被拒绝。请点击浏览器地址栏左侧的 🔒 图标，将「通知」改为「允许」，然后重新打开此页面并开启提醒。
+      </p>
+      <p v-else-if="notifPermission === 'default'" class="text-xs text-slate-400">开启提醒时会请求浏览器通知权限。</p>
+      <p v-else class="text-xs text-emerald-500">通知权限已授权。</p>
     </div>
 
     <!-- 名言 -->
