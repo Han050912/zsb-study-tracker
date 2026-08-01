@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { sessionUser, logout } from '../services/auth'
@@ -18,17 +18,28 @@ function fmtTime(ts?: number) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-const updatedAt = computed(() => {
-  if (!user.value) return null
-  return loadUserData(user.value.id)?.updatedAt ?? null
-})
-
-const dbSize = ref(formatSize(dbFileSize()))
 function formatSize(bytes: number) {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / 1024 / 1024).toFixed(2) + ' MB'
 }
+
+const updatedAt = ref<number | null>(null)
+const dbSize = ref('—')
+const myDataSize = ref('—')
+
+onMounted(async () => {
+  try {
+    dbSize.value = formatSize(await dbFileSize())
+    if (user.value) {
+      const row = await loadUserData(user.value.id)
+      updatedAt.value = row?.updatedAt ?? null
+    }
+    myDataSize.value = await store.storageUsageText()
+  } catch (e) {
+    console.error('读取数据库信息失败', e)
+  }
+})
 
 const stats = computed(() => {
   const totalPomo = Object.values(store.pomodoro.daily).reduce((s, d) => s + d.count, 0)
@@ -44,10 +55,10 @@ const stats = computed(() => {
   ]
 })
 
-function doLogout(switchAccount = false) {
+async function doLogout(switchAccount = false) {
   const tip = switchAccount ? '切换账号？当前数据将被保存。' : '确认退出登录？数据将被保存到本地数据库。'
   if (!window.confirm(tip)) return
-  if (!store.save()) {
+  if (!(await store.saveAsync())) {
     toast('保存失败，请稍后再试')
     return
   }
@@ -113,7 +124,7 @@ function exportBackup() {
         </div>
         <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
           <span class="text-slate-500 dark:text-slate-400">我的数据大小</span>
-          <span>{{ store.storageUsage }}</span>
+          <span>{{ myDataSize }}</span>
         </div>
       </div>
       <p class="text-[11px] text-slate-400">所有数据保存在本机浏览器的 SQLite 数据库中，不上传任何服务器；清除浏览器数据会导致丢失，请定期导出备份。</p>

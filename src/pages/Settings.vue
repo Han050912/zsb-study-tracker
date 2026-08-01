@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 const s = computed(() => store.settings)
+
+const storageUsage = ref('—')
+onMounted(async () => {
+  try { storageUsage.value = await store.storageUsageText() } catch { /* 忽略 */ }
+})
 
 function update(key: string, value: any) {
   store.updateSettings({ [key]: value })
@@ -176,7 +181,7 @@ function addQuote() {
     <!-- 数据管理 -->
     <div class="card space-y-3">
       <div class="section-title">💾 数据管理</div>
-      <div class="text-xs text-slate-400">本地存储用量：{{ store.storageUsage }} / 约 5MB</div>
+      <div class="text-xs text-slate-400">本地存储用量：{{ storageUsage }} / 约 5MB</div>
       <div class="flex gap-2 flex-wrap">
         <button class="btn-primary" @click="exportData">📤 导出 JSON 备份</button>
         <button class="btn-ghost" @click="importFile?.click()">📥 导入数据</button>

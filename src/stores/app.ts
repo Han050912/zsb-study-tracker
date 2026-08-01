@@ -47,13 +47,7 @@ export const useAppStore = defineStore('app', {
       const d = daysBetween(today(), this.settings.examDate)
       return d >= 0 ? d : null
     },
-    storageUsage(): string {
-      const raw = loadCurrentUserPayload()?.payload || ''
-      const bytes = new Blob([raw]).size
-      if (bytes < 1024) return bytes + ' B'
-      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-      return (bytes / 1024 / 1024).toFixed(2) + ' MB'
-    },
+
     /** 某科目某日期时长 */
     minutesByDate(): Record<string, number> {
       const map: Record<string, number> = {}
@@ -63,21 +57,42 @@ export const useAppStore = defineStore('app', {
   },
 
   actions: {
-    /** 持久化当前用户数据到 SQLite（user_data 表）。返回是否成功，失败时给出用户提示。 */
-    save(): boolean {
+    /** 异步持久化当前用户数据到 SQLite（加密后存 user_data 表）。返回是否成功。 */
+    async saveAsync(): Promise<boolean> {
       try {
-        saveCurrentUserPayload(JSON.stringify(this.$state))
+        await saveCurrentUserPayload(JSON.stringify(this.$state))
         return true
       } catch (e) {
         console.error('保存数据失败', e)
-        alert('保存失败，请检查浏览器存储空间（可能为隐私模式或存储已满）')
         return false
       }
     },
 
-    /** 登录后调用：从 SQLite 载入该用户的历史数据；无数据则尝试迁移旧版 localStorage 数据 */
-    hydrate() {
-      const row = loadCurrentUserPayload()
+    /** 同步触发一次后台持久化（不阻塞，用于常规增删改）。失败时打印日志。 */
+    save() {
+      this.saveAsync().then(ok => {
+        if (!ok) console.error('后台保存失败，数据可能未持久化')
+      })
+    },
+
+    /** 计算当前账号数据大小（异步读取已解密 payload）。 */
+    async storageUsageText(): Promise<string> {
+      const raw = (await loadCurrentUserPayload())?.payload || ''
+      const bytes = new Blob([raw]).size
+      if (bytes < 1024) return bytes + ' B'
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+      return (bytes / 1024 / 1024).toFixed(2) + ' MB'
+    },
+
+    /** 登录后调用：从 SQLite 载入该用户的历史数据（自动解密）；无数据则尝试迁移旧版 localStorage 数据 */
+    async hydrate() {
+      let row: { payload: string; updatedAt: number } | null = null
+      try {
+        row = await loadCurrentUserPayload()
+      } catch (e) {
+        console.error('载入用户数据失败', e)
+        throw e
+      }
       if (row) {
         try {
           this.$patch({ ...createDefaultState(), ...(JSON.parse(row.payload) as Partial<AppState>) })
@@ -92,7 +107,7 @@ export const useAppStore = defineStore('app', {
         try {
           this.$patch({ ...createDefaultState(), ...(JSON.parse(legacy) as Partial<AppState>) })
           // 仅在确认保存成功后才删除旧数据，避免迁移失败导致旧数据被清空
-          if (this.save()) {
+          if (await this.saveAsync()) {
             localStorage.removeItem(LEGACY_KEY)
           } else {
             console.error('历史数据迁移失败，已保留旧版本地数据')

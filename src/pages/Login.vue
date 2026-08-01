@@ -38,8 +38,8 @@ async function submit() {
     } else {
       await register(username.value.trim(), password.value)
     }
-    // 登录/注册成功后载入该用户的历史数据（含旧版数据迁移）
-    store.hydrate()
+    // 登录/注册成功后载入该用户的历史数据（自动解密 + 旧版数据迁移）
+    await store.hydrate()
     router.replace('/')
   } catch (e: any) {
     errorMsg.value = e?.message || '操作失败，请重试'
