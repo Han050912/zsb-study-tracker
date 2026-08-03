@@ -6,6 +6,7 @@ import { sessionUser, logout } from './services/auth'
 import Toast from './components/Toast.vue'
 import AchievementModal from './components/AchievementModal.vue'
 import Onboarding from './components/Onboarding.vue'
+import UpdateDialog from './components/UpdateDialog.vue'
 
 const store = useAppStore()
 const route = useRoute()
@@ -185,5 +186,7 @@ const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboa
     <Toast ref="toastRef" />
     <AchievementModal />
     <Onboarding v-if="showOnboarding" />
+    <!-- 桌面端自动更新弹窗（Web 端无 window.updater，自动隐藏） -->
+    <UpdateDialog />
   </div>
 </template>

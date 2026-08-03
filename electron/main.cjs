@@ -5,7 +5,7 @@
  * - 保证 crypto.subtle（安全上下文）、IndexedDB（sql.js 持久化）、Web Worker 等 Web 能力可用
  * - 开发环境直接加载 Vite Dev Server
  */
-const { app, BrowserWindow, Tray, Menu, nativeImage, protocol, net } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, protocol, net, ipcMain } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
@@ -24,6 +24,72 @@ let mainWindow = null
 let splashWindow = null
 let tray = null
 let isQuitting = false
+// 更新安装前需要真正退出应用（绕过「关闭最小化到托盘」的拦截）
+let quitForUpdate = false
+
+// ---- 自动更新（electron-updater，仅 Windows 打包端启用） ----
+let autoUpdater = null
+if (!isDev && process.platform === 'win32') {
+  try {
+    autoUpdater = require('electron-updater').autoUpdater
+  } catch {
+    autoUpdater = null
+  }
+}
+
+/** 初始化自动更新：检测 → 通知渲染进程弹窗 → 用户确认后下载 → 下载完成重启安装 */
+function setupAutoUpdater() {
+  if (!autoUpdater) return
+  // 发现更新先弹窗由用户确认，不自动下载；应用退出时自动完成安装
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = true
+
+  const send = (channel, payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+  }
+
+  autoUpdater.on('update-available', (info) => {
+    // releaseNotes 可能是字符串（Markdown）或 [{version, note}] 数组，统一规整为字符串
+    let notes = ''
+    if (typeof info.releaseNotes === 'string') notes = info.releaseNotes
+    else if (Array.isArray(info.releaseNotes)) notes = info.releaseNotes.map(n => n.note || '').filter(Boolean).join('\n')
+    send('update:available', {
+      version: info.version,
+      releaseName: info.releaseName || '',
+      // 发布说明取自 GitHub Release 正文（Markdown），渲染层负责分组渲染
+      releaseNotes: notes,
+      releaseDate: info.releaseDate || ''
+    })
+  })
+
+  autoUpdater.on('download-progress', (p) => {
+    send('update:progress', {
+      percent: Math.round(p.percent * 10) / 10,
+      transferred: p.transferred,
+      total: p.total,
+      bytesPerSecond: p.bytesPerSecond
+    })
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    send('update:downloaded', { version: info.version })
+  })
+
+  autoUpdater.on('error', (err) => {
+    send('update:error', err && err.message ? err.message : String(err))
+  })
+
+  ipcMain.on('update:check', () => { autoUpdater.checkForUpdates().catch(() => {}) })
+  ipcMain.on('update:download', () => { autoUpdater.downloadUpdate().catch(() => {}) })
+  ipcMain.on('update:install', () => {
+    quitForUpdate = true
+    isQuitting = true
+    autoUpdater.quitAndInstall()
+  })
+
+  // 启动后延迟检查，避免与启动画面争抢资源
+  setTimeout(() => { autoUpdater.checkForUpdates().catch(() => {}) }, 5000)
+}
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -93,7 +159,12 @@ function createMainWindow() {
     title: APP_NAME,
     autoHideMenuBar: true,
     backgroundColor: '#f8fafc',
-    webPreferences: { contextIsolation: true, nodeIntegration: false, spellcheck: false }
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      spellcheck: false,
+      preload: path.join(__dirname, 'preload.cjs')
+    }
   })
 
   mainWindow.once('ready-to-show', () => {
@@ -101,9 +172,9 @@ function createMainWindow() {
     showMainWindow()
   })
 
-  // 点击关闭按钮时隐藏到系统托盘，而不是退出应用
+  // 点击关闭按钮时隐藏到系统托盘，而不是退出应用（更新安装时除外）
   mainWindow.on('close', (e) => {
-    if (!isQuitting) {
+    if (!isQuitting && !quitForUpdate) {
       e.preventDefault()
       mainWindow.hide()
     }
@@ -141,6 +212,7 @@ function init() {
   createSplash()
   createMainWindow()
   createTray()
+  setupAutoUpdater()
 
   // macOS：点击 Dock 图标时恢复窗口
   app.on('activate', () => {

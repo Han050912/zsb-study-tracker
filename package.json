@@ -26,6 +26,11 @@
       "electron/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "Han050912",
+      "repo": "zsb-study-tracker"
+    },
     "win": {
       "target": "nsis",
       "icon": "electron/assets/logo.png"
@@ -45,6 +50,7 @@
   "dependencies": {
     "dayjs": "^1.11.13",
     "echarts": "^5.5.1",
+    "electron-updater": "^6.8.9",
     "katex": "^0.16.11",
     "pinia": "^2.2.6",
     "sql.js": "^1.14.1",
