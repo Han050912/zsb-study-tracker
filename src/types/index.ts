@@ -6,6 +6,9 @@ export interface Chapter {
   topics: string[]
 }
 
+/** 知识点重要程度分级 */
+export type TopicImportance = 'normal' | 'important' | 'must'
+
 export interface Subject {
   id: string
   name: string
@@ -16,6 +19,8 @@ export interface Subject {
   chapters: Chapter[]
   /** 知识点 -> 掌握度(1-5) */
   mastery: Record<string, number>
+  /** 知识点 -> 重要程度（普通/重要/必考），未标记视为普通 */
+  topicImportance: Record<string, TopicImportance>
 }
 
 /** 学习记录（按次） */

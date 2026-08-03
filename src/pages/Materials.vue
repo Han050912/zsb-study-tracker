@@ -2,6 +2,7 @@
 import { computed, inject, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
+import { normalizeUrl } from '../utils/url'
 import type { Material } from '../types'
 
 const store = useAppStore()
@@ -37,6 +38,16 @@ function save() {
 
 function progress(m: Material) {
   return m.totalPages ? Math.round(((m.readPages || 0) / m.totalPages) * 100) : null
+}
+
+/** 打开资料链接：先规范化 URL（补协议头），再于新标签页打开，兼容内网/外网格式 */
+function openLink(url?: string) {
+  const target = normalizeUrl(url)
+  if (!target) {
+    toast('链接格式无效，请检查 URL 后重试')
+    return
+  }
+  window.open(target, '_blank', 'noopener,noreferrer')
 }
 
 function remove() {
@@ -88,7 +99,7 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
           </div>
         </div>
         <p v-if="m.notes" class="text-xs text-slate-400 mt-2 line-clamp-2">📓 {{ m.notes }}</p>
-        <a v-if="m.url" :href="m.url" target="_blank" rel="noopener" class="text-xs text-primary-500 mt-2 inline-block" @click.stop>打开链接 ↗</a>
+        <button v-if="m.url" type="button" class="text-xs text-primary-500 mt-2 inline-block hover:underline" @click.stop="openLink(m.url)">打开链接 ↗</button>
       </div>
     </div>
 

@@ -6,7 +6,7 @@ import { useChart, chartTextColor } from '../composables/useChart'
 import { renderMarkdown } from '../utils/markdown'
 import StarRating from './StarRating.vue'
 import Modal from './Modal.vue'
-import type { Note } from '../types'
+import type { Note, TopicImportance } from '../types'
 
 const props = defineProps<{ subjectId: string }>()
 const store = useAppStore()
@@ -238,6 +238,36 @@ function removeTopic(chapterId: string, topic: string) {
   store.removeTopic(props.subjectId, chapterId, topic)
   toast('已删除')
 }
+
+// ---- 知识点重要程度 + 双击编辑 ----
+const IMPORTANCE_OPTIONS: { k: TopicImportance; l: string; cls: string }[] = [
+  { k: 'normal', l: '普通', cls: 'text-slate-400 bg-slate-100 dark:bg-slate-700' },
+  { k: 'important', l: '重要', cls: 'text-amber-500 bg-amber-50 dark:bg-amber-900/30' },
+  { k: 'must', l: '必考', cls: 'text-red-500 bg-red-50 dark:bg-red-900/30' }
+]
+function importanceOf(topic: string): TopicImportance {
+  return subject.value?.topicImportance?.[topic] || 'normal'
+}
+function importanceMeta(topic: string) {
+  return IMPORTANCE_OPTIONS.find(o => o.k === importanceOf(topic)) || IMPORTANCE_OPTIONS[0]
+}
+
+const showTopicModal = ref(false)
+const editTopic = ref<{ chapterId: string; old: string; text: string; importance: TopicImportance }>({
+  chapterId: '', old: '', text: '', importance: 'normal'
+})
+function openTopicEdit(chapterId: string, topic: string) {
+  editTopic.value = { chapterId, old: topic, text: topic, importance: importanceOf(topic) }
+  showTopicModal.value = true
+}
+function saveTopicEdit() {
+  const text = editTopic.value.text.trim()
+  if (!text) { toast('知识点内容不能为空'); return }
+  const ok = store.updateTopic(props.subjectId, editTopic.value.chapterId, editTopic.value.old, text, editTopic.value.importance)
+  if (!ok) { toast('保存失败：与本章节其他知识点重名'); return }
+  showTopicModal.value = false
+  toast('知识点已更新')
+}
 function removeChapter(chapterId: string) {
   if (!window.confirm('删除该章节及其全部知识点？')) return
   store.removeChapter(props.subjectId, chapterId)
@@ -283,7 +313,7 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
         <div ref="radarEl" class="h-64"></div>
       </div>
       <div class="card">
-        <div class="section-title">章节知识点（点击星星评估掌握度）</div>
+        <div class="section-title">章节知识点（点击星星评估掌握度，双击知识点可编辑内容与重要程度）</div>
         <div class="space-y-1">
           <div v-for="ch in subject.chapters" :key="ch.id" class="border border-slate-100 dark:border-slate-700 rounded-xl overflow-hidden">
             <button class="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50"
@@ -297,9 +327,13 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
             <div v-if="expanded[ch.id]" class="px-3 pb-2 space-y-1.5">
               <div v-if="!ch.topics.length" class="text-xs text-slate-400 py-1">暂无知识点，在下方添加小标题后可评估掌握度</div>
               <div v-for="topic in ch.topics" :key="topic" class="flex items-center justify-between text-sm py-0.5 group">
-                <span class="text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                <span class="text-slate-600 dark:text-slate-300 flex items-center gap-2 cursor-pointer select-none"
+                  title="双击编辑知识点内容与重要程度" @dblclick="openTopicEdit(ch.id, topic)">
                   {{ topic }}
-                  <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" title="删除知识点" @click="removeTopic(ch.id, topic)">×</button>
+                  <span v-if="importanceOf(topic) !== 'normal'" class="text-[10px] px-1.5 py-0.5 rounded font-medium" :class="importanceMeta(topic).cls">
+                    {{ importanceMeta(topic).l }}
+                  </span>
+                  <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" title="删除知识点" @click.stop="removeTopic(ch.id, topic)" @dblclick.stop>×</button>
                 </span>
                 <StarRating :model-value="subject.mastery[topic] || 0" @update:model-value="v => store.setMastery(subject.id, topic, v)" />
               </div>
@@ -440,6 +474,29 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
         </div>
       </div>
     </div>
+
+    <!-- 知识点编辑弹窗（双击知识点唤起） -->
+    <Modal title="编辑知识点" :show="showTopicModal" @close="showTopicModal = false">
+      <div class="space-y-3">
+        <div>
+          <label class="label">知识点内容</label>
+          <input v-model="editTopic.text" class="input" placeholder="知识点名称" @keyup.enter="saveTopicEdit" />
+        </div>
+        <div>
+          <label class="label">重要程度</label>
+          <div class="flex gap-2">
+            <button v-for="o in IMPORTANCE_OPTIONS" :key="o.k" type="button"
+              class="flex-1 text-xs px-3 py-2 rounded-xl font-medium transition-all"
+              :class="[o.cls, editTopic.importance === o.k ? 'ring-2 ring-primary-400' : 'opacity-60 hover:opacity-100']"
+              @click="editTopic.importance = o.k">{{ o.l }}</button>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn-ghost" @click="showTopicModal = false">取消</button>
+        <button class="btn-primary" @click="saveTopicEdit">保存</button>
+      </template>
+    </Modal>
 
     <!-- 真题弹窗 -->
     <Modal title="记录真题/套卷" :show="showExamModal" @close="showExamModal = false">

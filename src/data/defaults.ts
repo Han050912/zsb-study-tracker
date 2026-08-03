@@ -23,8 +23,8 @@ const engChapters = [
 
 export function defaultSubjects(): Subject[] {
   return [
-    { id: 'math', name: '高等数学', icon: '📐', color: '#3b82f6', weight: 50, builtin: true, chapters: mathChapters, mastery: {} },
-    { id: 'english', name: '英语', icon: '📖', color: '#10b981', weight: 50, builtin: true, chapters: engChapters, mastery: {} }
+    { id: 'math', name: '高等数学', icon: '📐', color: '#3b82f6', weight: 50, builtin: true, chapters: mathChapters, mastery: {}, topicImportance: {} },
+    { id: 'english', name: '英语', icon: '📖', color: '#10b981', weight: 50, builtin: true, chapters: engChapters, mastery: {}, topicImportance: {} }
   ]
 }
 

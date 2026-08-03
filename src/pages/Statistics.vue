@@ -13,16 +13,40 @@ const range = ref<7 | 30>(7)
 const days = computed(() => Array.from({ length: range.value }, (_, i) =>
   dayjs().subtract(range.value - 1 - i, 'day').format('YYYY-MM-DD')))
 
-// ---- 柱状图点击：当日各科目精准学习时长 ----
+// ---- 柱状图点击：当日各科目学习时长细分详情 ----
 const barDate = ref('')
 // 切换时间范围时关闭弹窗，避免展示范围外日期
 watch(range, () => { barDate.value = '' })
-const barSubjects = computed(() => {
+
+/** 指定日期各科目总学习时长（hover 提示与点击详情共用口径） */
+function subjectMinutesOn(date: string) {
   const map: Record<string, number> = {}
-  for (const r of store.records.filter(x => x.date === barDate.value)) {
+  for (const r of store.records.filter(x => x.date === date)) {
     map[r.subjectId] = (map[r.subjectId] || 0) + r.minutes
   }
-  return Object.entries(map).map(([sid, minutes]) => ({ sid, minutes }))
+  return map
+}
+
+/** 点击柱子后的详情卡片数据：按科目拆分，再按学习细分方向（章节/知识点/备注）聚合耗时 */
+const barDetail = computed(() => {
+  const bySubject: Record<string, typeof store.records> = {}
+  for (const r of store.records.filter(x => x.date === barDate.value)) {
+    ;(bySubject[r.subjectId] = bySubject[r.subjectId] || []).push(r)
+  }
+  return Object.entries(bySubject).map(([sid, items]) => {
+    const s = store.subjectMap[sid]
+    const total = items.reduce((sum, r) => sum + r.minutes, 0)
+    const detailMap: Record<string, number> = {}
+    for (const r of items) {
+      const ch = r.chapterId ? s?.chapters.find(c => c.id === r.chapterId) : undefined
+      const label = ch?.name || r.topic || r.note || '未标注方向'
+      detailMap[label] = (detailMap[label] || 0) + r.minutes
+    }
+    const details = Object.entries(detailMap)
+      .map(([label, minutes]) => ({ label, minutes }))
+      .sort((a, b) => b.minutes - a.minutes)
+    return { sid, total, details }
+  })
 })
 
 // ---- 学习时长 ----
@@ -34,7 +58,30 @@ const { el: timeEl } = useChart(() => ({
     { type: 'bar', data: days.value.map(d => store.minutesByDate[d] || 0), itemStyle: { color: '#3b82f6', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 20, cursor: 'pointer' },
     { type: 'line', smooth: true, data: days.value.map(d => store.minutesByDate[d] || 0), lineStyle: { color: '#93c5fd' }, itemStyle: { color: '#93c5fd' }, cursor: 'pointer' }
   ],
-  tooltip: { trigger: 'axis' }
+  // 悬浮提示：展示当日各科目的总学习时长（替代默认的单系列数值提示）
+  tooltip: {
+    trigger: 'axis',
+    formatter: (ps: any) => {
+      const list = Array.isArray(ps) ? ps : [ps]
+      const d = days.value[list[0]?.dataIndex ?? 0]
+      if (!d) return ''
+      const lines = [`📅 ${d}`]
+      const map = subjectMinutesOn(d)
+      const entries = Object.entries(map)
+      if (!entries.length) {
+        lines.push('当日暂无学习记录')
+      } else {
+        let total = 0
+        for (const [sid, minutes] of entries) {
+          total += minutes
+          const s = store.subjectMap[sid]
+          lines.push(`${s?.icon || ''} ${s?.name || '已删除科目'}：${formatMinutes(minutes)}`)
+        }
+        lines.push(`合计：${formatMinutes(total)}`)
+      }
+      return lines.join('<br>')
+    }
+  }
 }), [days], (params) => {
   // 点击任意时间柱子，展示当天所有科目精准学习时长
   // 折线 series 覆盖在柱子上方，两种 seriesType 均接受（dataIndex→日期映射一致）
@@ -180,7 +227,7 @@ const report = computed(() => {
     <div class="card">
       <div class="section-title">⏱ 学习时长（近{{ range }}天）</div>
       <div ref="timeEl" class="h-60"></div>
-      <p class="text-[10px] text-slate-400 mt-2">点击柱子可查看当天各科目精准学习时长</p>
+      <p class="text-[10px] text-slate-400 mt-2">悬浮查看当日各科目总学习时长，点击柱子查看科目细分耗时详情</p>
     </div>
 
     <div class="grid md:grid-cols-2 gap-4">
@@ -211,14 +258,22 @@ const report = computed(() => {
       <div ref="moodEl" class="h-48"></div>
     </div>
 
-    <!-- 柱状图点击：当日各科目精准学习时长弹窗 -->
-    <Modal :title="`${barDate} 各科目学习时长`" :show="!!barDate" @close="barDate = ''">
-      <div v-if="!barSubjects.length" class="text-xs text-slate-400 text-center py-4">当日暂无学习记录</div>
-      <div v-else class="space-y-2">
-        <div v-for="item in barSubjects" :key="item.sid" class="flex items-center gap-2 text-sm border border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2">
-          <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: store.subjectMap[item.sid]?.color || '#94a3b8' }"></span>
-          <span class="flex-1 font-medium">{{ store.subjectMap[item.sid]?.icon }} {{ store.subjectMap[item.sid]?.name || '已删除科目' }}</span>
-          <span class="font-semibold" :style="{ color: store.subjectMap[item.sid]?.color || '#94a3b8' }">{{ item.minutes }} 分钟</span>
+    <!-- 柱状图点击：当日各科目学习细分耗时详情卡片 -->
+    <Modal :title="`${barDate} 学习时长细分详情`" :show="!!barDate" @close="barDate = ''">
+      <div v-if="!barDetail.length" class="text-xs text-slate-400 text-center py-4">当日暂无学习记录</div>
+      <div v-else class="space-y-3">
+        <div v-for="item in barDetail" :key="item.sid" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3">
+          <div class="flex items-center gap-2 text-sm">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: store.subjectMap[item.sid]?.color || '#94a3b8' }"></span>
+            <span class="flex-1 font-semibold">{{ store.subjectMap[item.sid]?.icon }} {{ store.subjectMap[item.sid]?.name || '已删除科目' }}</span>
+            <span class="font-bold" :style="{ color: store.subjectMap[item.sid]?.color || '#94a3b8' }">{{ formatMinutes(item.total) }}</span>
+          </div>
+          <div class="mt-2 space-y-1">
+            <div v-for="d in item.details" :key="d.label" class="flex items-center gap-2 text-xs pl-4">
+              <span class="flex-1 text-slate-500 dark:text-slate-400 truncate">{{ d.label }}</span>
+              <span class="font-medium tabular-nums shrink-0">{{ formatMinutes(d.minutes) }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </Modal>

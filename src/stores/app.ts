@@ -4,7 +4,7 @@ import { today, yesterday, uid, daysBetween } from '../utils/date'
 import { loadCurrentUserPayload, saveCurrentUserPayload } from '../services/auth'
 import type {
   AppState, StudyRecord, ProblemSession, ErrorQuestion, ExamRecord,
-  Note, DailySummary, Habit, Material, Subject, Todo
+  Note, DailySummary, Habit, Material, Subject, Todo, TopicImportance
 } from '../types'
 
 /** 旧版本地存储键（用于首次登录时迁移历史数据） */
@@ -137,6 +137,8 @@ export const useAppStore = defineStore('app', {
         if (Array.isArray(this.subjects)) {
           for (const s of this.subjects) {
             if (s && !s.id) { s.id = uid(); changed = true }
+            // 旧版数据无知识点重要程度字段，补齐避免空指针
+            if (s && !s.topicImportance) { s.topicImportance = {}; changed = true }
           }
         }
         /** 为单条记录建立流水关联：认领一条匹配的旧流水；无法认领则补写 */
@@ -289,9 +291,9 @@ export const useAppStore = defineStore('app', {
       if (s) { s.mastery[topic] = level; this.save() }
     },
 
-    addSubject(s: Omit<Subject, 'id' | 'chapters' | 'mastery' | 'builtin'>) {
+    addSubject(s: Omit<Subject, 'id' | 'chapters' | 'mastery' | 'topicImportance' | 'builtin'>) {
       // 必须生成唯一 id，否则动态路由 /subject/:id 与导航将全部指向 /subject/undefined
-      this.subjects.push({ ...s, id: uid(), builtin: false, chapters: [], mastery: {} })
+      this.subjects.push({ ...s, id: uid(), builtin: false, chapters: [], mastery: {}, topicImportance: {} })
       this.save()
     },
     /** 修改任意科目的考核权重百分比 */
@@ -337,6 +339,7 @@ export const useAppStore = defineStore('app', {
       if (s && ch) {
         ch.topics = ch.topics.filter(t => t !== topic)
         delete s.mastery[topic]
+        if (s.topicImportance) delete s.topicImportance[topic]
         this.save()
       }
     },
@@ -344,10 +347,38 @@ export const useAppStore = defineStore('app', {
       const s = this.subjects.find(x => x.id === subjectId)
       if (s) {
         const ch = s.chapters.find(c => c.id === chapterId)
-        if (ch) for (const t of ch.topics) delete s.mastery[t]
+        if (ch) {
+          for (const t of ch.topics) {
+            delete s.mastery[t]
+            if (s.topicImportance) delete s.topicImportance[t]
+          }
+        }
         s.chapters = s.chapters.filter(c => c.id !== chapterId)
         this.save()
       }
+    },
+    /**
+     * 编辑知识点：支持重命名 + 调整重要程度，一次持久化。
+     * 重命名时同步迁移掌握度与重要程度数据；返回 false 表示内容为空或与本章节其他知识点重名。
+     */
+    updateTopic(subjectId: string, chapterId: string, oldTopic: string, newTopic: string, importance?: TopicImportance): boolean {
+      const s = this.subjects.find(x => x.id === subjectId)
+      const ch = s?.chapters.find(c => c.id === chapterId)
+      if (!s || !ch) return false
+      const name = newTopic.trim()
+      if (!name) return false
+      if (!s.topicImportance) s.topicImportance = {}
+      if (name !== oldTopic) {
+        if (ch.topics.includes(name)) return false
+        const idx = ch.topics.indexOf(oldTopic)
+        if (idx < 0) return false
+        ch.topics[idx] = name
+        if (s.mastery[oldTopic] !== undefined) { s.mastery[name] = s.mastery[oldTopic]; delete s.mastery[oldTopic] }
+        if (s.topicImportance[oldTopic] !== undefined) { s.topicImportance[name] = s.topicImportance[oldTopic]; delete s.topicImportance[oldTopic] }
+      }
+      s.topicImportance[name] = importance || 'normal'
+      this.save()
+      return true
     },
 
     /** 批量导入笔记（文件上传）：一次写入一次持久化，避免多文件触发多次全量保存 */

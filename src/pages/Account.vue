@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
-import { sessionUser, logout } from '../services/auth'
+import { sessionUser } from '../services/auth'
 import { dbFileSize, loadUserData } from '../db/database'
 
-const router = useRouter()
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 
@@ -55,18 +53,6 @@ const stats = computed(() => {
   ]
 })
 
-async function doLogout(switchAccount = false) {
-  const tip = switchAccount ? '切换账号？当前数据将被保存。' : '确认退出登录？数据将被保存到本地数据库。'
-  if (!window.confirm(tip)) return
-  if (!(await store.saveAsync())) {
-    toast('保存失败，请稍后再试')
-    return
-  }
-  logout()
-  store.resetState()
-  router.replace('/login')
-}
-
 function exportBackup() {
   try {
     const blob = new Blob([store.exportJSON()], { type: 'application/json' })
@@ -99,10 +85,6 @@ function exportBackup() {
         <div class="text-xs text-slate-400 mt-0.5">
           {{ store.level.name }}学者 · {{ store.gamification.points }} 积分 · 🔥连胜 {{ store.gamification.streak }} 天
         </div>
-      </div>
-      <div class="flex gap-2 shrink-0">
-        <button class="btn-ghost !text-xs" @click="doLogout(true)">切换账号</button>
-        <button class="btn-danger !text-xs" @click="doLogout(false)">退出登录</button>
       </div>
     </div>
 
