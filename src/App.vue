@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, ref } from 'vue'
+import { computed, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import { sessionUser, logout } from './services/auth'
+import { restartReminder } from './services/reminder'
 import Toast from './components/Toast.vue'
 import AchievementModal from './components/AchievementModal.vue'
 import Onboarding from './components/Onboarding.vue'
@@ -25,6 +26,7 @@ const NAV = computed(() => {
     { path: '/', icon: '🏠', label: '首页', subject: false },
     ...subjectItems,
     { path: '/pomodoro', icon: '🍅', label: '专注', subject: false },
+    { path: '/notes', icon: '📔', label: '笔记', subject: false },
     { path: '/daily-summary', icon: '📝', label: '总结', subject: false },
     { path: '/statistics', icon: '📊', label: '统计', subject: false },
     { path: '/error-book', icon: '📕', label: '错题本', subject: false },
@@ -56,22 +58,20 @@ function applyTheme() {
 onMounted(() => {
   applyTheme()
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme)
-  // 每日提醒
-  if (store.settings.reminderEnabled && 'Notification' in window && Notification.permission === 'granted') {
-    scheduleReminder()
-  }
 })
-function scheduleReminder() {
-  const [h, m] = (store.settings.reminderTime || '08:00').split(':').map(Number)
-  const nowD = new Date()
-  const target = new Date()
-  target.setHours(h, m, 0, 0)
-  if (target.getTime() <= nowD.getTime()) target.setDate(target.getDate() + 1)
-  setTimeout(() => {
-    new Notification('专升本学习提醒', { body: '该开始学习啦！坚持就是胜利 💪' })
-    scheduleReminder()
-  }, target.getTime() - nowD.getTime())
-}
+
+// ---- 每日学习提醒（浏览器 + 桌面端共用 src/services/reminder.ts 一套逻辑） ----
+// 监听设置变更即时重调度：开关切换、时间修改均无需重启应用即可生效
+watch(
+  () => [store.settings.reminderEnabled, store.settings.reminderTime] as const,
+  () => {
+    restartReminder(
+      () => ({ enabled: store.settings.reminderEnabled, time: store.settings.reminderTime }),
+      (shown) => { if (!shown) toastRef.value?.show('提醒时间到！该开始学习啦 💪') }
+    )
+  },
+  { immediate: true }
+)
 
 const isPomodoro = computed(() => route.path === '/pomodoro')
 const isAuthPage = computed(() => route.path === '/login')

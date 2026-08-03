@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
 import { useChart, chartTextColor } from '../composables/useChart'
-import { renderMarkdown } from '../utils/markdown'
+import { problemTypesFor } from '../data/problemTypes'
 import StarRating from './StarRating.vue'
 import Modal from './Modal.vue'
 import type { Note, TopicImportance } from '../types'
@@ -57,14 +58,15 @@ function addRecord() {
   toast(`已记录 ${recMinutes.value} 分钟学习 +积分`)
 }
 
-// ---- 刷题 ----
+// ---- 刷题（题型模板按科目适配：数学/英语/通用，见 data/problemTypes.ts） ----
+const typeDefs = computed(() => problemTypesFor(props.subjectId))
 const pTotal = ref(20)
 const pCorrect = ref(15)
-const pTypes = ref({ choice: 0, blank: 0, calc: 0, proof: 0 })
+const pTypes = ref<Record<string, number>>({})
 function addProblems() {
   if (pTotal.value <= 0) return
   store.addProblemSession({ subjectId: props.subjectId, date: today(), total: pTotal.value, correct: Math.min(pCorrect.value, pTotal.value), types: { ...pTypes.value } })
-  pTypes.value = { choice: 0, blank: 0, calc: 0, proof: 0 }
+  pTypes.value = {}
   toast('刷题记录已保存')
 }
 const accuracy = computed(() => {
@@ -115,19 +117,11 @@ const { el: examTrendEl } = useChart(() => ({
   tooltip: { trigger: 'axis' }
 }), [subjectExams])
 
-// ---- 笔记 ----
-const showNoteModal = ref(false)
-const editNote = ref<Partial<Note>>({})
-const notePreview = ref(false)
+// ---- 笔记（点击跳转全屏笔记页面，弹窗编辑已废弃） ----
+const router = useRouter()
 function openNote(n?: Note) {
-  editNote.value = n ? { ...n } : { subjectId: props.subjectId, title: '', content: '', tags: [] }
-  notePreview.value = false
-  showNoteModal.value = true
-}
-function saveNote() {
-  store.saveNote({ ...editNote.value, subjectId: props.subjectId })
-  showNoteModal.value = false
-  toast('笔记已保存')
+  if (n) router.push({ path: '/notes', query: { id: n.id } })
+  else router.push({ path: '/notes', query: { new: '1', subject: props.subjectId } })
 }
 const noteSearch = ref('')
 const filteredNotes = computed(() => {
@@ -444,10 +438,10 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
           <div><label class="label">做题数量</label><input v-model.number="pTotal" type="number" min="0" class="input" /></div>
           <div><label class="label">答对数量</label><input v-model.number="pCorrect" type="number" min="0" class="input" /></div>
         </div>
-        <div class="grid grid-cols-4 gap-2">
-          <div v-for="(label, key) in { choice: '选择', blank: '填空', calc: '计算', proof: '证明' }" :key="key">
-            <label class="label">{{ label }}</label>
-            <input v-model.number="pTypes[key]" type="number" min="0" class="input" />
+        <div class="grid gap-2" :class="typeDefs.length > 4 ? 'grid-cols-5' : 'grid-cols-4'">
+          <div v-for="t in typeDefs" :key="t.key">
+            <label class="label">{{ t.label }}</label>
+            <input v-model.number="pTypes[t.key]" type="number" min="0" class="input" />
           </div>
         </div>
         <button class="btn-primary w-full" @click="addProblems">保存刷题记录</button>
@@ -501,7 +495,7 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
           <button class="btn-primary shrink-0" @click="openNote()">+ 新建</button>
           <input ref="noteFileInput" type="file" multiple accept=".md,.markdown,.txt,text/markdown,text/plain" class="hidden" @change="onNoteFileChange" />
         </div>
-        <p class="text-[10px] text-slate-400 mb-2">支持上传 .md / .markdown / .txt 本地文件，也可将文件直接拖拽到本区域生成笔记</p>
+        <p class="text-[10px] text-slate-400 mb-2">支持 .md / .markdown / .txt 上传或拖拽导入；PDF 导入与预览请前往「笔记」页面 · 点击卡片进入全屏编辑</p>
         <div v-if="!filteredNotes.length" class="text-xs text-slate-400 text-center py-4">暂无笔记</div>
         <div class="grid sm:grid-cols-2 gap-2">
           <div v-for="n in filteredNotes" :key="n.id" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:shadow-sm" @click="openNote(n)">
@@ -554,25 +548,5 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
       </template>
     </Modal>
 
-    <!-- 笔记弹窗 -->
-    <Modal title="笔记编辑（支持 Markdown + $LaTeX$ 公式）" :show="showNoteModal" @close="showNoteModal = false">
-      <div class="space-y-3">
-        <input v-model="editNote.title" class="input" placeholder="笔记标题" />
-        <input :value="editNote.tags?.join(',')" class="input" placeholder="标签，逗号分隔"
-          @input="editNote.tags = ($event.target as HTMLInputElement).value.split(',').map(s => s.trim()).filter(Boolean)" />
-        <div class="flex gap-2 text-xs">
-          <button class="btn-ghost !py-1" :class="!notePreview ? 'ring-2 ring-primary-300' : ''" @click="notePreview = false">编辑</button>
-          <button class="btn-ghost !py-1" :class="notePreview ? 'ring-2 ring-primary-300' : ''" @click="notePreview = true">预览</button>
-        </div>
-        <textarea v-if="!notePreview" v-model="editNote.content" rows="10" class="input font-mono text-xs"
-          placeholder="支持 Markdown 语法与 LaTeX 公式，如 $e^x = \sum_{n=0}^{\infty} \frac{x^n}{n!}$"></textarea>
-        <div v-else class="border border-slate-100 dark:border-slate-700 rounded-lg p-3 text-sm min-h-[200px] overflow-x-auto" v-html="renderMarkdown(editNote.content || '')"></div>
-      </div>
-      <template #footer>
-        <button v-if="editNote.id" class="btn-danger mr-auto" @click="store.deleteNote(editNote.id!); showNoteModal = false">删除</button>
-        <button class="btn-ghost" @click="showNoteModal = false">取消</button>
-        <button class="btn-primary" @click="saveNote">保存</button>
-      </template>
-    </Modal>
   </div>
 </template>

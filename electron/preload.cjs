@@ -22,3 +22,11 @@ contextBridge.exposeInMainWorld('updater', {
   /** 更新流程出错 */
   onError: (cb) => ipcRenderer.on('update:error', (_e, msg) => cb(msg))
 })
+
+// 桌面原生通知桥接：渲染进程统一走 src/services/notify.ts 调度
+contextBridge.exposeInMainWorld('desktopNotify', {
+  /** 是否存在桌面原生通知能力（Electron 端为 true，浏览器端 undefined） */
+  available: true,
+  /** 弹出系统原生通知 */
+  show: (title, body) => ipcRenderer.send('notify:show', { title, body })
+})

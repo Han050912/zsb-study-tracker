@@ -4,7 +4,9 @@ import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor } from '../composables/useChart'
 import SubjectPanel from '../components/SubjectPanel.vue'
 import Modal from '../components/Modal.vue'
-import { uid } from '../utils/date'
+import { uid, today } from '../utils/date'
+import { BUILTIN_TEMPLATES } from '../data/englishTemplates'
+import { fetchMaimemoToday } from '../services/maimemo'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
@@ -33,7 +35,37 @@ function delVocab(id: string) {
   toast('记录已删除，积分已回收')
 }
 const totalVocab = computed(() => eng.value.vocab.reduce((s, v) => s + v.newWords, 0))
-/** 近 14 个有打卡的日期（按日聚合用于图表） */
+
+// ---- 墨墨背单词同步（官方开放 API，公测） ----
+const maimemoToken = ref(store.settings.maimemoToken || '')
+const syncing = ref(false)
+function saveMaimemoToken() {
+  store.updateSettings({ maimemoToken: maimemoToken.value.trim() || undefined })
+  toast('墨墨 Token 已保存')
+}
+async function syncMaimemo() {
+  const token = (store.settings.maimemoToken || '').trim()
+  if (!token) { toast('请先填写并保存墨墨开放 API Token'); return }
+  if (syncing.value) return
+  syncing.value = true
+  try {
+    const data = await fetchMaimemoToday(token)
+    if (data.newWords + data.reviewWords <= 0) {
+      toast('墨墨今日暂无已完成背诵（请在 App 内开启自动同步并完成今日学习后再试）')
+      return
+    }
+    // 防重复：同日同数量视为已同步
+    const dup = eng.value.vocab.some(v => v.date === today() && v.newWords === data.newWords && v.reviewWords === data.reviewWords)
+    if (dup) { toast('今日墨墨数据已同步，无需重复打卡'); return }
+    store.addVocabRecord(data.newWords, data.reviewWords)
+    toast(`已同步墨墨今日数据：新学 ${data.newWords} · 复习 ${data.reviewWords}`)
+  } catch (e: any) {
+    toast(e?.message || '同步失败，请检查网络后重试')
+  } finally {
+    syncing.value = false
+  }
+}
+/** 近 14 个自然日词汇量（无打卡的日期补 0，保证图表连续不断档） */
 const vocabByDate = computed(() => {
   const map: Record<string, { newWords: number; reviewWords: number }> = {}
   for (const v of eng.value.vocab) {
@@ -41,10 +73,14 @@ const vocabByDate = computed(() => {
     map[v.date].newWords += v.newWords
     map[v.date].reviewWords += v.reviewWords
   }
-  return Object.entries(map)
-    .map(([date, v]) => ({ date, ...v }))
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
-    .slice(-14)
+  const days: { date: string; newWords: number; reviewWords: number }[] = []
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date()
+    d.setDate(d.getDate() - i)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    days.push({ date: key, ...(map[key] || { newWords: 0, reviewWords: 0 }) })
+  }
+  return days
 })
 
 // ---- 阅读 ----
@@ -72,11 +108,12 @@ function addListening() {
   toast(`听力记录已保存 +${Math.round(mins / 10)} 积分`)
 }
 
-// ---- 模板 ----
+// ---- 作文模板（三大分类：议论文/图表文/信件文 + 自定义） ----
+const TPL_CATEGORIES = ['议论文', '图表文', '信件文', '自定义']
 const showTpl = ref(false)
-const tplForm = ref({ id: '', title: '', content: '', level: 0 })
+const tplForm = ref<{ id: string; title: string; content: string; level: number; category?: string }>({ id: '', title: '', content: '', level: 0, category: '自定义' })
 function openTpl(t?: any) {
-  tplForm.value = t ? { ...t } : { id: '', title: '', content: '', level: 0 }
+  tplForm.value = t ? { category: '自定义', ...t } : { id: '', title: '', content: '', level: 0, category: '自定义' }
   showTpl.value = true
 }
 function saveTpl() {
@@ -95,6 +132,27 @@ function delTpl(id: string) {
   eng.value.templates = eng.value.templates.filter(t => t.id !== id)
   store.save()
 }
+
+/** 一键生成内置高分模板库（按标题去重，可重复点击补全缺失项） */
+function generateBuiltin() {
+  const existing = new Set(eng.value.templates.map(t => t.title))
+  let added = 0
+  for (const bt of BUILTIN_TEMPLATES) {
+    if (existing.has(bt.title)) continue
+    eng.value.templates.push({ id: uid(), title: bt.title, content: bt.content, level: 0, category: bt.category })
+    added++
+  }
+  if (!added) { toast('内置模板已全部生成，无需重复添加'); return }
+  store.save()
+  toast(`已生成 ${added} 套内置高分模板`)
+}
+
+/** 按分类分组展示（旧数据无 category 归入「自定义」） */
+const tplGroups = computed(() =>
+  TPL_CATEGORIES
+    .map(cat => ({ cat, items: eng.value.templates.filter(t => (t.category || '自定义') === cat) }))
+    .filter(g => g.items.length)
+)
 
 // ---- 词汇图表（按日聚合） ----
 const { el: vocabEl } = useChart(() => {
@@ -150,6 +208,18 @@ const { el: vocabEl } = useChart(() => {
         </div>
         <button class="btn-primary w-full mt-3" @click="addVocab">打卡背单词（目标 {{ store.settings.wordGoal }} 个/天）</button>
         <p class="text-[10px] text-slate-400 mt-2">每完成一次背诵打卡，单独生成一条记录</p>
+      </div>
+      <!-- 墨墨背单词同步 -->
+      <div class="card space-y-2">
+        <div class="section-title !mb-0">🔗 墨墨背单词同步</div>
+        <div class="flex gap-2">
+          <input v-model="maimemoToken" type="password" class="input" placeholder="墨墨开放 API Token（App：我的→更多设置→实验功能→开放 API）" />
+          <button class="btn-ghost shrink-0" @click="saveMaimemoToken">保存</button>
+        </div>
+        <button class="btn-primary w-full" :disabled="syncing" @click="syncMaimemo">
+          {{ syncing ? '同步中…' : '☁️ 同步墨墨今日背诵数据' }}
+        </button>
+        <p class="text-[10px] text-slate-400">公测接口：需在墨墨 App 内开启「自动同步」，且当日打开过 App 后数据才准确</p>
       </div>
       <div class="card">
         <div class="section-title">打卡记录</div>
@@ -221,18 +291,34 @@ const { el: vocabEl } = useChart(() => {
     <!-- 作文模板 -->
     <div v-show="tab === 'templates'" class="space-y-3">
       <div class="card">
-        <div class="flex justify-between items-center mb-3">
+        <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
           <div class="section-title !mb-0">✍️ 作文模板库</div>
-          <button class="btn-primary !py-1.5" @click="openTpl()">+ 新建模板</button>
+          <div class="flex gap-2">
+            <button class="btn-ghost !py-1.5" title="一键生成 议论文×5 / 图表文×2 / 信件文×3 高分模板" @click="generateBuiltin">✨ 生成内置模板库</button>
+            <button class="btn-primary !py-1.5" @click="openTpl()">+ 自定义模板</button>
+          </div>
         </div>
-        <div v-if="!eng.templates.length" class="text-xs text-slate-400 text-center py-4">暂无模板，添加常用句型模板吧</div>
-        <div class="space-y-2">
-          <div v-for="t in eng.templates" :key="t.id" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:shadow-sm" @click="openTpl(t)">
-            <div class="flex items-center justify-between">
-              <span class="font-medium text-sm">{{ t.title }}</span>
-              <span class="text-amber-400 text-xs">{{ '★'.repeat(t.level) || '未评级' }}</span>
+        <div v-if="!eng.templates.length" class="text-xs text-slate-400 text-center py-6">
+          暂无模板。点击「✨ 生成内置模板库」一键获取 10 套高分模板（议论文 5 套 · 图表文 2 套 · 信件文 3 套）
+        </div>
+        <!-- 分分类多列布局 -->
+        <div v-for="g in tplGroups" :key="g.cat" class="mb-4">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+              :class="g.cat === '议论文' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                : g.cat === '图表文' ? 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'
+                : g.cat === '信件文' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
+                : 'bg-slate-100 text-slate-500 dark:bg-slate-700'">{{ g.cat }}</span>
+            <span class="text-[10px] text-slate-400">{{ g.items.length }} 套</span>
+          </div>
+          <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div v-for="t in g.items" :key="t.id" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:shadow-sm transition-shadow" @click="openTpl(t)">
+              <div class="flex items-center justify-between gap-2">
+                <span class="font-medium text-xs flex-1">{{ t.title }}</span>
+                <span class="text-amber-400 text-[10px] shrink-0">{{ '★'.repeat(t.level) || '未评级' }}</span>
+              </div>
+              <p class="text-[11px] text-slate-400 line-clamp-3 mt-1.5 whitespace-pre-line">{{ t.content }}</p>
             </div>
-            <p class="text-xs text-slate-400 line-clamp-2 mt-1">{{ t.content }}</p>
           </div>
         </div>
       </div>
@@ -241,7 +327,16 @@ const { el: vocabEl } = useChart(() => {
     <Modal title="作文模板" :show="showTpl" @close="showTpl = false">
       <div class="space-y-3">
         <input v-model="tplForm.title" class="input" placeholder="模板标题，如：议论文开头万能句" />
-        <textarea v-model="tplForm.content" rows="6" class="input" placeholder="模板内容…"></textarea>
+        <div>
+          <label class="label">分类</label>
+          <div class="flex gap-2">
+            <button v-for="c in TPL_CATEGORIES" :key="c" type="button"
+              class="flex-1 text-xs px-2 py-1.5 rounded-lg font-medium transition-all"
+              :class="tplForm.category === c ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500'"
+              @click="tplForm.category = c">{{ c }}</button>
+          </div>
+        </div>
+        <textarea v-model="tplForm.content" rows="8" class="input !text-xs font-mono" placeholder="模板内容…"></textarea>
         <div>
           <label class="label">掌握程度</label>
           <div class="flex gap-1">

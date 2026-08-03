@@ -1,7 +1,7 @@
 {
   "name": "zsb-study-tracker",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "description": "专升本学习打卡管理助手（Web + 桌面端）",
@@ -52,12 +52,15 @@
     "echarts": "^5.5.1",
     "electron-updater": "^6.8.9",
     "katex": "^0.16.11",
+    "markdown-it": "^15.0.0",
+    "pdfjs-dist": "^6.2.108",
     "pinia": "^2.2.6",
     "sql.js": "^1.14.1",
     "vue": "^3.5.13",
     "vue-router": "^4.4.5"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-vue": "^5.2.0",
     "autoprefixer": "^10.4.20",

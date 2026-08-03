@@ -62,3 +62,31 @@ body {
   0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
   100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
 }
+
+/* ================= Markdown 渲染排版（.md-body，对齐 Typora 视觉） ================= */
+.md-body { @apply text-sm leading-7 text-slate-700 dark:text-slate-200 break-words; }
+.md-body h1 { @apply text-xl font-bold mt-5 mb-3 pb-2 border-b border-slate-100 dark:border-slate-700; }
+.md-body h2 { @apply text-lg font-bold mt-5 mb-2 pb-1.5 border-b border-slate-100 dark:border-slate-700; }
+.md-body h3 { @apply text-base font-bold mt-4 mb-2; }
+.md-body h4, .md-body h5, .md-body h6 { @apply text-sm font-bold mt-3 mb-1.5; }
+.md-body h1:first-child, .md-body h2:first-child, .md-body h3:first-child { @apply mt-0; }
+.md-body p { @apply my-2.5; }
+.md-body ul { @apply list-disc pl-6 my-2.5 space-y-1; }
+.md-body ol { @apply list-decimal pl-6 my-2.5 space-y-1; }
+.md-body li > ul, .md-body li > ol { @apply my-1; }
+.md-body .task-list-item { @apply list-none -ml-5 flex items-center gap-1.5; }
+.md-body .task-list-item input { @apply accent-primary-500 shrink-0; }
+.md-body blockquote { @apply border-l-4 border-primary-200 dark:border-primary-800 bg-slate-50 dark:bg-slate-700/40 text-slate-500 dark:text-slate-400 px-4 py-2 my-3 rounded-r-lg; }
+.md-body blockquote p { @apply my-0.5; }
+.md-body code { @apply bg-slate-100 dark:bg-slate-700 text-rose-500 dark:text-rose-400 px-1.5 py-0.5 rounded text-[0.85em] font-mono; }
+.md-body pre { @apply bg-slate-900 dark:bg-slate-950 text-slate-100 rounded-xl p-4 my-3 overflow-x-auto text-xs leading-6; }
+.md-body pre code { @apply bg-transparent text-inherit p-0; }
+.md-body table { @apply w-full border-collapse my-3 text-xs; }
+.md-body th, .md-body td { @apply border border-slate-200 dark:border-slate-600 px-3 py-1.5 text-left; }
+.md-body th { @apply bg-slate-50 dark:bg-slate-700/60 font-semibold; }
+.md-body tr:nth-child(even) td { @apply bg-slate-50/50 dark:bg-slate-700/20; }
+.md-body a { @apply text-primary-500 hover:text-primary-600 underline underline-offset-2; }
+.md-body img { @apply max-w-full rounded-lg my-2; }
+.md-body hr { @apply my-5 border-slate-200 dark:border-slate-600; }
+.md-body del { @apply text-slate-400; }
+.md-body .katex-display { @apply my-3 overflow-x-auto; }

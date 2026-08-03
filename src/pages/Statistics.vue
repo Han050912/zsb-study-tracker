@@ -4,6 +4,7 @@ import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor } from '../composables/useChart'
 import { formatMinutes } from '../utils/date'
 import { MOODS } from '../data/defaults'
+import { PROBLEM_TYPE_LABELS } from '../data/problemTypes'
 import Modal from '../components/Modal.vue'
 import dayjs from 'dayjs'
 
@@ -131,16 +132,17 @@ const { el: accEl } = useChart(() => {
   }
 }, [days])
 
-// ---- 题型分布 ----
+// ---- 题型分布（动态聚合：兼容数学/英语/通用题型模板与历史数据） ----
 const typeStats = computed(() => {
-  const t = { choice: 0, blank: 0, calc: 0, proof: 0 }
+  const t: Record<string, number> = {}
   for (const p of store.problemSessions) {
-    t.choice += p.types.choice; t.blank += p.types.blank; t.calc += p.types.calc; t.proof += p.types.proof
+    for (const [k, v] of Object.entries(p.types || {})) {
+      t[k] = (t[k] || 0) + (Number(v) || 0)
+    }
   }
-  return [
-    { name: '选择题', value: t.choice }, { name: '填空题', value: t.blank },
-    { name: '计算题', value: t.calc }, { name: '证明题', value: t.proof }
-  ].filter(x => x.value > 0)
+  return Object.entries(t)
+    .map(([k, v]) => ({ name: PROBLEM_TYPE_LABELS[k] || k, value: v }))
+    .filter(x => x.value > 0)
 })
 const { el: typeEl } = useChart(() => ({
   series: [{ type: 'pie', radius: '60%', label: { color: chartTextColor(), fontSize: 11 }, data: typeStats.value,

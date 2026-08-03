@@ -5,7 +5,7 @@
  * - 保证 crypto.subtle（安全上下文）、IndexedDB（sql.js 持久化）、Web Worker 等 Web 能力可用
  * - 开发环境直接加载 Vite Dev Server
  */
-const { app, BrowserWindow, Tray, Menu, nativeImage, protocol, net, ipcMain } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, protocol, net, ipcMain, Notification } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
@@ -90,6 +90,29 @@ function setupAutoUpdater() {
   // 启动后延迟检查，避免与启动画面争抢资源
   setTimeout(() => { autoUpdater.checkForUpdates().catch(() => {}) }, 5000)
 }
+
+/**
+ * 桌面原生通知（学习提醒等），与浏览器端共用 src/services/notify.ts 一套逻辑。
+ * 模块顶层注册：不依赖 autoUpdater，开发模式下桌面端同样可弹提醒。
+ */
+ipcMain.on('notify:show', (_e, payload) => {
+  if (!Notification.isSupported()) return
+  const { title, body } = payload || {}
+  if (!title) return
+  const n = new Notification({
+    title: String(title),
+    body: String(body || ''),
+    silent: false
+  })
+  // 点击通知时唤起主窗口，便于用户直接进入学习
+  n.on('click', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show()
+      mainWindow.focus()
+    }
+  })
+  n.show()
+})
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {

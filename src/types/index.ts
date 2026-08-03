@@ -42,7 +42,8 @@ export interface ProblemSession {
   date: string
   total: number
   correct: number
-  types: { choice: number; blank: number; calc: number; proof: number }
+  /** 题型 -> 数量；键名随科目题型模板而定（数学：choice/blank/calc/proof，英语：choice/cloze/reading/translate/writing），旧数据键名不受影响 */
+  types: Record<string, number>
 }
 
 /** 错题 */
@@ -98,7 +99,8 @@ export interface EnglishExtra {
   /** id 用于积分流水关联（refId），旧数据迁移时自动补齐 */
   reading: { id?: string; date: string; wpm: number; accuracy: number }[]
   listening: { id?: string; date: string; minutes: number; material: string; mode: '精听' | '泛听' }[]
-  templates: { id: string; title: string; content: string; level: number }[]
+  /** 作文模板；category 为新增可选字段（议论文/图表文/信件文），旧数据无此字段归入「自定义」 */
+  templates: { id: string; title: string; content: string; level: number; category?: string }[]
 }
 
 /** 每日总结 */
@@ -131,7 +133,10 @@ export interface Material {
   type: 'book' | 'video' | 'link' | 'doc'
   subjectId?: string
   priority: '高' | '中' | '低'
+  /** 链接 URL 或上传文件的 dataURL */
   url?: string
+  /** 上传文件的原始文件名（url 为 dataURL 时存在） */
+  fileName?: string
   author?: string
   totalPages?: number
   readPages?: number
@@ -177,6 +182,8 @@ export interface Settings {
   reminderEnabled: boolean
   reminderTime: string
   quotes: string[]
+  /** 墨墨背单词开放 API Token（可选，App 内 我的→更多设置→实验功能→开放 API 获取） */
+  maimemoToken?: string
   onboarded: boolean
 }
 

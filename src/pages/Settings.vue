@@ -2,6 +2,7 @@
 import { computed, inject, onMounted, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
+import { isDesktopNotify, notifyPermission, requestNotifyPermission } from '../services/notify'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
@@ -22,15 +23,15 @@ function applyTheme(t: string) {
   document.documentElement.classList.toggle('dark', dark)
 }
 
-const notifSupported = typeof window !== 'undefined' && 'Notification' in window
-const notifPermission = ref(notifSupported ? Notification.permission : 'unsupported')
+// 统一通知权限（桌面端经 preload 桥接原生通知，无需授权；浏览器端走 Web Notification）
+const notifSupported = isDesktopNotify() || (typeof window !== 'undefined' && 'Notification' in window)
+const notifPermission = ref(notifyPermission())
 
 async function toggleReminder(v: boolean) {
   if (v && notifSupported) {
-    let perm = Notification.permission
-    if (perm === 'default') perm = await Notification.requestPermission()
+    const perm = await requestNotifyPermission()
     notifPermission.value = perm
-    if (perm !== 'granted') {
+    if (perm !== 'granted' && perm !== 'desktop') {
       if (perm === 'denied') {
         toast('通知权限已被拒绝，请在浏览器地址栏左侧的站点设置中手动开启通知')
       } else {
@@ -40,7 +41,7 @@ async function toggleReminder(v: boolean) {
     }
   }
   update('reminderEnabled', v)
-  toast(v ? '已开启每日提醒（保持页面打开有效）' : '已关闭提醒')
+  toast(v ? '已开启每日提醒（保持应用运行有效）' : '已关闭提醒')
 }
 
 // ---- 数据管理 ----
