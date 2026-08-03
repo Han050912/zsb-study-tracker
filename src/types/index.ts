@@ -77,11 +77,22 @@ export interface Note {
   updatedAt: number
 }
 
+/** 背单词打卡记录（逐条） */
+export interface VocabRecord {
+  id: string
+  date: string
+  newWords: number
+  reviewWords: number
+  /** 本条打卡获得的积分（删除时全额回收） */
+  points: number
+}
+
 /** 英语专项数据 */
 export interface EnglishExtra {
-  vocab: { date: string; newWords: number; reviewWords: number }[]
-  reading: { date: string; wpm: number; accuracy: number }[]
-  listening: { date: string; minutes: number; material: string; mode: '精听' | '泛听' }[]
+  vocab: VocabRecord[]
+  /** id 用于积分流水关联（refId），旧数据迁移时自动补齐 */
+  reading: { id?: string; date: string; wpm: number; accuracy: number }[]
+  listening: { id?: string; date: string; minutes: number; material: string; mode: '精听' | '泛听' }[]
   templates: { id: string; title: string; content: string; level: number }[]
 }
 
@@ -104,6 +115,8 @@ export interface Habit {
   bad?: boolean
   /** date -> 值（checkbox: 1/0, time: "HH:mm"） */
   records: Record<string, number | string>
+  /** 坏习惯「每日克制打卡」记录：date -> 1 */
+  checkins?: Record<string, number>
 }
 
 /** 学习资料 */
@@ -127,7 +140,8 @@ export interface Gamification {
   streak: number
   lastCheckin: string
   achievements: string[]
-  pointsLog: { date: string; points: number; reason: string }[]
+  /** 积分流水；refId 关联产生积分的原始记录 id，删除原始记录时按此回收积分并移除流水 */
+  pointsLog: { date: string; points: number; reason: string; refId?: string }[]
 }
 
 /** 番茄钟统计 */
@@ -143,6 +157,8 @@ export interface Todo {
   text: string
   done: boolean
   order: number
+  /** 标记完成的具体时间（时间戳），随待办永久保存；未完成/取消完成时该字段不存在 */
+  completedAt?: number
 }
 
 /** 设置 */

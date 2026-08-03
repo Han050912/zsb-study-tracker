@@ -9,24 +9,36 @@ import Onboarding from './components/Onboarding.vue'
 const store = useAppStore()
 const route = useRoute()
 
-const NAV = [
-  { path: '/', icon: '🏠', label: '首页' },
-  { path: '/math', icon: '📐', label: '高数' },
-  { path: '/english', icon: '📖', label: '英语' },
-  { path: '/pomodoro', icon: '🍅', label: '专注' },
-  { path: '/daily-summary', icon: '📝', label: '总结' },
-  { path: '/statistics', icon: '📊', label: '统计' },
-  { path: '/error-book', icon: '📕', label: '错题本' },
-  { path: '/habits', icon: '✅', label: '习惯' },
-  { path: '/rewards', icon: '🏆', label: '成就' },
-  { path: '/materials', icon: '📚', label: '资料' },
-  { path: '/account', icon: '👤', label: '我的' },
-  { path: '/settings', icon: '⚙️', label: '设置' }
-]
-// 移动端底部导航：按路径选取，避免 NAV 顺序变化导致索引错位
+// 导航动态生成：科目项随科目列表实时增减（删除科目自动隐藏，新增科目自动出现）
+// 侧边栏展示科目全名；移动端由 CSS truncate 截断
+const NAV = computed(() => {
+  const subjectItems = store.subjects.map(s => ({
+    path: s.id === 'math' ? '/math' : s.id === 'english' ? '/english' : `/subject/${s.id}`,
+    icon: s.icon,
+    label: s.name,
+    subject: true
+  }))
+  return [
+    { path: '/', icon: '🏠', label: '首页', subject: false },
+    ...subjectItems,
+    { path: '/pomodoro', icon: '🍅', label: '专注', subject: false },
+    { path: '/daily-summary', icon: '📝', label: '总结', subject: false },
+    { path: '/statistics', icon: '📊', label: '统计', subject: false },
+    { path: '/error-book', icon: '📕', label: '错题本', subject: false },
+    { path: '/habits', icon: '✅', label: '习惯', subject: false },
+    { path: '/rewards', icon: '🏆', label: '成就', subject: false },
+    { path: '/materials', icon: '📚', label: '资料', subject: false },
+    { path: '/account', icon: '👤', label: '我的', subject: false },
+    { path: '/settings', icon: '⚙️', label: '设置', subject: false }
+  ]
+})
+// 移动端底部导航：首页 + 前两个科目 + 专注/总结/设置（科目不足时自动减少）
 const mobileNav = computed(() => {
-  const pick = (path: string) => NAV.find(n => n.path === path)!
-  return ['/', '/math', '/english', '/pomodoro', '/daily-summary', '/settings'].map(pick)
+  const subjectPaths = NAV.value.filter(n => n.subject).slice(0, 2).map(n => n.path)
+  const picks = ['/', ...subjectPaths, '/pomodoro', '/daily-summary', '/settings']
+  return picks
+    .map(p => NAV.value.find(n => n.path === p))
+    .filter((n): n is NonNullable<typeof n> => !!n)
 })
 
 // ---- Toast 全局服务 ----
@@ -61,6 +73,12 @@ function scheduleReminder() {
 
 const isPomodoro = computed(() => route.path === '/pomodoro')
 const isAuthPage = computed(() => route.path === '/login')
+
+/** 导航激活判断：精确匹配或子路径匹配（避免 '/materials' 误激活 '/math' 这类前缀碰撞） */
+function isNavActive(path: string) {
+  if (path === '/') return route.path === '/'
+  return route.path === path || route.path.startsWith(path + '/')
+}
 const hideNav = computed(() => isPomodoro.value || isAuthPage.value)
 const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboarded)
 </script>
@@ -80,7 +98,7 @@ const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboa
       <nav class="flex-1 overflow-y-auto px-3 space-y-1 pb-4">
         <RouterLink v-for="item in NAV" :key="item.path" :to="item.path"
           class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors"
-          :class="route.path === item.path || (item.path !== '/' && route.path.startsWith(item.path))
+          :class="isNavActive(item.path)
             ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-semibold'
             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'">
           <span class="text-lg">{{ item.icon }}</span>{{ item.label }}
@@ -101,10 +119,11 @@ const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboa
     <!-- 移动端底部导航 -->
     <nav v-if="!hideNav" class="md:hidden fixed bottom-0 inset-x-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 z-30 flex justify-around py-1.5" style="padding-bottom: env(safe-area-inset-bottom)">
       <RouterLink v-for="item in mobileNav" :key="item.path" :to="item.path"
-        class="flex flex-col items-center px-2 py-1 text-[10px] rounded-lg"
-        :class="route.path === item.path || (item.path !== '/' && route.path.startsWith(item.path))
+        class="flex flex-col items-center px-2 py-1 text-[10px] rounded-lg max-w-[64px]"
+        :class="isNavActive(item.path)
           ? 'text-primary-600 dark:text-primary-400 font-semibold' : 'text-slate-500 dark:text-slate-400'">
-        <span class="text-xl leading-none">{{ item.icon }}</span>{{ item.label }}
+        <span class="text-xl leading-none">{{ item.icon }}</span>
+        <span class="truncate w-full text-center">{{ item.label }}</span>
       </RouterLink>
     </nav>
 

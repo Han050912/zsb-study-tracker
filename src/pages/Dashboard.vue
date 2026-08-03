@@ -5,6 +5,8 @@ import { today, formatMinutes } from '../utils/date'
 import { DEFAULT_QUOTES } from '../data/defaults'
 import Heatmap from '../components/Heatmap.vue'
 import ProgressRing from '../components/ProgressRing.vue'
+import Modal from '../components/Modal.vue'
+import dayjs from 'dayjs'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
@@ -39,6 +41,16 @@ function addTodo() {
 }
 
 const goalPercent = computed(() => Math.min(100, (store.todayMinutes / store.settings.dailyGoalMinutes) * 100))
+
+// ---- 热力图点击：当日学习总时长明细 ----
+const heatDate = ref('')
+const heatRecords = computed(() => store.records.filter(r => r.date === heatDate.value))
+const heatTotal = computed(() => heatRecords.value.reduce((s, r) => s + r.minutes, 0))
+
+/** 待办完成时间格式化（HH:mm） */
+function fmtCompletedAt(ts?: number | null) {
+  return ts ? dayjs(ts).format('HH:mm') : ''
+}
 </script>
 
 <template>
@@ -108,7 +120,10 @@ const goalPercent = computed(() => Math.min(100, (store.todayMinutes / store.set
           <div v-for="t in store.todayTodos" :key="t.id"
             class="flex items-center gap-2 rounded-lg px-2 py-1.5 group hover:bg-slate-50 dark:hover:bg-slate-700/50">
             <input type="checkbox" :checked="t.done" class="w-4 h-4 accent-primary-500" @change="store.toggleTodo(t.id)" />
-            <span class="flex-1 text-sm" :class="t.done ? 'line-through text-slate-400' : ''">{{ t.text }}</span>
+            <span class="flex-1 text-sm" :class="t.done ? 'line-through text-slate-400' : ''">
+              {{ t.text }}
+              <span v-if="t.done && t.completedAt" class="ml-1 inline-block text-[10px] text-emerald-500">完成于 {{ fmtCompletedAt(t.completedAt) }}</span>
+            </span>
             <button class="opacity-0 group-hover:opacity-100 text-xs text-slate-400" title="上移" @click="store.moveTodo(t.id, -1)">↑</button>
             <button class="opacity-0 group-hover:opacity-100 text-xs text-slate-400" title="下移" @click="store.moveTodo(t.id, 1)">↓</button>
             <button class="opacity-0 group-hover:opacity-100 text-xs text-red-400" title="删除" @click="store.deleteTodo(t.id)">×</button>
@@ -132,7 +147,8 @@ const goalPercent = computed(() => Math.min(100, (store.todayMinutes / store.set
     <!-- 热力图 -->
     <div class="card">
       <div class="section-title">🔥 学习热力图（近 {{ 20 }} 周）</div>
-      <Heatmap :data="store.minutesByDate" />
+      <Heatmap :data="store.minutesByDate" @select="d => heatDate = d" />
+      <p class="text-[10px] text-slate-400 mt-2">点击日期格子可查看当日学习总时长明细</p>
     </div>
 
     <!-- 快捷入口 -->
@@ -147,5 +163,24 @@ const goalPercent = computed(() => Math.min(100, (store.todayMinutes / store.set
         <span class="text-[11px] text-slate-500 dark:text-slate-400">{{ q.label }}</span>
       </RouterLink>
     </div>
+
+    <!-- 热力图当日学习明细弹窗 -->
+    <Modal :title="`${heatDate} 学习明细`" :show="!!heatDate" @close="heatDate = ''">
+      <div class="space-y-3">
+        <div class="flex items-center justify-between bg-primary-50 dark:bg-primary-900/30 rounded-xl px-4 py-3">
+          <span class="text-sm text-slate-500 dark:text-slate-400">当日学习总时长</span>
+          <span class="text-xl font-black text-primary-500">{{ formatMinutes(heatTotal) }}</span>
+        </div>
+        <div v-if="!heatRecords.length" class="text-xs text-slate-400 text-center py-4">当日暂无学习记录</div>
+        <div v-else class="space-y-2">
+          <div v-for="r in heatRecords" :key="r.id" class="flex items-center gap-2 text-sm border border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2">
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: store.subjectMap[r.subjectId]?.color || '#94a3b8' }"></span>
+            <span class="font-medium">{{ store.subjectMap[r.subjectId]?.icon }} {{ store.subjectMap[r.subjectId]?.name || '已删除科目' }}</span>
+            <span class="flex-1 text-xs text-slate-400 truncate">{{ r.note || '—' }}</span>
+            <span class="font-semibold shrink-0" :style="{ color: store.subjectMap[r.subjectId]?.color || '#94a3b8' }">{{ formatMinutes(r.minutes) }}</span>
+          </div>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>

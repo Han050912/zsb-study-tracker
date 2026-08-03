@@ -1,28 +1,44 @@
 <script setup lang="ts">
-import { computed, inject, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, inject, onUnmounted, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
 import { MOODS } from '../data/defaults'
 import dayjs from 'dayjs'
 
 const store = useAppStore()
-const route = useRoute()
-const router = useRouter()
 const toast = inject<(m: string) => void>('toast', () => {})
 
-const viewDate = computed(() => (route.params.date as string) || today())
-const isToday = computed(() => viewDate.value === today())
+// 编辑区固定为「今日」总结；往日总结通过点击日历弹出悬浮卡片查看
+// 定时器驱动：页面挂载跨午夜后自动切换到新的一天，并重载表单内容
+const editDate = ref(today())
+const dayTimer = setInterval(() => {
+  if (editDate.value !== today()) editDate.value = today()
+}, 60000)
+onUnmounted(() => clearInterval(dayTimer))
 
 const form = ref({ mood: '', harvest: '', improve: '', plan: '' })
-watch(viewDate, (d) => {
+watch(editDate, (d, oldD) => {
+  // 跨午夜切换时若存在未保存的编辑内容则保留，避免静默丢失用户输入
+  const prev = store.summaries[oldD]
+  const dirty = form.value.mood !== (prev?.mood || '')
+    || form.value.harvest !== (prev?.harvest || '')
+    || form.value.improve !== (prev?.improve || '')
+    || form.value.plan !== (prev?.plan || '')
+  if (dirty) {
+    toast('已跨到新的一天，未保存的总结内容已保留，请及时保存')
+    return
+  }
   const s = store.summaries[d]
-  form.value = s ? { mood: s.mood, harvest: s.harvest, improve: s.improve, plan: s.plan } : { mood: '', harvest: '', improve: '', plan: '' }
+  form.value = {
+    mood: s?.mood || '',
+    harvest: s?.harvest || '',
+    improve: s?.improve || '',
+    plan: s?.plan || ''
+  }
 }, { immediate: true })
 
-// ---- 当日数据聚合 ----
-const dayData = computed(() => {
-  const d = viewDate.value
+/** 聚合某日期的全维度数据概览 */
+function aggregateDay(d: string) {
   const records = store.records.filter(r => r.date === d)
   const minutes = records.reduce((s, r) => s + r.minutes, 0)
   const problems = store.problemSessions.filter(p => p.date === d)
@@ -32,16 +48,53 @@ const dayData = computed(() => {
   const bySubject: Record<string, number> = {}
   for (const r of records) bySubject[r.subjectId] = (bySubject[r.subjectId] || 0) + r.minutes
   return { minutes, pTotal, pCorrect, pomo, bySubject, accuracy: pTotal ? Math.round(pCorrect / pTotal * 100) : null }
-})
-
-function save() {
-  const isNew = !store.summaries[viewDate.value]
-  store.saveSummary({ date: viewDate.value, ...form.value })
-  toast('每日总结已保存' + (isToday.value && isNew ? ' +5 积分' : ''))
 }
 
+// ---- 当日数据聚合 ----
+const dayData = computed(() => aggregateDay(editDate.value))
+
+/** 保存总结；心情/收获/反思为必填项，全部填写才允许保存（返回是否保存成功） */
+function save(): boolean {
+  if (!form.value.mood || !form.value.harvest.trim() || !form.value.improve.trim()) {
+    toast('请先填写当日心情、收获与反思')
+    return false
+  }
+  const isNew = !store.summaries[editDate.value]
+  store.saveSummary({ date: editDate.value, ...form.value })
+  toast('每日总结已保存' + (isNew ? ' +5 积分' : ''))
+  return true
+}
+
+// ---- 往日总结悬浮卡片 ----
+const cardDate = ref('')
+/** 明日计划板块开关：用户可选择展示/隐藏，默认不强制显示 */
+const showPlan = ref(false)
+const cardData = computed(() => (cardDate.value ? aggregateDay(cardDate.value) : null))
+const cardSummary = computed(() => (cardDate.value ? store.summaries[cardDate.value] : undefined))
+/** 点击往日日期：弹出当日总结悬浮卡片；今日日期在页面直接编辑 */
+function openDayCard(d: string) {
+  if (d === today()) return
+  cardDate.value = d
+  showPlan.value = false
+}
+
+// Esc 关闭悬浮卡片
+function onCardKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') cardDate.value = ''
+}
+watch(cardDate, v => {
+  if (v) window.addEventListener('keydown', onCardKeydown)
+  else window.removeEventListener('keydown', onCardKeydown)
+})
+onUnmounted(() => window.removeEventListener('keydown', onCardKeydown))
+
 // ---- 日历 ----
-const calMonth = ref(dayjs(viewDate.value).format('YYYY-MM'))
+const calMonth = ref(dayjs().format('YYYY-MM'))
+// 跨午夜/跨月后日历自动切换到当前月
+watch(editDate, d => {
+  const m = dayjs(d).format('YYYY-MM')
+  if (calMonth.value !== m) calMonth.value = m
+})
 const calendarDays = computed(() => {
   const start = dayjs(calMonth.value + '-01')
   const firstWeekday = start.day()
@@ -62,8 +115,7 @@ function hasRecord(d: string | null) {
 // ---- 分享卡片 ----
 const showShare = ref(false)
 function openShare() {
-  save()
-  showShare.value = true
+  if (save()) showShare.value = true
 }
 </script>
 
@@ -79,9 +131,8 @@ function openShare() {
       <div class="lg:col-span-2 space-y-4">
         <div class="card">
           <div class="flex items-center justify-between mb-3">
-            <div class="section-title !mb-0">{{ isToday ? '今日' : viewDate }} 数据概览</div>
-            <input type="date" class="input !w-auto !py-1 text-xs" :value="viewDate"
-              @change="router.push(`/daily-summary/${($event.target as HTMLInputElement).value}`)" />
+            <div class="section-title !mb-0">今日数据概览</div>
+            <span class="text-xs text-slate-400">{{ editDate }}</span>
           </div>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
             <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
@@ -148,27 +199,102 @@ function openShare() {
           <button v-for="(d, i) in calendarDays" :key="i" :disabled="!d"
             class="aspect-square rounded-lg text-xs flex items-center justify-center relative transition-colors"
             :class="[
-              !d ? '' : d === viewDate ? 'bg-primary-500 text-white font-bold' : 'hover:bg-slate-100 dark:hover:bg-slate-700',
+              !d ? '' : d === editDate ? 'bg-primary-500 text-white font-bold' : 'hover:bg-slate-100 dark:hover:bg-slate-700',
             ]"
-            @click="d && router.push(d === today() ? '/daily-summary' : `/daily-summary/${d}`)">
+            :title="d && d !== editDate ? '点击查看当日总结卡片' : ''"
+            @click="d && openDayCard(d)">
             {{ d ? Number(d.slice(-2)) : '' }}
-            <span v-if="hasSummary(d)" class="absolute bottom-0.5 w-1 h-1 rounded-full" :class="d === viewDate ? 'bg-white' : 'bg-emerald-400'"></span>
-            <span v-else-if="hasRecord(d)" class="absolute bottom-0.5 w-1 h-1 rounded-full" :class="d === viewDate ? 'bg-white' : 'bg-primary-300'"></span>
+            <span v-if="hasSummary(d)" class="absolute bottom-0.5 w-1 h-1 rounded-full" :class="d === editDate ? 'bg-white' : 'bg-emerald-400'"></span>
+            <span v-else-if="hasRecord(d)" class="absolute bottom-0.5 w-1 h-1 rounded-full" :class="d === editDate ? 'bg-white' : 'bg-primary-300'"></span>
           </button>
         </div>
         <div class="text-[10px] text-slate-400 mt-2 flex gap-3">
           <span><span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1"></span>已写总结</span>
           <span><span class="inline-block w-1.5 h-1.5 rounded-full bg-primary-300 mr-1"></span>有学习</span>
         </div>
+        <p class="text-[10px] text-slate-400 mt-1">点击往日日期，弹出当日总结悬浮卡片</p>
       </div>
     </div>
+
+    <!-- 往日总结悬浮卡片 -->
+    <Teleport to="body">
+      <Transition name="fade">
+        <div v-if="cardDate && cardData" class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" @click.self="cardDate = ''">
+          <div class="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto shadow-2xl animate-pop"
+            role="dialog" aria-modal="true" :aria-label="`${cardDate} 总结`">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+              <h3 class="font-bold">📅 {{ cardDate }} 总结</h3>
+              <button class="text-slate-400 hover:text-slate-600 text-xl leading-none" @click="cardDate = ''" aria-label="关闭">×</button>
+            </div>
+            <div class="px-5 py-4 space-y-4">
+              <!-- ① 当日全维度数据概览（必填） -->
+              <div>
+                <div class="text-xs font-semibold text-slate-400 mb-2">📊 当日数据概览</div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                  <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
+                    <div class="font-black text-primary-500">{{ formatMinutes(cardData.minutes) }}</div>
+                    <div class="text-[10px] text-slate-400">学习时长</div>
+                  </div>
+                  <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
+                    <div class="font-black text-emerald-500">{{ cardData.pTotal }}</div>
+                    <div class="text-[10px] text-slate-400">刷题数</div>
+                  </div>
+                  <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
+                    <div class="font-black text-amber-500">{{ cardData.accuracy === null ? '—' : cardData.accuracy + '%' }}</div>
+                    <div class="text-[10px] text-slate-400">正确率</div>
+                  </div>
+                  <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
+                    <div class="font-black text-orange-500">{{ cardData.pomo.count }}</div>
+                    <div class="text-[10px] text-slate-400">番茄钟</div>
+                  </div>
+                </div>
+                <div v-if="Object.keys(cardData.bySubject).length" class="flex gap-2 mt-2 flex-wrap">
+                  <span v-for="(min, sid) in cardData.bySubject" :key="sid" class="text-xs px-2 py-1 rounded-full text-white"
+                    :style="{ background: store.subjectMap[sid]?.color || '#94a3b8' }">
+                    {{ store.subjectMap[sid]?.name }} {{ formatMinutes(min) }}
+                  </span>
+                </div>
+              </div>
+              <!-- ② 当日心情（必填） -->
+              <div>
+                <div class="text-xs font-semibold text-slate-400 mb-1">😊 当日心情</div>
+                <p class="text-sm">{{ cardSummary?.mood || '未填写' }}</p>
+              </div>
+              <!-- ③ 当日收获（必填） -->
+              <div>
+                <div class="text-xs font-semibold text-slate-400 mb-1">🌱 当日收获</div>
+                <p class="text-sm whitespace-pre-wrap leading-relaxed">{{ cardSummary?.harvest || '未填写' }}</p>
+              </div>
+              <!-- ④ 当日反思（必填） -->
+              <div>
+                <div class="text-xs font-semibold text-slate-400 mb-1">🪞 当日反思</div>
+                <p class="text-sm whitespace-pre-wrap leading-relaxed">{{ cardSummary?.improve || '未填写' }}</p>
+              </div>
+              <!-- 明日计划（可选配置：开关控制展示/隐藏） -->
+              <div class="border-t border-slate-100 dark:border-slate-700 pt-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-semibold text-slate-400">🎯 明日计划</span>
+                  <button class="text-xs px-2.5 py-1 rounded-full transition-colors"
+                    :class="showPlan ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'"
+                    :aria-pressed="showPlan"
+                    @click="showPlan = !showPlan">
+                    {{ showPlan ? '已展示 · 点击隐藏' : '已隐藏 · 点击展示' }}
+                  </button>
+                </div>
+                <p v-if="showPlan" class="text-sm whitespace-pre-wrap leading-relaxed mt-2">{{ cardSummary?.plan || '未填写' }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <!-- 分享卡片 -->
     <Teleport to="body">
       <div v-if="showShare" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" @click.self="showShare = false">
         <div class="max-w-sm w-full">
           <div class="rounded-3xl overflow-hidden shadow-2xl bg-gradient-to-br from-primary-500 via-indigo-500 to-purple-600 text-white p-6">
-            <div class="text-xs opacity-80">{{ viewDate }} · 专升本备考打卡</div>
+            <div class="text-xs opacity-80">{{ editDate }} · 专升本备考打卡</div>
             <div class="text-2xl font-black mt-1">{{ store.settings.userName }} 的学习日报</div>
             <div class="grid grid-cols-2 gap-3 mt-5">
               <div class="bg-white/15 backdrop-blur rounded-2xl p-3 text-center">

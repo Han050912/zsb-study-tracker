@@ -12,7 +12,8 @@ const routes = [
   { path: '/pomodoro', name: 'pomodoro', component: defineAsyncComponent(() => import('../pages/Pomodoro.vue')), meta: { title: '番茄钟' } },
   { path: '/habits', name: 'habits', component: defineAsyncComponent(() => import('../pages/Habits.vue')), meta: { title: '习惯追踪' } },
   { path: '/daily-summary', name: 'daily-summary', component: defineAsyncComponent(() => import('../pages/DailySummary.vue')), meta: { title: '每日总结' } },
-  { path: '/daily-summary/:date', name: 'summary-detail', component: defineAsyncComponent(() => import('../pages/DailySummary.vue')), meta: { title: '总结详情' } },
+  // 旧版「总结详情」路由已废弃（往日总结改为悬浮卡片），旧链接重定向到总结页，避免空白
+  { path: '/daily-summary/:date', redirect: '/daily-summary' },
   { path: '/statistics', name: 'statistics', component: defineAsyncComponent(() => import('../pages/Statistics.vue')), meta: { title: '数据统计' } },
   { path: '/rewards', name: 'rewards', component: defineAsyncComponent(() => import('../pages/Rewards.vue')), meta: { title: '成就激励' } },
   { path: '/materials', name: 'materials', component: defineAsyncComponent(() => import('../pages/Materials.vue')), meta: { title: '资料库' } },

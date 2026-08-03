@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue'
 import { useAppStore } from '../stores/app'
-import { today } from '../utils/date'
 import { useChart, chartTextColor } from '../composables/useChart'
 import SubjectPanel from '../components/SubjectPanel.vue'
 import Modal from '../components/Modal.vue'
@@ -10,32 +9,54 @@ import { uid } from '../utils/date'
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 const eng = computed(() => store.english)
+// 「英语」科目可能被用户在设置页删除，此时页面整体隐藏
+const subjectExists = computed(() => !!store.subjectMap.english)
 
 const tab = ref<'panel' | 'vocab' | 'reading' | 'listening' | 'templates'>('panel')
 
-// ---- 词汇 ----
+// ---- 词汇（逐条打卡记录） ----
 const newWords = ref(30)
 const reviewWords = ref(50)
 function addVocab() {
-  if (newWords.value <= 0 && reviewWords.value <= 0) return
-  const t = today()
-  const existing = eng.value.vocab.find(v => v.date === t)
-  if (existing) { existing.newWords += newWords.value; existing.reviewWords += reviewWords.value }
-  else eng.value.vocab.push({ date: t, newWords: newWords.value, reviewWords: reviewWords.value })
-  store.addPoints(Math.round((newWords.value + reviewWords.value) / 20), '背单词')
-  store.save()
-  toast('词汇记录已保存')
+  // v-model.number 清空后为 ''，入 store 前统一净化为非负整数，避免污染统计聚合
+  const n = Math.max(0, Math.floor(Number(newWords.value) || 0))
+  const r = Math.max(0, Math.floor(Number(reviewWords.value) || 0))
+  if (n <= 0 && r <= 0) return
+  // 每完成一次背诵单独生成一条打卡记录
+  store.addVocabRecord(n, r)
+  toast(`本次背单词打卡成功 +${Math.round((n + r) / 20)} 积分`)
+}
+/** 删除单条打卡记录：本条积分全额回收，同步删除积分流水 */
+function delVocab(id: string) {
+  if (!window.confirm('删除本条背单词打卡记录？对应积分将全额回收。')) return
+  store.deleteVocabRecord(id)
+  toast('记录已删除，积分已回收')
 }
 const totalVocab = computed(() => eng.value.vocab.reduce((s, v) => s + v.newWords, 0))
+/** 近 14 个有打卡的日期（按日聚合用于图表） */
+const vocabByDate = computed(() => {
+  const map: Record<string, { newWords: number; reviewWords: number }> = {}
+  for (const v of eng.value.vocab) {
+    map[v.date] = map[v.date] || { newWords: 0, reviewWords: 0 }
+    map[v.date].newWords += v.newWords
+    map[v.date].reviewWords += v.reviewWords
+  }
+  return Object.entries(map)
+    .map(([date, v]) => ({ date, ...v }))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+    .slice(-14)
+})
 
 // ---- 阅读 ----
 const readWpm = ref(80)
 const readAcc = ref(75)
 function addReading() {
-  eng.value.reading.push({ date: today(), wpm: readWpm.value, accuracy: readAcc.value })
-  store.addPoints(5, '阅读训练')
-  store.save()
-  toast('阅读记录已保存')
+  // v-model.number 清空后为 ''，入 store 前净化，避免污染历史与统计
+  const wpm = Math.max(0, Math.floor(Number(readWpm.value) || 0))
+  const acc = Math.min(100, Math.max(0, Math.floor(Number(readAcc.value) || 0)))
+  if (wpm <= 0) { toast('请填写有效的阅读速度'); return }
+  store.addReadingRecord(wpm, acc)
+  toast('阅读记录已保存 +5 积分')
 }
 
 // ---- 听力 ----
@@ -43,11 +64,12 @@ const lisMinutes = ref(20)
 const lisMaterial = ref('')
 const lisMode = ref<'精听' | '泛听'>('精听')
 function addListening() {
-  eng.value.listening.push({ date: today(), minutes: lisMinutes.value, material: lisMaterial.value || '未注明', mode: lisMode.value })
-  store.addPoints(Math.round(lisMinutes.value / 10), '听力练习')
-  store.save()
+  // v-model.number 清空后为 ''，入 store 前净化
+  const mins = Math.max(0, Math.floor(Number(lisMinutes.value) || 0))
+  if (mins <= 0) { toast('请填写有效的听力时长'); return }
+  store.addListeningRecord(mins, lisMaterial.value || '未注明', lisMode.value)
   lisMaterial.value = ''
-  toast('听力记录已保存')
+  toast(`听力记录已保存 +${Math.round(mins / 10)} 积分`)
 }
 
 // ---- 模板 ----
@@ -74,9 +96,9 @@ function delTpl(id: string) {
   store.save()
 }
 
-// ---- 词汇图表 ----
+// ---- 词汇图表（按日聚合） ----
 const { el: vocabEl } = useChart(() => {
-  const data = eng.value.vocab.slice(-14)
+  const data = vocabByDate.value
   return {
     grid: { left: 40, right: 16, top: 30, bottom: 24 },
     legend: { textStyle: { color: chartTextColor(), fontSize: 10 } },
@@ -88,11 +110,17 @@ const { el: vocabEl } = useChart(() => {
     ],
     tooltip: { trigger: 'axis' }
   }
-}, [eng])
+}, [vocabByDate])
 </script>
 
 <template>
   <div class="p-4 md:p-6 max-w-5xl mx-auto">
+    <div v-if="!subjectExists" class="card text-center py-16 text-slate-400">
+      <div class="text-4xl mb-2">📖</div>
+      <p class="text-sm">「英语」科目已被删除，此页面已隐藏</p>
+      <RouterLink to="/settings" class="text-primary-500 text-xs underline mt-2 inline-block">前往设置页管理科目 →</RouterLink>
+    </div>
+    <template v-else>
     <h1 class="page-title mb-4">📖 英语</h1>
 
     <div class="flex gap-1 overflow-x-auto bg-slate-100 dark:bg-slate-800 rounded-xl p-1 mb-4">
@@ -114,16 +142,29 @@ const { el: vocabEl } = useChart(() => {
         <div class="grid grid-cols-3 gap-3 text-center mb-3">
           <div><div class="text-xl font-black text-emerald-500">{{ totalVocab }}</div><div class="text-[11px] text-slate-400">累计新学词汇</div></div>
           <div><div class="text-xl font-black text-emerald-500">{{ eng.vocab.reduce((s, v) => s + v.reviewWords, 0) }}</div><div class="text-[11px] text-slate-400">累计复习</div></div>
-          <div><div class="text-xl font-black text-emerald-500">{{ eng.vocab.length }}</div><div class="text-[11px] text-slate-400">打卡天数</div></div>
+          <div><div class="text-xl font-black text-emerald-500">{{ eng.vocab.length }}</div><div class="text-[11px] text-slate-400">打卡次数</div></div>
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <div><label class="label">今日新学</label><input v-model.number="newWords" type="number" min="0" class="input" /></div>
-          <div><label class="label">今日复习</label><input v-model.number="reviewWords" type="number" min="0" class="input" /></div>
+          <div><label class="label">本次新学</label><input v-model.number="newWords" type="number" min="0" class="input" /></div>
+          <div><label class="label">本次复习</label><input v-model.number="reviewWords" type="number" min="0" class="input" /></div>
         </div>
         <button class="btn-primary w-full mt-3" @click="addVocab">打卡背单词（目标 {{ store.settings.wordGoal }} 个/天）</button>
+        <p class="text-[10px] text-slate-400 mt-2">每完成一次背诵打卡，单独生成一条记录</p>
       </div>
       <div class="card">
-        <div class="section-title">近 14 天词汇量</div>
+        <div class="section-title">打卡记录</div>
+        <div v-if="!eng.vocab.length" class="text-xs text-slate-400 text-center py-3">暂无打卡记录</div>
+        <div class="space-y-1.5 max-h-72 overflow-y-auto">
+          <div v-for="v in eng.vocab.slice().reverse()" :key="v.id" class="flex items-center gap-2 text-sm group">
+            <span class="text-xs text-slate-400 w-20 shrink-0">{{ v.date }}</span>
+            <span class="flex-1 text-xs">新学 <b class="text-emerald-500">{{ v.newWords }}</b> · 复习 <b class="text-emerald-500">{{ v.reviewWords }}</b></span>
+            <span class="text-[10px] text-amber-500 shrink-0">+{{ v.points }} 积分</span>
+            <button class="text-red-400 text-xs shrink-0" title="删除记录并回收积分" @click="delVocab(v.id)">删除</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-title">近 14 个打卡日词汇量</div>
         <div ref="vocabEl" class="h-52"></div>
       </div>
     </div>
@@ -214,5 +255,6 @@ const { el: vocabEl } = useChart(() => {
         <button class="btn-primary" @click="saveTpl">保存</button>
       </template>
     </Modal>
+    </template>
   </div>
 </template>

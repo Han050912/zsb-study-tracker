@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor } from '../composables/useChart'
 import { formatMinutes } from '../utils/date'
 import { MOODS } from '../data/defaults'
+import Modal from '../components/Modal.vue'
 import dayjs from 'dayjs'
 
 const store = useAppStore()
@@ -12,17 +13,36 @@ const range = ref<7 | 30>(7)
 const days = computed(() => Array.from({ length: range.value }, (_, i) =>
   dayjs().subtract(range.value - 1 - i, 'day').format('YYYY-MM-DD')))
 
+// ---- 柱状图点击：当日各科目精准学习时长 ----
+const barDate = ref('')
+// 切换时间范围时关闭弹窗，避免展示范围外日期
+watch(range, () => { barDate.value = '' })
+const barSubjects = computed(() => {
+  const map: Record<string, number> = {}
+  for (const r of store.records.filter(x => x.date === barDate.value)) {
+    map[r.subjectId] = (map[r.subjectId] || 0) + r.minutes
+  }
+  return Object.entries(map).map(([sid, minutes]) => ({ sid, minutes }))
+})
+
 // ---- 学习时长 ----
 const { el: timeEl } = useChart(() => ({
   grid: { left: 44, right: 16, top: 20, bottom: 24 },
   xAxis: { type: 'category', data: days.value.map(d => d.slice(5)), axisLabel: { color: chartTextColor(), fontSize: 10 } },
   yAxis: { type: 'value', name: '分钟', axisLabel: { color: chartTextColor() } },
   series: [
-    { type: 'bar', data: days.value.map(d => store.minutesByDate[d] || 0), itemStyle: { color: '#3b82f6', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 20 },
-    { type: 'line', smooth: true, data: days.value.map(d => store.minutesByDate[d] || 0), lineStyle: { color: '#93c5fd' }, itemStyle: { color: '#93c5fd' } }
+    { type: 'bar', data: days.value.map(d => store.minutesByDate[d] || 0), itemStyle: { color: '#3b82f6', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 20, cursor: 'pointer' },
+    { type: 'line', smooth: true, data: days.value.map(d => store.minutesByDate[d] || 0), lineStyle: { color: '#93c5fd' }, itemStyle: { color: '#93c5fd' }, cursor: 'pointer' }
   ],
   tooltip: { trigger: 'axis' }
-}), [days])
+}), [days], (params) => {
+  // 点击任意时间柱子，展示当天所有科目精准学习时长
+  // 折线 series 覆盖在柱子上方，两种 seriesType 均接受（dataIndex→日期映射一致）
+  if (params.componentType === 'series' && (params.seriesType === 'bar' || params.seriesType === 'line') && typeof params.dataIndex === 'number') {
+    const d = days.value[params.dataIndex]
+    if (d) barDate.value = d
+  }
+})
 
 // ---- 科目占比 ----
 const subjectMinutes = computed(() => {
@@ -160,6 +180,7 @@ const report = computed(() => {
     <div class="card">
       <div class="section-title">⏱ 学习时长（近{{ range }}天）</div>
       <div ref="timeEl" class="h-60"></div>
+      <p class="text-[10px] text-slate-400 mt-2">点击柱子可查看当天各科目精准学习时长</p>
     </div>
 
     <div class="grid md:grid-cols-2 gap-4">
@@ -189,5 +210,17 @@ const report = computed(() => {
       <div class="section-title">😊 情绪曲线</div>
       <div ref="moodEl" class="h-48"></div>
     </div>
+
+    <!-- 柱状图点击：当日各科目精准学习时长弹窗 -->
+    <Modal :title="`${barDate} 各科目学习时长`" :show="!!barDate" @close="barDate = ''">
+      <div v-if="!barSubjects.length" class="text-xs text-slate-400 text-center py-4">当日暂无学习记录</div>
+      <div v-else class="space-y-2">
+        <div v-for="item in barSubjects" :key="item.sid" class="flex items-center gap-2 text-sm border border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2">
+          <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: store.subjectMap[item.sid]?.color || '#94a3b8' }"></span>
+          <span class="flex-1 font-medium">{{ store.subjectMap[item.sid]?.icon }} {{ store.subjectMap[item.sid]?.name || '已删除科目' }}</span>
+          <span class="font-semibold" :style="{ color: store.subjectMap[item.sid]?.color || '#94a3b8' }">{{ item.minutes }} 分钟</span>
+        </div>
+      </div>
+    </Modal>
   </div>
 </template>

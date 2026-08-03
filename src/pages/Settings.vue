@@ -86,7 +86,28 @@ function addSubject() {
   store.addSubject({ ...subForm.value })
   showSubject.value = false
   subForm.value = { name: '', icon: '📘', color: '#8b5cf6', weight: 20 }
-  toast('科目已添加')
+  toast('科目已添加，独立页面已生成')
+}
+/** 修改科目权重；无效/空输入恢复原值并提示 */
+function onWeightChange(id: string, e: Event) {
+  const input = e.target as HTMLInputElement
+  const v = Number(input.value)
+  if (input.value.trim() === '' || Number.isNaN(v)) {
+    input.value = String(store.subjectMap[id]?.weight ?? 0)
+    toast('权重输入无效，已恢复原值')
+    return
+  }
+  store.updateSubjectWeight(id, v)
+  input.value = String(store.subjectMap[id]?.weight ?? v)
+  toast('权重已更新')
+}
+
+/** 删除任意科目（含内置），级联清理关联数据并回收对应积分，删除后对应科目页面自动隐藏 */
+function removeSubject(id: string, name: string) {
+  const extra = id === 'english' ? '，英语专项数据（词汇/阅读/听力/作文模板）也将永久删除' : ''
+  if (!window.confirm(`删除「${name}」？其学习记录、笔记、刷题、错题、真题将一并删除${extra}，相关积分同步回收，删除后该科目页面自动隐藏。`)) return
+  store.removeSubject(id)
+  toast('科目已删除，关联数据与积分已同步清理')
 }
 
 // ---- 名言管理 ----
@@ -129,13 +150,20 @@ function addQuote() {
         <button class="btn-primary !py-1.5 !text-xs" @click="showSubject = true">+ 扩展科目</button>
       </div>
       <div class="space-y-2">
-        <div v-for="sub in store.subjects" :key="sub.id" class="flex items-center gap-2 text-sm">
-          <span class="w-3 h-3 rounded-full" :style="{ background: sub.color }"></span>
+        <div v-for="sub in store.subjects" :key="sub.id" class="flex items-center gap-2 text-sm flex-wrap">
+          <span class="w-3 h-3 rounded-full shrink-0" :style="{ background: sub.color }"></span>
           <span>{{ sub.icon }} {{ sub.name }}</span>
-          <span class="text-xs text-slate-400">权重 {{ sub.weight }}%</span>
           <span v-if="sub.builtin" class="text-[10px] text-slate-400">（内置）</span>
-          <button v-else class="ml-auto text-xs text-red-400" @click="confirm(`删除「${sub.name}」及其学习记录？`) && store.removeSubject(sub.id)">删除</button>
+          <span class="ml-auto flex items-center gap-1 text-xs text-slate-400">
+            权重
+            <input type="number" min="0" max="100" class="input !w-16 !py-0.5 !px-1.5 !text-xs"
+              :value="sub.weight" title="修改权重百分比"
+              @change="onWeightChange(sub.id, $event)" />
+            %
+          </span>
+          <button class="text-xs text-red-400 shrink-0" @click="removeSubject(sub.id, sub.name)">删除</button>
         </div>
+        <p class="text-[10px] text-slate-400">可自由增删科目、调整权重；删除科目后其独立页面自动隐藏，新增科目自动生成独立页面。权重为自定义考核占比配置（各科目之和不要求等于 100%），统计图表仍按实际学习时长计算。</p>
       </div>
     </div>
 

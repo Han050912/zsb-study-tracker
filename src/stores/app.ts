@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { createDefaultState, ACHIEVEMENTS, LEVELS } from '../data/defaults'
+import { createDefaultState, ACHIEVEMENTS, LEVELS, VOCAB_HABIT_ID, PROBLEM_HABIT_ID } from '../data/defaults'
 import { today, yesterday, uid, daysBetween } from '../utils/date'
 import { loadCurrentUserPayload, saveCurrentUserPayload } from '../services/auth'
 import type {
@@ -96,6 +96,7 @@ export const useAppStore = defineStore('app', {
       if (row) {
         try {
           this.$patch({ ...createDefaultState(), ...(JSON.parse(row.payload) as Partial<AppState>) })
+          this.migrateLegacyData()
         } catch (e) {
           console.error('解析用户数据失败', e)
         }
@@ -106,6 +107,7 @@ export const useAppStore = defineStore('app', {
       if (legacy) {
         try {
           this.$patch({ ...createDefaultState(), ...(JSON.parse(legacy) as Partial<AppState>) })
+          this.migrateLegacyData()
           // 仅在确认保存成功后才删除旧数据，避免迁移失败导致旧数据被清空
           if (await this.saveAsync()) {
             localStorage.removeItem(LEGACY_KEY)
@@ -118,16 +120,97 @@ export const useAppStore = defineStore('app', {
       }
     },
 
+    /**
+     * 旧版本数据迁移：
+     * 1. 背单词记录由「按天合并」升级为「逐条打卡」，补齐 id/points；
+     * 2. 英语阅读/听力记录补齐 id；
+     * 3. 优先「认领」旧的无 refId 积分流水（盖章关联，不新增行，避免积分流水虚增）；
+     *    仅当无匹配旧流水时才补写 refId 流水，保证删除旧记录时积分可精确回收。
+     */
+    migrateLegacyData() {
+      try {
+        if (!this.english) return
+        if (!Array.isArray(this.gamification.pointsLog)) this.gamification.pointsLog = []
+        const log = this.gamification.pointsLog
+        let changed = false
+        // 回填旧版自定义科目缺失的 id（旧版 addSubject 未生成 id，JSON 序列化后字段丢失，会导致路由坍塌）
+        if (Array.isArray(this.subjects)) {
+          for (const s of this.subjects) {
+            if (s && !s.id) { s.id = uid(); changed = true }
+          }
+        }
+        /** 为单条记录建立流水关联：认领一条匹配的旧流水；无法认领则补写 */
+        const claim = (r: { id?: string; date: string }, points: number, reason: string) => {
+          if (!r.id) { r.id = uid(); changed = true }
+          if (log.some(l => l.refId === r.id)) return
+          const orphan = log.find(l => !l.refId && l.reason === reason && l.date === r.date)
+          if (orphan) { orphan.refId = r.id; changed = true }
+          else if (points > 0) {
+            log.push({ date: r.date || today(), points, reason, refId: r.id })
+            changed = true
+          }
+        }
+        if (Array.isArray(this.english.vocab)) {
+          for (const v of this.english.vocab) {
+            if (!v) continue
+            if (!v.id) { v.id = uid(); changed = true }
+            if (v.points === undefined) {
+              v.points = Math.round(((Number(v.newWords) || 0) + (Number(v.reviewWords) || 0)) / 20)
+              changed = true
+            }
+            if (log.some(l => l.refId === v.id)) continue
+            // 旧模型按天合并：该日全部无 refId 的「背单词」流水统一认领给这条记录
+            const orphans = log.filter(l => !l.refId && l.reason === '背单词' && l.date === v.date)
+            if (orphans.length) {
+              for (const o of orphans) o.refId = v.id
+              changed = true
+            } else if (v.points > 0) {
+              log.push({ date: v.date || today(), points: v.points, reason: '背单词', refId: v.id })
+              changed = true
+            }
+          }
+        }
+        if (Array.isArray(this.english.reading)) {
+          for (const r of this.english.reading) if (r) claim(r, 5, '阅读训练')
+        }
+        if (Array.isArray(this.english.listening)) {
+          for (const l of this.english.listening) if (l) claim(l, Math.round((Number(l.minutes) || 0) / 10), '听力练习')
+        }
+        if (changed) this.save()
+      } catch (e) {
+        console.error('迁移旧版数据失败', e)
+      }
+    },
+
     /** 退出登录/切换账号时重置为空白数据 */
     resetState() {
       this.$patch(createDefaultState())
     },
 
-    /** 增加积分并记录日志 */
-    addPoints(points: number, reason: string) {
+    /** 增加积分并记录日志；refId 关联产生积分的原始记录 id，用于删除原始记录时回收积分 */
+    addPoints(points: number, reason: string, refId?: string) {
       this.gamification.points += points
-      this.gamification.pointsLog.push({ date: today(), points, reason })
+      this.gamification.pointsLog.push({ date: today(), points, reason, refId })
       this.checkAchievements()
+    },
+
+    /** 按匹配条件回收积分：总积分回滚 + 彻底删除对应积分流水（内部公共实现） */
+    revokePointsWhere(match: (l: { date: string; points: number; reason: string; refId?: string }) => boolean) {
+      const logs = this.gamification.pointsLog.filter(match)
+      if (!logs.length) return
+      const sum = logs.reduce((s, l) => s + l.points, 0)
+      this.gamification.points = Math.max(0, this.gamification.points - sum)
+      this.gamification.pointsLog = this.gamification.pointsLog.filter(l => !match(l))
+    },
+
+    /** 回收某条原始记录对应的全部积分：总积分回滚 + 彻底删除对应积分流水 */
+    revokePointsByRef(refId: string) {
+      this.revokePointsWhere(l => l.refId === refId)
+    },
+
+    /** 按 refId 前缀回收积分（用于删除习惯等聚合记录时清理其全部打卡积分） */
+    revokePointsByRefPrefix(prefix: string) {
+      this.revokePointsWhere(l => !!l.refId?.startsWith(prefix))
     },
 
     /** 打卡：更新连胜 */
@@ -142,22 +225,27 @@ export const useAppStore = defineStore('app', {
     },
 
     addRecord(rec: Omit<StudyRecord, 'id' | 'createdAt'>) {
-      this.records.push({ ...rec, id: uid(), createdAt: Date.now() })
+      const id = uid()
+      this.records.push({ ...rec, id, createdAt: Date.now() })
       this.checkin()
-      this.addPoints(Math.max(1, Math.round(rec.minutes / 10)), `学习 ${rec.minutes} 分钟`)
+      this.addPoints(Math.max(1, Math.round(rec.minutes / 10)), `学习 ${rec.minutes} 分钟`, id)
       this.save()
     },
     deleteRecord(id: string) {
+      this.revokePointsByRef(id)
       this.records = this.records.filter(r => r.id !== id)
       this.save()
     },
 
     addProblemSession(p: Omit<ProblemSession, 'id'>) {
-      this.problemSessions.push({ ...p, id: uid() })
-      this.addPoints(Math.round(p.total / 5), `刷题 ${p.total} 道`)
+      const id = uid()
+      this.problemSessions.push({ ...p, id })
+      const pts = Math.round(p.total / 5)
+      if (pts > 0) this.addPoints(pts, `刷题 ${p.total} 道`, id)
       this.save()
     },
     deleteProblemSession(id: string) {
+      this.revokePointsByRef(id)
       this.problemSessions = this.problemSessions.filter(p => p.id !== id)
       this.save()
     },
@@ -170,7 +258,7 @@ export const useAppStore = defineStore('app', {
       const q = this.errorQuestions.find(e => e.id === id)
       if (q) {
         q.reviewCount++
-        this.addPoints(2, '复习错题')
+        this.addPoints(2, '复习错题', `error:${id}`)
         this.save()
       }
     },
@@ -179,16 +267,19 @@ export const useAppStore = defineStore('app', {
       if (q) { q.mastered = !q.mastered; this.save() }
     },
     deleteError(id: string) {
+      this.revokePointsByRef(`error:${id}`)
       this.errorQuestions = this.errorQuestions.filter(e => e.id !== id)
       this.save()
     },
 
     addExam(e: Omit<ExamRecord, 'id'>) {
-      this.exams.push({ ...e, id: uid() })
-      this.addPoints(20, '完成真题/套卷')
+      const id = uid()
+      this.exams.push({ ...e, id })
+      this.addPoints(20, '完成真题/套卷', id)
       this.save()
     },
     deleteExam(id: string) {
+      this.revokePointsByRef(id)
       this.exams = this.exams.filter(e => e.id !== id)
       this.save()
     },
@@ -198,13 +289,37 @@ export const useAppStore = defineStore('app', {
       if (s) { s.mastery[topic] = level; this.save() }
     },
 
-    addSubject(s: Omit<Subject, 'chapters' | 'mastery' | 'builtin'>) {
-      this.subjects.push({ ...s, builtin: false, chapters: [], mastery: {} })
+    addSubject(s: Omit<Subject, 'id' | 'chapters' | 'mastery' | 'builtin'>) {
+      // 必须生成唯一 id，否则动态路由 /subject/:id 与导航将全部指向 /subject/undefined
+      this.subjects.push({ ...s, id: uid(), builtin: false, chapters: [], mastery: {} })
       this.save()
     },
+    /** 修改任意科目的考核权重百分比 */
+    updateSubjectWeight(id: string, weight: number) {
+      const s = this.subjects.find(x => x.id === id)
+      if (s) { s.weight = Math.min(100, Math.max(0, Math.round(weight) || 0)); this.save() }
+    },
+    /** 删除科目：级联删除其学习记录/刷题/真题/错题/笔记等关联数据，并逐条回收这些数据产生的积分 */
     removeSubject(id: string) {
+      for (const r of this.records.filter(x => x.subjectId === id)) this.revokePointsByRef(r.id)
+      for (const p of this.problemSessions.filter(x => x.subjectId === id)) this.revokePointsByRef(p.id)
+      for (const e of this.exams.filter(x => x.subjectId === id)) this.revokePointsByRef(e.id)
+      for (const q of this.errorQuestions.filter(x => x.subjectId === id)) this.revokePointsByRef(`error:${q.id}`)
+      // 内置英语科目的专项数据（词汇/阅读/听力/模板）一并清理并回收积分
+      if (id === 'english') {
+        for (const v of this.english.vocab) this.revokePointsByRef(v.id)
+        for (const r of this.english.reading) if (r.id) this.revokePointsByRef(r.id)
+        for (const l of this.english.listening) if (l.id) this.revokePointsByRef(l.id)
+        this.english = { vocab: [], reading: [], listening: [], templates: [] }
+      }
       this.subjects = this.subjects.filter(s => s.id !== id)
       this.records = this.records.filter(r => r.subjectId !== id)
+      this.problemSessions = this.problemSessions.filter(p => p.subjectId !== id)
+      this.exams = this.exams.filter(e => e.subjectId !== id)
+      this.errorQuestions = this.errorQuestions.filter(q => q.subjectId !== id)
+      this.notes = this.notes.filter(n => n.subjectId !== id)
+      // 资料仅解除科目关联，不删除资料本身
+      for (const m of this.materials) if (m.subjectId === id) m.subjectId = undefined
       this.save()
     },
     addChapter(subjectId: string, name: string) {
@@ -235,6 +350,14 @@ export const useAppStore = defineStore('app', {
       }
     },
 
+    /** 批量导入笔记（文件上传）：一次写入一次持久化，避免多文件触发多次全量保存 */
+    importNotes(subjectId: string, items: { title: string; content: string; tags: string[] }[]) {
+      for (const n of items) {
+        this.notes.push({ id: uid(), subjectId, title: n.title || '未命名', content: n.content, tags: n.tags, updatedAt: Date.now() })
+      }
+      this.save()
+    },
+
     saveNote(note: Partial<Note> & { subjectId: string }) {
       if (note.id) {
         const n = this.notes.find(x => x.id === note.id)
@@ -256,7 +379,7 @@ export const useAppStore = defineStore('app', {
       const isNew = !this.summaries[s.date]
       this.summaries[s.date] = { ...s }
       // 仅当天首次保存总结时奖励积分，重复编辑不重复加分
-      if (s.date === today() && isNew) this.addPoints(5, '完成每日总结')
+      if (s.date === today() && isNew) this.addPoints(5, '完成每日总结', `summary:${s.date}`)
       this.save()
     },
 
@@ -265,12 +388,48 @@ export const useAppStore = defineStore('app', {
       this.save()
     },
     deleteHabit(id: string) {
+      // 回收该习惯全部打卡积分并删除对应流水
+      this.revokePointsByRefPrefix(`habit:${id}:`)
       this.habits = this.habits.filter(h => h.id !== id)
       this.save()
     },
+    /** 记录习惯打卡；好习惯当天从「未完成」变为「完成」奖励 +2 积分，取消完成则全额回收（历史日期仅记数据，不动积分） */
     recordHabit(id: string, date: string, value: number | string) {
       const h = this.habits.find(x => x.id === id)
-      if (h) { h.records[date] = value; this.save() }
+      if (!h) return
+      const hadValue = !!h.records[date]
+      h.records[date] = value
+      if (!h.bad && date === today()) {
+        const refId = `habit:${id}:${date}`
+        if (value && !hadValue) this.addPoints(2, `完成习惯「${h.name}」`, refId)
+        else if (!value && hadValue) this.revokePointsByRef(refId)
+      }
+      // 坏习惯发生记录与克制打卡互斥：记录发生即视为当天未克制
+      if (h.bad && Number(value) > 0 && h.checkins?.[date]) delete h.checkins[date]
+      this.save()
+    },
+    /** 坏习惯「每日克制打卡」：打卡/取消打卡；与发生次数互斥（打卡视为当天未犯，清除当天发生记录） */
+    toggleBadHabitCheckin(id: string, date: string) {
+      const h = this.habits.find(x => x.id === id)
+      if (!h || !h.bad) return
+      if (!h.checkins) h.checkins = {}
+      if (h.checkins[date]) {
+        delete h.checkins[date]
+      } else {
+        h.checkins[date] = 1
+        delete h.records[date]
+      }
+      this.save()
+    },
+    /** 单独修改习惯目标；「每日背单词」「每日做题」按固定 id 与设置页每日目标双向同步 */
+    updateHabitTarget(id: string, target: number) {
+      const h = this.habits.find(x => x.id === id)
+      if (!h) return
+      const t = Math.max(1, Math.round(target) || 1)
+      h.target = t
+      if (id === VOCAB_HABIT_ID) this.settings.wordGoal = t
+      if (id === PROBLEM_HABIT_ID) this.settings.problemGoal = t
+      this.save()
     },
 
     addMaterial(m: Omit<Material, 'id' | 'createdAt'>) {
@@ -291,11 +450,23 @@ export const useAppStore = defineStore('app', {
       this.todos.push({ id: uid(), date: today(), text, done: false, order: maxOrder + 1 })
       this.save()
     },
+    /** 切换待办完成状态；完成时记录完成时间并奖励积分，取消完成回收积分并清除完成时间 */
     toggleTodo(id: string) {
       const t = this.todos.find(x => x.id === id)
-      if (t) { t.done = !t.done; if (t.done) this.addPoints(3, '完成待办'); this.save() }
+      if (!t) return
+      t.done = !t.done
+      if (t.done) {
+        t.completedAt = Date.now()
+        this.addPoints(3, '完成待办', t.id)
+      } else {
+        delete t.completedAt
+        this.revokePointsByRef(t.id)
+      }
+      this.save()
     },
     deleteTodo(id: string) {
+      // 删除已完成待办时回收其积分
+      this.revokePointsByRef(id)
       this.todos = this.todos.filter(t => t.id !== id)
       this.save()
     },
@@ -325,8 +496,52 @@ export const useAppStore = defineStore('app', {
       this.save()
     },
 
+    /** 背单词逐条打卡：每次背诵单独生成一条记录 */
+    addVocabRecord(newWords: number, reviewWords: number) {
+      const points = Math.round((newWords + reviewWords) / 20)
+      const id = uid()
+      this.english.vocab.push({ id, date: today(), newWords, reviewWords, points })
+      if (points > 0) this.addPoints(points, '背单词', id)
+      this.save()
+    },
+    /** 删除单条背单词打卡记录：积分全额回收 + 删除对应积分流水 */
+    deleteVocabRecord(id: string) {
+      this.revokePointsByRef(id)
+      this.english.vocab = this.english.vocab.filter(v => v.id !== id)
+      this.save()
+    },
+
+    /** 保存阅读训练记录（+5 积分，refId 关联） */
+    addReadingRecord(wpm: number, accuracy: number) {
+      const id = uid()
+      this.english.reading.push({ id, date: today(), wpm, accuracy })
+      this.addPoints(5, '阅读训练', id)
+      this.save()
+    },
+
+    /** 保存听力练习记录（每 10 分钟 +1 积分，refId 关联） */
+    addListeningRecord(minutes: number, material: string, mode: '精听' | '泛听') {
+      const id = uid()
+      this.english.listening.push({ id, date: today(), minutes, material, mode })
+      const pts = Math.round(minutes / 10)
+      if (pts > 0) this.addPoints(pts, '听力练习', id)
+      this.save()
+    },
+
     updateSettings(patch: Partial<AppState['settings']>) {
+      // 每日目标统一钳制为 >=1 的整数，与 updateHabitTarget 口径一致
+      if (patch.wordGoal !== undefined) patch.wordGoal = Math.max(1, Math.round(patch.wordGoal) || 1)
+      if (patch.problemGoal !== undefined) patch.problemGoal = Math.max(1, Math.round(patch.problemGoal) || 1)
       Object.assign(this.settings, patch)
+      // 每日目标与习惯列表「每日背单词」「每日做题」按固定 id 实时双向同步
+      if (patch.wordGoal !== undefined) {
+        const h = this.habits.find(x => x.id === VOCAB_HABIT_ID && !x.bad)
+        if (h) h.target = patch.wordGoal
+      }
+      if (patch.problemGoal !== undefined) {
+        const h = this.habits.find(x => x.id === PROBLEM_HABIT_ID && !x.bad)
+        if (h) h.target = patch.problemGoal
+      }
       this.save()
     },
 
@@ -370,6 +585,7 @@ export const useAppStore = defineStore('app', {
       try {
         const data = JSON.parse(json)
         this.$patch({ ...createDefaultState(), ...data })
+        this.migrateLegacyData()
         this.save()
         return true
       } catch {

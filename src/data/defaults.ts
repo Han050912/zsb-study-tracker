@@ -23,8 +23,8 @@ const engChapters = [
 
 export function defaultSubjects(): Subject[] {
   return [
-    { id: 'math', name: '高等数学', icon: '📐', color: '#3b82f6', weight: 40, builtin: true, chapters: mathChapters, mastery: {} },
-    { id: 'english', name: '英语', icon: '📖', color: '#10b981', weight: 40, builtin: true, chapters: engChapters, mastery: {} }
+    { id: 'math', name: '高等数学', icon: '📐', color: '#3b82f6', weight: 50, builtin: true, chapters: mathChapters, mastery: {} },
+    { id: 'english', name: '英语', icon: '📖', color: '#10b981', weight: 50, builtin: true, chapters: engChapters, mastery: {} }
   ]
 }
 
@@ -70,6 +70,10 @@ export const LEVELS = [
   { name: '王者', min: 10000, color: '#a855f7' }
 ]
 
+/** 与设置页每日目标双向同步的固定习惯 id（默认习惯，id 稳定不受重命名影响） */
+export const VOCAB_HABIT_ID = 'h2'
+export const PROBLEM_HABIT_ID = 'h3'
+
 export function createDefaultState(): AppState {
   return {
     subjects: defaultSubjects(),
@@ -82,8 +86,8 @@ export function createDefaultState(): AppState {
     summaries: {},
     habits: [
       { id: 'h1', name: '早起晨读', type: 'checkbox', records: {} },
-      { id: 'h2', name: '每日背单词', type: 'count', target: 50, records: {} },
-      { id: 'h3', name: '每日做题', type: 'count', target: 20, records: {} },
+      { id: VOCAB_HABIT_ID, name: '每日背单词', type: 'count', target: 50, records: {} },
+      { id: PROBLEM_HABIT_ID, name: '每日做题', type: 'count', target: 30, records: {} },
       { id: 'h4', name: '回顾笔记', type: 'checkbox', records: {} },
       { id: 'h5', name: '熬夜', type: 'count', bad: true, records: {} },
       { id: 'h6', name: '无效刷手机', type: 'minutes', bad: true, records: {} }
