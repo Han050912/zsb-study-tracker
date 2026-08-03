@@ -211,7 +211,11 @@ const { el: vocabEl } = useChart(() => {
       </div>
       <!-- 墨墨背单词同步 -->
       <div class="card space-y-2">
-        <div class="section-title !mb-0">🔗 墨墨背单词同步</div>
+        <div class="flex items-center gap-2">
+          <div class="section-title !mb-0">🔗 墨墨背单词同步</div>
+          <span v-if="(window as any).maimemoAPI?.available" class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">桌面端</span>
+          <span v-else class="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">仅桌面端可用</span>
+        </div>
         <div class="flex gap-2">
           <input v-model="maimemoToken" type="password" class="input" placeholder="墨墨开放 API Token（App：我的→更多设置→实验功能→开放 API）" />
           <button class="btn-ghost shrink-0" @click="saveMaimemoToken">保存</button>
