@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
 
 /**
  * 桌面端自动更新弹窗
@@ -30,6 +30,9 @@ const updater = (window as any).updater as
       onError: (cb: (msg: string) => void) => void
     }
   | undefined
+
+// 全局 Toast（App.vue 通过 provide('toast') 注入），用于弹窗未打开时也提示更新错误
+const toast = inject<(m: string) => void>('toast', () => {})
 
 const show = ref(false)
 const info = ref<UpdateInfo | null>(null)
@@ -121,10 +124,13 @@ onMounted(() => {
     stage.value = 'downloaded'
   })
   updater.onError((msg) => {
-    // 下载阶段出错：回到待确认态并提示，可重试
     if (show.value) {
+      // 下载阶段出错：回到待确认态并提示，可重试
       stage.value = 'idle'
       errorMsg.value = `下载失败：${msg}`
+    } else {
+      // 弹窗未打开（如手动检查更新时失败），也提示用户
+      toast(`检查更新失败：${msg}`)
     }
   })
 })

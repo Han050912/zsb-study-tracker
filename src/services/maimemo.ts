@@ -31,11 +31,12 @@ async function post<T>(path: string, token: string, body: unknown): Promise<T> {
   })
   if (res.status === 401 || res.status === 403) throw new Error('Token 无效或已过期，请重新获取')
   if (!res.ok) throw new Error(`墨墨接口请求失败（HTTP ${res.status}）`)
-  const data = await res.json().catch(() => ({}))
-  if (data?.errors?.length || (data?.error && data.error.code)) {
-    throw new Error(data?.errors?.[0]?.message || data?.error?.message || '墨墨接口返回错误')
+  // 墨墨响应外壳为 { success, data, errors }，真实业务数据在 data 字段内
+  const wrapper = await res.json().catch(() => ({}))
+  if (wrapper?.errors?.length || (wrapper?.error && wrapper.error.code)) {
+    throw new Error(wrapper?.errors?.[0]?.message || wrapper?.error?.message || '墨墨接口返回错误')
   }
-  return data as T
+  return (wrapper?.data ?? {}) as T
 }
 
 /**
@@ -44,9 +45,10 @@ async function post<T>(path: string, token: string, body: unknown): Promise<T> {
  * - get_study_progress 补充今日总进度（失败时不影响主流程）
  */
 export async function fetchMaimemoToday(token: string): Promise<MaimemoToday> {
+  // 关键：必须带 is_finished:true，否则墨墨服务端返回空集（实测不带则 items=0）
   const [newRes, reviewRes] = await Promise.all([
-    post<{ today_items?: TodayItem[] }>('/api/v1/study/get_today_items', token, { is_new: true, limit: 1000 }),
-    post<{ today_items?: TodayItem[] }>('/api/v1/study/get_today_items', token, { is_new: false, limit: 1000 })
+    post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_finished: true, is_new: true, limit: 1000 }),
+    post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_finished: true, is_new: false, limit: 1000 })
   ])
   const newWords = (newRes.today_items || []).filter(i => i.is_finished).length
   const reviewWords = (reviewRes.today_items || []).filter(i => i.is_finished).length
@@ -55,7 +57,7 @@ export async function fetchMaimemoToday(token: string): Promise<MaimemoToday> {
   let total = 0
   try {
     const prog = await post<{ progress?: { finished: number; total: number } }>(
-      '/api/v1/study/get_study_progress', token, {})
+      '/api/v1/memo/study/get_study_progress', token, {})
     finished = prog.progress?.finished ?? finished
     total = prog.progress?.total ?? 0
   } catch { /* 进度接口失败不阻塞主数据 */ }

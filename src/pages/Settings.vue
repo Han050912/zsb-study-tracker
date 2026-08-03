@@ -27,6 +27,14 @@ function applyTheme(t: string) {
 const notifSupported = isDesktopNotify() || (typeof window !== 'undefined' && 'Notification' in window)
 const notifPermission = ref(notifyPermission())
 
+// 手动检查更新（仅桌面端打包环境可用）
+const updater = (window as any).updater
+function checkUpdate() {
+  if (!updater) return
+  updater.check()
+  toast('正在检查更新…')
+}
+
 async function toggleReminder(v: boolean) {
   if (v && notifSupported) {
     const perm = await requestNotifyPermission()
@@ -216,6 +224,7 @@ function addQuote() {
         <button class="btn-ghost" @click="importFile?.click()">📥 导入数据</button>
         <input ref="importFile" type="file" accept=".json" class="hidden" @change="onImport" />
         <button class="btn-danger" @click="showClearConfirm = true; clearText = ''">🗑 清除全部数据</button>
+        <button v-if="updater" class="btn-ghost" @click="checkUpdate">🔄 检查更新</button>
       </div>
     </div>
 
