@@ -13,6 +13,8 @@ const toast = inject<(m: string) => void>('toast', () => {})
 const eng = computed(() => store.english)
 // 「英语」科目可能被用户在设置页删除，此时页面整体隐藏
 const subjectExists = computed(() => !!store.subjectMap.english)
+// 桌面端检测：Electron preload 注入了 window.maimemoAPI 桥接
+const isDesktop = computed(() => !!(window as any).maimemoAPI?.available)
 
 const tab = ref<'panel' | 'vocab' | 'reading' | 'listening' | 'templates'>('panel')
 
@@ -213,7 +215,7 @@ const { el: vocabEl } = useChart(() => {
       <div class="card space-y-2">
         <div class="flex items-center gap-2">
           <div class="section-title !mb-0">🔗 墨墨背单词同步</div>
-          <span v-if="(window as any).maimemoAPI?.available" class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">桌面端</span>
+          <span v-if="isDesktop" class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">桌面端</span>
           <span v-else class="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">仅桌面端可用</span>
         </div>
         <div class="flex gap-2">
