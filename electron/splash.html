@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>启动中…</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #4f46e5 0%, #6366f1 45%, #8b5cf6 100%);
+      color: #fff; font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+      border-radius: 16px; user-select: none; -webkit-app-region: drag;
+    }
+    img.logo { width: 128px; height: 128px; filter: drop-shadow(0 10px 24px rgba(0, 0, 0, .25)); }
+    h1 { margin-top: 20px; font-size: 20px; font-weight: 700; letter-spacing: 2px; }
+    p { margin-top: 6px; font-size: 12px; opacity: .85; letter-spacing: 1px; }
+    .spinner {
+      margin-top: 26px; width: 26px; height: 26px;
+      border: 3px solid rgba(255, 255, 255, .35); border-top-color: #fff;
+      border-radius: 50%; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <img class="logo" src="./assets/logo.png" alt="专升本学习助手" />
+  <h1>专升本学习助手</h1>
+  <p>正在启动，请稍候…</p>
+  <div class="spinner"></div>
+</body>
+</html>

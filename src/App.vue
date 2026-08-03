@@ -88,7 +88,9 @@ const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboa
     <!-- 桌面侧边栏 -->
     <aside v-if="!hideNav" class="hidden md:flex fixed inset-y-0 left-0 w-56 flex-col bg-white dark:bg-slate-800 border-r border-slate-100 dark:border-slate-700 z-30">
       <div class="px-5 py-5">
-        <div class="text-lg font-bold text-primary-600 dark:text-primary-400">🎓 专升本助手</div>
+        <div class="flex items-center gap-2 text-lg font-bold text-primary-600 dark:text-primary-400">
+          <img :src="'./logo.png'" alt="Logo" class="w-8 h-8" />专升本助手
+        </div>
         <div class="text-xs text-slate-400 mt-1">{{ store.settings.userName }} · {{ store.level.name }}学者</div>
       </div>
       <div v-if="store.examCountdown !== null" class="mx-4 mb-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white px-3 py-2 text-center">

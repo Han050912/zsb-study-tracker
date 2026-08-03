@@ -3,10 +3,44 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "main": "electron/main.cjs",
+  "description": "专升本学习打卡管理助手（Web + 桌面端）",
+  "author": "Han050912",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.han.zsb-study-tracker",
+    "productName": "专升本学习助手",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "electron/assets/logo.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "专升本学习助手"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "electron/assets/logo.png",
+      "category": "public.app-category.education"
+    }
   },
   "dependencies": {
     "dayjs": "^1.11.13",
@@ -21,9 +55,13 @@
     "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-vue": "^5.2.0",
     "autoprefixer": "^10.4.20",
+    "concurrently": "^10.0.4",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "wait-on": "^9.1.0"
   }
 }

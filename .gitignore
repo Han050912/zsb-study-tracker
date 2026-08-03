@@ -4,6 +4,9 @@ node_modules/
 # ===== 构建产物 =====
 dist/
 dist-ssr/
+release/
+build/
+out/
 *.local
 *.log
 npm-debug.log*
