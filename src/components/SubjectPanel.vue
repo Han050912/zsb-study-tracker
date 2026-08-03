@@ -225,6 +225,31 @@ function addChapter() {
   toast('章节已添加，展开后可添加知识点')
 }
 
+// ---- 章节标题行内编辑（双击标题或点击编辑按钮进入编辑态） ----
+const editingChapterId = ref('')
+const editingChapterName = ref('')
+/** 输入框挂载后自动聚焦并全选，提升编辑流畅度 */
+const vFocus = {
+  mounted: (el: HTMLInputElement) => { el.focus(); el.select() }
+}
+function startEditChapter(ch: { id: string; name: string }) {
+  editingChapterId.value = ch.id
+  editingChapterName.value = ch.name
+}
+function saveChapterName(chapterId: string) {
+  // Enter 与 blur 可能连续触发，幂等守卫避免重复保存
+  if (editingChapterId.value !== chapterId) return
+  const name = editingChapterName.value.trim()
+  const oldName = subject.value?.chapters.find(c => c.id === chapterId)?.name
+  if (name && name !== oldName) {
+    if (store.updateChapter(props.subjectId, chapterId, name)) toast('章节标题已更新')
+  }
+  editingChapterId.value = ''
+}
+function cancelEditChapter() {
+  editingChapterId.value = ''
+}
+
 // ---- 知识点（小标题）管理 ----
 const newTopic = ref<Record<string, string>>({})
 function addTopic(chapterId: string) {
@@ -316,14 +341,29 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
         <div class="section-title">章节知识点（点击星星评估掌握度，双击知识点可编辑内容与重要程度）</div>
         <div class="space-y-1">
           <div v-for="ch in subject.chapters" :key="ch.id" class="border border-slate-100 dark:border-slate-700 rounded-xl overflow-hidden">
-            <button class="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50"
-              @click="expanded[ch.id] = !expanded[ch.id]">
-              <span>{{ ch.name }}<span class="text-xs text-slate-400 ml-1.5">{{ ch.topics.length }} 个知识点</span></span>
-              <span class="flex items-center gap-2">
+            <div class="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 group cursor-pointer"
+              role="button" tabindex="0"
+              @click="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])"
+              @keyup.enter="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])"
+              @keyup.space.prevent="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])">
+              <span class="flex items-center gap-1.5 min-w-0">
+                <!-- 编辑态：行内输入框，保持原标题字号与字重，排版不受影响 -->
+                <input v-if="editingChapterId === ch.id" v-model="editingChapterName" v-focus
+                  class="input !py-0.5 !px-1.5 !text-sm !font-medium !w-48 max-w-full"
+                  @click.stop @dblclick.stop @keyup.enter.stop="saveChapterName(ch.id)"
+                  @keyup.esc="cancelEditChapter" @blur="saveChapterName(ch.id)" />
+                <template v-else>
+                  <span class="cursor-text select-none" title="双击编辑章节标题" @dblclick.stop="startEditChapter(ch)">{{ ch.name }}</span>
+                  <span class="text-xs text-slate-400 ml-1.5">{{ ch.topics.length }} 个知识点</span>
+                  <span class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-primary-500 text-xs cursor-pointer transition-opacity"
+                    title="编辑章节标题" @click.stop="startEditChapter(ch)">✏️</span>
+                </template>
+              </span>
+              <span class="flex items-center gap-2 shrink-0">
                 <span class="text-red-400 text-xs hover:underline" @click.stop="removeChapter(ch.id)">删除</span>
                 <span class="text-slate-400 text-xs">{{ expanded[ch.id] ? '▲' : '▼' }}</span>
               </span>
-            </button>
+            </div>
             <div v-if="expanded[ch.id]" class="px-3 pb-2 space-y-1.5">
               <div v-if="!ch.topics.length" class="text-xs text-slate-400 py-1">暂无知识点，在下方添加小标题后可评估掌握度</div>
               <div v-for="topic in ch.topics" :key="topic" class="flex items-center justify-between text-sm py-0.5 group">

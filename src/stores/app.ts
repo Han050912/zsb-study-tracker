@@ -328,6 +328,16 @@ export const useAppStore = defineStore('app', {
       const s = this.subjects.find(x => x.id === subjectId)
       if (s) { s.chapters.push({ id: uid(), name, topics: [] }); this.save() }
     },
+    /** 重命名章节标题：内容为空或章节不存在时返回 false */
+    updateChapter(subjectId: string, chapterId: string, name: string): boolean {
+      const s = this.subjects.find(x => x.id === subjectId)
+      const ch = s?.chapters.find(c => c.id === chapterId)
+      const n = name.trim()
+      if (!s || !ch || !n) return false
+      ch.name = n
+      this.save()
+      return true
+    },
     /** 向章节添加知识点（小标题） */
     addTopic(subjectId: string, chapterId: string, topic: string) {
       const ch = this.subjects.find(x => x.id === subjectId)?.chapters.find(c => c.id === chapterId)
