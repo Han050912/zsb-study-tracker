@@ -13,7 +13,6 @@
 <br/>
 
 [![Version](https://img.shields.io/github/package-json/v/Han050912/zsb-study-tracker?color=blue&label=version)](https://github.com/Han050912/zsb-study-tracker/blob/master/package.json)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Han050912/zsb-study-tracker/deploy.yml?branch=master&label=build)](https://github.com/Han050912/zsb-study-tracker/actions)
 [![License](https://img.shields.io/github/license/Han050912/zsb-study-tracker?color=green)](./LICENSE)
 [![Stars](https://img.shields.io/github/stars/Han050912/zsb-study-tracker?style=social)](https://github.com/Han050912/zsb-study-tracker/stargazers)
 [![Issues](https://img.shields.io/github/issues/Han050912/zsb-study-tracker)](https://github.com/Han050912/zsb-study-tracker/issues)
