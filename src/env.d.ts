@@ -22,8 +22,4 @@ interface Window {
     available: boolean
     show: (title: string, body: string) => void
   }
-  maimemoAPI?: {
-    available: boolean
-    fetch: (token: string) => Promise<{ newWords: number; reviewWords: number; finished: number; total: number }>
-  }
 }
