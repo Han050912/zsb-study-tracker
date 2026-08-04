@@ -1,0 +1,21 @@
+{
+  "name": "zsb-study-api",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "init:local": "wrangler d1 execute zsb-study-db --local --file=./schema.sql",
+    "smoke": "node test/smoke.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "jose": "^6.0.10"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260730.1",
+    "typescript": "^5.6.3",
+    "wrangler": "^4.14.0"
+  }
+}

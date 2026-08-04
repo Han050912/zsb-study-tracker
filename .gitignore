@@ -79,3 +79,8 @@ temp/
 
 # ===== 工具/IDE 工作目录 =====
 .codebuddy/
+
+# ===== Cloudflare Worker 本地状态与密钥 =====
+worker/.dev.vars
+worker/.wrangler/
+worker/wrangler-dev*.log

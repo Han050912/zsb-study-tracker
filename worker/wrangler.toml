@@ -1,0 +1,17 @@
+name = "zsb-study-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[observability]
+enabled = true
+invocation_logs = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zsb-study-db"
+database_id = "627fbd6f-d81b-48d2-9603-ef5ae333c2a3"
+
+[vars]
+# 非敏感配置（JWT_SECRET 通过 Cloudflare 控制台设置加密变量，不写入此文件）
+
+[[env.production.vars]]

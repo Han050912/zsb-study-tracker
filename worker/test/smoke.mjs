@@ -1,0 +1,252 @@
+/**
+ * zsb-study-api 冒烟测试（Node 18+ 原生 fetch，无测试框架）。
+ * 前置：npx wrangler d1 execute zsb-study-db --local --file=./schema.sql && npx wrangler dev
+ * 运行：node test/smoke.mjs [baseURL]（默认 http://localhost:8787）
+ */
+
+const BASE = process.argv[2] || 'http://localhost:8787'
+const ORIGIN = 'http://localhost:5173'
+
+let passed = 0
+let failed = 0
+
+function check(name, cond, extra = '') {
+  if (cond) { passed++; console.log(`  ✓ ${name}`) }
+  else { failed++; console.error(`  ✗ ${name}${extra ? ' — ' + extra : ''}`) }
+}
+
+async function api(path, { method = 'GET', token, body } = {}) {
+  const headers = { 'Content-Type': 'application/json', Origin: ORIGIN }
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(`${BASE}${path}`, {
+    method, headers, body: body === undefined ? undefined : JSON.stringify(body)
+  })
+  let data = null
+  try { data = await res.json() } catch { /* 204 等无 body */ }
+  return { status: res.status, data, headers: res.headers }
+}
+
+const uniq = Date.now().toString(36)
+const userA = { username: `smoke_a_${uniq}`, password: 'password123' }
+const userB = { username: `smoke_b_${uniq}`, password: 'password123' }
+
+// 构建一份覆盖全部实体的 AppState 快照
+function sampleState() {
+  return {
+    subjects: [{
+      id: 'math', name: '高等数学', icon: '📐', color: '#3b82f6', weight: 50, builtin: true,
+      chapters: [{ id: 'm1', name: '第一章 函数与极限', topics: ['函数及其性质', '数列极限'] }],
+      mastery: { '函数及其性质': 4 }, topicImportance: { '函数及其性质': 'must' }
+    }],
+    records: [{ id: 'r1', subjectId: 'math', date: '2026-08-04', minutes: 60, chapterId: 'm1', topic: '数列极限', note: 'n', createdAt: 1 }],
+    problemSessions: [{ id: 'p1', subjectId: 'math', date: '2026-08-04', total: 20, correct: 15, types: { choice: 10, blank: 10 } }],
+    errorQuestions: [{ id: 'e1', subjectId: 'math', date: '2026-08-04', chapter: '第一章', type: '选择', content: '题面', answer: 'A', image: 'data:image/png;base64,xx', reviewCount: 2, mastered: false, createdAt: 1 }],
+    exams: [{ id: 'x1', subjectId: 'math', date: '2026-08-04', title: '2025 真题', score: 80, totalScore: 100, minutes: 120, parts: { 选择: 40 } }],
+    notes: [{ id: 'n1', subjectId: 'math', title: '极限笔记', content: '# md', tags: ['极限'], updatedAt: 1 }],
+    english: {
+      vocab: [{ id: 'v1', date: '2026-08-04', newWords: 30, reviewWords: 20, points: 3 }],
+      reading: [{ id: 'rd1', date: '2026-08-04', wpm: 120, accuracy: 0.8 }],
+      listening: [{ id: 'l1', date: '2026-08-04', minutes: 30, material: 'VOA', mode: '精听' }],
+      templates: [{ id: 't1', title: '议论文模板', content: 'As is known...', level: 2, category: '议论文' }]
+    },
+    summaries: { '2026-08-04': { date: '2026-08-04', mood: '😄 开心', harvest: 'h', improve: 'i', plan: 'p' } },
+    habits: [{
+      id: 'h1', name: '早起晨读', type: 'checkbox', target: undefined, bad: false,
+      records: { '2026-08-04': 1 }, checkins: {}
+    }, {
+      id: 'h5', name: '熬夜', type: 'count', bad: true,
+      records: { '2026-08-03': 2 }, checkins: { '2026-08-04': 1 }
+    }],
+    materials: [{ id: 'mt1', title: '高数讲义', type: 'doc', subjectId: 'math', priority: '高', author: '张', totalPages: 300, readPages: 50, notes: 'n', createdAt: 1 }],
+    gamification: {
+      points: 100, streak: 5, lastCheckin: '2026-08-04', achievements: ['first_checkin'],
+      pointsLog: [{ date: '2026-08-04', points: 10, reason: '每日打卡', refId: 'r1' }]
+    },
+    pomodoro: {
+      daily: { '2026-08-04': { count: 3, minutes: 75, interruptions: 1 } },
+      interruptions: [{ date: '2026-08-04', reason: '手机', time: 1754300000000 }]
+    },
+    todos: [{ id: 'td1', date: '2026-08-04', text: '复习极限', done: true, order: 1, completedAt: 1754300000000 }],
+    settings: {
+      userName: '测试员', dailyGoalMinutes: 300, wordGoal: 60, problemGoal: 40, examDate: '2027-04-01',
+      theme: 'dark', reminderEnabled: true, reminderTime: '07:30', quotes: ['自定义引言'],
+      maimemoToken: undefined, onboarded: true
+    }
+  }
+}
+
+async function main() {
+  console.log(`目标: ${BASE}\n`)
+
+  // ---- CORS ----
+  console.log('[CORS]')
+  const preflight = await fetch(`${BASE}/api/records`, {
+    method: 'OPTIONS',
+    headers: { Origin: ORIGIN, 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'Authorization' }
+  })
+  check('OPTIONS 预检返回 204', preflight.status === 204, `实际 ${preflight.status}`)
+  check('预检响应带 Access-Control-Allow-Origin', preflight.headers.get('access-control-allow-origin') === ORIGIN)
+  check('预检响应允许 Authorization 头', (preflight.headers.get('access-control-allow-headers') || '').includes('Authorization'))
+
+  // ---- 认证 ----
+  console.log('[认证]')
+  const regA = await api('/api/auth/register', { method: 'POST', body: userA })
+  check('注册 A 返回 201 + token', regA.status === 201 && !!regA.data?.token, JSON.stringify(regA.data))
+  check('注册即初始化 settings（GET /api/settings 有默认值）',
+    (await api('/api/settings', { token: regA.data.token })).data?.userName === '升本人')
+
+  const regDup = await api('/api/auth/register', { method: 'POST', body: userA })
+  check('重复注册返回 409', regDup.status === 409, `实际 ${regDup.status}`)
+
+  const badLogin = await api('/api/auth/login', { method: 'POST', body: { username: userA.username, password: 'wrong-password' } })
+  check('错误密码登录返回 401', badLogin.status === 401, `实际 ${badLogin.status}`)
+
+  const loginA = await api('/api/auth/login', { method: 'POST', body: userA })
+  check('登录返回 token + user', loginA.status === 200 && !!loginA.data?.token && loginA.data?.user?.username === userA.username)
+  const tokenA = loginA.data.token
+
+  const me = await api('/api/auth/me', { token: tokenA })
+  check('GET /api/auth/me 返回当前用户', me.status === 200 && me.data?.user?.username === userA.username)
+
+  const regB = await api('/api/auth/register', { method: 'POST', body: userB })
+  const tokenB = regB.data?.token
+
+  // ---- 未认证拦截 ----
+  console.log('[未认证]')
+  const noAuth = await api('/api/records')
+  check('无 token 访问数据接口返回 401', noAuth.status === 401, `实际 ${noAuth.status}`)
+  const badAuth = await api('/api/records', { token: 'invalid.token.here' })
+  check('伪造 token 返回 401', badAuth.status === 401, `实际 ${badAuth.status}`)
+
+  // ---- 单实体 CRUD（以 records 为例） ----
+  console.log('[CRUD /api/records]')
+  const created = await api('/api/records', {
+    method: 'POST', token: tokenA,
+    body: { subjectId: 'math', date: '2026-08-01', minutes: 45, topic: '导数', createdAt: 1 }
+  })
+  check('POST 创建返回 201 + 记录', created.status === 201 && !!created.data?.id, JSON.stringify(created.data))
+  const rid = created.data.id
+  const listed = await api('/api/records', { token: tokenA })
+  check('GET 列表包含新记录', listed.data?.some(r => r.id === rid && r.topic === '导数'))
+  const updated = await api(`/api/records/${rid}`, {
+    method: 'PUT', token: tokenA,
+    body: { subjectId: 'math', date: '2026-08-01', minutes: 90, topic: '导数', createdAt: 1 }
+  })
+  check('PUT 更新生效', updated.status === 200 && updated.data?.minutes === 90)
+  const notMine = await api(`/api/records/${rid}`, { method: 'PUT', token: tokenB, body: { minutes: 1 } })
+  check('B 用户更新 A 的记录返回 404', notMine.status === 404, `实际 ${notMine.status}`)
+  const del = await api(`/api/records/${rid}`, { method: 'DELETE', token: tokenA })
+  check('DELETE 删除成功', del.status === 200)
+  check('删除后列表为空', (await api('/api/records', { token: tokenA })).data?.length === 0)
+
+  // ---- 科目树 CRUD + 级联删除 ----
+  console.log('[CRUD /api/subjects]')
+  const subj = await api('/api/subjects', {
+    method: 'POST', token: tokenA,
+    body: { name: '计算机', icon: '💻', color: '#f59e0b', weight: 30, builtin: false,
+            chapters: [{ id: 'c1', name: '第一章', topics: ['数据结构'] }],
+            mastery: { '数据结构': 3 }, topicImportance: { '数据结构': 'important' } }
+  })
+  check('POST 创建科目（整树）', subj.status === 201 && !!subj.data?.id, JSON.stringify(subj.data))
+  const sid = subj.data.id
+  const tree = await api('/api/subjects', { token: tokenA })
+  const found = tree.data?.find(s => s.id === sid)
+  check('GET 科目树组装 chapters/topics/mastery',
+    found?.chapters?.[0]?.topics?.[0] === '数据结构' && found?.mastery?.['数据结构'] === 3 && found?.topicImportance?.['数据结构'] === 'important')
+  await api('/api/records', { method: 'POST', token: tokenA, body: { subjectId: sid, date: '2026-08-01', minutes: 10, createdAt: 1 } })
+  const delSubj = await api(`/api/subjects/${sid}`, { method: 'DELETE', token: tokenA })
+  check('DELETE 科目成功', delSubj.status === 200)
+  check('级联删除该科目学习记录', (await api('/api/records', { token: tokenA })).data?.length === 0)
+
+  // ---- 全量同步 ----
+  console.log('[全量同步 /api/data/sync]')
+  const snapshot = sampleState()
+  const push = await api('/api/data/sync', { method: 'POST', token: tokenA, body: snapshot })
+  check('POST 全量推送成功', push.status === 200, JSON.stringify(push.data))
+  const pull = await api('/api/data/sync', { token: tokenA })
+  check('GET 全量拉取成功', pull.status === 200 && !!pull.data)
+
+  const d = pull.data
+  check('subjects 树还原（chapters/topics/mastery/topicImportance）',
+    d.subjects?.[0]?.chapters?.[0]?.topics?.length === 2 &&
+    d.subjects[0].mastery['函数及其性质'] === 4 &&
+    d.subjects[0].topicImportance['函数及其性质'] === 'must' &&
+    d.subjects[0].builtin === true)
+  check('records 还原（camelCase + 可选字段）', d.records?.[0]?.subjectId === 'math' && d.records[0].chapterId === 'm1')
+  check('problemSessions.types JSON 还原', d.problemSessions?.[0]?.types?.choice === 10)
+  check('errorQuestions 还原（base64 图片 + mastered 布尔）', d.errorQuestions?.[0]?.image?.startsWith('data:image') && d.errorQuestions[0].mastered === false)
+  check('exams.parts JSON 还原', d.exams?.[0]?.parts?.['选择'] === 40)
+  check('notes.tags JSON 还原', d.notes?.[0]?.tags?.[0] === '极限')
+  check('english 四组数据还原', d.english?.vocab?.[0]?.newWords === 30 && d.english?.reading?.[0]?.wpm === 120 &&
+    d.english?.listening?.[0]?.mode === '精听' && d.english?.templates?.[0]?.category === '议论文')
+  check('summaries 按键还原', d.summaries?.['2026-08-04']?.mood === '😄 开心')
+  check('habits.records 数值还原', d.habits?.find(h => h.id === 'h1')?.records?.['2026-08-04'] === 1)
+  check('habits.checkins + bad 还原', d.habits?.find(h => h.id === 'h5')?.checkins?.['2026-08-04'] === 1 &&
+    d.habits.find(h => h.id === 'h5').bad === true)
+  check('materials 可选字段还原', d.materials?.[0]?.fileName === undefined && d.materials[0].totalPages === 300)
+  check('gamification + pointsLog 还原', d.gamification?.points === 100 && d.gamification?.pointsLog?.[0]?.refId === 'r1' &&
+    d.gamification?.achievements?.[0] === 'first_checkin')
+  check('pomodoro 还原', d.pomodoro?.daily?.['2026-08-04']?.count === 3 && d.pomodoro?.interruptions?.[0]?.reason === '手机')
+  check('todos 还原（done/order/completedAt）', d.todos?.[0]?.done === true && d.todos[0].order === 1 && d.todos[0].completedAt === 1754300000000)
+  check('settings + quotes 还原', d.settings?.userName === '测试员' && d.settings?.quotes?.[0] === '自定义引言' &&
+    d.settings?.reminderEnabled === true && d.settings?.onboarded === true)
+
+  // 二次推送（覆盖语义）：清空 records 后应同步为空
+  snapshot.records = []
+  await api('/api/data/sync', { method: 'POST', token: tokenA, body: snapshot })
+  check('二次推送为整体替换语义', (await api('/api/data/sync', { token: tokenA })).data?.records?.length === 0)
+
+  // ---- 跨用户数据隔离 ----
+  console.log('[数据隔离]')
+  const pullB = await api('/api/data/sync', { token: tokenB })
+  check('B 用户拉取不到 A 的科目', (pullB.data?.subjects ?? []).length === 0)
+  check('B 用户拉取不到 A 的笔记', (pullB.data?.notes ?? []).length === 0)
+  check('B 用户游戏化为默认值', pullB.data?.gamification?.points === 0)
+  const bSettings = await api('/api/settings', { token: tokenB })
+  check('B 用户设置为默认值（不受 A 影响）', bSettings.data?.userName === '升本人')
+
+  // 多租户 id 复用：B 推送与 A 完全相同 id 的快照应成功（复合主键 user_id+id）
+  const pushB = await api('/api/data/sync', { method: 'POST', token: tokenB, body: sampleState() })
+  check('B 推送相同 id 的数据不冲突', pushB.status === 200, JSON.stringify(pushB.data))
+  const pullB2 = await api('/api/data/sync', { token: tokenB })
+  check('B 拉取到自己的数据（id 与 A 相同但互不影响）', pullB2.data?.subjects?.[0]?.id === 'math' && pullB2.data?.notes?.length === 1)
+  const pullA2 = await api('/api/data/sync', { token: tokenA })
+  check('A 的数据未被 B 覆盖', pullA2.data?.notes?.length === 1 && pullA2.data?.records?.length === 0)
+
+  // C1 回归：B 推送与 A 相同章节 id（'m1'）但不同知识点名称，A 的 topics/mastery 必须不受影响
+  const variant = sampleState()
+  variant.subjects[0].chapters[0].topics = ['B的知识点']
+  variant.subjects[0].mastery = { 'B的知识点': 5 }
+  await api('/api/data/sync', { method: 'POST', token: tokenB, body: variant })
+  const pullA3 = await api('/api/data/sync', { token: tokenA })
+  check('A 的 topics 未被 B 污染（C1 回归）',
+    pullA3.data?.subjects?.[0]?.chapters?.[0]?.topics?.join(',') === '函数及其性质,数列极限' &&
+    pullA3.data.subjects[0].mastery['函数及其性质'] === 4,
+    JSON.stringify(pullA3.data?.subjects?.[0]?.chapters?.[0]?.topics))
+
+  // ---- 其余实体 REST 端点可用性 ----
+  console.log('[REST 端点可用性]')
+  for (const p of ['/api/problems', '/api/errors', '/api/exams', '/api/notes', '/api/vocab',
+    '/api/reading', '/api/listening', '/api/templates', '/api/materials', '/api/todos', '/api/habits', '/api/summaries']) {
+    const r = await api(p, { token: tokenA })
+    check(`GET ${p} → 200`, r.status === 200, `实际 ${r.status}`)
+  }
+  check('GET /api/gamification → 200', (await api('/api/gamification', { token: tokenA })).status === 200)
+  check('GET /api/pomodoro → 200', (await api('/api/pomodoro', { token: tokenA })).status === 200)
+  const sumPut = await api('/api/summaries/2026-08-05', { method: 'PUT', token: tokenA, body: { mood: '🙂 平静', harvest: 'h', improve: 'i', plan: 'p' } })
+  check('PUT /api/summaries/:date upsert → 200', sumPut.status === 200 && sumPut.data?.date === '2026-08-05')
+
+  // ---- 墨墨代理（未配置 Token 时） ----
+  console.log('[墨墨代理]')
+  const mm = await api('/api/proxy/maimemo/today', { method: 'POST', token: tokenA })
+  check('未配置墨墨 Token 返回 400 提示', mm.status === 400 && (mm.data?.message || '').includes('墨墨'), JSON.stringify(mm.data))
+
+  // ---- 404 ----
+  console.log('[路由]')
+  check('未知路径返回 404', (await api('/api/nonexistent', { token: tokenA })).status === 404)
+
+  console.log(`\n结果: ${passed} 通过, ${failed} 失败`)
+  process.exit(failed ? 1 : 0)
+}
+
+main().catch(e => { console.error('冒烟测试执行异常:', e); process.exit(1) })
