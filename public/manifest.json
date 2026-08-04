@@ -8,9 +8,9 @@
   "theme_color": "#3b82f6",
   "icons": [
     {
-      "src": "./vite.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "./logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
       "purpose": "any"
     }
   ]
