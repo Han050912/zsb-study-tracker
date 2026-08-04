@@ -64,14 +64,16 @@ function exportData() {
 }
 
 const importFile = ref<HTMLInputElement>()
-function onImport(e: Event) {
+async function onImport(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
   const reader = new FileReader()
-  reader.onload = () => {
+  reader.onload = async () => {
     if (store.importJSON(reader.result as string)) {
       toast('导入成功！')
-      setTimeout(() => location.reload(), 800)
+      // 立即推送到云端，避免防抖 save() 与 location.reload() 竞态导致数据丢失
+      await store.saveAsync()
+      setTimeout(() => location.reload(), 300)
     } else toast('导入失败：文件格式不正确')
   }
   reader.readAsText(file)
@@ -79,12 +81,14 @@ function onImport(e: Event) {
 
 const showClearConfirm = ref(false)
 const clearText = ref('')
-function clearAll() {
+async function clearAll() {
   if (clearText.value !== '确认清除') return
   store.clearAll()
   showClearConfirm.value = false
   toast('数据已清除')
-  setTimeout(() => location.reload(), 800)
+  // 立即推送到云端，避免防抖 save() 与 location.reload() 竞态
+  await store.saveAsync()
+  setTimeout(() => location.reload(), 300)
 }
 
 // ---- 自定义科目 ----
@@ -218,7 +222,7 @@ function addQuote() {
     <!-- 数据管理 -->
     <div class="card space-y-3">
       <div class="section-title">💾 数据管理</div>
-      <div class="text-xs text-slate-400">本地存储用量：{{ storageUsage }} / 约 5MB</div>
+      <div class="text-xs text-slate-400">云端数据大小：{{ storageUsage }}</div>
       <div class="flex gap-2 flex-wrap">
         <button class="btn-primary" @click="exportData">📤 导出 JSON 备份</button>
         <button class="btn-ghost" @click="importFile?.click()">📥 导入数据</button>

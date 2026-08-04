@@ -13,8 +13,6 @@ const toast = inject<(m: string) => void>('toast', () => {})
 const eng = computed(() => store.english)
 // 「英语」科目可能被用户在设置页删除，此时页面整体隐藏
 const subjectExists = computed(() => !!store.subjectMap.english)
-// 桌面端检测：Electron preload 注入了 window.maimemoAPI 桥接
-const isDesktop = computed(() => !!(window as any).maimemoAPI?.available)
 
 const tab = ref<'panel' | 'vocab' | 'reading' | 'listening' | 'templates'>('panel')
 
@@ -41,8 +39,10 @@ const totalVocab = computed(() => eng.value.vocab.reduce((s, v) => s + v.newWord
 // ---- 墨墨背单词同步（官方开放 API，公测） ----
 const maimemoToken = ref(store.settings.maimemoToken || '')
 const syncing = ref(false)
-function saveMaimemoToken() {
+async function saveMaimemoToken() {
   store.updateSettings({ maimemoToken: maimemoToken.value.trim() || undefined })
+  // 立即推送到云端（Worker 代理从 user_settings 读取 Token），不等待防抖
+  await store.saveAsync()
   toast('墨墨 Token 已保存')
 }
 async function syncMaimemo() {
@@ -51,7 +51,7 @@ async function syncMaimemo() {
   if (syncing.value) return
   syncing.value = true
   try {
-    const data = await fetchMaimemoToday(token)
+    const data = await fetchMaimemoToday()
     if (data.newWords + data.reviewWords <= 0) {
       toast('墨墨今日暂无已完成背诵（请在 App 内开启自动同步并完成今日学习后再试）')
       return
@@ -215,8 +215,7 @@ const { el: vocabEl } = useChart(() => {
       <div class="card space-y-2">
         <div class="flex items-center gap-2">
           <div class="section-title !mb-0">🔗 墨墨背单词同步</div>
-          <span v-if="isDesktop" class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">桌面端</span>
-          <span v-else class="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">仅桌面端可用</span>
+          <span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">云端同步</span>
         </div>
         <div class="flex gap-2">
           <input v-model="maimemoToken" type="password" class="input" placeholder="墨墨开放 API Token（App：我的→更多设置→实验功能→开放 API）" />

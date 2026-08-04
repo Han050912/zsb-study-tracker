@@ -60,6 +60,9 @@ onMounted(() => {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme)
 })
 
+// 401 登录过期：清空内存中的用户数据，防止串号到下一个登录的账号
+window.addEventListener('auth:expired', () => store.resetState())
+
 // ---- 每日学习提醒（浏览器 + 桌面端共用 src/services/reminder.ts 一套逻辑） ----
 // 监听设置变更即时重调度：开关切换、时间修改均无需重启应用即可生效
 watch(
@@ -94,7 +97,7 @@ function goAccount() {
 /** 切换账号 / 退出登录：先保存数据再清理会话 */
 async function accountLogout(switchAccount: boolean) {
   avatarOpen.value = false
-  const tip = switchAccount ? '切换账号？当前数据将被保存。' : '确认退出登录？数据将被保存到本地数据库。'
+  const tip = switchAccount ? '切换账号？当前数据将被保存。' : '确认退出登录？数据将被保存到云端。'
   if (!window.confirm(tip)) return
   if (!(await store.saveAsync())) {
     toastRef.value?.show('保存失败，请稍后再试')

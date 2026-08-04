@@ -2,7 +2,6 @@
 import { computed, inject, onMounted, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import { sessionUser } from '../services/auth'
-import { dbFileSize, loadUserData } from '../db/database'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
@@ -16,26 +15,13 @@ function fmtTime(ts?: number) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function formatSize(bytes: number) {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / 1024 / 1024).toFixed(2) + ' MB'
-}
-
-const updatedAt = ref<number | null>(null)
-const dbSize = ref('—')
 const myDataSize = ref('—')
 
 onMounted(async () => {
   try {
-    dbSize.value = formatSize(await dbFileSize())
-    if (user.value) {
-      const row = await loadUserData(user.value.id)
-      updatedAt.value = row?.updatedAt ?? null
-    }
     myDataSize.value = await store.storageUsageText()
   } catch (e) {
-    console.error('读取数据库信息失败', e)
+    console.error('读取数据信息失败', e)
   }
 })
 
@@ -88,28 +74,20 @@ function exportBackup() {
       </div>
     </div>
 
-    <!-- 账号与数据库信息 -->
+    <!-- 账号与云端数据信息 -->
     <div class="card space-y-2.5">
-      <h2 class="font-semibold text-sm">📦 本地数据库（SQLite）</h2>
+      <h2 class="font-semibold text-sm">☁️ 云端数据（Cloudflare D1）</h2>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
         <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
           <span class="text-slate-500 dark:text-slate-400">注册时间</span>
           <span>{{ fmtTime(user?.createdAt) }}</span>
         </div>
         <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
-          <span class="text-slate-500 dark:text-slate-400">最近保存</span>
-          <span>{{ fmtTime(updatedAt ?? undefined) }}</span>
-        </div>
-        <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
-          <span class="text-slate-500 dark:text-slate-400">数据库文件大小</span>
-          <span>{{ dbSize }}</span>
-        </div>
-        <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
           <span class="text-slate-500 dark:text-slate-400">我的数据大小</span>
           <span>{{ myDataSize }}</span>
         </div>
       </div>
-      <p class="text-[11px] text-slate-400">所有数据保存在本机浏览器的 SQLite 数据库中，不上传任何服务器；清除浏览器数据会导致丢失，请定期导出备份。</p>
+      <p class="text-[11px] text-slate-400">所有数据实时同步到云端数据库，多设备登录同一账号即可访问；建议定期导出备份作为应急恢复手段。</p>
     </div>
 
     <!-- 数据统计 -->

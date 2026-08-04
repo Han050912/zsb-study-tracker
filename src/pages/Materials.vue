@@ -44,7 +44,7 @@ const linkMode = ref<'url' | 'file'>('url')
 const fileInput = ref<HTMLInputElement>()
 const fileDragging = ref(false)
 let fileDragDepth = 0
-/** 上传文件大小上限（dataURL 内嵌存储，过大影响本地数据库读写性能） */
+/** 上传文件大小上限（dataURL 内嵌存储，过大影响云端同步性能） */
 const FILE_SIZE_LIMIT = 8 * 1024 * 1024
 
 function readMaterialFile(file: File | undefined) {

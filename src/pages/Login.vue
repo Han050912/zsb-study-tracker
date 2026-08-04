@@ -21,6 +21,15 @@ function switchMode(m: 'login' | 'register') {
   confirmPassword.value = ''
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}超时，请检查网络或禁用浏览器插件后重试`)), ms)
+    )
+  ])
+}
+
 async function submit() {
   errorMsg.value = ''
   if (!username.value.trim() || !password.value) {
@@ -34,12 +43,12 @@ async function submit() {
   loading.value = true
   try {
     if (mode.value === 'login') {
-      await login(username.value.trim(), password.value)
+      await withTimeout(login(username.value.trim(), password.value), 15000, '登录')
     } else {
-      await register(username.value.trim(), password.value)
+      await withTimeout(register(username.value.trim(), password.value), 15000, '注册')
     }
-    // 登录/注册成功后载入该用户的历史数据（自动解密 + 旧版数据迁移）
-    await store.hydrate()
+    // 登录/注册成功后从云端载入该用户的历史数据
+    await withTimeout(store.hydrate(), 20000, '数据同步')
     router.replace('/')
   } catch (e: any) {
     errorMsg.value = e?.message || '操作失败，请重试'
@@ -56,7 +65,7 @@ async function submit() {
       <div class="text-center mb-6">
         <div class="text-4xl mb-2">🎓</div>
         <h1 class="text-xl font-bold text-slate-800 dark:text-slate-100">专升本学习助手</h1>
-        <p class="text-xs text-slate-400 mt-1">数据保存在本地 SQLite 数据库 · 仅存储于此设备</p>
+        <p class="text-xs text-slate-400 mt-1">数据云端同步 · 多设备随时访问</p>
       </div>
 
       <div class="card !p-6">
@@ -98,7 +107,7 @@ async function submit() {
       </div>
 
       <p class="text-center text-[11px] text-slate-400 mt-4 leading-relaxed">
-        密码经 PBKDF2 加密存储，无法被还原<br />同一设备可注册多个账号，数据互相隔离
+        密码经 bcrypt 哈希存储，无法被还原<br />不同账号数据互相隔离
       </p>
     </div>
   </div>
