@@ -2,7 +2,7 @@
  * Electron 主进程：原生窗口 + 启动画面 + 系统托盘 + 自定义 app:// 协议
  *
  * 生产环境通过自定义 app:// 标准安全协议加载 dist 静态资源：
- * - 保证 crypto.subtle（安全上下文）、IndexedDB（sql.js 持久化）、Web Worker 等 Web 能力可用
+ * - 保证 crypto.subtle（安全上下文）等 Web 能力可用；数据经 Cloudflare Worker 云端存储
  * - 开发环境直接加载 Vite Dev Server
  */
 const { app, BrowserWindow, Tray, Menu, nativeImage, protocol, net, ipcMain, Notification } = require('electron')
@@ -112,45 +112,6 @@ ipcMain.on('notify:show', (_e, payload) => {
     }
   })
   n.show()
-})
-
-/**
- * 墨墨背单词开放 API（主进程代理，绕过浏览器 CORS 限制）。
- * 渲染进程通过 ipcRenderer.invoke('maimemo:fetch', token) 调用，
- * 主进程用 net.fetch 发请求（无 CORS 约束），返回解析后的数据或抛出错误。
- */
-const MAIMEMO_BASE = 'https://open.maimemo.com/open'
-ipcMain.handle('maimemo:fetch', async (_e, token) => {
-  if (!token || typeof token !== 'string') throw new Error('Token 不能为空')
-  const post = async (path, body) => {
-    const res = await net.fetch(MAIMEMO_BASE + path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body)
-    })
-    if (!res.ok) throw new Error(`墨墨接口请求失败（HTTP ${res.status}）`)
-    const wrapper = await res.json().catch(() => ({}))
-    if (wrapper?.errors?.length) throw new Error(`墨墨接口错误：${wrapper.errors.map((e) => e.message || '未知错误').join('; ')}`)
-    return (wrapper?.data ?? {})
-  }
-  try {
-    const [newRes, reviewRes] = await Promise.all([
-      post('/api/v1/memo/study/get_today_items', { is_finished: true, is_new: true, limit: 1000 }),
-      post('/api/v1/memo/study/get_today_items', { is_finished: true, is_new: false, limit: 1000 })
-    ])
-    const newWords = (newRes.today_items || []).filter((i) => i.is_finished).length
-    const reviewWords = (reviewRes.today_items || []).filter((i) => i.is_finished).length
-    let finished = newWords + reviewWords
-    let total = 0
-    try {
-      const prog = await post('/api/v1/memo/study/get_study_progress', {})
-      finished = prog.progress?.finished ?? finished
-      total = prog.progress?.total ?? 0
-    } catch { /* 进度获取失败不阻断 */ }
-    return { newWords, reviewWords, finished, total }
-  } catch (err) {
-    throw err instanceof Error ? err : new Error(String(err))
-  }
 })
 
 const gotLock = app.requestSingleInstanceLock()

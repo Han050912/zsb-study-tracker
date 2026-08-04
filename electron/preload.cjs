@@ -30,9 +30,3 @@ contextBridge.exposeInMainWorld('desktopNotify', {
   /** 弹出系统原生通知 */
   show: (title, body) => ipcRenderer.send('notify:show', { title, body })
 })
-
-// 墨墨背单词 API 桥接（主进程代理，绕过 CORS）
-contextBridge.exposeInMainWorld('maimemoAPI', {
-  available: true,
-  fetch: (token) => ipcRenderer.invoke('maimemo:fetch', token)
-})
