@@ -1,17 +1,25 @@
 import { defineStore } from 'pinia'
 import { createDefaultState, ACHIEVEMENTS, LEVELS, VOCAB_HABIT_ID, PROBLEM_HABIT_ID } from '../data/defaults'
 import { today, yesterday, uid, daysBetween } from '../utils/date'
-import { loadCurrentUserPayload, saveCurrentUserPayload } from '../services/auth'
+import { syncApi } from '../api/sync'
 import type {
   AppState, StudyRecord, ProblemSession, ErrorQuestion, ExamRecord,
   Note, DailySummary, Habit, Material, Subject, Todo, TopicImportance
 } from '../types'
 
-/** 旧版本地存储键（用于首次登录时迁移历史数据） */
-const LEGACY_KEY = 'zsb-study-tracker-v1'
+/** 推送防抖计时器（合并连续操作，避免每个 action 都触发一次全量推送） */
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+const SAVE_DEBOUNCE_MS = 800
+
+/**
+ * 是否已成功从云端拉取（hydrate）过数据。
+ * 未 hydrate 前禁止一切推送：此时内存是默认空状态，全量推送会覆盖云端真实数据。
+ * 退出登录/切换账号（resetState）时复位，防止脏数据推送到下一个账号。
+ */
+let hasHydrated = false
 
 export const useAppStore = defineStore('app', {
-  // 初始为默认空数据；登录后通过 hydrate() 从 SQLite 载入该用户的数据
+  // 初始为默认空数据；登录后通过 hydrate() 从云端全量拉取该用户的数据
   state: (): AppState => createDefaultState(),
 
   getters: {
@@ -57,10 +65,17 @@ export const useAppStore = defineStore('app', {
   },
 
   actions: {
-    /** 异步持久化当前用户数据到 SQLite（加密后存 user_data 表）。返回是否成功。 */
+    /** 异步持久化当前用户数据到云端（POST /api/data/sync 全量推送）。返回是否成功。
+     *  会取消未执行的防抖任务，避免与防抖推送产生新旧快照竞态。
+     *  未 hydrate 时跳过推送并视为成功：内存为默认空状态，推送会覆盖云端数据（也无本地修改需要保存）。 */
     async saveAsync(): Promise<boolean> {
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
+      if (!hasHydrated) {
+        console.warn('数据尚未从云端加载，跳过本次推送')
+        return true
+      }
       try {
-        await saveCurrentUserPayload(JSON.stringify(this.$state))
+        await syncApi.pushAll(this.$state)
         return true
       } catch (e) {
         console.error('保存数据失败', e)
@@ -68,56 +83,60 @@ export const useAppStore = defineStore('app', {
       }
     },
 
-    /** 同步触发一次后台持久化（不阻塞，用于常规增删改）。失败时打印日志。 */
+    /** 防抖触发一次后台持久化（不阻塞，用于常规增删改）。失败时打印日志。 */
     save() {
-      this.saveAsync().then(ok => {
-        if (!ok) console.error('后台保存失败，数据可能未持久化')
-      })
+      if (!hasHydrated) return
+      if (saveTimer) clearTimeout(saveTimer)
+      saveTimer = setTimeout(() => {
+        saveTimer = null
+        this.saveAsync().then(ok => {
+          if (!ok) console.error('后台保存失败，数据可能未持久化')
+        })
+      }, SAVE_DEBOUNCE_MS)
     },
 
-    /** 计算当前账号数据大小（异步读取已解密 payload）。 */
+    /** 页面卸载前兜底：若防抖窗口内还有未推送的修改，立即以 keepalive 方式发送 */
+    flushSave() {
+      if (!hasHydrated || !saveTimer) return
+      clearTimeout(saveTimer)
+      saveTimer = null
+      syncApi.pushAllBeacon(this.$state)
+    },
+
+    /** 计算当前账号数据大小（按当前状态 JSON 序列化估算）。 */
     async storageUsageText(): Promise<string> {
-      const raw = (await loadCurrentUserPayload())?.payload || ''
-      const bytes = new Blob([raw]).size
+      const bytes = new Blob([JSON.stringify(this.$state)]).size
       if (bytes < 1024) return bytes + ' B'
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
       return (bytes / 1024 / 1024).toFixed(2) + ' MB'
     },
 
-    /** 登录后调用：从 SQLite 载入该用户的历史数据（自动解密）；无数据则尝试迁移旧版 localStorage 数据 */
+    /** 登录后调用：从云端全量拉取该用户的历史数据；新用户（云端无任何数据）则保留默认数据并推送一次 */
     async hydrate() {
-      let row: { payload: string; updatedAt: number } | null = null
-      try {
-        row = await loadCurrentUserPayload()
-      } catch (e) {
-        console.error('载入用户数据失败', e)
-        throw e
-      }
-      if (row) {
-        try {
-          this.$patch({ ...createDefaultState(), ...(JSON.parse(row.payload) as Partial<AppState>) })
-          this.migrateLegacyData()
-        } catch (e) {
-          console.error('解析用户数据失败', e)
-        }
+      const data = await syncApi.pullAll()
+      // 新用户判定：云端全部实体均为空（任何一类实体有数据都视为老用户，避免误判覆盖）
+      const isNewUser =
+        !data.subjects?.length && !data.records?.length && !data.habits?.length &&
+        !data.notes?.length && !data.todos?.length && !data.materials?.length &&
+        !data.problemSessions?.length && !data.errorQuestions?.length && !data.exams?.length &&
+        !data.english?.vocab?.length && !data.english?.reading?.length &&
+        !data.english?.listening?.length && !data.english?.templates?.length &&
+        !Object.keys(data.summaries ?? {}).length &&
+        !Object.keys(data.pomodoro?.daily ?? {}).length && !data.pomodoro?.interruptions?.length &&
+        !data.gamification?.pointsLog?.length
+      if (isNewUser) {
+        // 保留启动时的默认数据（内置科目/习惯/引言），推送到云端作为初始数据
+        hasHydrated = true // 先置位，允许 saveAsync 推送初始数据
+        await this.saveAsync()
         return
       }
-      // 新用户：检测并迁移旧版本地数据
-      const legacy = localStorage.getItem(LEGACY_KEY)
-      if (legacy) {
-        try {
-          this.$patch({ ...createDefaultState(), ...(JSON.parse(legacy) as Partial<AppState>) })
-          this.migrateLegacyData()
-          // 仅在确认保存成功后才删除旧数据，避免迁移失败导致旧数据被清空
-          if (await this.saveAsync()) {
-            localStorage.removeItem(LEGACY_KEY)
-          } else {
-            console.error('历史数据迁移失败，已保留旧版本地数据')
-          }
-        } catch (e) {
-          console.error('迁移历史数据失败', e)
-        }
-      }
+      // settings 与默认值合并：云端可能缺 quotes 等字段（default_quotes 行不存在时）
+      this.$patch({
+        ...createDefaultState(),
+        ...data,
+        settings: { ...createDefaultState().settings, ...(data.settings || {}) }
+      })
+      hasHydrated = true
     },
 
     /**
@@ -184,8 +203,10 @@ export const useAppStore = defineStore('app', {
       }
     },
 
-    /** 退出登录/切换账号时重置为空白数据 */
+    /** 退出登录/切换账号时重置为空白数据；同时复位 hydrate 标志，阻止脏数据推送到下一个账号 */
     resetState() {
+      hasHydrated = false
+      if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
       this.$patch(createDefaultState())
     },
 
