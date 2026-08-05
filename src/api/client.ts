@@ -1,8 +1,12 @@
 /**
  * 统一 fetch 封装：所有请求经 Cloudflare Worker，携带 Bearer JWT。
- * 401 时清除 token 并跳转登录页。
+ * 401 时清除 token 并跳转登录页——但登录/注册接口除外：这两类公开端点的 401
+ * 表示凭证错误（账号不存在或密码错误），透传服务端消息给调用方展示。
  */
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8787'
+export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8787'
+
+/** 公开凭证端点：其 401 不属于「会话过期」，不做全局登出处理 */
+const CREDENTIAL_PATHS = ['/api/auth/login', '/api/auth/register']
 
 function getToken(): string | null {
   return localStorage.getItem('jwt_token')
@@ -20,7 +24,7 @@ export async function request<T>(
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
-  if (res.status === 401) {
+  if (res.status === 401 && !CREDENTIAL_PATHS.includes(path)) {
     localStorage.removeItem('jwt_token')
     // 通知应用清空内存中的用户数据（防止 401 后串号到下一个账号）
     window.dispatchEvent(new CustomEvent('auth:expired'))

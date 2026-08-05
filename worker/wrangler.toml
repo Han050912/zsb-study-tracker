@@ -1,6 +1,7 @@
 name = "zsb-study-api"
 main = "src/index.ts"
-compatibility_date = "2025-01-01"
+compatibility_date = "2026-08-04"
+account_id = "f56530b741377e91f44791c2aecd5855" 
 
 [observability]
 enabled = true

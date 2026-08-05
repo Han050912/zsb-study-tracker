@@ -2,6 +2,28 @@ import { on, body } from '../router'
 import { hashPassword, verifyPassword, signToken } from '../auth'
 import { first, run, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
+import type { Env } from '../index'
+
+const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
+
+async function verifyTurnstile(token: string, secret: string, ip: string): Promise<boolean> {
+  const form = new URLSearchParams()
+  form.set('secret', secret)
+  form.set('response', token)
+  if (ip) form.set('remoteip', ip)
+  const res = await fetch(TURNSTILE_VERIFY_URL, { method: 'POST', body: form })
+  const data = (await res.json()) as { success: boolean }
+  return data.success === true
+}
+
+function requireTurnstile(request: Request, env: Env): Promise<void> {
+  const token = request.headers.get('X-CF-Turnstile-Response')
+  if (!token) return Promise.reject(new HttpError(400, '缺少人机验证令牌，请完成验证后重试'))
+  const ip = request.headers.get('CF-Connecting-IP') || ''
+  return verifyTurnstile(token, env.TURNSTILE_SECRET, ip).then(ok => {
+    if (!ok) throw new HttpError(403, '人机验证失败，请重新验证')
+  })
+}
 
 interface UserRow {
   id: string
@@ -26,6 +48,7 @@ function validateCredentials(username: unknown, password: unknown): { username: 
 
 export function registerAuthRoutes() {
   on('POST', '/api/auth/register', false, async (ctx) => {
+    await requireTurnstile(ctx.request, ctx.env)
     rateLimit(ctx.request, 'register', 3, 60_000) // 每 IP 每分钟最多 3 次注册
     const b = await body<{ username?: unknown; password?: unknown }>(ctx.request)
     const { username, password } = validateCredentials(b.username, b.password)
@@ -43,6 +66,7 @@ export function registerAuthRoutes() {
   })
 
   on('POST', '/api/auth/login', false, async (ctx) => {
+    await requireTurnstile(ctx.request, ctx.env)
     rateLimit(ctx.request, 'login', 10, 60_000) // 每 IP 每分钟最多 10 次登录尝试
     const b = await body<{ username?: string; password?: string }>(ctx.request)
     const username = (b.username || '').trim()

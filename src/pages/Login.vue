@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { login, register } from '../services/auth'
 import { useAppStore } from '../stores/app'
@@ -14,11 +14,62 @@ const confirmPassword = ref('')
 const errorMsg = ref('')
 const loading = ref(false)
 
+// ---- Turnstile 人机验证 ----
+const TURNSTILE_SITEKEY = '0x4AAAAAAEGLRGric6eUYnOv'
+const turnstileContainer = ref<HTMLDivElement>()
+const turnstileId = ref('')
+const turnstileToken = ref('')
+
+function loadTurnstileScript(): Promise<void> {
+  return new Promise((resolve) => {
+    if ((window as any).turnstile) { resolve(); return }
+    const script = document.createElement('script')
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+    script.async = true
+    script.defer = true
+    script.onload = () => resolve()
+    // 加载失败（网络/CSP 拦截）也 resolve，避免 onMounted 永久悬挂；验证区保持为空并在提交时提示
+    script.onerror = () => { errorMsg.value = '人机验证组件加载失败，请检查网络后刷新页面'; resolve() }
+    document.head.appendChild(script)
+  })
+}
+
+function renderTurnstile() {
+  if (!turnstileContainer.value || !(window as any).turnstile) return
+  turnstileId.value = (window as any).turnstile.render(turnstileContainer.value, {
+    sitekey: TURNSTILE_SITEKEY,
+    theme: 'light',
+    callback: (token: string) => { turnstileToken.value = token },
+    'error-callback': () => {},
+    'expired-callback': () => { turnstileToken.value = '' },
+  })
+}
+
+function resetTurnstile() {
+  if (turnstileId.value) {
+    (window as any).turnstile.reset(turnstileId.value)
+    turnstileToken.value = ''
+  }
+}
+
+onMounted(async () => {
+  await loadTurnstileScript()
+  await nextTick()
+  renderTurnstile()
+})
+
+onUnmounted(() => {
+  if (turnstileId.value) {
+    (window as any).turnstile.remove(turnstileId.value)
+  }
+})
+
 function switchMode(m: 'login' | 'register') {
   mode.value = m
   errorMsg.value = ''
   password.value = ''
   confirmPassword.value = ''
+  resetTurnstile()
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -40,18 +91,23 @@ async function submit() {
     errorMsg.value = '两次输入的密码不一致'
     return
   }
+  if (!turnstileToken.value) {
+    errorMsg.value = '请先完成人机验证'
+    return
+  }
   loading.value = true
   try {
     if (mode.value === 'login') {
-      await withTimeout(login(username.value.trim(), password.value), 15000, '登录')
+      await withTimeout(login(username.value.trim(), password.value, turnstileToken.value), 15000, '登录')
     } else {
-      await withTimeout(register(username.value.trim(), password.value), 15000, '注册')
+      await withTimeout(register(username.value.trim(), password.value, turnstileToken.value), 15000, '注册')
     }
     // 登录/注册成功后从云端载入该用户的历史数据
     await withTimeout(store.hydrate(), 20000, '数据同步')
     router.replace('/')
   } catch (e: any) {
     errorMsg.value = e?.message || '操作失败，请重试'
+    resetTurnstile()
   } finally {
     loading.value = false
   }
@@ -95,12 +151,15 @@ async function submit() {
             <input v-model="confirmPassword" type="password" class="input" maxlength="128" placeholder="再次输入密码" autocomplete="new-password" />
           </div>
 
+          <!-- Turnstile 人机验证 -->
+          <div ref="turnstileContainer" class="flex justify-center my-1"></div>
+
           <!-- 错误提示 -->
           <div v-if="errorMsg" class="flex items-center gap-2 text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2">
             <span>⚠️</span>{{ errorMsg }}
           </div>
 
-          <button type="submit" class="btn-primary w-full !py-2.5" :disabled="loading">
+          <button type="submit" class="btn-primary w-full !py-2.5" :disabled="loading || !turnstileToken">
             {{ loading ? '请稍候…' : mode === 'login' ? '登 录' : '注册并登录' }}
           </button>
         </form>

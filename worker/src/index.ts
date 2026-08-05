@@ -17,11 +17,13 @@ import { registerPomodoroRoutes } from './api/pomodoro'
 import { registerTodoRoutes } from './api/todos'
 import { registerSettingsRoutes } from './api/settings'
 import { registerMaimemoRoutes } from './proxy/maimemo'
+import { registerWallpaperRoutes } from './proxy/wallpaper'
 import { HttpError } from './db'
 
 export interface Env {
   DB: D1Database
   JWT_SECRET: string
+  TURNSTILE_SECRET: string
 }
 
 /** CORS 允许的来源：本地开发、生产站点、Electron 自定义协议 */
@@ -40,7 +42,7 @@ function isAllowedOrigin(origin: string | null): boolean {
 function corsHeaders(origin: string | null): Record<string, string> {
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-CF-Turnstile-Response',
     'Access-Control-Max-Age': '86400',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
@@ -92,3 +94,4 @@ registerPomodoroRoutes()
 registerTodoRoutes()
 registerSettingsRoutes()
 registerMaimemoRoutes()
+registerWallpaperRoutes()

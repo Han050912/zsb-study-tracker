@@ -41,23 +41,23 @@ export async function restoreSession(): Promise<SessionUser | null> {
 }
 
 // ---------- 注册 ----------
-export async function register(username: string, password: string): Promise<SessionUser> {
+export async function register(username: string, password: string, cfTurnstileToken: string): Promise<SessionUser> {
   username = username.trim()
   // 前置校验与 Worker 端口径一致，保证错误提示即时
   if (username.length < 2) throw new Error('用户名至少 2 个字符')
   if (username.length > 20) throw new Error('用户名最多 20 个字符')
   if (password.length < 6) throw new Error('密码至少 6 位')
   if (password.length > 128) throw new Error('密码最多 128 位')
-  const { token, user } = await authApi.register(username, password)
+  const { token, user } = await authApi.register(username, password, cfTurnstileToken)
   setSession(user, token)
   return user
 }
 
 // ---------- 登录 ----------
-export async function login(username: string, password: string): Promise<SessionUser> {
+export async function login(username: string, password: string, cfTurnstileToken: string): Promise<SessionUser> {
   username = username.trim()
   if (!username || !password) throw new Error('请输入用户名和密码')
-  const { token, user } = await authApi.login(username, password)
+  const { token, user } = await authApi.login(username, password, cfTurnstileToken)
   setSession(user, token)
   return user
 }
