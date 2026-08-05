@@ -41,11 +41,18 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
-.fade-enter-active, .fade-leave-active {
+/* 路由切换只做入场淡入，不做离场动画：
+   1. out-in 模式与异步路由组件配合存在挂载失败风险（离场后新组件不渲染，页面空白）
+   2. 无 mode 时若保留离场淡出，新旧页面会短暂同时占位导致布局跳动
+   因此离场立即隐藏，新页面直接淡入 */
+.fade-enter-active {
   transition: opacity 0.18s ease;
 }
-.fade-enter-from, .fade-leave-to {
+.fade-enter-from {
   opacity: 0;
+}
+.fade-leave-active {
+  display: none;
 }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }

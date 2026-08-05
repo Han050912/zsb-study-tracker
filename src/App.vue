@@ -78,6 +78,10 @@ watch(
 
 const isPomodoro = computed(() => route.path === '/pomodoro')
 const isAuthPage = computed(() => route.path === '/login')
+// 笔记页打开具体笔记时隐藏右上角头像浮层，把顶部右侧让给编辑工具栏
+const isNotesEditing = computed(() =>
+  route.path === '/notes' && (!!route.query.id || route.query.new === '1')
+)
 
 // ---- 侧边栏折叠 / 展开（状态持久化，刷新后保持） ----
 const NAV_COLLAPSED_KEY = 'zsb-nav-collapsed'
@@ -151,8 +155,8 @@ const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboa
       <div v-if="!navCollapsed" class="px-5 py-3 text-[10px] text-slate-400">积分 {{ store.gamification.points }} · 🔥{{ store.gamification.streak }}天</div>
     </aside>
 
-    <!-- 右上角账号头像入口（个人中心 / 切换账号 / 退出登录） -->
-    <div v-if="!hideNav" class="fixed top-3 right-4 z-40">
+    <!-- 右上角账号头像入口（个人中心 / 切换账号 / 退出登录）；笔记编辑态隐藏 -->
+    <div v-if="!hideNav && !isNotesEditing" class="fixed top-3 right-4 z-40">
       <button class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
         title="账号菜单" @click.stop="avatarOpen = !avatarOpen">
         {{ avatarLetter }}
@@ -166,10 +170,10 @@ const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboa
       </div>
     </div>
 
-    <!-- 主内容（非全屏页顶部预留头像入口空间，避免遮挡页面标题栏右侧操作区） -->
-    <main :class="hideNav ? '' : (navCollapsed ? 'md:pl-16' : 'md:pl-56') + ' pb-20 md:pb-6 pt-14'">
+    <!-- 主内容（非全屏页顶部预留头像入口空间，避免遮挡页面标题栏右侧操作区；笔记编辑态不预留，工具栏置顶） -->
+    <main :class="hideNav ? '' : (navCollapsed ? 'md:pl-16' : 'md:pl-56') + ' pb-20 md:pb-6' + (isNotesEditing ? '' : ' pt-14')">
       <RouterView v-slot="{ Component }">
-        <Transition name="fade" mode="out-in">
+        <Transition name="fade">
           <component :is="Component" />
         </Transition>
       </RouterView>
