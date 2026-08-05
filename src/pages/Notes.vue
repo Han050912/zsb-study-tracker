@@ -61,10 +61,12 @@ function backToList() {
 }
 
 function flushIfDirty() {
-  if (dirty.value && draft.value) doSave(true)
+  // 兜底保存（切换笔记/离开页面/关闭页面前）：只写数据，绝不操作路由——
+  // 卸载期间 router.replace 会劫持正在进行的导航，打断 out-in 过渡导致空白页
+  if (dirty.value && draft.value) doSave(true, false)
 }
 
-function doSave(silent = false) {
+function doSave(silent = false, navigate = true) {
   if (!draft.value) return
   if (!draft.value.title?.trim() && !draft.value.content?.trim()) {
     if (!silent) toast('标题与内容均为空，未保存')
@@ -72,8 +74,8 @@ function doSave(silent = false) {
   }
   store.saveNote({ ...draft.value, subjectId: draft.value.subjectId || store.subjects[0]?.id || '' })
   dirty.value = false
-  // 新建保存后，将 URL 切换为该笔记的固定链接
-  if (!draft.value.id) {
+  // 新建保存后，将 URL 切换为该笔记的固定链接（仅用户主动点保存时；兜底保存禁止跳转）
+  if (navigate && !draft.value.id) {
     const created = store.notes.slice().sort((a, b) => b.updatedAt - a.updatedAt)[0]
     if (created) router.replace({ path: '/notes', query: { id: created.id } })
   }
@@ -94,8 +96,10 @@ function removeNote() {
   backToList()
 }
 
-// 路由变化 -> 载入目标笔记；无 id 时清空草稿回到列表态
+// 路由变化 -> 先兜底保存当前未保存改动（watcher 先于 onUnmounted 执行，
+// 若直接清空 dirty/draft，卸载时的 flushIfDirty 会被跳过导致编辑丢失），再载入目标笔记
 watch(selectedId, (id) => {
+  flushIfDirty()
   if (id) {
     const n = store.notes.find(x => x.id === id)
     draft.value = n ? { ...n, tags: [...n.tags] } : null
@@ -184,7 +188,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex h-[calc(100vh-8.5rem)] md:h-[calc(100vh-5rem)] -m-4 md:-m-6">
+  <!-- 编辑态无 pt-14（工具栏置顶），高度按 pt-0 计算；列表态保留 pt-14 -->
+  <div class="flex" :class="isEditing ? 'h-[calc(100vh-5rem)] md:h-[calc(100vh-1.5rem)]' : 'h-[calc(100vh-8.5rem)] md:h-[calc(100vh-5rem)]'">
     <!-- 左侧笔记列表（移动端：编辑时隐藏） -->
     <aside class="w-full md:w-72 shrink-0 flex-col border-r border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800"
       :class="isEditing ? 'hidden md:flex' : 'flex'">
