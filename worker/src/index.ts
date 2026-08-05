@@ -29,6 +29,8 @@ export interface Env {
 /** CORS 允许的来源：本地开发、生产站点、Electron 自定义协议 */
 const ALLOWED_ORIGINS = new Set([
   'https://zsb-study-tracker.sryze.cc',
+  'https://zsb-study-tracker.pages.dev',
+  'https://han050912.github.io',
   'app://localhost'
 ])
 
