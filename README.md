@@ -1,13 +1,3 @@
-<p align="center">
-  <a href="#" style="display:inline-block;padding:10px 18px;border-bottom:2px solid #f78166;font-weight:700;text-decoration:none;color:#f78166;">README</a>
-  <a href="https://github.com/Han050912/zsb-study-tracker/blob/master/CODE_OF_CONDUCT.md" style="display:inline-block;padding:10px 18px;border-bottom:2px solid transparent;text-decoration:none;color:#c9d1d9;">Code of conduct</a>
-  <a href="https://github.com/Han050912/zsb-study-tracker/blob/master/CONTRIBUTING.md" style="display:inline-block;padding:10px 18px;border-bottom:2px solid transparent;text-decoration:none;color:#c9d1d9;">Contributing</a>
-  <a href="https://github.com/Han050912/zsb-study-tracker/blob/master/LICENSE" style="display:inline-block;padding:10px 18px;border-bottom:2px solid transparent;text-decoration:none;color:#c9d1d9;">MIT license</a>
-  <a href="https://github.com/Han050912/zsb-study-tracker/security" style="display:inline-block;padding:10px 18px;border-bottom:2px solid transparent;text-decoration:none;color:#c9d1d9;">Security</a>
-</p>
-
----
-
 <div align="center" style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:40px 20px 24px 20px;margin:16px 0;">
 
 <img src="./public/logo.png" alt="Logo" width="120" style="margin-bottom:8px;" />
