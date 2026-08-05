@@ -532,13 +532,23 @@ export const useAppStore = defineStore('app', {
       this.todos = this.todos.filter(t => t.id !== id)
       this.save()
     },
-    moveTodo(id: string, dir: -1 | 1) {
+    /**
+     * 按拖拽后得到的新顺序排列今日待办：重新分配 order 并去重保存。
+     * orderedIds 为拖拽结束后期望的顺序（仅今日待办 id）；未在列表中的今日待办保持原位追加在末尾。
+     */
+    reorderTodos(orderedIds: string[]) {
       const list = this.todayTodos
-      const idx = list.findIndex(t => t.id === id)
-      const swap = list[idx + dir]
-      if (idx < 0 || !swap) return
-      const a = list[idx]
-      ;[a.order, swap.order] = [swap.order, a.order]
+      const byId = new Map(list.map(t => [t.id, t]))
+      let order = 1
+      const seen = new Set<string>()
+      for (const id of orderedIds) {
+        const t = byId.get(id)
+        if (t) { t.order = order++; seen.add(id) }
+      }
+      // 兜底：列表中存在但未被传入的今日待办，按原顺序追加在末尾
+      for (const t of list) {
+        if (!seen.has(t.id)) t.order = order++
+      }
       this.save()
     },
 

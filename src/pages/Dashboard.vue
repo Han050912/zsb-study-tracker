@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, inject, onUnmounted, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
 import { DEFAULT_QUOTES } from '../data/defaults'
@@ -51,6 +51,87 @@ const heatTotal = computed(() => heatRecords.value.reduce((s, r) => s + r.minute
 function fmtCompletedAt(ts?: number | null) {
   return ts ? dayjs(ts).format('HH:mm') : ''
 }
+
+// ===== 待办拖拽排序（Pointer 事件，统一支持桌面鼠标与移动端触摸）=====
+const listRef = ref<HTMLElement | null>(null)
+/** 拖拽中的待办 id；null 表示当前未拖拽 */
+const draggingId = ref<string | null>(null)
+/** 插入边界处的卡片 id（松手后拖到它前面），用于高亮提示 */
+const overId = ref<string | null>(null)
+/** 拖拽卡片垂直位移像素，配合 transform 让卡片跟手移动 */
+const dragShift = ref(0)
+const pointerStartY = ref(0)
+/** 插入位（在「排除被拖拽项」列表中的下标）；-1 表示尚未移动 */
+let insertIndex = -1
+/** 是否发生了有效位移（区分「点击手柄」与「真实拖拽」，空拖不提交排序） */
+let dragMoved = false
+
+function todoItemEls(): HTMLElement[] {
+  return listRef.value ? Array.from(listRef.value.querySelectorAll<HTMLElement>('[data-todo-item]')) : []
+}
+
+function onPointerDown(e: PointerEvent, id: string) {
+  // 捕获指针，保证移出手柄/浏览器窗口后仍能收到 move/up（含触摸）
+  ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  draggingId.value = id
+  overId.value = null
+  insertIndex = -1
+  dragMoved = false
+  pointerStartY.value = e.clientY
+  dragShift.value = 0
+  window.addEventListener('pointermove', onPointerMove)
+  window.addEventListener('pointerup', onPointerUp)
+  window.addEventListener('pointercancel', onPointerCancel)
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (!draggingId.value) return
+  const delta = e.clientY - pointerStartY.value
+  if (Math.abs(delta) > 4) dragMoved = true
+  dragShift.value = delta
+  // 计算插入位：指针在某卡片中线以上 → 插到它前面；全部越过 → 插到末尾
+  const others = todoItemEls().filter(el => el.dataset.todoItem !== draggingId.value)
+  insertIndex = others.length
+  overId.value = null
+  for (let i = 0; i < others.length; i++) {
+    const rect = others[i].getBoundingClientRect()
+    if (e.clientY < rect.top + rect.height / 2) {
+      insertIndex = i
+      overId.value = others[i].dataset.todoItem!
+      break
+    }
+  }
+}
+
+/** 结束拖拽；commit 为 false（pointercancel）时仅还原状态，不提交排序 */
+function finishDrag(commit: boolean) {
+  window.removeEventListener('pointermove', onPointerMove)
+  window.removeEventListener('pointerup', onPointerUp)
+  window.removeEventListener('pointercancel', onPointerCancel)
+  const id = draggingId.value
+  if (commit && id && dragMoved && insertIndex >= 0) {
+    const all = todoItemEls().map(el => el.dataset.todoItem!)
+    const from = all.indexOf(id)
+    if (from >= 0 && insertIndex !== from) {
+      const rest = all.filter(x => x !== id)
+      rest.splice(insertIndex, 0, id)
+      store.reorderTodos(rest)
+    }
+  }
+  draggingId.value = null
+  overId.value = null
+  dragShift.value = 0
+  insertIndex = -1
+  dragMoved = false
+}
+
+function onPointerUp() { finishDrag(true) }
+function onPointerCancel() { finishDrag(false) }
+
+// 组件卸载（拖拽中切路由等极端情况）兜底清理 window 监听器，防止泄漏
+onUnmounted(() => {
+  if (draggingId.value) finishDrag(false)
+})
 </script>
 
 <template>
@@ -116,19 +197,31 @@ function fmtCompletedAt(ts?: number | null) {
           <button class="btn-primary shrink-0" @click="addTodo">添加</button>
         </div>
         <div v-if="!store.todayTodos.length" class="text-xs text-slate-400 py-4 text-center">暂无待办，添加一个吧～</div>
-        <TransitionGroup tag="div" class="space-y-1.5">
+        <div ref="listRef" class="space-y-1.5">
           <div v-for="t in store.todayTodos" :key="t.id"
-            class="flex items-center gap-2 rounded-lg px-2 py-1.5 group hover:bg-slate-50 dark:hover:bg-slate-700/50">
+            :data-todo-item="t.id"
+            class="flex items-center gap-2 rounded-lg px-2 py-1.5 group hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors select-none"
+            :class="{
+              'opacity-40': draggingId === t.id,
+              'ring-2 ring-primary-400 bg-primary-50 dark:bg-primary-900/30': overId === t.id && draggingId && draggingId !== t.id,
+              'shadow-lg scale-[1.02] cursor-grabbing bg-white dark:bg-slate-800 z-10': draggingId === t.id
+            }"
+            :style="draggingId === t.id ? { transform: `translateY(${dragShift}px)` } : {}">
+            <!-- 拖拽手柄：pointerdown 触发拖拽，桌面/移动端通用 -->
+            <span data-drag-handle
+              class="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 dark:hover:text-slate-300 touch-none shrink-0"
+              title="拖动排序"
+              @pointerdown="onPointerDown($event, t.id)">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            </span>
             <input type="checkbox" :checked="t.done" class="w-4 h-4 accent-primary-500" @change="store.toggleTodo(t.id)" />
             <span class="flex-1 text-sm" :class="t.done ? 'line-through text-slate-400' : ''">
               {{ t.text }}
               <span v-if="t.done && t.completedAt" class="ml-1 inline-block text-[10px] text-emerald-500">完成于 {{ fmtCompletedAt(t.completedAt) }}</span>
             </span>
-            <button class="opacity-0 group-hover:opacity-100 text-xs text-slate-400" title="上移" @click="store.moveTodo(t.id, -1)">↑</button>
-            <button class="opacity-0 group-hover:opacity-100 text-xs text-slate-400" title="下移" @click="store.moveTodo(t.id, 1)">↓</button>
-            <button class="opacity-0 group-hover:opacity-100 text-xs text-red-400" title="删除" @click="store.deleteTodo(t.id)">×</button>
+            <button class="opacity-0 group-hover:opacity-100 text-xs text-red-400 shrink-0" title="删除" @click="store.deleteTodo(t.id)">×</button>
           </div>
-        </TransitionGroup>
+        </div>
       </div>
 
       <div class="card">
