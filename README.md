@@ -1,22 +1,33 @@
-<div align="center">
+<p align="center">
+  <a href="#" style="display:inline-block;padding:10px 18px;border-bottom:2px solid #f78166;font-weight:700;text-decoration:none;color:#f78166;">README</a>
+  <a href="https://github.com/Han050912/zsb-study-tracker/blob/master/CODE_OF_CONDUCT.md" style="display:inline-block;padding:10px 18px;border-bottom:2px solid transparent;text-decoration:none;color:#c9d1d9;">Code of conduct</a>
+  <a href="https://github.com/Han050912/zsb-study-tracker/blob/master/CONTRIBUTING.md" style="display:inline-block;padding:10px 18px;border-bottom:2px solid transparent;text-decoration:none;color:#c9d1d9;">Contributing</a>
+  <a href="https://github.com/Han050912/zsb-study-tracker/blob/master/LICENSE" style="display:inline-block;padding:10px 18px;border-bottom:2px solid transparent;text-decoration:none;color:#c9d1d9;">MIT license</a>
+  <a href="https://github.com/Han050912/zsb-study-tracker/security" style="display:inline-block;padding:10px 18px;border-bottom:2px solid transparent;text-decoration:none;color:#c9d1d9;">Security</a>
+</p>
 
-<img src="./public/logo.png" alt="Logo" width="120" />
+---
 
-# 专升本学习助手
+<div align="center" style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:40px 20px 24px 20px;margin:16px 0;">
+
+<img src="./public/logo.png" alt="Logo" width="120" style="margin-bottom:8px;" />
+
+# [专升本学习助手](https://zsb-study-tracker.sryze.cc/)
 
 **zsb-study-tracker** · 专升本备考打卡管理助手（Web + 桌面端）
 
-学习记录 · 番茄钟 · 游戏化激励 · 数据可视化 · 多账号本地存储
-
-[演示站点](https://zsb-study-tracker.sryze.cc/) · [Issues](https://github.com/Han050912/zsb-study-tracker/issues) · [Releases](https://github.com/Han050912/zsb-study-tracker/releases)
+<span style="color:#8b949e;">学习记录 · 番茄钟 · 游戏化激励 · 数据可视化 · 多账号本地存储</span>
 
 <br/>
 
-[![Version](https://img.shields.io/github/package-json/v/Han050912/zsb-study-tracker?color=blue&label=version)](https://github.com/Han050912/zsb-study-tracker/blob/master/package.json)
-[![License](https://img.shields.io/github/license/Han050912/zsb-study-tracker?color=green)](./LICENSE)
-[![Stars](https://img.shields.io/github/stars/Han050912/zsb-study-tracker?style=social)](https://github.com/Han050912/zsb-study-tracker/stargazers)
-[![Issues](https://img.shields.io/github/issues/Han050912/zsb-study-tracker)](https://github.com/Han050912/zsb-study-tracker/issues)
-[![GitHub Pages](https://img.shields.io/github/deployments/Han050912/zsb-study-tracker/github-pages?label=pages%20deploy)](https://Han050912.github.io/zsb-study-tracker/)
+[![Vue](https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)](https://vuejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-5-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Electron](https://img.shields.io/badge/Electron-43-47848F?style=flat-square&logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![Pinia](https://img.shields.io/badge/Pinia-2-FFD859?style=flat-square&logo=vuedotjs&logoColor=black)](https://pinia.vuejs.org/)
+[![ECharts](https://img.shields.io/badge/ECharts-5-AA344D?style=flat-square&logo=apacheecharts&logoColor=white)](https://echarts.apache.org/)
+[![KaTeX](https://img.shields.io/badge/KaTeX-0.16-222222?style=flat-square&logo=katex&logoColor=white)](https://katex.org/)
 
 </div>
 
@@ -24,166 +35,251 @@
 
 ## 📑 目录
 
-- [项目简介](#-项目简介)
-- [🚀 快速上手](#-快速上手)
-- [📦 安装与部署指南](#-安装与部署指南)
-- [🤝 参与贡献指南](#-参与贡献指南)
-- [📜 许可证 License](#-许可证-license)
-- [📋 更新日志 Changelog](#-更新日志-changelog)
-- [🙏 致谢与引用](#-致谢与引用)
-- [👤 About Me](#-about-me)
-- [⭐ Star History](#-star-history)
-- [☕ 请我喝咖啡](#-请我喝咖啡)
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:20px 24px;margin:16px 0;">
+
+<table align="center">
+  <tr>
+    <td align="center" width="33%" style="padding:6px 12px;"><a href="#-项目简介" style="text-decoration:none;color:#58a6ff;">✨ 项目简介</a></td>
+    <td align="center" width="33%" style="padding:6px 12px;"><a href="#-效果图" style="text-decoration:none;color:#58a6ff;">📸 效果图</a></td>
+    <td align="center" width="33%" style="padding:6px 12px;"><a href="#-快速上手" style="text-decoration:none;color:#58a6ff;">🚀 快速上手</a></td>
+  </tr>
+  <tr>
+    <td align="center" style="padding:6px 12px;"><a href="#-参与贡献指南" style="text-decoration:none;color:#58a6ff;">🤝 贡献指南</a></td>
+    <td align="center" style="padding:6px 12px;"><a href="#-许可证-license" style="text-decoration:none;color:#58a6ff;">📜 许可证</a></td>
+    <td align="center" style="padding:6px 12px;"><a href="#-about-me" style="text-decoration:none;color:#58a6ff;">👤 About Me</a></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3" style="padding:6px 12px;"><a href="#-请我喝咖啡" style="text-decoration:none;color:#58a6ff;">☕ 请我喝咖啡</a></td>
+  </tr>
+</table>
+
+</div>
 
 ---
 
 ## ✨ 项目简介
 
+<div style="background-color:#0d1117;border:1px solid #21262d;border-left:4px solid #f78166;border-radius:4px;padding:20px 24px;margin:16px 0;">
+
 「专升本学习助手」是一款面向专升本考生的**备考打卡管理应用**，提供 **Web 版** 与 **Windows / macOS 桌面版**。所有数据均在本地保存，无需后端服务器，开箱即用、隐私可控。
 
-> 核心定位：把「记录 → 专注 → 激励 → 复盘」串成一条完整的学习闭环。
+</div>
 
-### 功能亮点
+<div style="background-color:#0d1117;border:1px solid #21262d;border-left:4px solid #58a6ff;border-radius:4px;padding:16px 24px;margin:16px 0;">
 
-| 模块 | 说明 |
-| --- | --- |
-| 📊 首页仪表盘 | 今日概览、待办、学习热力图、进度环、考试倒计时、每日名言 |
-| 📐 高等数学 | 考纲章节树、学习计时、刷题记录、掌握度雷达、Markdown + LaTeX 笔记、真题趋势 |
-| 📖 英语 | 逐条背单词打卡、阅读计时、听力记录、作文模板库、笔记检索 |
-| 🛠️ 科目自定义 | 默认高数 / 英语（权重各 50%），支持修改权重、删除、新增任意科目 |
-| 📝 笔记中心 | Markdown 编辑、全文检索，支持本地文件上传与拖拽（.md / .txt） |
-| ❌ 错题本 | 图片上传（Base64）、分类、复习计数 |
-| 🍅 番茄钟 | 正 / 倒计时、白噪音（WebAudio）、中断记录、全屏沉浸 |
-| 🎮 游戏化积分 | 积分、等级（青铜 → 王者）、成就徽章墙、连胜计数，删除记录自动回收积分 |
-| 📅 每日总结 | 自动聚合数据、情绪日志、三段式反思、分享卡片 |
-| 📈 统计中心 | 时长 / 占比 / 正确率 / 题型 / 专注 / 情绪多维图表、周报 |
-| 🔁 习惯追踪 | 四种量化方式、30 天热力、坏习惯克制打卡 |
-| 📚 资料库 | 书籍进度条、链接、笔记摘抄 |
-| 👥 多账号 | 基于 sql.js 的本地注册 / 登录，数据按账号隔离 |
-| 🔔 每日提醒 | 浏览器 / 系统通知定时提醒学习 |
-| 🖥️ 桌面端 | 原生窗口、启动画面、系统托盘、自动更新（electron-updater） |
+> **核心定位**：把「记录 → 专注 → 激励 → 复盘」串成一条完整的学习闭环。
+
+</div>
+
+### 为什么选择这个项目
+
+<table align="center">
+  <tr>
+    <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
+      <strong style="color:#f78166;">🔗 一条龙学习闭环</strong><br/>
+      <span style="color:#8b949e;">每日打卡、番茄钟专注、错题整理、晚间总结反思，备考全流程在一个工具里搞定，不用在多个 App 间来回切换</span>
+    </td>
+    <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
+      <strong style="color:#f78166;">🔒 数据完全归你</strong><br/>
+      <span style="color:#8b949e;">所有学习记录、账号数据都只存在你电脑里，不上传任何服务器，断网也能正常使用</span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
+      <strong style="color:#f78166;">🎮 游戏化让你坚持</strong><br/>
+      <span style="color:#8b949e;">青铜到王者的段位爬升、成就徽章墙、连胜记录，把枯燥的长期备考变成闯关体验</span>
+    </td>
+    <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
+      <strong style="color:#f78166;">📐 高数与英语专项强化</strong><br/>
+      <span style="color:#8b949e;">考纲章节树、Markdown + LaTeX 公式笔记、搭配「墨墨背单词」App 逐条打卡、完形 / 阅读 / 听力 / 作文模板多维记录</span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
+      <strong style="color:#f78166;">⚙️ 科目随你定</strong><br/>
+      <span style="color:#8b949e;">高数和英语是默认科目（权重各 50%），你可以随时调整权重，也能新增或删除任何科目</span>
+    </td>
+    <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
+      <strong style="color:#f78166;">📊 图表一目了然</strong><br/>
+      <span style="color:#8b949e;">学习热力图、掌握度雷达图、正确率趋势、专注时长分布，学习效果全可视化</span>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
+      <strong style="color:#f78166;">🖥️ 桌面端免费可用</strong><br/>
+      <span style="color:#8b949e;">Windows / macOS 原生客户端，常驻系统托盘、定时提醒、自动更新</span>
+    </td>
+    <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
+      <strong style="color:#f78166;">🛡️ 隐私安全零顾虑</strong><br/>
+      <span style="color:#8b949e;">不连后端、不接数据库，你的学习数据永远留在自己的设备上</span>
+    </td>
+  </tr>
+</table>
+
+---
+
+## 📸 效果图
+
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
+
+### 📊 首页仪表盘
+
+<span style="color:#8b949e;">今日概览、待办、学习热力图、科目掌握度与今日名言，一屏掌握当日学习节奏。</span>
+
+<br/><br/>
+
+<img src="./public/screenshots/Home.png" alt="首页仪表盘" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
+
+</div>
+
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
+
+### 📝 笔记中心（Markdown + LaTeX）
+
+<span style="color:#8b949e;">基于 KaTeX 的数学公式渲染，支持 Markdown 全量语法与笔记检索。</span>
+
+<br/><br/>
+
+<img src="./public/screenshots/Notes.png" alt="笔记中心" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
+
+</div>
+
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
+
+### 📖 英语打卡（搭配「墨墨背单词」App）
+
+<span style="color:#8b949e;">与墨墨背单词 App 配合，自定义每日目标，完形、阅读、听力、作文模板多维记录，自动累计积分。</span>
+
+<br/><br/>
+
+<img src="./public/screenshots/English.png" alt="英语打卡" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
+
+</div>
+
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
+
+### 📅 每日总结
+
+<span style="color:#8b949e;">自动聚合今日学习数据，支持情绪日志 + 三段式反思 + 明日计划，一键生成分享卡片。</span>
+
+<br/><br/>
+
+<img src="./public/screenshots/Summary.png" alt="每日总结" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
+
+</div>
+
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
+
+### 🏆 成就激励
+
+<span style="color:#8b949e;">青铜 → 王者段位体系、徽章墙、自我排行榜，让坚持有看得见的回报。</span>
+
+<br/><br/>
+
+<img src="./public/screenshots/Rewards.png" alt="成就激励" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
+
+</div>
 
 ---
 
 ## 🚀 快速上手
 
-### 在线预览
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:20px 24px;margin:16px 0;">
 
-- **演示站点**：https://zsb-study-tracker.sryze.cc/
-- **GitHub Pages**：https://Han050912.github.io/zsb-study-tracker/
+> 你电脑上需要先装好 **Node.js 18 或更高版本**（可以去 [nodejs.org](https://nodejs.org) 下载安装包，像装普通软件一样下一步就行）。
 
-### 本地快速启动
+</div>
 
-> 环境要求：**Node.js 18+**
+### 在浏览器里跑起来
+
+打开终端（Windows 按 `Win+R` 输入 `cmd`，Mac 打开「终端」），依次敲下面几条命令：
 
 ```bash
-# 克隆仓库
+# 把项目代码下载到本地
 git clone https://github.com/Han050912/zsb-study-tracker.git
 cd zsb-study-tracker
 
-# 安装依赖
+# 安装项目需要的依赖包（第一次会比较慢，后面就快了）
 npm install
 
-# 启动 Web 开发服务器
+# 启动开发服务器，浏览器会自动打开页面
 npm run dev
 ```
 
-启动后访问终端输出的本地地址（默认 `http://localhost:5173/`）即可使用。
-
----
-
-## 📦 安装与部署指南
-
-### 本地开发环境搭建
+### 在桌面客户端里跑起来
 
 ```bash
-# 1. 安装依赖
-npm install
-
-# 2. Web 开发（Vite 热更新）
-npm run dev
-
-# 3. 桌面端开发（Vite Dev Server + Electron 热调试）
+# 浏览器和桌面端同时启动，改代码两边都会自动刷新
 npm run electron:dev
 ```
 
-### GitHub Pages 自动化部署（推荐 Action 方案）
+### 打包成安装文件
 
-在仓库中新建 `.github/workflows/deploy.yml`：
-
-```yaml
-name: Deploy to GitHub Pages
-
-on:
-  push:
-    branches: [master]
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install & Build
-        run: |
-          npm ci
-          npm run build
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./dist
-
-      - name: Deploy
-        uses: actions/deploy-pages@v4
-```
-
-然后在仓库 **Settings → Pages** 中将 Source 选为 **GitHub Actions** 即可。
-
-### 桌面端打包构建说明
+想把应用打包成 `.exe` 或 `.dmg` 发给同学用？跑下面命令就行：
 
 ```bash
-# 打包 Windows 安装包（NSIS，输出到 release/）
-npm run dist:win
-
-# 打包 macOS 安装包（DMG，需在 macOS 上执行）
-npm run dist:mac
-
-# 按当前系统平台打包
-npm run dist
+npm run dist:win    # 打包 Windows 安装包，输出在 release/ 文件夹
+npm run dist:mac    # 打包 Mac 安装包（需要在 Mac 电脑上执行）
+npm run dist        # 自动识别你当前的系统来打包
 ```
 
-> 桌面端通过自定义 `app://` 安全协议加载本地静态资源，保证加密 API、IndexedDB、Web Worker 等能力可用；内置 electron-updater 自动更新，新版本发布至 GitHub Releases 后会推送提醒。
+打包好的桌面端会自动检查新版本并提示更新，不需要手动下载覆盖。
 
 ---
 
 ## 🤝 参与贡献指南
 
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:20px 24px;margin:16px 0;">
+
 欢迎任何形式的贡献！标准流程如下：
 
-1. **Fork** 本仓库到你的账号
-2. **新建分支**：`git checkout -b feat/your-feature`（或 `fix/xxx`）
-3. **编码** 并本地验证
-4. **提交 PR** 到本仓库的 `development` 分支
+<br/>
+
+<table align="center">
+  <tr>
+    <td align="center" width="25%" style="padding:12px;">
+      <span style="display:inline-block;background-color:#1f6feb;color:#fff;border-radius:50%;width:28px;height:28px;line-height:28px;text-align:center;font-weight:700;font-size:14px;">1</span>
+      <br/><strong>Fork</strong><br/>
+      <span style="color:#8b949e;font-size:13px;">本仓库到你的账号</span>
+    </td>
+    <td align="center" width="25%" style="padding:12px;">
+      <span style="display:inline-block;background-color:#1f6feb;color:#fff;border-radius:50%;width:28px;height:28px;line-height:28px;text-align:center;font-weight:700;font-size:14px;">2</span>
+      <br/><strong>新建分支</strong><br/>
+      <span style="color:#8b949e;font-size:13px;"><code>feat/xxx</code> 或 <code>fix/xxx</code></span>
+    </td>
+    <td align="center" width="25%" style="padding:12px;">
+      <span style="display:inline-block;background-color:#1f6feb;color:#fff;border-radius:50%;width:28px;height:28px;line-height:28px;text-align:center;font-weight:700;font-size:14px;">3</span>
+      <br/><strong>编码</strong><br/>
+      <span style="color:#8b949e;font-size:13px;">本地验证通过</span>
+    </td>
+    <td align="center" width="25%" style="padding:12px;">
+      <span style="display:inline-block;background-color:#1f6feb;color:#fff;border-radius:50%;width:28px;height:28px;line-height:28px;text-align:center;font-weight:700;font-size:14px;">4</span>
+      <br/><strong>提交 PR</strong><br/>
+      <span style="color:#8b949e;font-size:13px;">到 <code>development</code> 分支</span>
+    </td>
+  </tr>
+</table>
+
+</div>
 
 ### 代码规范
+
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px 24px;margin:16px 0;">
 
 - 使用 **TypeScript**，遵循 Vue 3 `<script setup>` 风格
 - 样式统一使用 **Tailwind CSS**，移动端优先响应式
 - 保持现有目录结构与命名风格
 
+</div>
+
 ### 提交规范
+
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px 24px;margin:16px 0;">
 
 - 遵循 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)：`feat:` / `fix:` / `docs:` / `refactor:` 等
 - 示例：`feat: 新增单词背诵统计图表`
+
+</div>
 
 ### 反馈与建议
 
@@ -194,77 +290,49 @@ npm run dist
 
 ## 📜 许可证 License
 
-本项目基于 [MIT License](./LICENSE) 开源。
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px 24px;margin:16px 0;text-align:center;">
 
----
-
-## 📋 更新日志 Changelog
-
-完整的版本更新记录请前往 **[Releases 页面](https://github.com/Han050912/zsb-study-tracker/releases)** 查看。
-
-每个版本的说明遵循如下格式：
-
-```markdown
-## v1.x.x
-
-### ✨ 新增
-- ...
-
-### 🐞 修复
-- ...
-
-### ⚡ 优化
-- ...
-```
-
----
-
-## 🙏 致谢与引用
-
-本项目站在众多优秀开源项目的肩膀上：
-
-- [Vue 3](https://vuejs.org/) · [Vite](https://vite.dev/) · [TypeScript](https://www.typescriptlang.org/)
-- [Tailwind CSS](https://tailwindcss.com/) · [Pinia](https://pinia.vuejs.org/)
-- [sql.js](https://github.com/sql-js/sql.js) · [ECharts](https://echarts.apache.org/) · [KaTeX](https://katex.org/)
-- [Electron](https://www.electronjs.org/) · [electron-builder](https://www.electron.build/) · [electron-updater](https://github.com/electron-userland/electron-updater)
-- [markdown-it](https://github.com/markdown-it/markdown-it) · [dayjs](https://day.js.org/)
-- Logo 图标来自 Microsoft [Fluent Emoji](https://github.com/microsoft/fluentui-emoji)（MIT License）
-
----
-
-## 👤 About Me
-
-**Han050912** · 一名正在备考专升本、热爱折腾工具的开发者。
-
-- 🏠 仓库地址：https://github.com/Han050912/zsb-study-tracker
-- 🌐 演示站点：https://zsb-study-tracker.sryze.cc/
-
----
-
-## ⭐ Star History
-
-<a href="https://www.star-history.com/#Han050912/zsb-study-tracker&type=Date">
-  <img src="https://api.star-history.com/svg?repos=Han050912/zsb-study-tracker&type=Date" alt="Star History Chart" />
-</a>
-
----
-
-## ☕ 请我喝咖啡
-
-如果这个项目对你有帮助，欢迎请我喝杯咖啡，让工具持续迭代下去 ☕
-
-<div align="center">
-
-| 微信支付 | 支付宝 |
-| :---: | :---: |
-| <img src="https://your-domain.com/wechat-pay-qrcode.png" alt="微信支付" width="200" /> | <img src="https://your-domain.com/alipay-qrcode.png" alt="支付宝" width="200" /> |
+本项目基于 <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT License" /></a> 开源。
 
 </div>
 
 ---
 
-<div align="center">
+## 👤 About Me
 
-**如果这个项目对你有帮助，请不吝点亮一个 ⭐ Star，你的支持是我持续更新的最大动力！**
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:16px 0;text-align:center;">
+
+**Han050912** · 一名正在备考专升本、热爱折腾工具的开发者。
+
+<br/>
+
+<a href="https://blog.csdn.net/hajai?spm=1000.2115.3001.5343">
+  <img src="https://img.shields.io/badge/博客-CSDN-fc5531?style=for-the-badge&logo=rss&logoColor=white" alt="CSDN 博客" />
+</a>
+<a href="https://x.com/hanhaoyi888">
+  <img src="https://img.shields.io/badge/X-@hanhaoyi888-000000?style=for-the-badge&logo=x&logoColor=white" alt="X (Twitter)" />
+</a>
+<a href="https://discord.gg/49C9ZGqX4">
+  <img src="https://img.shields.io/badge/Discord-加入服务器-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" />
+</a>
+<a href="https://t.me/hanhaoyi888">
+  <img src="https://img.shields.io/badge/Telegram-@hanhaoyi888-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram" />
+</a>
+
+</div>
+
+---
+
+## ☕ 请我喝咖啡
+
+<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:16px 0;text-align:center;">
+
+如果这个项目对你有帮助，欢迎请我喝杯咖啡，让工具持续迭代下去 ☕
+
+<br/>
+
+| 微信支付 | 支付宝 |
+| :---: | :---: |
+| <img src="./public/donate/wechat.jpg" alt="微信支付" width="220" style="border-radius:8px;" /> | <img src="./public/donate/alipay.jpg" alt="支付宝" width="220" style="border-radius:8px;" /> |
 
 </div>
