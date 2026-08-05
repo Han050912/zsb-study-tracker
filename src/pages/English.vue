@@ -6,7 +6,9 @@ import SubjectPanel from '../components/SubjectPanel.vue'
 import Modal from '../components/Modal.vue'
 import { uid, today } from '../utils/date'
 import { BUILTIN_TEMPLATES } from '../data/englishTemplates'
-import { fetchMaimemoToday } from '../services/maimemo'
+import { fetchMaimemoToday, fetchMaimemoTodayDetail } from '../services/maimemo'
+import type { MaimemoWordDetail } from '../services/maimemo'
+import VocabCheckList from '../components/VocabCheckList.vue'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
@@ -56,11 +58,17 @@ async function syncMaimemo() {
       toast('墨墨今日暂无已完成背诵（请在 App 内开启自动同步并完成今日学习后再试）')
       return
     }
+    // 同步数据直接回填「本次新学 / 本次复习」输入框，直观展示墨墨最新数据
+    newWords.value = data.newWords
+    reviewWords.value = data.reviewWords
     // 防重复：同日同数量视为已同步
     const dup = eng.value.vocab.some(v => v.date === today() && v.newWords === data.newWords && v.reviewWords === data.reviewWords)
     if (dup) { toast('今日墨墨数据已同步，无需重复打卡'); return }
+    // 直接保存为今日词汇打卡记录（含积分奖励，store 内自动持久化）
     store.addVocabRecord(data.newWords, data.reviewWords)
     toast(`已同步墨墨今日数据：新学 ${data.newWords} · 复习 ${data.reviewWords}`)
+    // 顺带拉取今日单词明细，打卡列表一并更新（失败不影响同步结果）
+    loadTodayWords()
   } catch (e: any) {
     toast(e?.message || '同步失败，请检查网络后重试')
   } finally {
@@ -84,6 +92,62 @@ const vocabByDate = computed(() => {
   }
   return days
 })
+
+// ---- 墨墨今日单词明细（词汇打卡列表） ----
+/** 今日单词本地缓存键（按日期隔离） */
+const WORDS_CACHE_KEY = `maimemo-today-words:${today()}`
+
+/** 从本地缓存恢复今日单词（界面切换/页面跳转/组件卸载后自动恢复） */
+function loadCachedWords(): MaimemoWordDetail[] {
+  try {
+    const raw = localStorage.getItem(WORDS_CACHE_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+/** 拉取成功后立即持久化，保证数据可靠性 */
+function persistWords(words: MaimemoWordDetail[]) {
+  try {
+    localStorage.setItem(WORDS_CACHE_KEY, JSON.stringify(words))
+  } catch { /* 存储满时静默失败 */ }
+}
+
+/** 清理历史日期的词汇缓存（单词列表 + 打卡状态），避免 localStorage 无限累积 */
+function cleanStaleVocabCache() {
+  try {
+    const stale: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && (k.startsWith('maimemo-today-words:') || k.startsWith('vocab-checkin:')) && !k.endsWith(today())) stale.push(k)
+    }
+    stale.forEach(k => localStorage.removeItem(k))
+  } catch { /* 忽略 */ }
+}
+cleanStaleVocabCache()
+
+// 初始值直接读缓存：返回本页时无需重新拉取即可恢复已保存的单词
+const todayWords = ref<MaimemoWordDetail[]>(loadCachedWords())
+const loadingWords = ref(false)
+
+/** 拉取墨墨今日全部单词明细（含释义），供打卡列表使用 */
+async function loadTodayWords() {
+  const token = (store.settings.maimemoToken || '').trim()
+  if (!token) { toast('请先填写并保存墨墨开放 API Token'); return }
+  if (loadingWords.value) return
+  loadingWords.value = true
+  try {
+    const words = await fetchMaimemoTodayDetail()
+    todayWords.value = words
+    persistWords(words)
+    if (!words.length) toast('墨墨今日暂无单词数据（请先在 App 中完成学习并开启自动同步）')
+  } catch (e: any) {
+    toast(e?.message || '拉取单词明细失败')
+  } finally {
+    loadingWords.value = false
+  }
+}
 
 // ---- 阅读 ----
 const readWpm = ref(80)
@@ -238,6 +302,11 @@ const { el: vocabEl } = useChart(() => {
           </div>
         </div>
       </div>
+      <!-- 今日词汇打卡列表（表头与刷新按钮由组件内部统一管理） -->
+      <div class="card !p-0 overflow-hidden">
+        <VocabCheckList :words="todayWords" :loading="loadingWords" @refresh="loadTodayWords" />
+      </div>
+
       <div class="card">
         <div class="section-title">近 14 个打卡日词汇量</div>
         <div ref="vocabEl" class="h-52"></div>

@@ -13,6 +13,16 @@ export interface MaimemoToday {
   total: number
 }
 
+/** 今日单词明细（用于词汇打卡列表） */
+export interface MaimemoWordDetail {
+  vocId: string
+  spelling: string
+  isNew: boolean
+  isFinished: boolean
+  /** 标准中文释义（墨墨官方释义，可能为空字符串） */
+  meaning: string
+}
+
 /** 拉取今日背诵数据 + 学习进度（合并为一次调用） */
 export async function fetchMaimemoToday(): Promise<MaimemoToday> {
   const [today, progress] = await Promise.all([
@@ -25,4 +35,10 @@ export async function fetchMaimemoToday(): Promise<MaimemoToday> {
     finished: progress.finished,
     total: progress.total
   }
+}
+
+/** 拉取今日全部单词明细（含拼写 + 标准释义），用于词汇打卡列表 */
+export async function fetchMaimemoTodayDetail(): Promise<MaimemoWordDetail[]> {
+  const res = await request<{ words: MaimemoWordDetail[] }>('/api/proxy/maimemo/today-detail', { method: 'POST' })
+  return res.words || []
 }
