@@ -81,6 +81,8 @@ const radarTopics = computed(() => {
   if (!s) return []
   return s.chapters.flatMap(c => c.topics).slice(0, 8)
 })
+/** 掌握度数值快照：computed 读取每个 topic 的掌握度，属性变更时重算并产出新数组（配合 useChart 浅监听触发重绘） */
+const radarValues = computed(() => radarTopics.value.map(t => subject.value?.mastery[t] || 0))
 const { el: radarEl } = useChart(() => ({
   radar: {
     indicator: radarTopics.value.map(t => ({ name: t, max: 5 })),
@@ -90,14 +92,14 @@ const { el: radarEl } = useChart(() => ({
   series: [{
     type: 'radar',
     data: [{
-      value: radarTopics.value.map(t => subject.value?.mastery[t] || 0),
+      value: radarValues.value,
       name: '掌握度',
       areaStyle: { color: (subject.value?.color || '#3b82f6') + '44' },
       lineStyle: { color: subject.value?.color || '#3b82f6' },
       itemStyle: { color: subject.value?.color || '#3b82f6' }
     }]
   }]
-}), [radarTopics, () => subject.value?.mastery])
+}), [radarTopics, radarValues])
 
 // ---- 真题 ----
 const showExamModal = ref(false)

@@ -21,27 +21,63 @@ const rankRange = ref<7 | 30>(7)
 const rankDays = computed(() => Array.from({ length: rankRange.value }, (_, i) =>
   dayjs().subtract(rankRange.value - 1 - i, 'day').format('YYYY-MM-DD')))
 
-const { el: pointsEl } = useChart(() => {
-  let cum = store.gamification.pointsLog
-    .filter(l => l.date < rankDays.value[0])
-    .reduce((s, l) => s + l.points, 0)
-  const daily = rankDays.value.map(d => store.gamification.pointsLog.filter(l => l.date === d).reduce((s, l) => s + l.points, 0))
+// 提取为响应式数据，供 useChart 依赖追踪（积分新增时自动重绘）
+const pointsTrend = computed(() => {
+  const logs = store.gamification.pointsLog
+  // 基准：所选区间第一天之前的历史累计积分（折线起点不从 0 开始）
+  const start = rankDays.value[0]
+  let cum = 0
+  const dailyByDate: Record<string, number> = {}
+  for (const l of logs) {
+    if (l.date < start) cum += l.points
+    else dailyByDate[l.date] = (dailyByDate[l.date] || 0) + l.points
+  }
+  const daily = rankDays.value.map(d => dailyByDate[d] || 0)
   const cumulative = daily.map(v => (cum += v))
+  return { daily, cumulative }
+})
+
+const { el: pointsEl } = useChart(() => {
+  const { daily, cumulative } = pointsTrend.value
   return {
     grid: { left: 40, right: 40, top: 30, bottom: 24 },
     legend: { textStyle: { color: chartTextColor(), fontSize: 10 } },
     xAxis: { type: 'category', data: rankDays.value.map(d => d.slice(5)), axisLabel: { color: chartTextColor(), fontSize: 10 } },
+    // 双 Y 轴均从 0 起，避免 ECharts 自动 min 让折线起点看似异常
     yAxis: [
-      { type: 'value', name: '日积分', axisLabel: { color: chartTextColor() } },
-      { type: 'value', name: '累计', axisLabel: { color: chartTextColor() } }
+      { type: 'value', name: '日积分', min: 0, axisLabel: { color: chartTextColor() } },
+      { type: 'value', name: '累计', min: 0, axisLabel: { color: chartTextColor() } }
     ],
     series: [
-      { name: '每日获得', type: 'bar', data: daily, itemStyle: { color: '#f59e0b', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 16 },
-      { name: '累计积分', type: 'line', yAxisIndex: 1, smooth: true, data: cumulative, lineStyle: { color: '#3b82f6' }, itemStyle: { color: '#3b82f6' } }
+      {
+        name: '每日获得', type: 'bar', data: daily,
+        itemStyle: { color: '#f59e0b', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 16
+      },
+      {
+        name: '累计积分', type: 'line', yAxisIndex: 1, smooth: true, data: cumulative,
+        lineStyle: { color: '#3b82f6', width: 2 }, itemStyle: { color: '#3b82f6' },
+        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [
+          { offset: 0, color: 'rgba(59,130,246,0.18)' }, { offset: 1, color: 'rgba(59,130,246,0)' }
+        ] } },
+        symbol: 'circle', symbolSize: 6
+      }
     ],
-    tooltip: { trigger: 'axis' }
+    tooltip: {
+      trigger: 'axis',
+      formatter: (ps: any) => {
+        const list = Array.isArray(ps) ? ps : [ps]
+        const d = rankDays.value[list[0]?.dataIndex ?? 0]
+        if (!d) return ''
+        const idx = list[0].dataIndex
+        return [
+          `📅 ${d}`,
+          `每日新增：+${daily[idx] ?? 0} 分`,
+          `累计积分：${cumulative[idx] ?? 0} 分`
+        ].join('<br>')
+      }
+    }
   }
-}, [rankDays])
+}, [rankDays, pointsTrend])
 
 const stats = computed(() => [
   { label: '累计学习', value: formatMinutes(store.totalMinutes), icon: '⏱' },
@@ -119,6 +155,7 @@ const stats = computed(() => [
         </div>
       </div>
       <div ref="pointsEl" class="h-56"></div>
+      <p class="text-[10px] text-slate-400 mt-2">柱为每日新增积分，折线为当日累计积分（含区间前历史积分）</p>
     </div>
 
     <!-- 积分日志 -->
