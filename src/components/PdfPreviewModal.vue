@@ -31,12 +31,17 @@ async function loadDoc() {
     loadingTask = getDocument({ data: buf })
     doc = await loadingTask.promise
     pageCount.value = doc.numPages
-    await renderPage()
   } catch (e: unknown) {
     console.error('PDF preview load failed:', e)
     loadError.value = classifyPdfError(e)
+    doc = null
   } finally {
     loading.value = false
+  }
+  // canvas 需要在 loading=false 后才挂载到 DOM，因此渲染必须放在这里
+  if (doc) {
+    await nextTick()
+    await renderPage()
   }
 }
 
