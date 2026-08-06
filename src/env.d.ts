@@ -1,5 +1,10 @@
 /// <reference types="vite/client" />
 
+/** 编译期常量：桌面端（Electron）构建标识，由 vite.config.ts define 注入 */
+declare const __DESKTOP_BUILD__: boolean
+/** 编译期常量：桌面端认证令牌，Worker 校验以跳过 Turnstile */
+declare const __DESKTOP_TOKEN__: string
+
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
   const component: DefineComponent<{}, {}, any>
