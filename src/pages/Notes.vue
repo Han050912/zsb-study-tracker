@@ -3,7 +3,7 @@ import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { renderMarkdown } from '../utils/markdown'
-import { extractPdfText } from '../utils/pdf'
+import { extractPdfText, classifyPdfError } from '../utils/pdf'
 import PdfPreviewModal from '../components/PdfPreviewModal.vue'
 import type { Note } from '../types'
 
@@ -169,8 +169,9 @@ async function importPdfAsNote() {
     store.importNotes(draftSubjectForImport(), [{ title: result.title, content: result.content, tags: ['导入', 'PDF'] }])
     toast(`已导入 PDF（${result.pages} 页）为笔记`)
     showPdf.value = false
-  } catch {
-    toast('PDF 解析失败，文件可能已损坏')
+  } catch (e: unknown) {
+    console.error('PDF import failed:', e)
+    toast(classifyPdfError(e))
   } finally {
     importing.value = false
   }
