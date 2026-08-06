@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { login, register } from '../services/auth'
 import { useAppStore } from '../stores/app'
@@ -14,62 +14,22 @@ const confirmPassword = ref('')
 const errorMsg = ref('')
 const loading = ref(false)
 
-// ---- Turnstile 人机验证 ----
-const TURNSTILE_SITEKEY = '0x4AAAAAAEGLRGric6eUYnOv'
-const turnstileContainer = ref<HTMLDivElement>()
-const turnstileId = ref('')
+// ---- Turnstile 人机验证（仅 Web 端） ----
+// __DESKTOP_BUILD__ 为编译期常量：桌面端构建时为 true，
+// defineAsyncComponent 分支被 Rollup 视为死代码整体剔除，TurnstileWidget 不进入桌面产物
+const isDesktop = __DESKTOP_BUILD__
+const TurnstileWidget = isDesktop
+  ? null
+  : defineAsyncComponent(() => import('../components/TurnstileWidget.vue'))
+const turnstileWidget = ref<{ reset: () => void } | null>(null)
 const turnstileToken = ref('')
-
-function loadTurnstileScript(): Promise<void> {
-  return new Promise((resolve) => {
-    if ((window as any).turnstile) { resolve(); return }
-    const script = document.createElement('script')
-    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
-    script.async = true
-    script.defer = true
-    script.onload = () => resolve()
-    // 加载失败（网络/CSP 拦截）也 resolve，避免 onMounted 永久悬挂；验证区保持为空并在提交时提示
-    script.onerror = () => { errorMsg.value = '人机验证组件加载失败，请检查网络后刷新页面'; resolve() }
-    document.head.appendChild(script)
-  })
-}
-
-function renderTurnstile() {
-  if (!turnstileContainer.value || !(window as any).turnstile) return
-  turnstileId.value = (window as any).turnstile.render(turnstileContainer.value, {
-    sitekey: TURNSTILE_SITEKEY,
-    theme: 'light',
-    callback: (token: string) => { turnstileToken.value = token },
-    'error-callback': () => {},
-    'expired-callback': () => { turnstileToken.value = '' },
-  })
-}
-
-function resetTurnstile() {
-  if (turnstileId.value) {
-    (window as any).turnstile.reset(turnstileId.value)
-    turnstileToken.value = ''
-  }
-}
-
-onMounted(async () => {
-  await loadTurnstileScript()
-  await nextTick()
-  renderTurnstile()
-})
-
-onUnmounted(() => {
-  if (turnstileId.value) {
-    (window as any).turnstile.remove(turnstileId.value)
-  }
-})
 
 function switchMode(m: 'login' | 'register') {
   mode.value = m
   errorMsg.value = ''
   password.value = ''
   confirmPassword.value = ''
-  resetTurnstile()
+  turnstileWidget.value?.reset()
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -91,7 +51,7 @@ async function submit() {
     errorMsg.value = '两次输入的密码不一致'
     return
   }
-  if (!turnstileToken.value) {
+  if (!isDesktop && !turnstileToken.value) {
     errorMsg.value = '请先完成人机验证'
     return
   }
@@ -107,7 +67,7 @@ async function submit() {
     router.replace('/')
   } catch (e: any) {
     errorMsg.value = e?.message || '操作失败，请重试'
-    resetTurnstile()
+    turnstileWidget.value?.reset()
   } finally {
     loading.value = false
   }
@@ -151,15 +111,16 @@ async function submit() {
             <input v-model="confirmPassword" type="password" class="input" maxlength="128" placeholder="再次输入密码" autocomplete="new-password" />
           </div>
 
-          <!-- Turnstile 人机验证 -->
-          <div ref="turnstileContainer" class="flex justify-center my-1"></div>
+          <!-- Turnstile 人机验证（仅 Web 端渲染，桌面端产物不含此组件） -->
+          <TurnstileWidget v-if="!isDesktop" ref="turnstileWidget" v-model:token="turnstileToken"
+            @load-error="errorMsg = '人机验证组件加载失败（可能当前域名未在 Cloudflare Turnstile 白名单中），请检查网络后刷新页面'" />
 
           <!-- 错误提示 -->
           <div v-if="errorMsg" class="flex items-center gap-2 text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2">
             <span>⚠️</span>{{ errorMsg }}
           </div>
 
-          <button type="submit" class="btn-primary w-full !py-2.5" :disabled="loading || !turnstileToken">
+          <button type="submit" class="btn-primary w-full !py-2.5" :disabled="loading || (!isDesktop && !turnstileToken)">
             {{ loading ? '请稍候…' : mode === 'login' ? '登 录' : '注册并登录' }}
           </button>
         </form>
