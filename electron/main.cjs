@@ -48,17 +48,42 @@ function setupAutoUpdater() {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
   }
 
+  /**
+   * 从 GitHub API 拉取指定 tag 的 Release 正文（releaseNotes 兜底）。
+   * electron-updater 的 update-available 事件中 releaseNotes 可能为空（API 限流/静默失败），
+   * 此时主动调用 GitHub Releases API 获取发布说明。
+   */
+  function fetchReleaseNotes(version) {
+    return net.fetch(`https://api.github.com/repos/Han050912/zsb-study-tracker/releases/tags/v${version}`, {
+      headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': APP_NAME }
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => (d && d.body) ? d.body : '')
+      .catch(() => '')
+  }
+
   autoUpdater.on('update-available', (info) => {
     // releaseNotes 可能是字符串（Markdown）或 [{version, note}] 数组，统一规整为字符串
     let notes = ''
     if (typeof info.releaseNotes === 'string') notes = info.releaseNotes
     else if (Array.isArray(info.releaseNotes)) notes = info.releaseNotes.map(n => n.note || '').filter(Boolean).join('\n')
-    send('update:available', {
+
+    const payload = {
       version: info.version,
       releaseName: info.releaseName || '',
-      // 发布说明取自 GitHub Release 正文（Markdown），渲染层负责分组渲染
       releaseNotes: notes,
       releaseDate: info.releaseDate || ''
+    }
+
+    if (notes.trim()) {
+      send('update:available', payload)
+      return
+    }
+
+    // electron-updater 未返回 releaseNotes 时，从 GitHub API 兜底拉取
+    fetchReleaseNotes(info.version).then(fetched => {
+      payload.releaseNotes = fetched
+      send('update:available', payload)
     })
   })
 

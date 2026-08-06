@@ -22,6 +22,8 @@ export async function request<T>(
     ...(options.headers as Record<string, string> || {})
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
+  // 桌面端附加认证令牌，Worker 校验以跳过 Turnstile（Web 构建此分支整体 tree-shake）
+  if (__DESKTOP_BUILD__) headers['X-Desktop-Token'] = __DESKTOP_TOKEN__
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
   if (res.status === 401 && !CREDENTIAL_PATHS.includes(path)) {

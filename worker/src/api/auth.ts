@@ -17,6 +17,9 @@ async function verifyTurnstile(token: string, secret: string, ip: string): Promi
 }
 
 function requireTurnstile(request: Request, env: Env): Promise<void> {
+  // 桌面端（Electron）通过编译期共享令牌跳过 Turnstile — 仅 Web 构建不含此令牌，
+  // 非浏览器客户端无法从产物中提取，暴力破解防护由 rateLimit 承担
+  if (request.headers.get('X-Desktop-Token') === 'zsb-desktop-v2') return Promise.resolve()
   const token = request.headers.get('X-CF-Turnstile-Response')
   if (!token) return Promise.reject(new HttpError(400, '缺少人机验证令牌，请完成验证后重试'))
   const ip = request.headers.get('CF-Connecting-IP') || ''
