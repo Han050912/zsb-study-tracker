@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
-import { getDocument } from 'pdfjs-dist'
+import { getDocument, classifyPdfError } from '../utils/pdf'
+import type { PDFDocumentLoadingTask } from 'pdfjs-dist/types/src/display/api'
 import Modal from './Modal.vue'
 
 /**
@@ -16,6 +17,7 @@ const pageCount = ref(0)
 const loading = ref(false)
 const loadError = ref('')
 
+let loadingTask: PDFDocumentLoadingTask | null = null
 let doc: any = null
 let renderSeq = 0 // 渲染序号：翻页/关闭竞态时丢弃过期渲染
 
@@ -26,11 +28,13 @@ async function loadDoc() {
   pageNum.value = 1
   try {
     const buf = await props.file.arrayBuffer()
-    doc = await getDocument({ data: buf }).promise
+    loadingTask = getDocument({ data: buf })
+    doc = await loadingTask.promise
     pageCount.value = doc.numPages
     await renderPage()
-  } catch {
-    loadError.value = 'PDF 加载失败，文件可能已损坏或受密码保护'
+  } catch (e: unknown) {
+    console.error('PDF preview load failed:', e)
+    loadError.value = classifyPdfError(e)
   } finally {
     loading.value = false
   }
@@ -73,7 +77,8 @@ watch(() => props.show, async (v) => {
     await loadDoc()
   } else {
     renderSeq++
-    if (doc) { doc.destroy().catch(() => {}); doc = null }
+    if (loadingTask) { loadingTask.destroy().catch(() => {}); loadingTask = null }
+    doc = null
     pageCount.value = 0
     loadError.value = ''
   }

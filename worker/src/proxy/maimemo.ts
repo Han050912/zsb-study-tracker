@@ -31,7 +31,8 @@ async function maimemoToken(env: Env, userId: string): Promise<string> {
 }
 
 function unwrap<T>(res: Response, wrapper: any): T {
-  if (res.status === 401 || res.status === 403) throw new HttpError(401, '墨墨 Token 无效或已过期，请重新获取')
+  // 使用 403 而非 401，避免前端将墨墨 Token 失效误判为「用户登录过期」强制登出
+  if (res.status === 401 || res.status === 403) throw new HttpError(403, '墨墨 Token 无效或已过期，请重新获取')
   if (!res.ok) throw new HttpError(502, `墨墨接口请求失败（HTTP ${res.status}）`)
   if (wrapper?.errors?.length || wrapper?.error?.code) {
     throw new HttpError(502, wrapper?.errors?.[0]?.message || wrapper?.error?.message || '墨墨接口返回错误')
