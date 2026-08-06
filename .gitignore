@@ -21,10 +21,11 @@ coverage/
 
 # ===== 环境变量（可能含密钥/令牌/个人信息）=====
 # 密钥、令牌、账号密码、API 凭据等一律不提交
-.env
+# .env 含公开的 Worker 地址，提交以确保 CI 构建使用正确 API_BASE
 .env.*
 !.env.example
 *.env
+!.env
 .env.local
 .env.development.local
 .env.test.local
