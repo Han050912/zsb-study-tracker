@@ -41,7 +41,7 @@ export async function restoreSession(): Promise<SessionUser | null> {
 }
 
 // ---------- 注册 ----------
-export async function register(username: string, password: string, cfTurnstileToken: string): Promise<SessionUser> {
+export async function register(username: string, password: string, cfTurnstileToken = ''): Promise<SessionUser> {
   username = username.trim()
   // 前置校验与 Worker 端口径一致，保证错误提示即时
   if (username.length < 2) throw new Error('用户名至少 2 个字符')
@@ -54,7 +54,7 @@ export async function register(username: string, password: string, cfTurnstileTo
 }
 
 // ---------- 登录 ----------
-export async function login(username: string, password: string, cfTurnstileToken: string): Promise<SessionUser> {
+export async function login(username: string, password: string, cfTurnstileToken = ''): Promise<SessionUser> {
   username = username.trim()
   if (!username || !password) throw new Error('请输入用户名和密码')
   const { token, user } = await authApi.login(username, password, cfTurnstileToken)
