@@ -52,14 +52,46 @@ function setupAutoUpdater() {
    * 从 GitHub API 拉取指定 tag 的 Release 正文（releaseNotes 兜底）。
    * electron-updater 的 update-available 事件中 releaseNotes 可能为空（API 限流/静默失败），
    * 此时主动调用 GitHub Releases API 获取发布说明。
+   * 使用 node:https 替代 net.fetch，避免 Electron net 模块对 HTTPS 外部请求的不稳定支持。
    */
   function fetchReleaseNotes(version) {
-    return net.fetch(`https://api.github.com/repos/Han050912/zsb-study-tracker/releases/tags/v${version}`, {
-      headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': APP_NAME }
+    const url = `https://api.github.com/repos/Han050912/zsb-study-tracker/releases/tags/v${version}`
+    return new Promise((resolve) => {
+      const https = require('node:https')
+      const req = https.get(url, {
+        headers: {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'zsb-desktop'
+        }
+      }, (res) => {
+        let data = ''
+        res.on('data', (chunk) => { data += chunk })
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            console.error(`[fetchReleaseNotes] GitHub API status: ${res.statusCode}, body: ${data.slice(0, 200)}`)
+            resolve('')
+            return
+          }
+          try {
+            const json = JSON.parse(data)
+            console.log(`[fetchReleaseNotes] fetched body length: ${json.body ? json.body.length : 0}`)
+            resolve(json.body || '')
+          } catch (err) {
+            console.error('[fetchReleaseNotes] JSON parse error:', err.message)
+            resolve('')
+          }
+        })
+      })
+      req.on('error', (err) => {
+        console.error('[fetchReleaseNotes] request error:', err.message)
+        resolve('')
+      })
+      req.setTimeout(8000, () => {
+        console.error('[fetchReleaseNotes] request timeout')
+        req.destroy()
+        resolve('')
+      })
     })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => (d && d.body) ? d.body : '')
-      .catch(() => '')
   }
 
   autoUpdater.on('update-available', (info) => {
