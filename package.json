@@ -1,7 +1,7 @@
 {
   "name": "zsb-study-tracker",
   "private": true,
-  "version": "2.0.2",
+  "version": "2.0.3-beta.1",
   "type": "module",
   "main": "electron/main.cjs",
   "description": "专升本学习打卡管理助手（Web + 桌面端）",
