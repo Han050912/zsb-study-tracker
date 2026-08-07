@@ -98,15 +98,18 @@ function goAccount() {
   avatarOpen.value = false
   router.push('/account')
 }
-/** 切换账号 / 退出登录：先保存数据再清理会话 */
+/** 切换账号 / 退出登录：立即退出，数据保存不阻塞 UI */
 async function accountLogout(switchAccount: boolean) {
   avatarOpen.value = false
   const tip = switchAccount ? '切换账号？当前数据将被保存。' : '确认退出登录？数据将被保存到云端。'
   if (!window.confirm(tip)) return
-  if (!(await store.saveAsync())) {
-    toastRef.value?.show('保存失败，请稍后再试')
-    return
-  }
+
+  // ① 清空待推送的防抖定时器，用 beacon 异步发送（不阻塞）
+  store.flushSave()
+  // ② 再发起一次完整的 fetch 保存（不阻塞退出流程，静默失败）
+  store.saveAsync().catch(() => {})
+
+  // ③ 立即清理会话状态并跳转登录页
   logout()
   store.resetState()
   router.replace('/login')
