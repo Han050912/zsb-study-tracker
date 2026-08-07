@@ -49,18 +49,24 @@ function setupAutoUpdater() {
   }
 
   /**
-   * 从 GitHub API 拉取指定 tag 的 Release 正文（releaseNotes 兜底）。
-   * electron-updater 的 update-available 事件中 releaseNotes 可能为空（API 限流/静默失败），
-   * 此时主动调用 GitHub Releases API 获取发布说明。
+   * 从 Worker 中转接口拉取 GitHub Release 信息（releaseNotes 兜底）。
+   *
+   * 问题背景：国内网络直接访问 api.github.com 存在严重的匿名限流与连接不稳定，
+   * electron-updater 的 update-available 事件中 releaseNotes 几乎始终为空。
+   *
+   * 解决方案：Worker 服务端携带 GITHUB_TOKEN（PAT）请求 GitHub API，
+   * 绕过匿名限流，客户端绝不接触令牌。Worker 端点：/api/latest-release
+   *
    * 使用 node:https 替代 net.fetch，避免 Electron net 模块对 HTTPS 外部请求的不稳定支持。
+   * 6 秒超时 + 全量异常捕获，失败不阻塞更新弹窗。
    */
   function fetchReleaseNotes(version) {
-    const url = `https://api.github.com/repos/Han050912/zsb-study-tracker/releases/tags/v${version}`
+    const url = 'https://cn.zsbservice.de5.net/api/latest-release'
     return new Promise((resolve) => {
       const https = require('node:https')
       const req = https.get(url, {
         headers: {
-          'Accept': 'application/vnd.github+json',
+          'Accept': 'application/json',
           'User-Agent': 'zsb-desktop'
         }
       }, (res) => {
@@ -68,28 +74,36 @@ function setupAutoUpdater() {
         res.on('data', (chunk) => { data += chunk })
         res.on('end', () => {
           if (res.statusCode !== 200) {
-            console.error(`[fetchReleaseNotes] GitHub API status: ${res.statusCode}, body: ${data.slice(0, 200)}`)
-            resolve('')
+            console.error(`[fetchReleaseNotes] Worker API status: ${res.statusCode}, body: ${data.slice(0, 200)}`)
+            resolve({ notes: '', releaseDate: '' })
             return
           }
           try {
             const json = JSON.parse(data)
-            console.log(`[fetchReleaseNotes] fetched body length: ${json.body ? json.body.length : 0}`)
-            resolve(json.body || '')
+            if (!json.success || !json.data) {
+              console.error('[fetchReleaseNotes] Worker API returned success=false or missing data')
+              resolve({ notes: '', releaseDate: '' })
+              return
+            }
+            const release = json.data
+            const notes = release.body || ''
+            const releaseDate = release.published_at || ''
+            console.log(`[fetchReleaseNotes] fetched body length: ${notes.length}, published: ${releaseDate}`)
+            resolve({ notes, releaseDate })
           } catch (err) {
             console.error('[fetchReleaseNotes] JSON parse error:', err.message)
-            resolve('')
+            resolve({ notes: '', releaseDate: '' })
           }
         })
       })
       req.on('error', (err) => {
         console.error('[fetchReleaseNotes] request error:', err.message)
-        resolve('')
+        resolve({ notes: '', releaseDate: '' })
       })
-      req.setTimeout(8000, () => {
-        console.error('[fetchReleaseNotes] request timeout')
+      req.setTimeout(6000, () => {
+        console.error('[fetchReleaseNotes] request timeout (6s)')
         req.destroy()
-        resolve('')
+        resolve({ notes: '', releaseDate: '' })
       })
     })
   }
@@ -112,9 +126,10 @@ function setupAutoUpdater() {
       return
     }
 
-    // electron-updater 未返回 releaseNotes 时，从 GitHub API 兜底拉取
-    fetchReleaseNotes(info.version).then(fetched => {
-      payload.releaseNotes = fetched
+    // electron-updater 未返回 releaseNotes 时，通过 Worker 中转接口兜底拉取
+    fetchReleaseNotes(info.version).then(({ notes: fetchedNotes, releaseDate: fetchedDate }) => {
+      payload.releaseNotes = fetchedNotes
+      if (fetchedDate && !payload.releaseDate) payload.releaseDate = fetchedDate
       send('update:available', payload)
     })
   })
