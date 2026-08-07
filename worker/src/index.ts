@@ -18,12 +18,14 @@ import { registerTodoRoutes } from './api/todos'
 import { registerSettingsRoutes } from './api/settings'
 import { registerMaimemoRoutes } from './proxy/maimemo'
 import { registerWallpaperRoutes } from './proxy/wallpaper'
+import { registerReleaseRoutes } from './api/release'
 import { HttpError } from './db'
 
 export interface Env {
   DB: D1Database
   JWT_SECRET: string
   TURNSTILE_SECRET: string
+  GITHUB_TOKEN?: string
 }
 
 /** CORS 允许的来源：本地开发、生产站点、Electron 自定义协议 */
@@ -97,3 +99,4 @@ registerTodoRoutes()
 registerSettingsRoutes()
 registerMaimemoRoutes()
 registerWallpaperRoutes()
+registerReleaseRoutes()

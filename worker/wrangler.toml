@@ -14,3 +14,5 @@ database_id = "627fbd6f-d81b-48d2-9603-ef5ae333c2a3"
 
 [vars]
 # 非敏感配置（JWT_SECRET 通过 Cloudflare 控制台设置加密变量，不写入此文件）
+# GITHUB_TOKEN 也需通过 Cloudflare Dashboard > Workers > Settings > Secrets 配置
+# 用于 /api/latest-release 携带 PAT 请求 GitHub API，绕过匿名限流
