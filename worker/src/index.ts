@@ -20,6 +20,7 @@ import { registerMaimemoRoutes } from './proxy/maimemo'
 import { registerWallpaperRoutes } from './proxy/wallpaper'
 import { registerReleaseRoutes } from './api/release'
 import { HttpError } from './db'
+import { canCache, getCached, putCache } from './middleware/cache'
 
 export interface Env {
   DB: D1Database
@@ -57,7 +58,7 @@ function corsHeaders(origin: string | null): Record<string, string> {
 }
 
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const origin = request.headers.get('Origin')
     const cors = corsHeaders(origin)
 
@@ -67,8 +68,23 @@ export default {
     }
 
     try {
+      // 高频只读 GET 请求走边缘缓存
+      if (canCache(request)) {
+        const cached = await getCached(request)
+        if (cached) {
+          for (const [k, v] of Object.entries(cors)) cached.headers.set(k, v)
+          return cached
+        }
+      }
+
       const res = await route(request, env)
       for (const [k, v] of Object.entries(cors)) res.headers.set(k, v)
+
+      // 缓存成功的 200 响应
+      if (canCache(request) && res.status === 200) {
+        putCache(request, res.clone(), ctx)
+      }
+
       return res
     } catch (e) {
       const status = e instanceof HttpError ? e.status : 500
