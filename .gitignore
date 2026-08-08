@@ -80,6 +80,8 @@ temp/
 
 # ===== 工具/IDE 工作目录 =====
 .codebuddy/
+.claude/
+.codex/
 
 # ===== Cloudflare Worker 本地状态与密钥 =====
 worker/.dev.vars
