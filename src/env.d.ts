@@ -27,4 +27,8 @@ interface Window {
     available: boolean
     show: (title: string, body: string) => void
   }
+  /** 托盘菜单导航桥接：主进程 IPC 触发页面跳转 */
+  nav?: {
+    onNav: (cb: (route: { path: string; query?: Record<string, string> }) => void) => void
+  }
 }

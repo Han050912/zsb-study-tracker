@@ -122,6 +122,11 @@ function isNavActive(path: string) {
 }
 const hideNav = computed(() => isPomodoro.value || isAuthPage.value)
 const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboarded)
+
+// Electron IPC: 托盘菜单触发页面导航
+if (window.nav) {
+  window.nav.onNav((route) => router.push(route))
+}
 </script>
 
 <template>

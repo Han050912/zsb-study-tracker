@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, inject, ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor } from '../composables/useChart'
 import SubjectPanel from '../components/SubjectPanel.vue'
@@ -11,12 +12,19 @@ import type { MaimemoWordDetail } from '../services/maimemo'
 import VocabCheckList from '../components/VocabCheckList.vue'
 
 const store = useAppStore()
+const route = useRoute()
 const toast = inject<(m: string) => void>('toast', () => {})
 const eng = computed(() => store.english)
 // 「英语」科目可能被用户在设置页删除，此时页面整体隐藏
 const subjectExists = computed(() => !!store.subjectMap.english)
 
 const tab = ref<'panel' | 'vocab' | 'reading' | 'listening' | 'templates'>('panel')
+onMounted(() => {
+  const t = route.query.tab as string
+  if (['panel', 'vocab', 'reading', 'listening', 'templates'].includes(t)) {
+    tab.value = t as typeof tab.value
+  }
+})
 
 // ---- 词汇（逐条打卡记录） ----
 const newWords = ref(30)
