@@ -281,12 +281,17 @@ function createMainWindow() {
   else mainWindow.loadURL('app://localhost/index.html')
 }
 
-/** 系统托盘：图标 + 右键菜单（显示主界面 / 退出），单击切换窗口显隐 */
+/** 系统托盘：图标 + 右键菜单（快捷操作 / 显示主界面 / 退出），单击切换窗口显隐 */
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'logo.png'))
   tray = new Tray(icon.resize({ width: 18, height: 18 }))
   tray.setToolTip(APP_NAME)
   tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '开始专注', click: () => { showMainWindow(); mainWindow.webContents.send('nav', { path: '/pomodoro' }) } },
+    { label: '今日总结', click: () => { showMainWindow(); mainWindow.webContents.send('nav', { path: '/daily-summary' }) } },
+    { label: '快速笔记', click: () => { showMainWindow(); mainWindow.webContents.send('nav', { path: '/notes' }) } },
+    { label: '今日词汇', click: () => { showMainWindow(); mainWindow.webContents.send('nav', { path: '/english', query: { tab: 'vocab' } }) } },
+    { type: 'separator' },
     { label: '显示主界面', click: () => showMainWindow() },
     { type: 'separator' },
     { label: '退出', click: () => { isQuitting = true; app.quit() } }

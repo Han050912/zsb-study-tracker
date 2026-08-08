@@ -30,3 +30,8 @@ contextBridge.exposeInMainWorld('desktopNotify', {
   /** 弹出系统原生通知 */
   show: (title, body) => ipcRenderer.send('notify:show', { title, body })
 })
+
+// 托盘菜单导航桥接：主进程通过 IPC 触发渲染进程页面跳转
+contextBridge.exposeInMainWorld('nav', {
+  onNav: (cb) => ipcRenderer.on('nav', (_e, route) => cb(route))
+})
