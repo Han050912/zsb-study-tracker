@@ -117,6 +117,11 @@ const showShare = ref(false)
 function openShare() {
   if (save()) showShare.value = true
 }
+
+function copyShareText() {
+  const text = `我正在用「专升本学习助手」备考，今日专注 ${formatMinutes(dayData.value.minutes)}，完成 ${dayData.value.pTotal} 道题，连续学习 🔥${store.gamification.streak} 天！\n👉 https://github.com/Han050912/zsb-study-tracker`
+  navigator.clipboard.writeText(text).then(() => toast('分享文案已复制'))
+}
 </script>
 
 <template>
@@ -294,7 +299,12 @@ function openShare() {
       <div v-if="showShare" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" @click.self="showShare = false">
         <div class="max-w-sm w-full">
           <div class="rounded-3xl overflow-hidden shadow-2xl bg-gradient-to-br from-primary-500 via-indigo-500 to-purple-600 text-white p-6">
-            <div class="text-xs opacity-80">{{ editDate }} · 专升本备考打卡</div>
+            <!-- Logo + 品牌 -->
+            <div class="flex items-center gap-2 mb-3">
+              <img src="/logo.png" alt="Logo" class="w-6 h-6 rounded" onerror="this.style.display='none'" />
+              <span class="text-xs font-medium opacity-90">专升本学习助手</span>
+            </div>
+            <div class="text-xs opacity-80">{{ editDate }} · 备考打卡</div>
             <div class="text-2xl font-black mt-1">{{ store.settings.userName }} 的学习日报</div>
             <div class="grid grid-cols-2 gap-3 mt-5">
               <div class="bg-white/15 backdrop-blur rounded-2xl p-3 text-center">
@@ -316,10 +326,13 @@ function openShare() {
             </div>
             <div v-if="form.mood" class="mt-3 text-sm">今日心情：{{ form.mood }}</div>
             <div v-if="form.harvest" class="mt-2 text-xs bg-white/10 rounded-xl p-3 leading-relaxed">🌱 {{ form.harvest.slice(0, 100) }}</div>
-            <div class="mt-4 text-[10px] opacity-70 text-center">—— 专升本学习助手 · 坚持就是胜利 ——</div>
+            <div class="mt-4 text-[10px] opacity-70 text-center">github.com/Han050912/zsb-study-tracker</div>
           </div>
-          <p class="text-center text-white/70 text-xs mt-3">截图保存卡片，分享给一起备考的伙伴吧 📸</p>
-          <button class="btn-ghost w-full mt-2" @click="showShare = false">关闭</button>
+          <p class="text-center text-white/70 text-xs mt-3">长按保存图片，分享到备考群，和朋友一起上岸！📸</p>
+          <div class="flex gap-2 mt-2">
+            <button class="btn-ghost flex-1" @click="copyShareText">📋 复制分享文案</button>
+            <button class="btn-ghost flex-1" @click="showShare = false">关闭</button>
+          </div>
         </div>
       </div>
     </Teleport>
