@@ -567,6 +567,13 @@ export const useAppStore = defineStore('app', {
       this.pomodoro.interruptions.push({ date: t, reason, time: Date.now() })
       this.save()
     },
+    /** 记录中断/提前结束的部分时长（不增加完成次数、不加积分） */
+    recordPartialSession(minutes: number) {
+      const t = today()
+      if (!this.pomodoro.partialSessions) this.pomodoro.partialSessions = []
+      this.pomodoro.partialSessions.push({ date: t, minutes, time: Date.now() })
+      this.save()
+    },
 
     /** 背单词逐条打卡：每次背诵单独生成一条记录 */
     addVocabRecord(newWords: number, reviewWords: number) {

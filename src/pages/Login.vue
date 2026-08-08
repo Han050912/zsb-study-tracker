@@ -23,6 +23,14 @@ const TurnstileWidget = isDesktop
   : defineAsyncComponent(() => import('../components/TurnstileWidget.vue'))
 const turnstileWidget = ref<{ reset: () => void } | null>(null)
 const turnstileToken = ref('')
+const turnstileKey = ref(0)          // 递增以强制重新挂载 TurnstileWidget
+const turnstileError = ref(false)    // Turnstile 加载失败的独立状态
+
+function retryTurnstile() {
+  turnstileError.value = false
+  turnstileToken.value = ''
+  turnstileKey.value++
+}
 
 function switchMode(m: 'login' | 'register') {
   mode.value = m
@@ -112,10 +120,20 @@ async function submit() {
           </div>
 
           <!-- Turnstile 人机验证（仅 Web 端渲染，桌面端产物不含此组件） -->
-          <TurnstileWidget v-if="!isDesktop" ref="turnstileWidget" v-model:token="turnstileToken"
-            @load-error="errorMsg = '人机验证组件加载失败（可能当前域名未在 Cloudflare Turnstile 白名单中），请检查网络后刷新页面'" />
+          <TurnstileWidget v-if="!isDesktop" :key="turnstileKey" ref="turnstileWidget" v-model:token="turnstileToken"
+            @load-error="turnstileError = true" />
 
-          <!-- 错误提示 -->
+          <!-- Turnstile 加载失败（含手动重试） -->
+          <div v-if="turnstileError" class="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2 space-y-1.5">
+            <div class="flex items-center gap-2">
+              <span>⚠️</span>人机验证组件加载失败（Cloudflare CDN 在国内可能不稳定），请尝试刷新页面或使用代理/加速器后重试
+            </div>
+            <button type="button"
+              class="text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 underline cursor-pointer"
+              @click="retryTurnstile">→ 点击重试</button>
+          </div>
+
+          <!-- 其他错误 -->
           <div v-if="errorMsg" class="flex items-center gap-2 text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2">
             <span>⚠️</span>{{ errorMsg }}
           </div>
