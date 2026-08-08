@@ -19,6 +19,15 @@
 [![ECharts](https://img.shields.io/badge/ECharts-5-AA344D?style=flat-square&logo=apacheecharts&logoColor=white)](https://echarts.apache.org/)
 [![KaTeX](https://img.shields.io/badge/KaTeX-0.16-222222?style=flat-square&logo=katex&logoColor=white)](https://katex.org/)
 
+<br/>
+
+[![Pages Deploy](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-pages.yml)
+[![Worker Deploy](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-worker.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-worker.yml)
+
+<br/>
+
+> [:arrow_right: English version](./README_EN.md)
+
 </div>
 
 ---
