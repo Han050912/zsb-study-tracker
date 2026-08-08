@@ -15,6 +15,33 @@ const phase = ref<'idle' | 'focus' | 'break'>('idle')
 const seconds = ref(0)
 const running = ref(false)
 let handle: ReturnType<typeof setInterval> | null = null
+/** 当前计时段的起始时间戳（Date.now()），暂停后重新赋值 */
+let startTimestamp = 0
+/** 暂停前已累计的秒数，恢复计时后与新的时间差累加 */
+let pausedElapsed = 0
+
+// ---- 控制按钮自动隐藏 ----
+const controlsVisible = ref(true)
+let hideControlsTimer: ReturnType<typeof setTimeout> | null = null
+
+function handleMouseMove(e: MouseEvent) {
+  // 配置页始终显示按钮
+  if (phase.value === 'idle') {
+    controlsVisible.value = true
+    return
+  }
+  const threshold = 100
+  if (e.clientY > window.innerHeight - threshold) {
+    // 鼠标在底部区域：显示按钮并取消隐藏定时器
+    controlsVisible.value = true
+    if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
+  } else if (controlsVisible.value) {
+    // 鼠标离开底部区域：启动 3 秒后隐藏
+    if (!hideControlsTimer) {
+      hideControlsTimer = setTimeout(() => { controlsVisible.value = false }, 3000)
+    }
+  }
+}
 
 const display = computed(() => {
   const s = mode.value === 'countdown' && phase.value !== 'idle'
@@ -23,54 +50,86 @@ const display = computed(() => {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 })
 
+/** 基于时间戳计算已流逝秒数，后台节流/休眠后恢复也能得到准确值 */
 function tick() {
-  seconds.value++
+  seconds.value = pausedElapsed + Math.floor((Date.now() - startTimestamp) / 1000)
   if (mode.value === 'countdown') {
     const total = (phase.value === 'focus' ? focusMinutes.value : breakMinutes.value) * 60
     if (seconds.value >= total) completePhase()
   }
 }
 
+/** 停止计时器并将当前段的时间累加到 pausedElapsed（纯计时操作，无 UI 副作用） */
+function stopTimer() {
+  running.value = false
+  if (handle) clearInterval(handle)
+  pausedElapsed += Math.floor((Date.now() - startTimestamp) / 1000)
+}
+
+/** 页面从后台恢复可见时立即校准计时显示，并检查是否已到达结束时间 */
+function handleVisibilityChange() {
+  if (!document.hidden && running.value) tick()
+}
+
 function start() {
   if (phase.value === 'idle') {
     phase.value = 'focus'
     seconds.value = 0
+    pausedElapsed = 0
     document.documentElement.requestFullscreen?.().catch(() => {})
     startBgRotation()
+    // 进入专注时显示按钮 3 秒后自动隐藏
+    controlsVisible.value = true
+    if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
+    hideControlsTimer = setTimeout(() => { controlsVisible.value = false }, 3000)
   }
+  startTimestamp = Date.now()
   running.value = true
   handle = setInterval(tick, 1000)
 }
 
 function pause() {
-  running.value = false
-  if (handle) clearInterval(handle)
+  stopTimer()
+  // 暂停时保持按钮可见更久，方便用户看到「继续」按钮
+  controlsVisible.value = true
+  if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
+  hideControlsTimer = setTimeout(() => { controlsVisible.value = false }, 8000)
 }
 
 function completePhase() {
-  pause()
+  stopTimer()
   if (phase.value === 'focus') {
     store.recordPomodoro(focusMinutes.value)
     toast(`🍅 完成一个番茄钟！+5 积分`)
     phase.value = 'break'
     seconds.value = 0
-    if (mode.value === 'countdown') start()
+    pausedElapsed = 0
+    if (mode.value === 'countdown') {
+      startTimestamp = Date.now()
+      running.value = true
+      handle = setInterval(tick, 1000)
+    }
   } else {
     phase.value = 'idle'
     seconds.value = 0
+    pausedElapsed = 0
     stopBgRotation()
     toast('休息结束，继续加油！')
   }
 }
 
 function giveUp() {
-  pause()
-  if (phase.value === 'focus' && mode.value === 'countup' && seconds.value >= 60) {
-    store.recordPomodoro(Math.round(seconds.value / 60))
-    toast(`已记录 ${Math.round(seconds.value / 60)} 分钟专注`)
+  // 先计算已流逝秒数（stopTimer 会将当前段累加到 pausedElapsed）
+  const elapsed = pausedElapsed + Math.floor((Date.now() - startTimestamp) / 1000)
+  stopTimer()
+  if (phase.value === 'focus' && elapsed >= 60) {
+    const minutes = Math.round(elapsed / 60)
+    store.recordPartialSession(minutes)
+    toast(`已记录 ${minutes} 分钟专注（未计入完成次数）`)
   }
   phase.value = 'idle'
   seconds.value = 0
+  pausedElapsed = 0
   stopBgRotation()
   document.exitFullscreen?.().catch(() => {})
 }
@@ -153,11 +212,16 @@ function randomQuote() {
 onMounted(() => {
   randomQuote()
   clockHandle = setInterval(() => { now.value = new Date() }, 1000)
+  window.addEventListener('mousemove', handleMouseMove)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 onUnmounted(() => {
-  pause()
+  stopTimer()
   stopBgRotation()
   if (clockHandle) clearInterval(clockHandle)
+  if (hideControlsTimer) clearTimeout(hideControlsTimer)
+  window.removeEventListener('mousemove', handleMouseMove)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
 const recentInterruptions = computed(() => store.pomodoro.interruptions.slice(-5).reverse())
@@ -248,8 +312,11 @@ const totalFocusMin = computed(() => Object.values(store.pomodoro.daily).reduce(
         </div>
       </div>
 
-      <!-- 控制按钮（底部，低干扰） -->
-      <div class="absolute bottom-8 inset-x-0 flex gap-3 justify-center px-6">
+      <!-- 控制按钮（底部，低干扰，鼠标滑至底部自动唤起） -->
+      <div
+        class="absolute bottom-8 inset-x-0 flex gap-3 justify-center px-6 transition-all duration-500 ease-out"
+        :class="controlsVisible ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'"
+      >
         <button v-if="running" class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="pause">⏸ 暂停</button>
         <button v-else class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="start">▶ 继续</button>
         <button v-if="phase === 'focus'" class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="showInterrupt = true">⚠️ 被打断</button>

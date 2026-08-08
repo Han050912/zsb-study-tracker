@@ -158,6 +158,8 @@ export interface Gamification {
 export interface PomodoroStat {
   daily: Record<string, { count: number; minutes: number; interruptions: number }>
   interruptions: { date: string; reason: string; time: number }[]
+  /** 中断/提前结束的部分时长记录（不计入完成次数和总时长） */
+  partialSessions: { date: string; minutes: number; time: number }[]
 }
 
 /** 待办 */

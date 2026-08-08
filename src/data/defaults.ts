@@ -94,7 +94,7 @@ export function createDefaultState(): AppState {
     ],
     materials: [],
     gamification: { points: 0, streak: 0, lastCheckin: '', achievements: [], pointsLog: [] },
-    pomodoro: { daily: {}, interruptions: [] },
+    pomodoro: { daily: {}, interruptions: [], partialSessions: [] },
     todos: [],
     settings: {
       userName: '升本人',
