@@ -11,8 +11,6 @@ import dayjs from 'dayjs'
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 
-const showMore = ref(false)
-
 const quote = computed(() => {
   const list = store.settings.quotes.length ? store.settings.quotes : DEFAULT_QUOTES
   const idx = Math.floor(Date.now() / 86400000) % list.length
@@ -33,6 +31,9 @@ function subjectPercent(subjectId: string) {
   const sum = topics.reduce((acc, t) => acc + (s.mastery[t] || 0), 0)
   return (sum / (topics.length * 5)) * 100
 }
+
+// ---- 快捷入口折叠 ----
+const showQuickLinks = ref(false)
 
 const newTodo = ref('')
 function addTodo() {
@@ -142,7 +143,7 @@ onUnmounted(() => {
     <div class="flex items-center justify-between">
       <div>
         <h1 class="page-title">你好，{{ store.settings.userName }} 👋</h1>
-        <p class="text-xs text-slate-400 mt-0.5">{{ today() }}</p>
+        <p class="text-xs text-slate-400 mt-0.5">{{ today() }} · 连续学习 🔥{{ store.gamification.streak }} 天</p>
       </div>
       <div class="text-right">
         <div class="text-xs text-slate-400">{{ store.level.name }}学者</div>
@@ -150,25 +151,94 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 核心聚焦区：进度环 + 指标 -->
-    <div class="card flex flex-col sm:flex-row items-center gap-4 py-6">
-      <ProgressRing :percent="goalPercent" :color="'var(--color-primary-500)'" :size="120" />
-      <div class="flex-1 space-y-3 text-sm">
-        <div class="flex items-center gap-2">
-          <span class="text-slate-400">今日专注</span>
-          <span class="text-2xl font-black text-primary-500">{{ formatMinutes(store.todayMinutes) }}</span>
-          <span class="text-xs text-slate-400">/ {{ formatMinutes(store.settings.dailyGoalMinutes) }} 目标</span>
+    <!-- 倒计时 + 名言 -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div class="card bg-gradient-to-br from-primary-500 to-indigo-600 !text-white border-0">
+        <div class="text-xs opacity-80">🎯 距离专升本考试</div>
+        <div v-if="store.examCountdown !== null" class="mt-1">
+          <template v-if="store.examCountdown > 0">
+            <span class="text-4xl font-black">{{ store.examCountdown }}</span><span class="ml-1">天</span>
+          </template>
+          <div v-else class="text-2xl font-black">就是今天，加油！💪</div>
         </div>
-        <div class="flex flex-wrap gap-3">
-          <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-orange-50 dark:bg-orange-900/20 text-orange-600 text-xs font-medium">
-            🔥 连续打卡 {{ store.gamification.streak }} 天
-          </span>
-          <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-purple-50 dark:bg-purple-900/20 text-purple-600 text-xs font-medium">
-            🏆 {{ store.level.name }}学者
-          </span>
-          <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 text-xs font-medium">
-            🍅 {{ store.todayPomodoro.count }} 个番茄
-          </span>
+        <RouterLink v-else to="/settings" class="text-sm underline opacity-90 mt-2 inline-block">去设置考试日期 →</RouterLink>
+        <div class="text-xs opacity-80 mt-2">{{ store.examCountdown === 0 ? '沉着应考，你付出的每一分努力都算数！' : '坚持到底，就是胜利！' }}</div>
+      </div>
+      <div class="card flex flex-col justify-center">
+        <div class="text-xs text-slate-400 mb-1">📜 今日名言</div>
+        <p class="text-sm font-medium leading-relaxed">{{ quote }}</p>
+      </div>
+    </div>
+
+    <!-- 今日概览 -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div class="card !p-3 text-center">
+        <div class="text-2xl font-black text-primary-500">{{ formatMinutes(store.todayMinutes) }}</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">今日学习时长</div>
+        <div class="w-full h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full mt-2 overflow-hidden">
+          <div class="h-full bg-primary-400 rounded-full transition-all duration-700" :style="{ width: goalPercent + '%' }"></div>
+        </div>
+        <div class="text-[10px] text-slate-400 mt-1">目标 {{ formatMinutes(store.settings.dailyGoalMinutes) }}</div>
+      </div>
+      <div class="card !p-3 text-center">
+        <div class="text-2xl font-black text-emerald-500">{{ todayDoneTodos }}/{{ store.todayTodos.length }}</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">今日待办完成</div>
+      </div>
+      <div class="card !p-3 text-center">
+        <div class="text-2xl font-black text-orange-500">{{ store.todayPomodoro.count }}</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">今日番茄钟</div>
+      </div>
+      <div class="card !p-3 text-center">
+        <div class="text-2xl font-black text-purple-500">{{ store.gamification.streak }}</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">连续学习天数</div>
+      </div>
+    </div>
+
+    <!-- 待办 + 进度环 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="card">
+        <div class="section-title">📋 今日待办</div>
+        <div class="flex gap-2 mb-3">
+          <input v-model="newTodo" class="input" placeholder="添加今日学习任务，回车确认" @keyup.enter="addTodo" />
+          <button class="btn-primary shrink-0" @click="addTodo">添加</button>
+        </div>
+        <div v-if="!store.todayTodos.length" class="text-xs text-slate-400 py-4 text-center">暂无待办，添加一个吧～</div>
+        <div ref="listRef" class="space-y-1.5">
+          <div v-for="t in store.todayTodos" :key="t.id"
+            :data-todo-item="t.id"
+            class="flex items-center gap-2 rounded-lg px-2 py-1.5 group hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors select-none"
+            :class="{
+              'opacity-40': draggingId === t.id,
+              'ring-2 ring-primary-400 bg-primary-50 dark:bg-primary-900/30': overId === t.id && draggingId && draggingId !== t.id,
+              'shadow-lg scale-[1.02] cursor-grabbing bg-white dark:bg-slate-800 z-10': draggingId === t.id
+            }"
+            :style="draggingId === t.id ? { transform: `translateY(${dragShift}px)` } : {}">
+            <!-- 拖拽手柄：pointerdown 触发拖拽，桌面/移动端通用 -->
+            <span data-drag-handle
+              class="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 dark:hover:text-slate-300 touch-none shrink-0"
+              title="拖动排序"
+              @pointerdown="onPointerDown($event, t.id)">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+            </span>
+            <input type="checkbox" :checked="t.done" class="w-4 h-4 accent-primary-500" @change="store.toggleTodo(t.id)" />
+            <span class="flex-1 text-sm" :class="t.done ? 'line-through text-slate-400' : ''">
+              {{ t.text }}
+              <span v-if="t.done && t.completedAt" class="ml-1 inline-block text-[10px] text-emerald-500">完成于 {{ fmtCompletedAt(t.completedAt) }}</span>
+            </span>
+            <button class="opacity-0 group-hover:opacity-100 text-xs text-red-400 shrink-0" title="删除" @click="store.deleteTodo(t.id)">×</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">⭕ 科目掌握进度</div>
+        <div class="flex flex-wrap gap-4 justify-center py-2">
+          <RouterLink v-for="s in store.subjects" :key="s.id"
+            :to="s.id === 'math' ? '/math' : s.id === 'english' ? '/english' : `/subject/${s.id}`"
+            class="flex flex-col items-center gap-1">
+            <ProgressRing :percent="subjectPercent(s.id)" :color="s.color" :size="76" :label="s.name" />
+            <span class="text-xs">{{ s.icon }} {{ s.name }}</span>
+          </RouterLink>
         </div>
       </div>
     </div>
@@ -180,77 +250,20 @@ onUnmounted(() => {
       <p class="text-[10px] text-slate-400 mt-2">点击日期格子可查看当日学习总时长明细</p>
     </div>
 
-    <!-- 折叠切换 -->
-    <button class="w-full text-center text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 py-2 transition-colors"
-      @click="showMore = !showMore">
-      {{ showMore ? '收起更多 ▲' : '展开更多 ▼' }}
-    </button>
-
-    <!-- 次要内容：倒计时+名言、待办+进度环、快捷入口 -->
-    <template v-if="showMore">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div class="card bg-gradient-to-br from-primary-500 to-indigo-600 !text-white border-0">
-          <div class="text-xs opacity-80">🎯 距离专升本考试</div>
-          <div v-if="store.examCountdown !== null" class="mt-1">
-            <span class="text-4xl font-black">{{ store.examCountdown }}</span><span class="ml-1">天</span>
-          </div>
-          <RouterLink v-else to="/settings" class="text-sm underline opacity-90 mt-2 inline-block">去设置考试日期 →</RouterLink>
-          <div class="text-xs opacity-80 mt-2">坚持到底，就是胜利！</div>
-        </div>
-        <div class="card flex flex-col justify-center">
-          <div class="text-xs text-slate-400 mb-1">📜 今日名言</div>
-          <p class="text-sm font-medium leading-relaxed">{{ quote }}</p>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div class="card">
-          <div class="section-title">📋 今日待办</div>
-          <div class="flex gap-2 mb-3">
-            <input v-model="newTodo" class="input" placeholder="添加今日学习任务，回车确认" @keyup.enter="addTodo" />
-            <button class="btn-primary shrink-0" @click="addTodo">添加</button>
-          </div>
-          <div v-if="!store.todayTodos.length" class="text-xs text-slate-400 py-4 text-center">暂无待办，添加一个吧～</div>
-          <div ref="listRef" class="space-y-1.5">
-            <div v-for="t in store.todayTodos" :key="t.id"
-              :data-todo-item="t.id"
-              class="flex items-center gap-2 rounded-lg px-2 py-1.5 group hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors select-none"
-              :class="{
-                'opacity-40': draggingId === t.id,
-                'ring-2 ring-primary-400 bg-primary-50 dark:bg-primary-900/30': overId === t.id && draggingId && draggingId !== t.id,
-                'shadow-lg scale-[1.02] cursor-grabbing bg-white dark:bg-slate-800 z-10': draggingId === t.id
-              }"
-              :style="draggingId === t.id ? { transform: `translateY(${dragShift}px)` } : {}">
-              <span data-drag-handle
-                class="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 dark:hover:text-slate-300 touch-none shrink-0"
-                title="拖动排序"
-                @pointerdown="onPointerDown($event, t.id)">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
-              </span>
-              <input type="checkbox" :checked="t.done" class="w-4 h-4 accent-primary-500" @change="store.toggleTodo(t.id)" />
-              <span class="flex-1 text-sm" :class="t.done ? 'line-through text-slate-400' : ''">
-                {{ t.text }}
-                <span v-if="t.done && t.completedAt" class="ml-1 inline-block text-[10px] text-emerald-500">完成于 {{ fmtCompletedAt(t.completedAt) }}</span>
-              </span>
-              <button class="opacity-0 group-hover:opacity-100 text-xs text-red-400 shrink-0" title="删除" @click="store.deleteTodo(t.id)">×</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="section-title">⭕ 科目掌握进度</div>
-          <div class="flex flex-wrap gap-4 justify-center py-2">
-            <RouterLink v-for="s in store.subjects" :key="s.id"
-              :to="s.id === 'math' ? '/math' : s.id === 'english' ? '/english' : `/subject/${s.id}`"
-              class="flex flex-col items-center gap-1">
-              <ProgressRing :percent="subjectPercent(s.id)" :color="s.color" :size="76" :label="s.name" />
-              <span class="text-xs">{{ s.icon }} {{ s.name }}</span>
-            </RouterLink>
-          </div>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-4 sm:grid-cols-8 gap-2">
+    <!-- 快捷入口（默认折叠，点击展开） -->
+    <div>
+      <button
+        class="w-full flex items-center justify-center gap-1.5 py-2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+        :aria-expanded="showQuickLinks"
+        @click="showQuickLinks = !showQuickLinks">
+        <span>⚡ 快捷入口</span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          class="transition-transform duration-200" :class="showQuickLinks ? 'rotate-180' : ''">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      <div v-if="showQuickLinks" class="grid grid-cols-4 sm:grid-cols-8 gap-2">
         <RouterLink v-for="q in [
           { to: '/pomodoro', icon: '🍅', label: '专注' }, { to: '/daily-summary', icon: '📝', label: '总结' },
           { to: '/error-book', icon: '📕', label: '错题' }, { to: '/habits', icon: '✅', label: '习惯' },
@@ -261,7 +274,7 @@ onUnmounted(() => {
           <span class="text-[11px] text-slate-500 dark:text-slate-400">{{ q.label }}</span>
         </RouterLink>
       </div>
-    </template>
+    </div>
 
     <!-- 热力图当日学习明细弹窗 -->
     <Modal :title="`${heatDate} 学习明细`" :show="!!heatDate" @close="heatDate = ''">
