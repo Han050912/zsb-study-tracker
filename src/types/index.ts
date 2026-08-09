@@ -205,3 +205,55 @@ export interface AppState {
   todos: Todo[]
   settings: Settings
 }
+
+/** ========== 社区广场 ========== */
+
+/** 帖子类型 */
+export type PostType = 'checkin' | 'share' | 'achievement' | 'longform'
+
+/** 社区帖子（userName/userPoints/likedByMe 为服务端 JOIN 填充） */
+export interface CommunityPost {
+  id: string
+  userId: string
+  userName: string
+  /** 作者当前总积分，前端据此换算等级称号（LEVELS） */
+  userPoints: number
+  type: PostType
+  content: string
+  tags: string[]
+  refType?: string
+  refId?: string
+  likesCount: number
+  commentsCount: number
+  isPinned: boolean
+  likedByMe: boolean
+  createdAt: number // Unix 秒
+}
+
+/** 社区评论；parentId 为空为一级评论，否则为二级回复（最多二级） */
+export interface CommunityComment {
+  id: string
+  postId: string
+  userId: string
+  userName: string
+  parentId?: string
+  content: string
+  likesCount: number
+  likedByMe: boolean
+  createdAt: number // Unix 秒
+  /** 前端组装的二级回复 */
+  replies?: CommunityComment[]
+}
+
+/** 社区通知 */
+export interface CommunityNotification {
+  id: string
+  type: 'like' | 'comment' | 'follow' | 'achievement'
+  actorId?: string
+  actorName?: string
+  postId?: string
+  commentId?: string
+  content: string
+  isRead: boolean
+  createdAt: number // Unix 秒
+}
