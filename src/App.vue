@@ -141,8 +141,11 @@ if (window.nav) {
         <div v-if="!navCollapsed" class="text-xs text-slate-400 mt-1">{{ store.settings.userName }} · {{ store.level.name }}学者</div>
       </div>
       <div v-if="store.examCountdown !== null && !navCollapsed" class="mx-4 mb-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white px-3 py-2 text-center">
-        <div class="text-[10px] opacity-80">距考试还有</div>
-        <div class="text-xl font-bold leading-tight">{{ store.examCountdown }} 天</div>
+        <template v-if="store.examCountdown > 0">
+          <div class="text-[10px] opacity-80">距考试还有</div>
+          <div class="text-xl font-bold leading-tight">{{ store.examCountdown }} 天</div>
+        </template>
+        <div v-else class="text-sm font-bold leading-tight py-1">考试就是今天，加油！💪</div>
       </div>
       <nav class="flex-1 overflow-y-auto px-3 space-y-1 pb-4" :class="navCollapsed ? '!px-2' : ''">
         <RouterLink v-for="item in NAV" :key="item.path" :to="item.path"
