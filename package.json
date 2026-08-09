@@ -52,6 +52,7 @@
     }
   },
   "dependencies": {
+    "@lucide/vue": "^1.30.0",
     "dayjs": "^1.11.13",
     "echarts": "^5.5.1",
     "electron-updater": "^6.8.9",
