@@ -6,6 +6,7 @@ import { DEFAULT_QUOTES } from '../data/defaults'
 import Heatmap from '../components/Heatmap.vue'
 import ProgressRing from '../components/ProgressRing.vue'
 import Modal from '../components/Modal.vue'
+import PostComposer from '../components/community/PostComposer.vue'
 import dayjs from 'dayjs'
 
 const store = useAppStore()
@@ -44,6 +45,29 @@ function addTodo() {
 }
 
 const goalPercent = computed(() => Math.min(100, (store.todayMinutes / store.settings.dailyGoalMinutes) * 100))
+
+// ---- 分享打卡到社区广场 ----
+const showComposer = ref(false)
+const composerContent = ref('')
+
+/** 聚合今日学习数据生成打卡帖预设内容 */
+function openCheckinShare() {
+  if (!store.todayRecords.length && !store.todayPomodoro.count) {
+    toast('今天还没有学习记录，先学习一会儿再来打卡吧')
+    return
+  }
+  const bySubject: Record<string, number> = {}
+  for (const r of store.todayRecords) bySubject[r.subjectId] = (bySubject[r.subjectId] || 0) + r.minutes
+  const subjectParts = Object.entries(bySubject)
+    .map(([sid, min]) => `${store.subjectMap[sid]?.name || '未知科目'} ${formatMinutes(min)}`)
+    .join('、')
+  composerContent.value = [
+    '💪 今日学习打卡',
+    subjectParts ? `📚 ${subjectParts}` : '',
+    `⏱️ 共 ${formatMinutes(store.todayMinutes)} · 🍅 ${store.todayPomodoro.count} 个番茄钟 · 🔥 连续 ${store.gamification.streak} 天`
+  ].filter(Boolean).join('\n')
+  showComposer.value = true
+}
 
 // ---- 热力图点击：当日学习总时长明细 ----
 const heatDate = ref('')
@@ -148,6 +172,7 @@ onUnmounted(() => {
       <div class="text-right">
         <div class="text-xs text-slate-400">{{ store.level.name }}学者</div>
         <div class="text-sm font-bold text-primary-500">{{ store.gamification.points }} 积分</div>
+        <button class="btn-ghost !text-xs !px-2 !py-1 mt-1" @click="openCheckinShare">📣 分享打卡</button>
       </div>
     </div>
 
@@ -294,5 +319,9 @@ onUnmounted(() => {
         </div>
       </div>
     </Modal>
+
+    <!-- 分享打卡到社区广场 -->
+    <PostComposer v-model:show="showComposer" type="checkin" :preset-content="composerContent"
+      :preset-tags="['#每日打卡']" ref-type="record" :ref-id="today()" />
   </div>
 </template>

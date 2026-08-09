@@ -4,6 +4,7 @@ import html2canvas from 'html2canvas'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
 import { MOODS } from '../data/defaults'
+import PostComposer from '../components/community/PostComposer.vue'
 import dayjs from 'dayjs'
 
 const store = useAppStore()
@@ -156,13 +157,38 @@ function copyShareText() {
   const text = `我正在用「专升本学习助手」备考，今日学习 ${formatMinutes(dayData.value.minutes)}，完成 ${dayData.value.pTotal} 道题，连续学习 🔥${store.gamification.streak} 天！\n👉 https://github.com/Han050912/zsb-study-tracker`
   navigator.clipboard.writeText(text).then(() => toast('分享文案已复制'))
 }
+
+// ---- 分享到社区广场 ----
+const showComposer = ref(false)
+const composerContent = ref('')
+
+/** 一键分享：先保存总结，再按「心情 + 收获 + 当日数据摘要」预填帖子内容 */
+function openCommunityShare() {
+  if (!save()) return
+  const d = dayData.value
+  const stats = [
+    d.minutes ? `学习 ${formatMinutes(d.minutes)}` : '',
+    d.pTotal ? `刷题 ${d.pTotal} 道${d.accuracy !== null ? `（正确率 ${d.accuracy}%）` : ''}` : '',
+    d.pomo.count ? `番茄钟 ${d.pomo.count} 个` : ''
+  ].filter(Boolean).join(' · ')
+  composerContent.value = [
+    `${form.value.mood} 今日学习总结`,
+    `🌱 收获：${form.value.harvest}`,
+    `🪞 反思：${form.value.improve}`,
+    stats ? `📊 ${stats}` : ''
+  ].filter(Boolean).join('\n')
+  showComposer.value = true
+}
 </script>
 
 <template>
   <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
       <h1 class="page-title">📝 每日总结</h1>
-      <button class="btn-primary" @click="openShare">🎨 生成分享卡片</button>
+      <div class="flex gap-2">
+        <button class="btn-ghost" @click="openCommunityShare">📣 分享到广场</button>
+        <button class="btn-primary" @click="openShare">🎨 生成分享卡片</button>
+      </div>
     </div>
 
     <div class="grid lg:grid-cols-3 gap-4">
@@ -376,5 +402,9 @@ function copyShareText() {
         </div>
       </div>
     </Teleport>
+
+    <!-- 分享到社区广场（预填总结内容，可编辑后发布） -->
+    <PostComposer v-model:show="showComposer" type="share" :preset-content="composerContent"
+      :preset-tags="['#每日打卡']" ref-type="summary" :ref-id="editDate" />
   </div>
 </template>
