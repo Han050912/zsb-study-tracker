@@ -276,3 +276,64 @@ CREATE TABLE IF NOT EXISTS default_quotes (
   user_id TEXT PRIMARY KEY REFERENCES users(id),
   quotes TEXT NOT NULL           -- JSON 数组
 );
+
+-- ========== 社区广场 ==========
+-- 帖子表：likes_count/comments_count 冗余聚合，避免列表查询 JOIN 计数
+CREATE TABLE IF NOT EXISTS community_posts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  type TEXT NOT NULL DEFAULT 'share',  -- 'checkin' | 'share' | 'achievement' | 'longform'
+  content TEXT NOT NULL,
+  tags TEXT NOT NULL DEFAULT '[]',     -- JSON 数组：['#每日打卡', '#高等数学']
+  ref_type TEXT,                       -- 关联源类型：'summary' | 'record' | 'achievement' | 'habit' | 'vocab'
+  ref_id TEXT,                         -- 关联源 ID
+  likes_count INTEGER NOT NULL DEFAULT 0,
+  comments_count INTEGER NOT NULL DEFAULT 0,
+  is_pinned INTEGER NOT NULL DEFAULT 0,
+  is_hidden INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,         -- Unix 时间戳（秒）
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_posts_created_at ON community_posts(created_at);
+CREATE INDEX IF NOT EXISTS idx_posts_user_id ON community_posts(user_id);
+CREATE INDEX IF NOT EXISTS idx_posts_type ON community_posts(type);
+
+-- 评论表：parent_id NULL 为一级评论，非 NULL 为二级回复（最多二级）
+CREATE TABLE IF NOT EXISTS community_comments (
+  id TEXT PRIMARY KEY,
+  post_id TEXT NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  parent_id TEXT,
+  content TEXT NOT NULL,
+  likes_count INTEGER NOT NULL DEFAULT 0,
+  is_hidden INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_comments_post_id ON community_comments(post_id);
+CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON community_comments(parent_id);
+
+-- 点赞表：复合主键保证同一用户对同一目标只能点赞一次
+CREATE TABLE IF NOT EXISTS community_likes (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  target_type TEXT NOT NULL,           -- 'post' | 'comment'
+  target_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, target_type, target_id)
+);
+CREATE INDEX IF NOT EXISTS idx_likes_target ON community_likes(target_type, target_id);
+
+-- 通知表
+CREATE TABLE IF NOT EXISTS community_notifications (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),  -- 接收者
+  type TEXT NOT NULL,                   -- 'like' | 'comment' | 'follow' | 'achievement'
+  actor_id TEXT,                        -- 触发者
+  post_id TEXT,
+  comment_id TEXT,
+  content TEXT NOT NULL DEFAULT '',
+  is_read INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notify_user ON community_notifications(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_notify_unread ON community_notifications(user_id, is_read);
