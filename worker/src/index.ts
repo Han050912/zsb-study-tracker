@@ -19,6 +19,7 @@ import { registerSettingsRoutes } from './api/settings'
 import { registerMaimemoRoutes } from './proxy/maimemo'
 import { registerWallpaperRoutes } from './proxy/wallpaper'
 import { registerReleaseRoutes } from './api/release'
+import { registerCommunityRoutes } from './api/community'
 import { HttpError } from './db'
 import { canCache, getCached, putCache } from './middleware/cache'
 
@@ -116,3 +117,4 @@ registerSettingsRoutes()
 registerMaimemoRoutes()
 registerWallpaperRoutes()
 registerReleaseRoutes()
+registerCommunityRoutes()
