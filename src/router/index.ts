@@ -12,8 +12,10 @@ const routes = [
   { path: '/pomodoro', name: 'pomodoro', component: () => import('../pages/Pomodoro.vue'), meta: { title: '番茄钟' } },
   { path: '/habits', name: 'habits', component: () => import('../pages/Habits.vue'), meta: { title: '习惯追踪' } },
   { path: '/daily-summary', name: 'daily-summary', component: () => import('../pages/DailySummary.vue'), meta: { title: '每日总结' } },
+  { path: '/community', name: 'community', component: () => import('../pages/Community.vue'), meta: { title: '社区广场' } },
+  { path: '/community/post/:id', name: 'community-post', component: () => import('../pages/CommunityPost.vue'), meta: { title: '帖子详情' } },
+  { path: '/community/notifications', name: 'community-notifications', component: () => import('../pages/CommunityNotifications.vue'), meta: { title: '通知中心' } },
   { path: '/notes', name: 'notes', component: () => import('../pages/Notes.vue'), meta: { title: '笔记' } },
-  // 旧版「总结详情」路由已废弃（往日总结改为悬浮卡片），旧链接重定向到总结页，避免空白
   { path: '/daily-summary/:date', redirect: '/daily-summary' },
   { path: '/statistics', name: 'statistics', component: () => import('../pages/Statistics.vue'), meta: { title: '数据统计' } },
   { path: '/rewards', name: 'rewards', component: () => import('../pages/Rewards.vue'), meta: { title: '成就激励' } },
