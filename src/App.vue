@@ -2,7 +2,8 @@
 import { computed, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
-import { sessionUser, logout } from './services/auth'
+import { useCommunityStore } from './stores/community'
+import { sessionUser, logout, isLoggedIn } from './services/auth'
 import { restartReminder } from './services/reminder'
 import Toast from './components/Toast.vue'
 import AchievementModal from './components/AchievementModal.vue'
@@ -10,8 +11,12 @@ import Onboarding from './components/Onboarding.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 
 const store = useAppStore()
+const community = useCommunityStore()
 const route = useRoute()
 const router = useRouter()
+
+// 登录后拉取社区未读通知数；退出/过期时清空社区数据避免串号
+watch(isLoggedIn, v => { if (v) community.fetchUnreadCount().catch(() => {}) }, { immediate: true })
 
 // 导航动态生成：科目项随科目列表实时增减（删除科目自动隐藏，新增科目自动出现）
 // 侧边栏展示科目全名；移动端由 CSS truncate 截断
@@ -24,6 +29,7 @@ const NAV = computed(() => {
   }))
   return [
     { path: '/', icon: '🏠', label: '首页', subject: false },
+    { path: '/community', icon: '💬', label: '社区', subject: false },
     ...subjectItems,
     { path: '/pomodoro', icon: '🍅', label: '专注', subject: false },
     { path: '/notes', icon: '📔', label: '笔记', subject: false },
@@ -36,10 +42,10 @@ const NAV = computed(() => {
     { path: '/settings', icon: '⚙️', label: '设置', subject: false }
   ]
 })
-// 移动端底部导航：首页 + 前两个科目 + 专注/总结/设置（科目不足时自动减少）
+// 移动端底部导航：首页 + 第一个科目 + 社区/专注/总结/设置（最多 6 项，超出时减少科目位，避免挤压截断）
 const mobileNav = computed(() => {
-  const subjectPaths = NAV.value.filter(n => n.subject).slice(0, 2).map(n => n.path)
-  const picks = ['/', ...subjectPaths, '/pomodoro', '/daily-summary', '/settings']
+  const subjectPaths = NAV.value.filter(n => n.subject).slice(0, 1).map(n => n.path)
+  const picks = ['/', ...subjectPaths, '/community', '/pomodoro', '/daily-summary', '/settings']
   return picks
     .map(p => NAV.value.find(n => n.path === p))
     .filter((n): n is NonNullable<typeof n> => !!n)
@@ -61,7 +67,7 @@ onMounted(() => {
 })
 
 // 401 登录过期：清空内存中的用户数据，防止串号到下一个登录的账号
-window.addEventListener('auth:expired', () => store.resetState())
+window.addEventListener('auth:expired', () => { store.resetState(); community.resetState() })
 
 // ---- 每日学习提醒（浏览器 + 桌面端共用 src/services/reminder.ts 一套逻辑） ----
 // 监听设置变更即时重调度：开关切换、时间修改均无需重启应用即可生效
@@ -112,6 +118,7 @@ async function accountLogout(switchAccount: boolean) {
   // ③ 立即清理会话状态并跳转登录页
   logout()
   store.resetState()
+  community.resetState()
   router.replace('/login')
 }
 
@@ -166,8 +173,16 @@ if (window.nav) {
       <div v-if="!navCollapsed" class="px-5 py-3 text-[10px] text-slate-400">积分 {{ store.gamification.points }} · 🔥{{ store.gamification.streak }}天</div>
     </aside>
 
-    <!-- 右上角账号头像入口（个人中心 / 切换账号 / 退出登录）；笔记编辑态隐藏 -->
-    <div v-if="!hideNav && !isNotesEditing" class="fixed top-3 right-4 z-40">
+    <!-- 右上角通知铃铛 + 账号头像入口（个人中心 / 切换账号 / 退出登录）；笔记编辑态隐藏 -->
+    <div v-if="!hideNav && !isNotesEditing" class="fixed top-3 right-4 z-40 flex items-center gap-2">
+      <button class="relative w-9 h-9 rounded-full bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-base flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
+        title="通知中心" @click="router.push('/community/notifications')">
+        🔔
+        <span v-if="community.unreadCount"
+          class="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">
+          {{ community.unreadCount > 99 ? '99+' : community.unreadCount }}
+        </span>
+      </button>
       <button class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
         title="账号菜单" @click.stop="avatarOpen = !avatarOpen">
         {{ avatarLetter }}
