@@ -19,7 +19,14 @@ export async function getGamification(env: Env, userId: string): Promise<Gamific
     points: row?.points ?? 0,
     streak: row?.streak ?? 0,
     lastCheckin: row?.last_checkin ?? '',
-    achievements: JSON.parse(row?.achievements || '[]'),
+    achievements: (() => {
+      try {
+        const v = JSON.parse(row?.achievements || '[]')
+        return Array.isArray(v) ? v : []
+      } catch {
+        return []
+      }
+    })(),
     pointsLog: log.map((l: any) => ({
       date: l.date, points: l.points, reason: l.reason, refId: l.ref_id ?? undefined
     }))

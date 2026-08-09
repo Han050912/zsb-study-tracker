@@ -13,14 +13,24 @@ export const notesMapping = crudHandlers({
     tags: JSON.stringify(b.tags ?? []),
     updated_at: b.updatedAt ?? Date.now()
   }),
-  fromRow: (r) => ({
-    id: r.id,
-    subjectId: r.subject_id,
-    title: r.title,
-    content: r.content,
-    tags: JSON.parse(r.tags || '[]'),
-    updatedAt: r.updated_at
-  })
+  fromRow: (r) => {
+    let tags: string[] = []
+    try {
+      tags = JSON.parse(r.tags || '[]')
+      if (!Array.isArray(tags)) tags = []
+    } catch {
+      // 数据库中 tags 字段损坏时降级为空数组，不拖垮整个同步接口
+      tags = []
+    }
+    return {
+      id: r.id,
+      subjectId: r.subject_id,
+      title: r.title,
+      content: r.content,
+      tags,
+      updatedAt: r.updated_at
+    }
+  }
 })
 
 export function registerNoteRoutes() {
