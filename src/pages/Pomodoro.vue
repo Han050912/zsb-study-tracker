@@ -125,7 +125,7 @@ function giveUp() {
   if (phase.value === 'focus' && elapsed >= 60) {
     const minutes = Math.round(elapsed / 60)
     store.recordPartialSession(minutes)
-    toast(`已记录 ${minutes} 分钟专注（未计入完成次数）`)
+    toast(`已记录 ${minutes} 分钟专注（未计入番茄数）`)
   }
   phase.value = 'idle'
   seconds.value = 0

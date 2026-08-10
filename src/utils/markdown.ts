@@ -7,7 +7,7 @@ import katex from 'katex'
  * - 叠加 LaTeX 公式（$...$ 行内，$$...$$ 块级，KaTeX 渲染）
  * - html:false 原始 HTML 一律转义，配合 v-html 输出天然防 XSS
  */
-const md: MarkdownIt = new MarkdownIt({
+const md: InstanceType<typeof MarkdownIt> = new MarkdownIt({
   html: false,
   linkify: true, // 自动识别 URL 为链接
   breaks: true,  // 单换行即 <br>，对齐 Typora 的默认换行行为
@@ -55,6 +55,6 @@ export function renderMarkdown(src: string): string {
   html = html.replace(/<li>\[[xX]\]/g, '<li class="task-list-item"><input type="checkbox" disabled checked />')
 
   // 4. 还原公式为 KaTeX HTML（在 md.render 之后注入，不会被转义）
-  html = html.replace(/@@ZSBMATH(\d+)@@/g, (_m, i: string) => maths[Number(i)] ?? '')
+  html = html.replace(/@@ZSBMATH(\d+)@@/g, (_m: string, i: string) => maths[Number(i)] ?? '')
   return html
 }

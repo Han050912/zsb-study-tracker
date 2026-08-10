@@ -16,7 +16,8 @@ function check(name, cond, extra = '') {
 }
 
 async function api(path, { method = 'GET', token, body } = {}) {
-  const headers = { 'Content-Type': 'application/json', Origin: ORIGIN }
+  // 本地冒烟无人机验证环节，与桌面端一样通过共享令牌跳过 Turnstile
+  const headers = { 'Content-Type': 'application/json', Origin: ORIGIN, 'X-Desktop-Token': 'zsb-desktop-v2' }
   if (token) headers.Authorization = `Bearer ${token}`
   const res = await fetch(`${BASE}${path}`, {
     method, headers, body: body === undefined ? undefined : JSON.stringify(body)
@@ -240,6 +241,74 @@ async function main() {
   console.log('[墨墨代理]')
   const mm = await api('/api/proxy/maimemo/today', { method: 'POST', token: tokenA })
   check('未配置墨墨 Token 返回 400 提示', mm.status === 400 && (mm.data?.message || '').includes('墨墨'), JSON.stringify(mm.data))
+
+  // ---- 社区广场 ----
+  // 前置：A/B 均已推送 sampleState（gamification.points 各为 100）
+  console.log('[社区广场]')
+  check('未认证访问社区接口返回 401', (await api('/api/community/posts')).status === 401)
+
+  const post1 = await api('/api/community/posts', {
+    method: 'POST', token: tokenA,
+    body: { type: 'checkin', content: '今日学习打卡：高数 2 小时', tags: ['#每日打卡', '#高等数学'], refType: 'record', refId: '2026-08-04' }
+  })
+  check('发帖返回 201 + 作者昵称', post1.status === 201 && post1.data?.userName === '测试员', JSON.stringify(post1.data))
+  const postId = post1.data?.id
+  // 积分经 /api/data/sync 拉取验证（/api/gamification 有 60s 边缘缓存，写入后短时间会读到旧值）
+  const pointsOf = async (token) => (await api('/api/data/sync', { token })).data?.gamification?.points
+  check('每日首帖 +5 积分', (await pointsOf(tokenA)) === 105)
+  await api('/api/community/posts', { method: 'POST', token: tokenA, body: { type: 'share', content: '当日第二帖', tags: [] } })
+  check('当日第二帖不重复加分', (await pointsOf(tokenA)) === 105)
+  const emptyPost = await api('/api/community/posts', { method: 'POST', token: tokenA, body: { type: 'share', content: '  ', tags: [] } })
+  check('空内容发帖返回 400', emptyPost.status === 400, `实际 ${emptyPost.status}`)
+
+  const feed = await api('/api/community/posts?sort=latest', { token: tokenB })
+  check('B 拉取动态流包含 A 的帖子', feed.data?.posts?.some(p => p.id === postId && p.likedByMe === false))
+  const tagFeed = await api('/api/community/posts?tag=' + encodeURIComponent('#高等数学'), { token: tokenB })
+  check('按标签筛选生效', tagFeed.data?.posts?.length === 1 && tagFeed.data.posts[0].id === postId)
+  const page1 = await api('/api/community/posts?limit=1', { token: tokenB })
+  const page2 = await api(`/api/community/posts?limit=1&cursor=${encodeURIComponent(page1.data?.nextCursor)}`, { token: tokenB })
+  check('游标分页不重复', page1.data?.posts?.[0]?.id !== page2.data?.posts?.[0]?.id && !!page1.data?.nextCursor)
+
+  const like = await api('/api/community/likes', { method: 'POST', token: tokenB, body: { targetType: 'post', targetId: postId } })
+  check('B 点赞 A 的帖子', like.data?.liked === true)
+  check('被赞 +1 积分', (await pointsOf(tokenA)) === 106)
+  const unlike = await api('/api/community/likes', { method: 'POST', token: tokenB, body: { targetType: 'post', targetId: postId } })
+  check('再次点赞为取消（toggle）', unlike.data?.liked === false)
+  check('取消点赞回收被赞积分', (await pointsOf(tokenA)) === 105)
+  await api('/api/community/likes', { method: 'POST', token: tokenB, body: { targetType: 'post', targetId: postId } })
+
+  const c1 = await api(`/api/community/posts/${postId}/comments`, { method: 'POST', token: tokenB, body: { content: '一起加油！' } })
+  check('B 评论成功返回 201', c1.status === 201 && !!c1.data?.id, JSON.stringify(c1.data))
+  check('评论者 +1 / 作者 +2 积分',
+    (await pointsOf(tokenB)) === 101 && (await pointsOf(tokenA)) === 108)
+  const c2 = await api(`/api/community/posts/${postId}/comments`, { method: 'POST', token: tokenA, body: { content: '@测试员B 谢谢！', parentId: c1.data.id } })
+  check('二级回复成功', c2.status === 201 && c2.data?.parentId === c1.data.id)
+  const c3 = await api(`/api/community/posts/${postId}/comments`, { method: 'POST', token: tokenB, body: { content: '三级', parentId: c2.data.id } })
+  check('三级回复被拒绝（400）', c3.status === 400, `实际 ${c3.status}`)
+
+  const detail = await api(`/api/community/posts/${postId}`, { token: tokenB })
+  check('帖子详情含评论与点赞态',
+    detail.data?.post?.likedByMe === true && detail.data?.comments?.length === 2 && detail.data?.post?.commentsCount === 2)
+
+  const notify = await api('/api/community/notifications', { token: tokenA })
+  check('A 收到点赞+评论通知（取消点赞的通知已撤回，未读=1赞+1评论）',
+    notify.data?.unreadCount === 2 && notify.data?.items?.some(n => n.type === 'like') && notify.data?.items?.some(n => n.type === 'comment'),
+    JSON.stringify({ unread: notify.data?.unreadCount, types: notify.data?.items?.map(n => n.type) }))
+  await api('/api/community/notifications/read-all', { method: 'PUT', token: tokenA })
+  check('全部已读后未读数归零', (await api('/api/community/notifications', { token: tokenA })).data?.unreadCount === 0)
+
+  const delByOther = await api(`/api/community/posts/${postId}`, { method: 'DELETE', token: tokenB })
+  check('B 删除 A 的帖子返回 403', delByOther.status === 403, `实际 ${delByOther.status}`)
+  const delComment = await api(`/api/community/comments/${c1.data.id}`, { method: 'DELETE', token: tokenB })
+  check('B 删除自己的评论成功', delComment.status === 200)
+  check('删除评论后帖子评论数回退', (await api(`/api/community/posts/${postId}`, { token: tokenA })).data?.post?.commentsCount === 0)
+  // A 轨迹：发帖105 → 再被赞106 → 收到评论+2=108 → 自己回复+1=109 → 回收c1(+2)+c2(+1)=106
+  const [ptsB, ptsA] = [await pointsOf(tokenB), await pointsOf(tokenA)]
+  check('删除评论回收双方积分（B -1 评论 / A -2 收到评论 -1 回复）',
+    ptsB === 100 && ptsA === 106, `实际 B=${ptsB} A=${ptsA}`)
+  const delPost = await api(`/api/community/posts/${postId}`, { method: 'DELETE', token: tokenA })
+  check('A 删除自己的帖子成功', delPost.status === 200)
+  check('删帖后动态流不再包含', !(await api('/api/community/posts', { token: tokenB })).data?.posts?.some(p => p.id === postId))
 
   // ---- 404 ----
   console.log('[路由]')

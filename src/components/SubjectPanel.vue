@@ -502,7 +502,7 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
         <div class="grid sm:grid-cols-2 gap-2">
           <div v-for="n in filteredNotes" :key="n.id" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:shadow-sm" @click="openNote(n)">
             <div class="font-medium text-sm truncate">{{ n.title }}</div>
-            <div class="text-xs text-slate-400 line-clamp-2 mt-1">{{ n.content.replace(/\$+/g, '').slice(0, 80) }}</div>
+            <div class="text-xs text-slate-400 line-clamp-2 mt-1">{{ n.type === 'pdf' ? 'PDF 文档' : n.content.replace(/\$+/g, '').slice(0, 80) }}</div>
             <div class="flex gap-1 mt-2 flex-wrap">
               <span v-for="t in n.tags" :key="t" class="text-[10px] px-1.5 py-0.5 rounded bg-primary-50 dark:bg-primary-900/30 text-primary-500">#{{ t }}</span>
             </div>

@@ -12,6 +12,7 @@ const TOKEN_KEY = 'jwt_token'
 export interface SessionUser {
   id: string
   username: string
+  role: string
   createdAt: number
 }
 
@@ -19,6 +20,7 @@ const currentUser = ref<SessionUser | null>(null)
 
 export const isLoggedIn = computed(() => currentUser.value !== null)
 export const sessionUser = computed(() => currentUser.value)
+export const isAdmin = computed(() => currentUser.value?.role === 'admin')
 
 function setSession(user: SessionUser | null, token?: string) {
   currentUser.value = user

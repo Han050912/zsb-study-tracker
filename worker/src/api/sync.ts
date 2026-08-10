@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { all, batch, uid, HttpError } from '../db'
+import { all, batch, run, uid, HttpError } from '../db'
 import { getSubjectTree, subjectDeleteStatements, subjectInsertStatements } from './subjects'
 import { getHabits, habitReplaceStatements } from './habits'
 import { getGamification, gamificationReplaceStatements } from './gamification'
@@ -146,7 +146,20 @@ export function registerSyncRoutes() {
   on('POST', '/api/data/sync', true, async (ctx) => {
     const state = await body(ctx.request)
     if (!state || typeof state !== 'object') throw new HttpError(400, '快照格式错误')
+    // 全量替换前记录现存 PDF 笔记，替换后清理已删笔记的 D1 孤儿分片
+    const before = await all(ctx.env, "SELECT id FROM notes WHERE user_id = ? AND type = 'pdf'", ctx.userId)
     await batch(ctx.env, pushAllStatements(ctx.env, ctx.userId, state))
+    const keep = new Set(
+      (state.notes ?? []).filter((n: any) => n?.type === 'pdf').map((n: any) => String(n.id))
+    )
+    const orphans = (before as any[])
+      .filter((r) => !keep.has(String(r.id)))
+      .map((r) => String(r.id))
+    if (orphans.length) {
+      // 单条 SQL 批量删除孤儿分片，原子性由 D1 保证
+      const placeholders = orphans.map(() => '?').join(',')
+      await run(ctx.env, `DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id IN (${placeholders})`, ctx.userId, ...orphans)
+    }
     return Response.json({ ok: true })
   })
 }

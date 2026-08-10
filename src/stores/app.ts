@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { createDefaultState, ACHIEVEMENTS, LEVELS, VOCAB_HABIT_ID, PROBLEM_HABIT_ID } from '../data/defaults'
 import { today, yesterday, uid, daysBetween } from '../utils/date'
 import { syncApi } from '../api/sync'
+import { deletePdf, PDF_REF_PREFIX } from '../api/pdfs'
 import type {
   AppState, StudyRecord, ProblemSession, ErrorQuestion, ExamRecord,
   Note, DailySummary, Habit, Material, Subject, Todo, TopicImportance
@@ -412,10 +413,11 @@ export const useAppStore = defineStore('app', {
       return true
     },
 
-    /** 批量导入笔记（文件上传）：一次写入一次持久化，避免多文件触发多次全量保存 */
-    importNotes(subjectId: string, items: { title: string; content: string; tags: string[] }[]) {
+    /** 批量导入笔记（文件上传）：一次写入一次持久化，避免多文件触发多次全量保存。
+     *  PDF 笔记需传入显式 id——导入前已用该 id 将原文上传至服务端 D1，content 为 'd1:<id>' 引用 */
+    importNotes(subjectId: string, items: { id?: string; title: string; content: string; tags: string[]; type?: Note['type'] }[]) {
       for (const n of items) {
-        this.notes.push({ id: uid(), subjectId, title: n.title || '未命名', content: n.content, tags: n.tags, updatedAt: Date.now() })
+        this.notes.push({ id: n.id || uid(), subjectId, title: n.title || '未命名', content: n.content, tags: n.tags, updatedAt: Date.now(), type: n.type })
       }
       this.save()
     },
@@ -427,13 +429,18 @@ export const useAppStore = defineStore('app', {
       } else {
         this.notes.push({
           id: uid(), subjectId: note.subjectId, title: note.title || '未命名',
-          content: note.content || '', tags: note.tags || [], updatedAt: Date.now()
+          content: note.content || '', tags: note.tags || [], updatedAt: Date.now(), type: note.type
         })
       }
       this.save()
     },
     deleteNote(id: string) {
+      const note = this.notes.find(n => n.id === id)
       this.notes = this.notes.filter(n => n.id !== id)
+      // PDF 笔记联动删除云端原文（失败静默，由全量同步的孤儿清理兜底）
+      if (note?.type === 'pdf' && note.content.startsWith(PDF_REF_PREFIX)) {
+        deletePdf(note.content.slice(PDF_REF_PREFIX.length)).catch(() => {})
+      }
       this.save()
     },
 
@@ -567,11 +574,14 @@ export const useAppStore = defineStore('app', {
       this.pomodoro.interruptions.push({ date: t, reason, time: Date.now() })
       this.save()
     },
-    /** 记录中断/提前结束的部分时长（不增加完成次数、不加积分） */
+    /** 记录中断/提前结束的部分时长（不增加完成次数、不加积分，但计入今日专注） */
     recordPartialSession(minutes: number) {
       const t = today()
       if (!this.pomodoro.partialSessions) this.pomodoro.partialSessions = []
       this.pomodoro.partialSessions.push({ date: t, minutes, time: Date.now() })
+      // 提前结束的时长计入今日学习时长，但不算番茄数、不加积分
+      if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
+      this.pomodoro.daily[t].minutes += minutes
       this.save()
     },
 

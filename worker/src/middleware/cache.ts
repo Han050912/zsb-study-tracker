@@ -19,8 +19,9 @@ const CACHE_TTL = 60 // 秒
 function cacheKeyUrl(request: Request): string {
   const url = new URL(request.url)
   const auth = request.headers.get('Authorization') || ''
-  // 取 token 前 32 字符作为用户标识，避免长 URL
-  if (auth) url.searchParams.set('_c', auth.slice(0, 32))
+  // 取 token 末尾 32 字符作为用户标识：JWT 前缀（header/payload 头部）对所有用户相同，
+  // 只有末尾签名段随用户/签发时间变化，取前缀会导致跨用户共享缓存
+  if (auth) url.searchParams.set('_c', auth.slice(-32))
   return url.toString()
 }
 

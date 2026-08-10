@@ -70,6 +70,16 @@ export const LEVELS = [
   { name: '王者', min: 10000, color: '#a855f7' }
 ]
 
+/** 社区广场预设话题标签（与科目体系对应） */
+export const COMMUNITY_TAGS = ['#每日打卡', '#高等数学', '#英语', '#升本经验', '#笔记分享', '#心情树洞']
+
+/** 按积分换算等级（与 store.level getter 同一口径） */
+export function levelOf(points: number) {
+  let cur = LEVELS[0]
+  for (const l of LEVELS) if (points >= l.min) cur = l
+  return cur
+}
+
 /** 与设置页每日目标双向同步的固定习惯 id（默认习惯，id 稳定不受重命名影响） */
 export const VOCAB_HABIT_ID = 'h2'
 export const PROBLEM_HABIT_ID = 'h3'

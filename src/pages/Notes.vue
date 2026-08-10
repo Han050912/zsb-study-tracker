@@ -3,8 +3,9 @@ import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { renderMarkdown } from '../utils/markdown'
-import { extractPdfText, classifyPdfError } from '../utils/pdf'
-import PdfPreviewModal from '../components/PdfPreviewModal.vue'
+import PdfViewer from '../components/PdfViewer.vue'
+import { uploadPdf, fetchPdf, PDF_MAX_BYTES, PDF_MAX_MB, PDF_REF_PREFIX, pdfRefOf } from '../api/pdfs'
+import { uid } from '../utils/date'
 import type { Note } from '../types'
 
 const store = useAppStore()
@@ -20,9 +21,10 @@ const allNotes = computed(() =>
 const filteredNotes = computed(() => {
   const kw = search.value.trim().toLowerCase()
   if (!kw) return allNotes.value
+  // PDF 笔记正文是云端 R2 引用（非文本），不参与内容检索，仅匹配标题与标签
   return allNotes.value.filter(n =>
     n.title.toLowerCase().includes(kw) ||
-    n.content.toLowerCase().includes(kw) ||
+    (n.type !== 'pdf' && n.content.toLowerCase().includes(kw)) ||
     n.tags.some(t => t.toLowerCase().includes(kw)))
 })
 
@@ -123,12 +125,32 @@ watch(() => route.query.new, (v) => {
 
 // dirty 仅由用户编辑行为标记（模板 @input/@change 调用），避免加载笔记时被误判为已修改
 
-// ---- 文件导入（.md/.txt 直接导入；.pdf 打开预览后提取导入） ----
+// ---- 文件导入（.md/.txt 导入为 Markdown 笔记；.pdf 原文上传至 R2，笔记仅存引用） ----
 const fileInput = ref<HTMLInputElement>()
 const TEXT_EXTS = ['.md', '.markdown', '.txt']
-const pdfFile = ref<File | null>(null)
-const showPdf = ref(false)
-const importing = ref(false)
+/** 进行中的 PDF 上传数（>0 时禁用导入按钮，避免批量并发上传失控） */
+const uploadingCount = ref(0)
+
+/**
+ * PDF 导入：先生成笔记 id 并以其为键将原文上传至服务端 D1 分片表，成功后再落笔记。
+ * content 仅存 'd1:<id>' 引用——PDF 不进入全量同步载荷，30MB 文件也不会拖慢日常保存。
+ */
+function importPdf(file: File) {
+  const id = uid()
+  uploadingCount.value++
+  uploadPdf(id, file).then(() => {
+    store.importNotes(draftSubjectForImport(), [{
+      id,
+      title: file.name.replace(/\.[^.]+$/, ''),
+      content: PDF_REF_PREFIX + id,
+      tags: ['PDF'],
+      type: 'pdf'
+    }])
+    toast(`已导入 PDF「${file.name}」`)
+  }).catch(e => {
+    toast(`导入「${file.name}」失败：${e instanceof Error ? e.message : '网络错误'}`)
+  }).finally(() => { uploadingCount.value-- })
+}
 
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
@@ -137,8 +159,8 @@ function onFileChange(e: Event) {
   for (const file of files) {
     const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
     if (ext === '.pdf') {
-      pdfFile.value = file
-      showPdf.value = true
+      if (file.size > PDF_MAX_BYTES) { toast(`「${file.name}」超过 ${PDF_MAX_MB}MB 上限，请压缩或拆分后再导入`); continue }
+      importPdf(file)
     } else if (TEXT_EXTS.includes(ext)) {
       if (file.size > 1024 * 1024) { toast(`「${file.name}」超过 1MB，已跳过`); continue }
       file.text().then(content => {
@@ -157,25 +179,23 @@ function draftSubjectForImport() {
   return draft.value?.subjectId || (route.query.subject as string) || store.subjects[0]?.id || ''
 }
 
-async function importPdfAsNote() {
-  if (!pdfFile.value || importing.value) return
-  importing.value = true
-  try {
-    const result = await extractPdfText(pdfFile.value)
-    if (!result.content.trim()) {
-      toast('未能从该 PDF 提取到文本（可能是扫描件图片型 PDF）')
-      return
-    }
-    store.importNotes(draftSubjectForImport(), [{ title: result.title, content: result.content, tags: ['导入', 'PDF'] }])
-    toast(`已导入 PDF（${result.pages} 页）为笔记`)
-    showPdf.value = false
-  } catch (e: unknown) {
-    console.error('PDF import failed:', e)
-    toast(classifyPdfError(e))
-  } finally {
-    importing.value = false
-  }
-}
+// ---- PDF 笔记正文：content 为 'd1:<id>' 引用，选中笔记时回源拉取分片拼装交给查看器 ----
+const pdfBytes = ref<Uint8Array | null>(null)
+const pdfFetchError = ref('')
+let pdfFetchSeq = 0
+
+watch(selectedId, (id) => {
+  const seq = ++pdfFetchSeq
+  pdfBytes.value = null
+  pdfFetchError.value = ''
+  const n = id ? store.notes.find(x => x.id === id) : null
+  if (n?.type !== 'pdf') return
+  fetchPdf(pdfRefOf(n.content)).then(b => {
+    if (seq === pdfFetchSeq) pdfBytes.value = b
+  }).catch(e => {
+    if (seq === pdfFetchSeq) pdfFetchError.value = e instanceof Error ? e.message : 'PDF 加载失败'
+  })
+}, { immediate: true })
 
 // ---- 移动端：列表/编辑 视图切换 ----
 const isEditing = computed(() => !!draft.value)
@@ -197,7 +217,7 @@ onUnmounted(() => {
       <div class="p-3 space-y-2 border-b border-slate-100 dark:border-slate-700">
         <div class="flex gap-2">
           <button class="btn-primary flex-1" @click="newNote">＋ 新建笔记</button>
-          <button class="btn-ghost shrink-0" title="导入 .md / .txt / .pdf 文件" @click="fileInput?.click()">📁</button>
+          <button class="btn-ghost shrink-0" :title="`导入 .md / .txt / .pdf 文件（PDF 单文件 ≤${PDF_MAX_MB}MB）`" :disabled="uploadingCount > 0" @click="fileInput?.click()">{{ uploadingCount ? '上传中…' : '📁' }}</button>
           <input ref="fileInput" type="file" multiple accept=".md,.markdown,.txt,.pdf" class="hidden" @change="onFileChange" />
         </div>
         <input v-model="search" class="input" placeholder="🔍 搜索标题 / 内容 / 标签" />
@@ -215,7 +235,7 @@ onUnmounted(() => {
             <span class="font-medium text-sm truncate flex-1">{{ n.title || '未命名' }}</span>
             <span class="text-[10px] text-slate-400 shrink-0">{{ fmtTime(n.updatedAt) }}</span>
           </div>
-          <div class="text-xs text-slate-400 truncate mt-0.5">{{ n.content.replace(/\$+/g, '').slice(0, 50) || '（空）' }}</div>
+          <div class="text-xs text-slate-400 truncate mt-0.5">{{ n.type === 'pdf' ? 'PDF 文档' : (n.content.replace(/\$+/g, '').slice(0, 50) || '（空）') }}</div>
         </button>
       </div>
     </aside>
@@ -228,15 +248,17 @@ onUnmounted(() => {
           <button class="btn-ghost !py-1 !px-2 md:hidden" title="返回列表" @click="backToList">←</button>
           <input v-model="draft.title" class="flex-1 min-w-0 bg-transparent text-base font-bold outline-none dark:text-slate-100" placeholder="笔记标题" @input="dirty = true" />
           <span v-if="dirty" class="text-[10px] text-amber-500 shrink-0">未保存</span>
-          <div class="hidden sm:flex gap-1 bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs">
-            <button v-for="m in [{ k: 'edit', l: '编辑' }, { k: 'split', l: '分栏' }, { k: 'preview', l: '预览' }]" :key="m.k"
-              class="px-2.5 py-1 rounded-md transition-colors"
-              :class="previewMode === m.k ? 'bg-white dark:bg-slate-600 shadow-sm font-medium' : 'text-slate-500'"
-              @click="previewMode = m.k as any">{{ m.l }}</button>
-          </div>
-          <button class="sm:hidden btn-ghost !py-1 !px-2 text-xs" @click="previewMode = previewMode === 'preview' ? 'edit' : 'preview'">
-            {{ previewMode === 'preview' ? '编辑' : '预览' }}
-          </button>
+          <template v-if="draft.type !== 'pdf'">
+            <div class="hidden sm:flex gap-1 bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs">
+              <button v-for="m in [{ k: 'edit', l: '编辑' }, { k: 'split', l: '分栏' }, { k: 'preview', l: '预览' }]" :key="m.k"
+                class="px-2.5 py-1 rounded-md transition-colors"
+                :class="previewMode === m.k ? 'bg-white dark:bg-slate-600 shadow-sm font-medium' : 'text-slate-500'"
+                @click="previewMode = m.k as any">{{ m.l }}</button>
+            </div>
+            <button class="sm:hidden btn-ghost !py-1 !px-2 text-xs" @click="previewMode = previewMode === 'preview' ? 'edit' : 'preview'">
+              {{ previewMode === 'preview' ? '编辑' : '预览' }}
+            </button>
+          </template>
           <button class="btn-danger !py-1.5 shrink-0" @click="removeNote">删除</button>
           <button class="btn-primary !py-1.5 shrink-0" @click="doSave()">保存</button>
         </div>
@@ -248,8 +270,12 @@ onUnmounted(() => {
           <input :value="draft.tags?.join(',')" class="input !flex-1 !py-1 !text-xs min-w-32" placeholder="标签，逗号分隔"
             @input="draft.tags = ($event.target as HTMLInputElement).value.split(',').map(s => s.trim()).filter(Boolean); dirty = true" />
         </div>
-        <!-- 编辑 / 预览 -->
-        <div class="flex-1 flex min-h-0">
+        <!-- 正文区：PDF 笔记为查看器（正文只读，字节回源拉取），Markdown 笔记为编辑 / 预览 -->
+        <div v-if="draft.type === 'pdf'" class="flex-1 min-h-0 flex flex-col">
+          <div v-if="pdfFetchError" class="flex-1 flex items-center justify-center text-xs text-red-400 px-6 text-center">{{ pdfFetchError }}</div>
+          <PdfViewer v-else :bytes="pdfBytes" class="flex-1 min-h-0" />
+        </div>
+        <div v-else class="flex-1 flex min-h-0">
           <textarea v-show="previewMode !== 'preview'" v-model="draft.content"
             class="flex-1 min-w-0 resize-none bg-white dark:bg-slate-800 p-4 text-sm font-mono leading-6 outline-none dark:text-slate-100"
             :class="previewMode === 'split' ? 'border-r border-slate-100 dark:border-slate-700' : ''"
@@ -268,8 +294,5 @@ onUnmounted(() => {
         <button class="btn-primary" @click="newNote">＋ 新建笔记</button>
       </div>
     </section>
-
-    <!-- PDF 预览 / 导入 -->
-    <PdfPreviewModal :show="showPdf" :file="pdfFile" @close="showPdf = false" @import="importPdfAsNote" />
   </div>
 </template>

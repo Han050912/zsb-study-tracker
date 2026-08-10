@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, inject, onUnmounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue'
+import html2canvas from 'html2canvas'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
 import { MOODS } from '../data/defaults'
+import PostComposer from '../components/community/PostComposer.vue'
 import dayjs from 'dayjs'
 
 const store = useAppStore()
@@ -19,7 +21,8 @@ onUnmounted(() => clearInterval(dayTimer))
 const form = ref({ mood: '', harvest: '', improve: '', plan: '' })
 watch(editDate, (d, oldD) => {
   // 跨午夜切换时若存在未保存的编辑内容则保留，避免静默丢失用户输入
-  const prev = store.summaries[oldD]
+  // immediate 首次触发无旧值，oldD 为 undefined，直接跳过索引取 prev
+  const prev = oldD === undefined ? undefined : store.summaries[oldD]
   const dirty = form.value.mood !== (prev?.mood || '')
     || form.value.harvest !== (prev?.harvest || '')
     || form.value.improve !== (prev?.improve || '')
@@ -114,13 +117,67 @@ function hasRecord(d: string | null) {
 
 // ---- 分享卡片 ----
 const showShare = ref(false)
+/** 分享卡片 DOM 引用，用于渲染成图片 */
+const shareCardRef = ref<HTMLElement | null>(null)
+/** 卡片渲染后的图片 dataURL；非空时用 <img> 替换 DOM 卡片，支持移动端长按保存 */
+const shareImg = ref('')
+const shareImgLoading = ref(false)
+
 function openShare() {
   if (save()) showShare.value = true
 }
 
+watch(showShare, async v => {
+  shareImg.value = ''
+  if (!v) return
+  shareImgLoading.value = true
+  // 等待弹窗 DOM 渲染完成后再截图
+  await nextTick()
+  try {
+    const canvas = await html2canvas(shareCardRef.value!, { scale: 2, useCORS: true })
+    shareImg.value = canvas.toDataURL('image/png')
+  } catch {
+    toast('图片生成失败，可截图保存或使用分享文案')
+  } finally {
+    shareImgLoading.value = false
+  }
+})
+
+/** 下载分享图片（桌面端无长按保存，提供下载按钮兜底） */
+function downloadShareImage() {
+  if (!shareImg.value) return
+  const a = document.createElement('a')
+  a.href = shareImg.value
+  a.download = `学习日报-${editDate.value}.png`
+  a.click()
+  toast('图片已开始下载')
+}
+
 function copyShareText() {
-  const text = `我正在用「专升本学习助手」备考，今日专注 ${formatMinutes(dayData.value.minutes)}，完成 ${dayData.value.pTotal} 道题，连续学习 🔥${store.gamification.streak} 天！\n👉 https://github.com/Han050912/zsb-study-tracker`
+  const text = `我正在用「专升本学习助手」备考，今日学习 ${formatMinutes(dayData.value.minutes)}，完成 ${dayData.value.pTotal} 道题，连续学习 🔥${store.gamification.streak} 天！\n👉 https://github.com/Han050912/zsb-study-tracker`
   navigator.clipboard.writeText(text).then(() => toast('分享文案已复制'))
+}
+
+// ---- 分享到社区广场 ----
+const showComposer = ref(false)
+const composerContent = ref('')
+
+/** 一键分享：先保存总结，再按「心情 + 收获 + 当日数据摘要」预填帖子内容 */
+function openCommunityShare() {
+  if (!save()) return
+  const d = dayData.value
+  const stats = [
+    d.minutes ? `学习 ${formatMinutes(d.minutes)}` : '',
+    d.pTotal ? `刷题 ${d.pTotal} 道${d.accuracy !== null ? `（正确率 ${d.accuracy}%）` : ''}` : '',
+    d.pomo.count ? `番茄钟 ${d.pomo.count} 个` : ''
+  ].filter(Boolean).join(' · ')
+  composerContent.value = [
+    `${form.value.mood} 今日学习总结`,
+    `🌱 收获：${form.value.harvest}`,
+    `🪞 反思：${form.value.improve}`,
+    stats ? `📊 ${stats}` : ''
+  ].filter(Boolean).join('\n')
+  showComposer.value = true
 }
 </script>
 
@@ -128,7 +185,10 @@ function copyShareText() {
   <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
       <h1 class="page-title">📝 每日总结</h1>
-      <button class="btn-primary" @click="openShare">🎨 生成分享卡片</button>
+      <div class="flex gap-2">
+        <button class="btn-ghost" @click="openCommunityShare">📣 分享到广场</button>
+        <button class="btn-primary" @click="openShare">🎨 生成分享卡片</button>
+      </div>
     </div>
 
     <div class="grid lg:grid-cols-3 gap-4">
@@ -298,7 +358,10 @@ function copyShareText() {
     <Teleport to="body">
       <div v-if="showShare" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" @click.self="showShare = false">
         <div class="max-w-sm w-full">
-          <div class="rounded-3xl overflow-hidden shadow-2xl bg-gradient-to-br from-primary-500 via-indigo-500 to-purple-600 text-white p-6">
+          <!-- 图片生成成功后用 <img> 展示，移动端可长按保存；生成期间/失败时展示原 DOM 卡片 -->
+          <img v-if="shareImg" :src="shareImg" alt="学习日报分享卡片" class="w-full rounded-3xl shadow-2xl select-none" />
+          <div v-show="!shareImg" ref="shareCardRef"
+            class="rounded-3xl overflow-hidden shadow-2xl bg-gradient-to-br from-primary-500 via-indigo-500 to-purple-600 text-white p-6">
             <!-- Logo + 品牌 -->
             <div class="flex items-center gap-2 mb-3">
               <img src="/logo.png" alt="Logo" class="w-6 h-6 rounded" onerror="this.style.display='none'" />
@@ -328,13 +391,20 @@ function copyShareText() {
             <div v-if="form.harvest" class="mt-2 text-xs bg-white/10 rounded-xl p-3 leading-relaxed">🌱 {{ form.harvest.slice(0, 100) }}</div>
             <div class="mt-4 text-[10px] opacity-70 text-center">github.com/Han050912/zsb-study-tracker</div>
           </div>
-          <p class="text-center text-white/70 text-xs mt-3">长按保存图片，分享到备考群，和朋友一起上岸！📸</p>
+          <p class="text-center text-white/70 text-xs mt-3">
+            {{ shareImgLoading ? '正在生成图片…' : shareImg ? '点击保存图片，分享到备考群，和朋友一起上岸！📸' : '图片生成失败，可截图保存' }}
+          </p>
           <div class="flex gap-2 mt-2">
-            <button class="btn-ghost flex-1" @click="copyShareText">📋 复制分享文案</button>
+            <button class="btn-ghost flex-1" @click="copyShareText">📋 复制文案</button>
+            <button v-if="shareImg" class="btn-ghost flex-1" @click="downloadShareImage">💾 保存图片</button>
             <button class="btn-ghost flex-1" @click="showShare = false">关闭</button>
           </div>
         </div>
       </div>
     </Teleport>
+
+    <!-- 分享到社区广场（预填总结内容，可编辑后发布） -->
+    <PostComposer v-model:show="showComposer" type="share" :preset-content="composerContent"
+      :preset-tags="['#每日打卡']" ref-type="summary" :ref-id="editDate" />
   </div>
 </template>

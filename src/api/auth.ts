@@ -3,6 +3,7 @@ import { request } from './client'
 export interface AuthUser {
   id: string
   username: string
+  role: string
   createdAt: number
 }
 
