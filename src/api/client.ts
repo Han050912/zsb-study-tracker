@@ -12,13 +12,39 @@ function getToken(): string | null {
   return localStorage.getItem('jwt_token')
 }
 
+/** 401 全局处理：清除 token、通知清空内存数据、跳转登录页 */
+function handleUnauthorized(): never {
+  localStorage.removeItem('jwt_token')
+  // 通知应用清空内存中的用户数据（防止 401 后串号到下一个账号）
+  window.dispatchEvent(new CustomEvent('auth:expired'))
+  window.location.hash = '#/login'
+  throw Object.assign(new Error('登录已过期，请重新登录'), { status: 401 })
+}
+
 export async function request<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const res = await authFetch(path, options, { 'Content-Type': 'application/json' })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: '请求失败' }))
+    throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })
+  }
+  return res.json()
+}
+
+/**
+ * 携带认证头的原始 fetch：返回 Response 本身，供二进制上传/下载等非 JSON 场景使用。
+ * 调用方自行检查 res.ok 并解析响应体；401 与 request() 走同一全局处理。
+ */
+export async function authFetch(
+  path: string,
+  options: RequestInit = {},
+  baseHeaders: Record<string, string> = {}
+): Promise<Response> {
   const token = getToken()
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...baseHeaders,
     ...(options.headers as Record<string, string> || {})
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
@@ -26,18 +52,8 @@ export async function request<T>(
   if (__DESKTOP_BUILD__) headers['X-Desktop-Token'] = __DESKTOP_TOKEN__
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
-  if (res.status === 401 && !CREDENTIAL_PATHS.includes(path)) {
-    localStorage.removeItem('jwt_token')
-    // 通知应用清空内存中的用户数据（防止 401 后串号到下一个账号）
-    window.dispatchEvent(new CustomEvent('auth:expired'))
-    window.location.hash = '#/login'
-    throw Object.assign(new Error('登录已过期，请重新登录'), { status: 401 })
-  }
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: '请求失败' }))
-    throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })
-  }
-  return res.json()
+  if (res.status === 401 && !CREDENTIAL_PATHS.includes(path)) handleUnauthorized()
+  return res
 }
 
 /** Chrome keepalive 请求体上限（Firefox 更大，此处取 Chrome 保守值） */

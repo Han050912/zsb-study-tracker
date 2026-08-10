@@ -78,9 +78,12 @@ export interface Note {
   id: string
   subjectId: string
   title: string
+  /** 文本笔记为 Markdown 源码；PDF 笔记为 'd1:<id>' 引用（原文二进制分片存 D1，阅读时回源拼装） */
   content: string
   tags: string[]
   updatedAt: number
+  /** 缺省为 Markdown 笔记；'pdf' 表示 PDF 原文笔记（以查看器渲染，不可编辑正文） */
+  type?: 'pdf'
 }
 
 /** 背单词打卡记录（逐条） */
@@ -226,6 +229,7 @@ export interface CommunityPost {
   likesCount: number
   commentsCount: number
   isPinned: boolean
+  isHidden: boolean
   likedByMe: boolean
   createdAt: number // Unix 秒
 }
@@ -239,6 +243,7 @@ export interface CommunityComment {
   parentId?: string
   content: string
   likesCount: number
+  isHidden: boolean
   likedByMe: boolean
   createdAt: number // Unix 秒
   /** 前端组装的二级回复 */

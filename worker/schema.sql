@@ -1,8 +1,18 @@
+-- 已建库升级：notes 表新增 type 列（PDF 笔记），执行一次：
+--   ALTER TABLE notes ADD COLUMN type TEXT;
+-- 已建库升级：pdf_chunks 分片表（替代 R2），执行一次：
+--   CREATE TABLE IF NOT EXISTS pdf_chunks ( user_id TEXT NOT NULL REFERENCES users(id), pdf_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (user_id, pdf_id, chunk_index) );
+-- 已建库升级：users 表新增 role 列（管理员体系），执行一次：
+--   ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user';
+-- 将指定用户设为管理员：UPDATE users SET role = 'admin' WHERE username = '你的用户名';
+-- 新库直接执行本文件即可（所有建表语句已含最新列）。
+
 -- ========== 用户认证 ==========
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user',   -- 'user' | 'admin'
   created_at INTEGER NOT NULL
 );
 
@@ -117,8 +127,9 @@ CREATE TABLE IF NOT EXISTS notes (
   user_id TEXT NOT NULL REFERENCES users(id),
   subject_id TEXT NOT NULL,
   title TEXT NOT NULL,
-  content TEXT NOT NULL,        -- Markdown 正文
+  content TEXT NOT NULL,        -- Markdown 正文 / PDF 的 D1 引用（'d1:<id>'，原文分片存 pdf_chunks）
   tags TEXT,                    -- JSON 数组：标签列表
+  type TEXT,                    -- NULL 为 Markdown 笔记；'pdf' 为 PDF 原文笔记
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, id)
 );
@@ -337,3 +348,13 @@ CREATE TABLE IF NOT EXISTS community_notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_notify_user ON community_notifications(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_notify_unread ON community_notifications(user_id, is_read);
+
+-- ========== PDF 原文分片存储（D1，替代 R2） ==========
+-- 单行上限约 100KB，按 95KB 分片，30MB PDF 约拆 324 片
+CREATE TABLE IF NOT EXISTS pdf_chunks (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  pdf_id TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  PRIMARY KEY (user_id, pdf_id, chunk_index)
+);

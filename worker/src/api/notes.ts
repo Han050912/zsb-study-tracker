@@ -1,7 +1,8 @@
 import { on } from '../router'
 import { crudHandlers } from '../db'
 
-/** Markdown 笔记（notes 表 ↔ 前端 Note，tags 为 JSON 数组字符串） */
+/** Markdown 笔记（notes 表 ↔ 前端 Note，tags 为 JSON 数组字符串）。
+ *  PDF 笔记的 content 为 'd1:<id>' 引用，原文二进制分片存 pdf_chunks 表 */
 export const notesMapping = crudHandlers({
   table: 'notes',
   toRow: (userId, b, id) => ({
@@ -11,6 +12,7 @@ export const notesMapping = crudHandlers({
     title: b.title,
     content: b.content,
     tags: JSON.stringify(b.tags ?? []),
+    type: b.type ?? null,
     updated_at: b.updatedAt ?? Date.now()
   }),
   fromRow: (r) => {
@@ -28,7 +30,8 @@ export const notesMapping = crudHandlers({
       title: r.title,
       content: r.content,
       tags,
-      updatedAt: r.updated_at
+      updatedAt: r.updated_at,
+      type: r.type === 'pdf' ? 'pdf' : undefined
     }
   }
 })
