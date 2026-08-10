@@ -3,7 +3,7 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
-import { sessionUser } from '../services/auth'
+import { sessionUser, isAdmin } from '../services/auth'
 import type { CommunityComment, CommunityPost } from '../types'
 import PostCard from '../components/community/PostCard.vue'
 import CommentItem from '../components/community/CommentItem.vue'
@@ -33,6 +33,7 @@ onMounted(async () => {
 })
 
 const isMine = computed(() => post.value?.userId === sessionUser.value?.id)
+const canDeletePost = computed(() => isMine.value || isAdmin.value)
 
 /** 一级评论 + 二级回复树（回复的 parentId 始终指向一级评论） */
 const commentTree = computed(() => {
@@ -122,6 +123,34 @@ async function removePost() {
     toast(e?.message || '删除失败')
   }
 }
+
+// ---- 管理员操作 ----
+async function togglePin() {
+  if (!post.value) return
+  try {
+    const pinned = await store.adminPinPost(postId)
+    post.value.isPinned = pinned
+    toast(pinned ? '已置顶' : '已取消置顶')
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
+async function toggleHidePost() {
+  if (!post.value) return
+  try {
+    const hidden = await store.adminHidePost(postId)
+    post.value.isHidden = hidden
+    toast(hidden ? '已隐藏' : '已取消隐藏')
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
+async function toggleHideComment(c: CommunityComment) {
+  try {
+    const hidden = await store.adminHideComment(c.id)
+    const target = findComment(c.id)
+    if (target) target.isHidden = hidden
+    toast(hidden ? '评论已隐藏' : '评论已恢复')
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
 </script>
 
 <template>
@@ -138,9 +167,9 @@ async function removePost() {
     </div>
 
     <template v-else-if="post">
-      <PostCard :post="post" detail @like="likePost">
+      <PostCard :post="post" detail @like="likePost" @pin="togglePin" @hide="toggleHidePost">
         <template #actions>
-          <button v-if="isMine" class="ml-auto text-xs text-slate-400 hover:text-red-500" @click.stop="removePost">删除</button>
+          <button v-if="canDeletePost" class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost">删除</button>
         </template>
       </PostCard>
 
@@ -157,11 +186,11 @@ async function removePost() {
 
         <div v-if="!commentTree.length" class="text-center text-xs text-slate-400 py-4">暂无评论，来抢沙发～</div>
         <div v-for="c in commentTree" :key="c.id" class="space-y-3">
-          <CommentItem :comment="c" @like="likeComment(c)" @reply="reply(c)" @remove="removeComment(c)" />
+          <CommentItem :comment="c" @like="likeComment(c)" @reply="reply(c)" @remove="removeComment(c)" @hide="toggleHideComment(c)" />
           <!-- 二级回复 -->
           <div v-if="c.replies?.length" class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
             <CommentItem v-for="r in c.replies" :key="r.id" :comment="r"
-              @like="likeComment(r)" @reply="reply(r)" @remove="removeComment(r)" />
+              @like="likeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)" />
           </div>
         </div>
       </div>

@@ -2,6 +2,7 @@
 import { inject, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
+import { isAdmin } from '../services/auth'
 import { COMMUNITY_TAGS } from '../data/defaults'
 import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
@@ -33,6 +34,29 @@ async function like(id: string) {
 function filterTag(tag: string) {
   store.setTag(tag).catch(e => toast(e?.message || '加载失败'))
 }
+
+// ---- 管理员操作 ----
+async function togglePin(id: string) {
+  try {
+    const pinned = await store.adminPinPost(id)
+    toast(pinned ? '已置顶' : '已取消置顶')
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
+async function toggleHide(id: string) {
+  try {
+    const hidden = await store.adminHidePost(id)
+    toast(hidden ? '已隐藏' : '已取消隐藏')
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
+async function removePost(id: string) {
+  if (!window.confirm('确认删除这篇帖子？评论和点赞将一并删除。')) return
+  try {
+    await store.removePost(id)
+    toast('帖子已删除')
+  } catch (e: any) { toast(e?.message || '删除失败') }
+}
 </script>
 
 <template>
@@ -63,7 +87,13 @@ function filterTag(tag: string) {
       <PostCard v-for="p in store.posts" :key="p.id" :post="p"
         @like="like(p.id)"
         @tag="filterTag"
-        @open="router.push(`/community/post/${p.id}`)" />
+        @open="router.push(`/community/post/${p.id}`)"
+        @pin="togglePin(p.id)"
+        @hide="toggleHide(p.id)">
+        <template v-if="isAdmin" #actions>
+          <button class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost(p.id)">删除</button>
+        </template>
+      </PostCard>
     </div>
 
     <div v-if="!store.posts.length && !store.feedLoading" class="card text-center py-10 text-slate-400 text-sm">

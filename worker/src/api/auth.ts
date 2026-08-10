@@ -32,11 +32,12 @@ interface UserRow {
   id: string
   username: string
   password_hash: string
+  role: string
   created_at: number
 }
 
 function toUser(row: UserRow) {
-  return { id: row.id, username: row.username, createdAt: row.created_at }
+  return { id: row.id, username: row.username, role: row.role || 'user', createdAt: row.created_at }
 }
 
 function validateCredentials(username: unknown, password: unknown): { username: string; password: string } {
@@ -58,7 +59,7 @@ export function registerAuthRoutes() {
     if (await first(ctx.env, 'SELECT id FROM users WHERE username = ?', username)) {
       throw new HttpError(409, '该用户名已被注册')
     }
-    const row: UserRow = { id: uid(), username, password_hash: hashPassword(password), created_at: Date.now() }
+    const row: UserRow = { id: uid(), username, password_hash: hashPassword(password), role: 'user', created_at: Date.now() }
     await run(ctx.env, 'INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)',
       row.id, row.username, row.password_hash, row.created_at)
     // 初始化用户设置与游戏化数据（默认值由表结构兜底）

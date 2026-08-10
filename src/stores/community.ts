@@ -178,6 +178,27 @@ export const useCommunityStore = defineStore('community', {
       await communityApi.markAllRead()
       for (const n of this.notifications) n.isRead = true
       this.unreadCount = 0
+    },
+
+    // ---- 管理员操作 ----
+
+    async adminPinPost(id: string): Promise<boolean> {
+      const { isPinned } = await communityApi.adminPinPost(id)
+      const p = this.posts.find(x => x.id === id)
+      if (p) p.isPinned = isPinned
+      return isPinned
+    },
+
+    async adminHidePost(id: string): Promise<boolean> {
+      const { isHidden } = await communityApi.adminHidePost(id)
+      const p = this.posts.find(x => x.id === id)
+      if (p) p.isHidden = isHidden
+      return isHidden
+    },
+
+    async adminHideComment(id: string): Promise<boolean> {
+      const { isHidden } = await communityApi.adminHideComment(id)
+      return isHidden
     }
   }
 })

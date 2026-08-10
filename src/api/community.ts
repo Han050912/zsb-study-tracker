@@ -57,5 +57,13 @@ export const communityApi = {
   markRead: (id: string) =>
     request<{ ok: boolean }>(`/api/community/notifications/${id}/read`, { method: 'PUT' }),
   markAllRead: () =>
-    request<{ ok: boolean }>('/api/community/notifications/read-all', { method: 'PUT' })
+    request<{ ok: boolean }>('/api/community/notifications/read-all', { method: 'PUT' }),
+
+  // ---- 管理员操作 ----
+  adminPinPost: (id: string) =>
+    request<{ isPinned: boolean }>(`/api/admin/posts/${id}/pin`, { method: 'PUT' }),
+  adminHidePost: (id: string) =>
+    request<{ isHidden: boolean }>(`/api/admin/posts/${id}/hide`, { method: 'PUT' }),
+  adminHideComment: (id: string) =>
+    request<{ isHidden: boolean }>(`/api/admin/comments/${id}/hide`, { method: 'PUT' })
 }

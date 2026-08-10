@@ -40,6 +40,7 @@ function mapPost(r: any) {
     likesCount: r.likes_count,
     commentsCount: r.comments_count,
     isPinned: !!r.is_pinned,
+    isHidden: !!r.is_hidden,
     likedByMe: !!r.liked_by_me,
     createdAt: r.created_at
   }
@@ -54,6 +55,7 @@ function mapComment(r: any) {
     parentId: r.parent_id ?? undefined,
     content: r.content,
     likesCount: r.likes_count,
+    isHidden: !!r.is_hidden,
     likedByMe: !!r.liked_by_me,
     createdAt: r.created_at
   }
@@ -142,6 +144,12 @@ async function displayName(env: Env, userId: string): Promise<string> {
   return r?.name || '升本人'
 }
 
+/** 当前用户是否为管理员 */
+async function isAdmin(env: Env, userId: string): Promise<boolean> {
+  const u = await first<{ role: string }>(env, 'SELECT role FROM users WHERE id = ?', userId)
+  return u?.role === 'admin'
+}
+
 /** LIKE 通配符转义（tags JSON 子串匹配用） */
 function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, c => '\\' + c)
@@ -168,18 +176,20 @@ export function registerCommunityRoutes() {
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const cursor = url.searchParams.get('cursor') || ''
 
-    const where: string[] = ['p.is_hidden = 0']
+    const admin = await isAdmin(ctx.env, ctx.userId)
+    const where: string[] = []
+    if (!admin) where.push('p.is_hidden = 0')
     const params: unknown[] = [ctx.userId]
     if (type && POST_TYPES.includes(type)) { where.push('p.type = ?'); params.push(type) }
     if (tag) { where.push(`p.tags LIKE ? ESCAPE '\\'`); params.push(`%"${escapeLike(tag)}"%`) }
 
-    let sql = `${POST_SELECT} WHERE ${where.join(' AND ')}`
+    let sql = `${POST_SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`
     let nextCursor: string | null = null
 
     if (sort === 'hot') {
       // 热度 = 互动分 / 时间衰减；offset 分页（热度随时间漂移，游标无意义）
       const offset = Math.max(parseInt(cursor || '') || 0, 0)
-      sql += ` ORDER BY (p.likes_count * 2 + p.comments_count * 3 + 1) * 3600.0 / (? - p.created_at + 7200) DESC, p.created_at DESC LIMIT ? OFFSET ?`
+      sql += ` ORDER BY p.is_pinned DESC, (p.likes_count * 2 + p.comments_count * 3 + 1) * 3600.0 / (? - p.created_at + 7200) DESC, p.created_at DESC LIMIT ? OFFSET ?`
       const rows = await all(ctx.env, sql, ...params, nowSec(), limit + 1, offset)
       if (rows.length > limit) nextCursor = String(offset + limit)
       return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor })
@@ -191,7 +201,7 @@ export function registerCommunityRoutes() {
       params.push(c.ts, c.ts, c.id)
       sql = `${POST_SELECT} WHERE ${where.join(' AND ')}`
     }
-    sql += ' ORDER BY p.created_at DESC, p.id DESC LIMIT ?'
+    sql += ' ORDER BY p.is_pinned DESC, p.created_at DESC, p.id DESC LIMIT ?'
     const rows = await all(ctx.env, sql, ...params, limit + 1)
     if (rows.length > limit) {
       const last = rows[limit - 1] as any
@@ -200,10 +210,13 @@ export function registerCommunityRoutes() {
     return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor })
   })
 
-  // 帖子详情（含评论列表，前端组装二级树）
+  // 帖子详情（含评论列表，前端组装二级树；管理员可见隐藏内容）
   on('GET', '/api/community/posts/:id', true, async (ctx) => {
-    const post = await first(ctx.env, `${POST_SELECT} WHERE p.id = ? AND p.is_hidden = 0`, ctx.userId, ctx.params.id)
+    const admin = await isAdmin(ctx.env, ctx.userId)
+    const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0'
+    const post = await first(ctx.env, `${POST_SELECT} WHERE ${postWhere}`, ctx.userId, ctx.params.id)
     if (!post) throw new HttpError(404, '帖子不存在')
+    const commentWhere = admin ? 'c.post_id = ?' : 'c.post_id = ? AND c.is_hidden = 0'
     const comments = await all(ctx.env, `
       SELECT c.*, COALESCE(s.user_name, u.username) AS user_name,
         (l.user_id IS NOT NULL) AS liked_by_me
@@ -211,7 +224,7 @@ export function registerCommunityRoutes() {
       JOIN users u ON u.id = c.user_id
       LEFT JOIN user_settings s ON s.user_id = c.user_id
       LEFT JOIN community_likes l ON l.target_type = 'comment' AND l.target_id = c.id AND l.user_id = ?
-      WHERE c.post_id = ? AND c.is_hidden = 0
+      WHERE ${commentWhere}
       ORDER BY c.created_at ASC, c.id ASC`, ctx.userId, ctx.params.id)
     return Response.json({ post: mapPost(post), comments: comments.map(mapComment) })
   })
@@ -246,20 +259,24 @@ export function registerCommunityRoutes() {
     return Response.json(mapPost(created), { status: 201 })
   })
 
-  // 删帖（仅作者；级联清理评论/点赞/通知）
+  // 删帖（作者或管理员；级联清理评论/点赞/通知）
   on('DELETE', '/api/community/posts/:id', true, async (ctx) => {
     const id = ctx.params.id
     const post = await first<{ user_id: string }>(ctx.env, 'SELECT user_id FROM community_posts WHERE id = ?', id)
     if (!post) throw new HttpError(404, '帖子不存在')
-    if (post.user_id !== ctx.userId) throw new HttpError(403, '只能删除自己的帖子')
+    const isOwner = post.user_id === ctx.userId
+    if (!isOwner && !(await isAdmin(ctx.env, ctx.userId))) throw new HttpError(403, '只能删除自己的帖子')
     // 回收该帖下全部评论产生的积分流水（评论帖子/收到评论），与单独删评论口径一致
+    // 管理员删除时跳过积分回收——管理操作不应惩罚用户
     const commentIds = await all<{ id: string }>(ctx.env,
       'SELECT id FROM community_comments WHERE post_id = ?', id)
     const revoke: D1PreparedStatement[] = []
-    for (const c of commentIds) revoke.push(...await revokeStatements(ctx.env, c.id))
-    // 回收帖子本身及全部评论的「获赞」流水（取消点赞之外的另一条点赞退出路径）
-    revoke.push(...await revokeLikeStatements(ctx.env, 'post', [id]))
-    revoke.push(...await revokeLikeStatements(ctx.env, 'comment', commentIds.map(c => c.id)))
+    if (isOwner) {
+      for (const c of commentIds) revoke.push(...await revokeStatements(ctx.env, c.id))
+      // 回收帖子本身及全部评论的「获赞」流水（取消点赞之外的另一条点赞退出路径）
+      revoke.push(...await revokeLikeStatements(ctx.env, 'post', [id]))
+      revoke.push(...await revokeLikeStatements(ctx.env, 'comment', commentIds.map(c => c.id)))
+    }
     await batch(ctx.env, [
       ...revoke,
       ctx.env.DB.prepare(
@@ -320,27 +337,31 @@ export function registerCommunityRoutes() {
     return Response.json({
       id, postId, userId: ctx.userId, userName: myName,
       parentId: parent ? b.parentId : undefined,
-      content, likesCount: 0, likedByMe: false, createdAt: now
+      content, likesCount: 0, isHidden: false, likedByMe: false, createdAt: now
     }, { status: 201 })
   })
 
-  // 删除评论（仅作者；级联删除其二级回复并回退帖子评论数）
+  // 删除评论（作者或管理员；级联删除其二级回复并回退帖子评论数）
   on('DELETE', '/api/community/comments/:id', true, async (ctx) => {
     const id = ctx.params.id
     const c = await first<{ post_id: string; user_id: string }>(ctx.env,
       'SELECT post_id, user_id FROM community_comments WHERE id = ?', id)
     if (!c) throw new HttpError(404, '评论不存在')
-    if (c.user_id !== ctx.userId) throw new HttpError(403, '只能删除自己的评论')
+    const isOwner = c.user_id === ctx.userId
+    if (!isOwner && !(await isAdmin(ctx.env, ctx.userId))) throw new HttpError(403, '只能删除自己的评论')
     const replies = await all<{ id: string }>(ctx.env,
       'SELECT id FROM community_comments WHERE parent_id = ?', id)
     const removedIds = [id, ...replies.map(r => r.id)]
     const removed = removedIds.length
     // 回收该评论及其回复产生的积分流水（评论帖子/收到评论 + 获赞），防止反复评论+删除刷分
+    // 管理员删除时跳过积分回收——管理操作不应惩罚用户
     const revoke: D1PreparedStatement[] = []
-    for (const cid of removedIds) {
-      revoke.push(...await revokeStatements(ctx.env, cid))
+    if (isOwner) {
+      for (const cid of removedIds) {
+        revoke.push(...await revokeStatements(ctx.env, cid))
+      }
+      revoke.push(...await revokeLikeStatements(ctx.env, 'comment', removedIds))
     }
-    revoke.push(...await revokeLikeStatements(ctx.env, 'comment', removedIds))
     await batch(ctx.env, [
       ...revoke,
       // 清理这些评论触发的通知（被评论/被回复/被赞评论），避免通知指向已删除内容
