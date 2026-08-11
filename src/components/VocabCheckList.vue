@@ -2,9 +2,10 @@
 /**
  * 词汇打卡列表组件
  * - 卡片分行布局，支持滚动、吸顶表头、毛玻璃效果
- * - 点击单词切换释义显隐，输入框回车/失焦触发语义校验
- * - 校验结果实时反馈（正确绿边+✓ / 错误红边+展示标准释义）
- * - 用户输入持久化到 localStorage，刷新不丢失
+ * - 双模式：英译汉（看单词写释义）/ 汉译英（看释义拼单词），表头一键切换
+ * - 点击主词条切换答案显隐，输入框回车/失焦触发校验
+ * - 校验结果实时反馈（正确绿边+✓ / 错误红边+展示标准答案）
+ * - 两种模式作答状态独立存储，任一模式答对即算掌握；持久化到 localStorage，刷新不丢失
  */
 import { computed, ref, watch } from 'vue'
 import { today } from '../utils/date'
@@ -24,43 +25,92 @@ const emit = defineEmits<{
 /** 校验状态：null=未校验 true=正确 false=错误 */
 type ValidationResult = boolean | null
 
-interface WordState {
-  /** 用户填写的释义 */
-  userAnswer: string
+/** 练习模式：zh=英译汉（看英文写中文释义） en=汉译英（看中文写英文拼写） */
+type Mode = 'zh' | 'en'
+
+interface AnswerState {
+  /** 用户填写的答案 */
+  answer: string
   /** 校验结果 */
   validation: ValidationResult
-  /** 是否展开显示标准释义 */
-  showMeaning: boolean
+  /** 是否展开显示标准答案 */
+  show: boolean
 }
+
+/** 每个单词在两种模式下各自独立的作答状态 */
+interface ModeStates {
+  zh: AnswerState
+  en: AnswerState
+}
+
+const emptyAnswer = (): AnswerState => ({ answer: '', validation: null, show: false })
 
 // ---- 本地存储（按日期隔离，跨天由 English 页统一清理） ----
 // 使用本地日期（与 English 页缓存键口径一致）；toISOString 为 UTC 日期，凌晨时段会错位一天
 const STORAGE_KEY = `vocab-checkin:${today()}`
+const MODE_KEY = 'vocab-checkin-mode'
 
-function loadState(): Record<string, WordState> {
+function loadState(): Record<string, ModeStates> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : {}
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const out: Record<string, ModeStates> = {}
+    for (const [k, v] of Object.entries(parsed)) {
+      if (!v || typeof v !== 'object') continue
+      // 新格式：{ zh: {...}, en: {...} }
+      if ('zh' in (v as Record<string, unknown>)) {
+        out[k] = v as ModeStates
+        continue
+      }
+      // 旧格式迁移：{ userAnswer, validation, showMeaning } → 英译汉模式
+      const old = v as { userAnswer?: string; validation?: ValidationResult; showMeaning?: boolean }
+      out[k] = {
+        zh: { answer: old.userAnswer ?? '', validation: old.validation ?? null, show: !!old.showMeaning },
+        en: emptyAnswer()
+      }
+    }
+    return out
   } catch {
     return {}
   }
 }
 
-function persistState(map: Record<string, WordState>) {
+function persistState(map: Record<string, ModeStates>) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(map))
   } catch { /* 存储满时静默失败 */ }
 }
 
-// ---- 响应式状态 ----
-const stateMap = ref<Record<string, WordState>>(loadState())
+function loadMode(): Mode {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'en' ? 'en' : 'zh'
+  } catch {
+    return 'zh'
+  }
+}
 
-/** 获取某个单词的当前状态（不存在则初始化默认值） */
-function getWord(vocId: string): WordState {
+// ---- 响应式状态 ----
+const stateMap = ref<Record<string, ModeStates>>(loadState())
+const mode = ref<Mode>(loadMode())
+
+function setMode(m: Mode) {
+  mode.value = m
+  try { localStorage.setItem(MODE_KEY, m) } catch { /* 忽略 */ }
+}
+
+/** 获取某个单词的双模式状态（不存在则惰性初始化默认值） */
+function getWord(vocId: string): ModeStates {
   if (!stateMap.value[vocId]) {
-    stateMap.value[vocId] = { userAnswer: '', validation: null, showMeaning: false }
+    stateMap.value[vocId] = { zh: emptyAnswer(), en: emptyAnswer() }
   }
   return stateMap.value[vocId]
+}
+
+/** 当前模式下某个单词的作答状态。getWord 惰性初始化保证永不返回 undefined，
+ *  模板中 v-model 直接绑定其 .answer 字段（初始化与读取同一引用，安全） */
+function ws(vocId: string): AnswerState {
+  return getWord(vocId)[mode.value]
 }
 
 // 单词列表变化时：为所有单词预初始化状态并持久化（如刷新后重新拉取）。
@@ -70,19 +120,25 @@ watch(() => props.words, (words) => {
   persistState(stateMap.value)
 }, { immediate: true })
 
-// ---- 统计 ----
+// ---- 统计（按词去重：任一模式校验过/答对即计入） ----
 const totalCount = computed(() => props.words.length)
 const validatedCount = computed(() =>
-  props.words.filter(w => getWord(w.vocId).validation !== null).length
+  props.words.filter(w => {
+    const s = getWord(w.vocId)
+    return s.zh.validation !== null || s.en.validation !== null
+  }).length
 )
 const correctCount = computed(() =>
-  props.words.filter(w => getWord(w.vocId).validation === true).length
+  props.words.filter(w => {
+    const s = getWord(w.vocId)
+    return s.zh.validation === true || s.en.validation === true
+  }).length
 )
 const progressPercent = computed(() =>
   totalCount.value ? Math.round((validatedCount.value / totalCount.value) * 100) : 0
 )
 
-// ---- 语义校验 ----
+// ---- 语义校验（英译汉） ----
 /** 常见中文虚词/连接字，匹配时降权处理 */
 const STOP_CHARS = new Set('的地得着了过在和与或及而其又因所以但是如果就是都也很还'.split(''))
 
@@ -121,32 +177,41 @@ function semanticMatch(userInput: string, standard: string): boolean {
   return hitRatio >= 0.5 || hasSubstring
 }
 
+// ---- 拼写校验（汉译英）：忽略大小写与首尾空格，严格一致 ----
+function spellingMatch(userInput: string, spelling: string): boolean {
+  const user = userInput.trim().toLowerCase()
+  const std = spelling.trim().toLowerCase()
+  return !!user && !!std && user === std
+}
+
 // ---- 交互方法 ----
-/** 切换标准释义显隐 */
-function toggleMeaning(vocId: string) {
-  const w = getWord(vocId)
-  w.showMeaning = !w.showMeaning
+/** 切换标准答案显隐 */
+function toggleAnswer(vocId: string) {
+  const w = ws(vocId)
+  w.show = !w.show
   persistState(stateMap.value)
 }
 
-/** 触发校验（回车 / 失焦） */
+/** 触发校验（回车 / 失焦），按当前模式选择判题规则 */
 function validate(word: MaimemoWordDetail) {
-  const w = getWord(word.vocId)
-  const input = w.userAnswer.trim()
+  const w = ws(word.vocId)
+  const input = w.answer.trim()
   if (!input) { w.validation = null; persistState(stateMap.value); return }
-  w.validation = semanticMatch(input, word.meaning)
+  w.validation = mode.value === 'zh'
+    ? semanticMatch(input, word.meaning)
+    : spellingMatch(input, word.spelling)
   persistState(stateMap.value)
 }
 
 /** 输入变化时重置校验状态（等待下次触发） */
 function onInput(vocId: string) {
-  const w = getWord(vocId)
+  const w = ws(vocId)
   w.validation = null
   persistState(stateMap.value)
 }
 
 /** 输入框样式类 */
-function inputClass(w: WordState): string {
+function inputClass(w: AnswerState): string {
   const base = 'w-full rounded-xl px-3 py-2 text-sm outline-none transition-all duration-300 border bg-white/80 dark:bg-slate-700/80 dark:text-slate-100'
   if (w.validation === true) return `${base} border-emerald-400 dark:border-emerald-500 ring-2 ring-emerald-100 dark:ring-emerald-900/30`
   if (w.validation === false) return `${base} border-red-400 dark:border-red-500 ring-2 ring-red-100 dark:ring-red-900/30`
@@ -159,11 +224,28 @@ function inputClass(w: WordState): string {
     <!-- 渐变背景 -->
     <div class="absolute inset-0 bg-gradient-to-br from-indigo-50/80 via-white to-violet-50/60 dark:from-slate-800 dark:via-slate-800 dark:to-slate-900 pointer-events-none" />
 
-    <!-- 吸顶表头（毛玻璃）：标题 + 校验统计 + 进度 + 拉取/刷新入口 -->
+    <!-- 吸顶表头（毛玻璃）：标题 + 模式切换 + 校验统计 + 进度 + 拉取/刷新入口 -->
     <div class="sticky top-0 z-10 backdrop-blur-xl bg-white/70 dark:bg-slate-800/70 border-b border-white/30 dark:border-slate-700/50 px-4 py-3">
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-3 min-w-0">
           <h3 class="text-sm font-bold text-slate-700 dark:text-slate-200 shrink-0">📋 今日词汇打卡</h3>
+          <!-- 模式切换：英译汉 / 汉译英 -->
+          <div class="flex shrink-0 rounded-lg bg-slate-100 dark:bg-slate-700 p-0.5 text-[11px] font-medium">
+            <button
+              class="px-2.5 py-1 rounded-md transition-all duration-300"
+              :class="mode === 'zh'
+                ? 'bg-white dark:bg-slate-600 text-indigo-600 dark:text-indigo-300 shadow-sm'
+                : 'text-slate-400 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'"
+              @click="setMode('zh')"
+            >英译汉</button>
+            <button
+              class="px-2.5 py-1 rounded-md transition-all duration-300"
+              :class="mode === 'en'
+                ? 'bg-white dark:bg-slate-600 text-indigo-600 dark:text-indigo-300 shadow-sm'
+                : 'text-slate-400 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'"
+              @click="setMode('en')"
+            >汉译英</button>
+          </div>
           <span class="text-[10px] text-slate-400 dark:text-slate-500 truncate">
             {{ validatedCount }}/{{ totalCount }} 已校验 · {{ correctCount }} 正确
           </span>
@@ -220,14 +302,14 @@ function inputClass(w: WordState): string {
           class="group relative rounded-2xl bg-white/80 dark:bg-slate-700/60 border border-slate-100/80 dark:border-slate-600/50 p-3.5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-100/50 dark:hover:shadow-slate-900/50"
         >
           <div class="flex items-start gap-3">
-            <!-- 左侧：单词 + 标签 -->
+            <!-- 左侧：主词条 + 标签 -->
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <!-- 单词（点击切换释义） -->
+                <!-- 主词条（点击切换答案显隐）：英译汉显示单词，汉译英显示释义 -->
                 <button
-                  class="text-base font-bold text-slate-800 dark:text-slate-100 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors duration-300 cursor-pointer select-none"
-                  @click="toggleMeaning(word.vocId)"
-                >{{ word.spelling }}</button>
+                  class="text-base font-bold text-slate-800 dark:text-slate-100 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors duration-300 cursor-pointer select-none text-left"
+                  @click="toggleAnswer(word.vocId)"
+                >{{ mode === 'zh' ? word.spelling : (word.meaning || '暂无释义') }}</button>
 
                 <!-- 新学 / 复习标签 -->
                 <span
@@ -247,12 +329,12 @@ function inputClass(w: WordState): string {
                 >✓</span>
               </div>
 
-              <!-- 标准释义（点击单词后展开，淡入淡出） -->
+              <!-- 标准答案（点击主词条后展开，淡入淡出） -->
               <Transition name="meaning">
                 <p
-                  v-if="getWord(word.vocId).showMeaning"
+                  v-if="ws(word.vocId).show"
                   class="mt-1.5 text-xs text-slate-500 dark:text-slate-400 leading-relaxed"
-                >{{ word.meaning || '暂无释义' }}</p>
+                >{{ mode === 'zh' ? (word.meaning || '暂无释义') : (word.spelling || '暂无') }}</p>
               </Transition>
             </div>
 
@@ -260,9 +342,9 @@ function inputClass(w: WordState): string {
             <div class="w-[45%] sm:w-[40%] shrink-0">
               <div class="relative">
                 <input
-                  v-model="getWord(word.vocId).userAnswer"
-                  :class="inputClass(getWord(word.vocId))"
-                  placeholder="输入释义…"
+                  v-model="ws(word.vocId).answer"
+                  :class="inputClass(ws(word.vocId))"
+                  :placeholder="mode === 'zh' ? '输入释义…' : '输入英文单词…'"
                   @input="onInput(word.vocId)"
                   @keydown.enter="validate(word)"
                   @blur="validate(word)"
@@ -270,19 +352,24 @@ function inputClass(w: WordState): string {
                 <!-- 校验成功图标 -->
                 <Transition name="pop">
                   <span
-                    v-if="getWord(word.vocId).validation === true"
+                    v-if="ws(word.vocId).validation === true"
                     class="absolute right-2.5 top-1/2 -translate-y-1/2 text-emerald-500 text-sm pointer-events-none"
                   >✓</span>
                 </Transition>
               </div>
 
-              <!-- 校验失败：展示标准释义（不覆盖用户输入） -->
+              <!-- 校验失败：展示标准答案（不覆盖用户输入） -->
               <Transition name="meaning">
                 <p
-                  v-if="getWord(word.vocId).validation === false"
+                  v-if="ws(word.vocId).validation === false"
                   class="mt-1.5 text-[11px] text-red-400 dark:text-red-400 leading-relaxed"
                 >
-                  <span class="text-slate-400 dark:text-slate-500">标准释义：</span>{{ word.meaning || '暂无' }}
+                  <template v-if="mode === 'zh'">
+                    <span class="text-slate-400 dark:text-slate-500">标准释义：</span>{{ word.meaning || '暂无' }}
+                  </template>
+                  <template v-else>
+                    <span class="text-slate-400 dark:text-slate-500">正确拼写：</span>{{ word.spelling || '暂无' }}
+                  </template>
                 </p>
               </Transition>
             </div>
