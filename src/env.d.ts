@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/client" />
 
 /** 编译期常量：桌面端（Electron）构建标识，由 vite.config.ts define 注入 */
 declare const __DESKTOP_BUILD__: boolean
