@@ -13,6 +13,11 @@ export function uid(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16)
 }
 
+/** 业务日期（YYYY-MM-DD）一律按 UTC+8：用户群固定为国内考生，避免 UTC 零点至早八点跨日错位 */
+export function utc8Today(): string {
+  return new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
+}
+
 /** 解析 JSON 请求体；非法 JSON 抛出 400（与 router.ts 的 body() 行为一致） */
 async function parseBody(request: Request): Promise<any> {
   try {
