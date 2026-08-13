@@ -1,23 +1,28 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { all, first, run, batch, uid, HttpError } from '../db'
+import { all, first, run, batch, uid, utc8Today, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
+import { deleteUploads, uploadIdsOf, IMAGE_MAX_PER_POST } from './uploads'
 
 /**
- * 社区广场：帖子 / 评论 / 点赞 / 通知。
+ * 社区广场：帖子 / 评论 / 点赞 / 通知 / 图片 / 举报 / 榜单。
  * 积分与学习积分共用 gamification + points_log 两张表（awardStatements 与前端全量同步同一口径）。
+ * 服务端写入的积分流水 ref_id 一律带 'srv:' 前缀，供全量同步区分「服务端来源」并保留（见 gamification.ts）。
  * 列表游标分页：latest 用 `${created_at}_${id}` 游标；hot 用 offset 数字游标（热度随时间变化，游标无意义）。
  */
 
-const POST_TYPES = ['checkin', 'share', 'achievement', 'longform']
+const POST_TYPES = ['checkin', 'share', 'achievement', 'longform', 'question']
+/** 提问帖必选的科目标签（二选一，与前端 COMMUNITY_TAGS 对应） */
+const QUESTION_SUBJECT_TAGS = ['#高等数学', '#英语']
+const REPORT_REASONS = ['广告', '人身攻击', '不相关内容', '其他']
 const MAX_PAGE = 50
 
 const nowSec = () => Math.floor(Date.now() / 1000)
-const todayStr = () => new Date().toISOString().slice(0, 10)
 
 // ---------- 行 → 前端对象 ----------
 
-function parseTags(raw: unknown): string[] {
+/** 解析 JSON 字符串数组列（tags / image_urls 共用），非法输入回退空数组 */
+function parseStrArray(raw: unknown): string[] {
   try {
     const v = JSON.parse(String(raw || '[]'))
     return Array.isArray(v) ? v.filter(t => typeof t === 'string') : []
@@ -34,7 +39,9 @@ function mapPost(r: any) {
     userPoints: r.user_points ?? 0,
     type: r.type,
     content: r.content,
-    tags: parseTags(r.tags),
+    tags: parseStrArray(r.tags),
+    imageUrls: parseStrArray(r.image_urls),
+    isResolved: !!r.is_resolved,
     refType: r.ref_type ?? undefined,
     refId: r.ref_id ?? undefined,
     likesCount: r.likes_count,
@@ -89,7 +96,7 @@ const POST_SELECT = `
 
 // ---------- 积分 / 通知 ----------
 
-/** 社区行为积分语句：gamification 行可能不存在（upsert），流水写入 points_log */
+/** 社区行为积分语句：gamification 行可能不存在（upsert），流水写入 points_log（refId 带 srv: 前缀标记服务端来源） */
 function awardStatements(env: Env, userId: string, points: number, reason: string, refId?: string): D1PreparedStatement[] {
   return [
     env.DB.prepare(
@@ -97,7 +104,7 @@ function awardStatements(env: Env, userId: string, points: number, reason: strin
       'ON CONFLICT(user_id) DO UPDATE SET points = points + excluded.points'
     ).bind(userId, points),
     env.DB.prepare('INSERT INTO points_log (user_id, date, points, reason, ref_id) VALUES (?, ?, ?, ?, ?)')
-      .bind(userId, todayStr(), points, reason, refId ?? null)
+      .bind(userId, utc8Today(), points, reason, refId ? `srv:${refId}` : null)
   ]
 }
 
@@ -123,11 +130,11 @@ async function revokeLikeStatements(env: Env, targetType: 'post' | 'comment', ta
     `SELECT user_id, target_id FROM community_likes WHERE target_type = ? AND target_id IN (${targetIds.map(() => '?').join(',')})`,
     targetType, ...targetIds)
   const stmts: D1PreparedStatement[] = []
-  for (const l of likes) stmts.push(...await revokeStatements(env, `like:${l.user_id}:${targetType}:${l.target_id}`))
+  for (const l of likes) stmts.push(...await revokeStatements(env, `srv:like:${l.user_id}:${targetType}:${l.target_id}`))
   return stmts
 }
 
-function notifyStatement(env: Env, n: {
+export function notifyStatement(env: Env, n: {
   userId: string; type: string; actorId?: string; postId?: string; commentId?: string; content: string
 }): D1PreparedStatement {
   return env.DB.prepare(
@@ -137,7 +144,7 @@ function notifyStatement(env: Env, n: {
 }
 
 /** 用户展示名（用户设置昵称优先，回退用户名） */
-async function displayName(env: Env, userId: string): Promise<string> {
+export async function displayName(env: Env, userId: string): Promise<string> {
   const r = await first<{ name: string }>(env,
     'SELECT COALESCE(s.user_name, u.username) AS name FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?',
     userId)
@@ -162,6 +169,45 @@ function parseCursor(cursor: string): { ts: number; id: string } | null {
   const ts = Number(cursor.slice(0, i))
   const id = cursor.slice(i + 1)
   return Number.isFinite(ts) && id ? { ts, id } : null
+}
+
+// ---------- 级联删除（作者删除与管理员处理共用；不含积分回收与 R2 清理） ----------
+
+/** 删帖级联清理语句：点赞/通知/举报/评论/帖子本体。举报清理须在评论删除前执行（子查询依赖评论存在） */
+export function postCascadeStatements(env: Env, postId: string): D1PreparedStatement[] {
+  return [
+    env.DB.prepare(
+      `DELETE FROM community_likes WHERE (target_type = 'post' AND target_id = ?)
+       OR (target_type = 'comment' AND target_id IN (SELECT id FROM community_comments WHERE post_id = ?))`
+    ).bind(postId, postId),
+    env.DB.prepare('DELETE FROM community_notifications WHERE post_id = ?').bind(postId),
+    env.DB.prepare(
+      `DELETE FROM community_reports WHERE (target_type = 'post' AND target_id = ?)
+       OR (target_type = 'comment' AND target_id IN (SELECT id FROM community_comments WHERE post_id = ?))`
+    ).bind(postId, postId),
+    env.DB.prepare('DELETE FROM community_comments WHERE post_id = ?').bind(postId),
+    env.DB.prepare('DELETE FROM community_posts WHERE id = ?').bind(postId)
+  ]
+}
+
+/** 删评论级联清理语句：通知/点赞/举报/评论本体及二级回复 + 帖子计数回退；同时返回被删 id 列表 */
+export async function commentCascadeStatements(env: Env, commentId: string, postId: string): Promise<{ statements: D1PreparedStatement[]; removedIds: string[] }> {
+  const replies = await all<{ id: string }>(env,
+    'SELECT id FROM community_comments WHERE parent_id = ?', commentId)
+  const removedIds = [commentId, ...replies.map(r => r.id)]
+  const ph = removedIds.map(() => '?').join(',')
+  return {
+    removedIds,
+    statements: [
+      // 清理这些评论触发的通知（被评论/被回复/被赞评论），避免通知指向已删除内容
+      env.DB.prepare(`DELETE FROM community_notifications WHERE comment_id IN (${ph})`).bind(...removedIds),
+      env.DB.prepare(`DELETE FROM community_likes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
+      env.DB.prepare(`DELETE FROM community_reports WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
+      env.DB.prepare(`DELETE FROM community_comments WHERE id IN (${ph})`).bind(...removedIds),
+      env.DB.prepare('UPDATE community_posts SET comments_count = MAX(comments_count - ?, 0) WHERE id = ?')
+        .bind(removedIds.length, postId)
+    ]
+  }
 }
 
 // ---------- 路由 ----------
@@ -239,19 +285,37 @@ export function registerCommunityRoutes() {
     const tags = (Array.isArray(b?.tags) ? b.tags : [])
       .filter((t: unknown) => typeof t === 'string').slice(0, 5)
       .map((t: string) => t.trim().slice(0, 20)).filter(Boolean)
+    if (type === 'question' && !tags.some((t: string) => QUESTION_SUBJECT_TAGS.includes(t))) {
+      throw new HttpError(400, '提问帖请选择科目标签（#高等数学 或 #英语）')
+    }
+
+    // 配图：仅接受本系统上传路径，且必须属于当前用户（防串用他人图片）；去重防同一图重复嵌入
+    const rawImageUrls: unknown[] = Array.isArray(b?.imageUrls) ? b.imageUrls : []
+    const imageUrls = [...new Set(rawImageUrls.filter((u): u is string => typeof u === 'string'))]
+      .slice(0, IMAGE_MAX_PER_POST)
+    if (imageUrls.length) {
+      if (imageUrls.some(u => !/^\/api\/community\/images\/[a-f0-9]{16}$/.test(u))) {
+        throw new HttpError(400, '图片地址无效')
+      }
+      const ids = imageUrls.map(u => u.split('/').pop()!)
+      const owned = await all<{ id: string }>(ctx.env,
+        `SELECT id FROM community_uploads WHERE user_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
+        ctx.userId, ...ids)
+      if (owned.length !== new Set(ids).size) throw new HttpError(400, '图片不存在或已失效，请重新上传')
+    }
 
     const id = uid()
     const now = nowSec()
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare(
-        'INSERT INTO community_posts (id, user_id, type, content, tags, ref_type, ref_id, created_at, updated_at) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(id, ctx.userId, type, content, JSON.stringify(tags),
+        'INSERT INTO community_posts (id, user_id, type, content, tags, image_urls, ref_type, ref_id, created_at, updated_at) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, ctx.userId, type, content, JSON.stringify(tags), JSON.stringify(imageUrls),
         typeof b?.refType === 'string' ? b.refType.slice(0, 20) : null,
         typeof b?.refId === 'string' ? b.refId.slice(0, 64) : null, now, now)
     ]
     const awarded = await first(ctx.env,
-      'SELECT id FROM points_log WHERE user_id = ? AND date = ? AND reason = ?', ctx.userId, todayStr(), '社区打卡')
+      'SELECT id FROM points_log WHERE user_id = ? AND date = ? AND reason = ?', ctx.userId, utc8Today(), '社区打卡')
     if (!awarded) stmts.push(...awardStatements(ctx.env, ctx.userId, 5, '社区打卡', id))
     await batch(ctx.env, stmts)
 
@@ -259,10 +323,11 @@ export function registerCommunityRoutes() {
     return Response.json(mapPost(created), { status: 201 })
   })
 
-  // 删帖（作者或管理员；级联清理评论/点赞/通知）
+  // 删帖（作者或管理员；级联清理评论/点赞/通知/举报/配图）
   on('DELETE', '/api/community/posts/:id', true, async (ctx) => {
     const id = ctx.params.id
-    const post = await first<{ user_id: string }>(ctx.env, 'SELECT user_id FROM community_posts WHERE id = ?', id)
+    const post = await first<{ user_id: string; image_urls: string }>(ctx.env,
+      'SELECT user_id, image_urls FROM community_posts WHERE id = ?', id)
     if (!post) throw new HttpError(404, '帖子不存在')
     const isOwner = post.user_id === ctx.userId
     if (!isOwner && !(await isAdmin(ctx.env, ctx.userId))) throw new HttpError(403, '只能删除自己的帖子')
@@ -272,21 +337,14 @@ export function registerCommunityRoutes() {
       'SELECT id FROM community_comments WHERE post_id = ?', id)
     const revoke: D1PreparedStatement[] = []
     if (isOwner) {
-      for (const c of commentIds) revoke.push(...await revokeStatements(ctx.env, c.id))
+      for (const c of commentIds) revoke.push(...await revokeStatements(ctx.env, `srv:${c.id}`))
       // 回收帖子本身及全部评论的「获赞」流水（取消点赞之外的另一条点赞退出路径）
       revoke.push(...await revokeLikeStatements(ctx.env, 'post', [id]))
       revoke.push(...await revokeLikeStatements(ctx.env, 'comment', commentIds.map(c => c.id)))
     }
-    await batch(ctx.env, [
-      ...revoke,
-      ctx.env.DB.prepare(
-        `DELETE FROM community_likes WHERE (target_type = 'post' AND target_id = ?)
-         OR (target_type = 'comment' AND target_id IN (SELECT id FROM community_comments WHERE post_id = ?))`
-      ).bind(id, id),
-      ctx.env.DB.prepare('DELETE FROM community_notifications WHERE post_id = ?').bind(id),
-      ctx.env.DB.prepare('DELETE FROM community_comments WHERE post_id = ?').bind(id),
-      ctx.env.DB.prepare('DELETE FROM community_posts WHERE id = ?').bind(id)
-    ])
+    await batch(ctx.env, [...revoke, ...postCascadeStatements(ctx.env, id)])
+    // DB 删除成功后清理 R2 图片（失败仅留孤儿对象，不影响主流程）
+    await deleteUploads(ctx.env, uploadIdsOf(post.image_urls))
     return Response.json({ ok: true })
   })
 
@@ -349,33 +407,15 @@ export function registerCommunityRoutes() {
     if (!c) throw new HttpError(404, '评论不存在')
     const isOwner = c.user_id === ctx.userId
     if (!isOwner && !(await isAdmin(ctx.env, ctx.userId))) throw new HttpError(403, '只能删除自己的评论')
-    const replies = await all<{ id: string }>(ctx.env,
-      'SELECT id FROM community_comments WHERE parent_id = ?', id)
-    const removedIds = [id, ...replies.map(r => r.id)]
-    const removed = removedIds.length
     // 回收该评论及其回复产生的积分流水（评论帖子/收到评论 + 获赞），防止反复评论+删除刷分
     // 管理员删除时跳过积分回收——管理操作不应惩罚用户
+    const { statements, removedIds } = await commentCascadeStatements(ctx.env, id, c.post_id)
     const revoke: D1PreparedStatement[] = []
     if (isOwner) {
-      for (const cid of removedIds) {
-        revoke.push(...await revokeStatements(ctx.env, cid))
-      }
+      for (const cid of removedIds) revoke.push(...await revokeStatements(ctx.env, `srv:${cid}`))
       revoke.push(...await revokeLikeStatements(ctx.env, 'comment', removedIds))
     }
-    await batch(ctx.env, [
-      ...revoke,
-      // 清理这些评论触发的通知（被评论/被回复/被赞评论），避免通知指向已删除内容
-      ctx.env.DB.prepare(
-        `DELETE FROM community_notifications WHERE comment_id IN (${removedIds.map(() => '?').join(',')})`
-      ).bind(...removedIds),
-      ctx.env.DB.prepare(
-        `DELETE FROM community_likes WHERE target_type = 'comment'
-         AND (target_id = ? OR target_id IN (SELECT id FROM community_comments WHERE parent_id = ?))`
-      ).bind(id, id),
-      ctx.env.DB.prepare('DELETE FROM community_comments WHERE id = ? OR parent_id = ?').bind(id, id),
-      ctx.env.DB.prepare('UPDATE community_posts SET comments_count = MAX(comments_count - ?, 0) WHERE id = ?')
-        .bind(removed, c.post_id)
-    ])
+    await batch(ctx.env, [...revoke, ...statements])
     return Response.json({ ok: true })
   })
 
@@ -400,7 +440,7 @@ export function registerCommunityRoutes() {
         ctx.env.DB.prepare(
           `DELETE FROM community_notifications WHERE type = 'like' AND actor_id = ? AND ${targetType === 'post' ? 'post_id' : 'comment_id'} = ?`
         ).bind(ctx.userId, targetId),
-        ...(await revokeStatements(ctx.env, `like:${ctx.userId}:${targetType}:${targetId}`))
+        ...(await revokeStatements(ctx.env, `srv:like:${ctx.userId}:${targetType}:${targetId}`))
       ]
       await batch(ctx.env, unlikeStmts)
       return Response.json({ liked: false })
@@ -431,6 +471,91 @@ export function registerCommunityRoutes() {
     }
     await batch(ctx.env, stmts)
     return Response.json({ liked: true })
+  })
+
+  // 提问帖标记解决/取消解决（仅楼主；采纳最佳答案属 P1，本期仅手动标记）
+  on('PUT', '/api/community/posts/:id/resolve', true, async (ctx) => {
+    rateLimit(ctx.request, 'community:resolve', 20)
+    const post = await first<{ user_id: string; type: string; is_resolved: number }>(ctx.env,
+      'SELECT user_id, type, is_resolved FROM community_posts WHERE id = ?', ctx.params.id)
+    if (!post) throw new HttpError(404, '帖子不存在')
+    if (post.user_id !== ctx.userId) throw new HttpError(403, '只有楼主可以标记解决状态')
+    if (post.type !== 'question') throw new HttpError(400, '仅提问帖支持标记解决')
+    const next = post.is_resolved ? 0 : 1
+    await run(ctx.env, 'UPDATE community_posts SET is_resolved = ?, updated_at = ? WHERE id = ?',
+      next, nowSec(), ctx.params.id)
+    return Response.json({ isResolved: !!next })
+  })
+
+  // 每日打卡榜：今日打卡榜 TOP 10（今日已打卡者按当日积分降序）+ 连续打卡王 TOP 5（streak 降序）
+  on('GET', '/api/community/leaderboard', true, async (ctx) => {
+    const today = utc8Today()
+    const [todayRows, streakRows, subjectRows] = await Promise.all([
+      all<{ user_id: string; user_name: string; points: number; streak: number; today_points: number }>(ctx.env, `
+        SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak,
+          SUM(pl.points) AS today_points
+        FROM points_log pl
+        JOIN gamification g ON g.user_id = pl.user_id AND g.last_checkin = ?
+        JOIN users u ON u.id = pl.user_id
+        LEFT JOIN user_settings s ON s.user_id = pl.user_id
+        WHERE pl.date = ?
+        GROUP BY pl.user_id
+        ORDER BY today_points DESC, g.points DESC
+        LIMIT 10`, today, today),
+      all<{ user_id: string; user_name: string; points: number; streak: number }>(ctx.env, `
+        SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak
+        FROM gamification g
+        JOIN users u ON u.id = g.user_id
+        LEFT JOIN user_settings s ON s.user_id = g.user_id
+        WHERE g.streak > 0
+        ORDER BY g.streak DESC, g.points DESC
+        LIMIT 5`),
+      all<{ user_id: string; name: string }>(ctx.env, `
+        SELECT DISTINCT r.user_id, sb.name FROM study_records r
+        JOIN subjects sb ON sb.user_id = r.user_id AND sb.id = r.subject_id
+        WHERE r.date = ?`, today)
+    ])
+    const subjMap = new Map<string, string[]>()
+    for (const r of subjectRows) {
+      const list = subjMap.get(r.user_id) || []
+      list.push(r.name)
+      subjMap.set(r.user_id, list)
+    }
+    return Response.json({
+      today: todayRows.map(r => ({
+        userName: r.user_name || '升本人', todayPoints: r.today_points,
+        streak: r.streak, totalPoints: r.points, subjects: subjMap.get(r.user_id) ?? []
+      })),
+      streak: streakRows.map(r => ({
+        userName: r.user_name || '升本人', streak: r.streak, totalPoints: r.points
+      }))
+    })
+  })
+
+  // 举报帖子/评论（举报人匿名，仅管理员可见；同一内容重复举报去重）
+  on('POST', '/api/community/reports', true, async (ctx) => {
+    rateLimit(ctx.request, 'community:report', 10)
+    const b = await body(ctx.request)
+    const targetType = b?.targetType === 'comment' ? 'comment' : b?.targetType === 'post' ? 'post' : null
+    const targetId = typeof b?.targetId === 'string' ? b.targetId : ''
+    const reason = String(b?.reason ?? '')
+    const detail = String(b?.detail ?? '').trim().slice(0, 200)
+    if (!targetType || !targetId) throw new HttpError(400, '参数错误')
+    if (!REPORT_REASONS.includes(reason)) throw new HttpError(400, '举报原因无效')
+    if (reason === '其他' && !detail) throw new HttpError(400, '选择「其他」时请填写补充说明')
+    const table = targetType === 'post' ? 'community_posts' : 'community_comments'
+    const target = await first<{ user_id: string }>(ctx.env,
+      `SELECT user_id FROM ${table} WHERE id = ? AND is_hidden = 0`, targetId)
+    if (!target) throw new HttpError(404, '内容不存在')
+    if (target.user_id === ctx.userId) throw new HttpError(400, '不能举报自己的内容')
+    const dup = await first(ctx.env,
+      "SELECT id FROM community_reports WHERE reporter_id = ? AND target_type = ? AND target_id = ? AND status = 'pending'",
+      ctx.userId, targetType, targetId)
+    if (dup) throw new HttpError(400, '你已举报过该内容，请等待处理')
+    await run(ctx.env,
+      "INSERT INTO community_reports (id, reporter_id, target_type, target_id, reason, detail, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+      uid(), ctx.userId, targetType, targetId, reason, detail, nowSec())
+    return Response.json({ ok: true }, { status: 201 })
   })
 
   // 通知列表（含未读数）
