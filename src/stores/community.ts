@@ -19,6 +19,8 @@ interface CommunityState {
   sort: 'latest' | 'hot'
   /** 当前筛选标签（'' = 全部） */
   tag: string
+  /** 当前筛选帖子类型（'' = 全部；本期用于「提问」筛选） */
+  typeFilter: PostType | ''
   notifications: CommunityNotification[]
   notifyCursor: string | null
   hasMoreNotify: boolean
@@ -33,6 +35,7 @@ export const useCommunityStore = defineStore('community', {
     feedLoading: false,
     sort: 'latest',
     tag: '',
+    typeFilter: '',
     notifications: [],
     notifyCursor: null,
     hasMoreNotify: true,
@@ -70,6 +73,12 @@ export const useCommunityStore = defineStore('community', {
       await this.fetchFeed(true)
     },
 
+    async setTypeFilter(t: PostType | '') {
+      if (this.typeFilter === t) return
+      this.typeFilter = t
+      await this.fetchFeed(true)
+    },
+
     /** 拉取动态流；reset 清空重来，否则按游标追加（按 id 去重防重复）。
      *  请求令牌防止竞态：旧请求返回时若令牌已失效则丢弃结果，避免快速切换筛选后旧数据覆盖新数据。 */
     async fetchFeed(reset = false) {
@@ -85,7 +94,7 @@ export const useCommunityStore = defineStore('community', {
       this.feedLoading = true
       try {
         const res = await communityApi.feed({
-          sort: this.sort, tag: this.tag || undefined, cursor: this.feedCursor
+          sort: this.sort, tag: this.tag || undefined, type: this.typeFilter || undefined, cursor: this.feedCursor
         })
         if (ticket !== feedTicket) return // 已有更新的请求，丢弃本次过期结果
         const existing = new Set(this.posts.map(p => p.id))
@@ -98,9 +107,9 @@ export const useCommunityStore = defineStore('community', {
     },
 
     /** 发帖成功返回新帖；仅当命中当前筛选时插入列表头部 */
-    async publishPost(data: { type: PostType; content: string; tags: string[]; refType?: string; refId?: string }) {
+    async publishPost(data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; refType?: string; refId?: string }) {
       const post = await communityApi.createPost(data)
-      if (this.sort === 'latest' && (!this.tag || post.tags.includes(this.tag))) {
+      if (this.sort === 'latest' && !this.typeFilter && (!this.tag || post.tags.includes(this.tag))) {
         this.posts.unshift(post)
       }
       await this.syncGamification()

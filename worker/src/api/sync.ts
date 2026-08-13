@@ -1,9 +1,9 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { all, batch, run, uid, HttpError } from '../db'
+import { all, first, batch, run, uid, utc8Today, HttpError } from '../db'
 import { getSubjectTree, subjectDeleteStatements, subjectInsertStatements } from './subjects'
 import { getHabits, habitReplaceStatements } from './habits'
-import { getGamification, gamificationReplaceStatements } from './gamification'
+import { getGamification, gamificationReplaceStatements, serverAwardStatements } from './gamification'
 import { getPomodoro, pomodoroReplaceStatements } from './pomodoro'
 import { getSettings, settingsReplaceStatements } from './settings'
 import { recordsMapping } from './records'
@@ -146,9 +146,32 @@ export function registerSyncRoutes() {
   on('POST', '/api/data/sync', true, async (ctx) => {
     const state = await body(ctx.request)
     if (!state || typeof state !== 'object') throw new HttpError(400, '快照格式错误')
+
+    // 服务端积分规则（基于推送快照检测，refId 去重保证每日/每档仅发放一次）。
+    // 发放语句排在全量替换之后执行，避免被 gamification 行覆盖冲掉
+    const awardStmts: D1PreparedStatement[] = []
+    const awarded: { points: number; reason: string }[] = []
+    const today = utc8Today()
+    const award = async (points: number, reason: string, refId: string) => {
+      const dup = await first(ctx.env, 'SELECT id FROM points_log WHERE user_id = ? AND ref_id = ?', ctx.userId, refId)
+      if (dup) return
+      awardStmts.push(...serverAwardStatements(ctx.env, ctx.userId, points, reason, refId))
+      awarded.push({ points, reason })
+    }
+    // 每日学习时长满 60 分钟 +3
+    const todayMinutes = (Array.isArray(state.records) ? state.records : [])
+      .filter((r: any) => r?.date === today)
+      .reduce((s: number, r: any) => s + (Number(r?.minutes) || 0), 0)
+    if (todayMinutes >= 60) await award(3, '学习时长满 60 分钟', `srv:study-minutes:${today}`)
+    // 连续打卡里程碑：7 天 +5 / 30 天 +10 / 100 天 +20
+    const streak = Number(state.gamification?.streak) || 0
+    for (const [days, pts] of [[7, 5], [30, 10], [100, 20]] as const) {
+      if (streak >= days) await award(pts, `连续打卡 ${days} 天`, `srv:streak:${days}`)
+    }
+
     // 全量替换前记录现存 PDF 笔记，替换后清理已删笔记的 D1 孤儿分片
     const before = await all(ctx.env, "SELECT id FROM notes WHERE user_id = ? AND type = 'pdf'", ctx.userId)
-    await batch(ctx.env, pushAllStatements(ctx.env, ctx.userId, state))
+    await batch(ctx.env, [...pushAllStatements(ctx.env, ctx.userId, state), ...awardStmts])
     const keep = new Set(
       (state.notes ?? []).filter((n: any) => n?.type === 'pdf').map((n: any) => String(n.id))
     )
@@ -160,6 +183,12 @@ export function registerSyncRoutes() {
       const placeholders = orphans.map(() => '?').join(',')
       await run(ctx.env, `DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id IN (${placeholders})`, ctx.userId, ...orphans)
     }
-    return Response.json({ ok: true })
+    // 发放了新积分时回传最新 gamification，前端据此刷新本地，避免下次推送用旧总值覆盖
+    const res: Record<string, unknown> = { ok: true }
+    if (awarded.length) {
+      res.awarded = awarded
+      res.gamification = await getGamification(ctx.env, ctx.userId)
+    }
+    return Response.json(res)
   })
 }

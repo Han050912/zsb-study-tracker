@@ -7,6 +7,8 @@ import { COMMUNITY_TAGS } from '../data/defaults'
 import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import TagBadge from '../components/community/TagBadge.vue'
+import LeaderboardBoard from '../components/community/LeaderboardBoard.vue'
+import ReportDialog from '../components/community/ReportDialog.vue'
 
 const store = useCommunityStore()
 const router = useRouter()
@@ -33,6 +35,20 @@ async function like(id: string) {
 
 function filterTag(tag: string) {
   store.setTag(tag).catch(e => toast(e?.message || '加载失败'))
+}
+
+/** 「提问」类型筛选（再点一次取消） */
+function toggleQuestionFilter() {
+  store.setTypeFilter(store.typeFilter === 'question' ? '' : 'question')
+    .catch(e => toast(e?.message || '加载失败'))
+}
+
+// ---- 举报 ----
+const showReport = ref(false)
+const reportPostId = ref('')
+function openReport(postId: string) {
+  reportPostId.value = postId
+  showReport.value = true
 }
 
 // ---- 管理员操作 ----
@@ -66,6 +82,9 @@ async function removePost(id: string) {
       <button class="btn-primary" @click="showComposer = true">✏️ 发帖</button>
     </div>
 
+    <!-- 每日打卡榜 -->
+    <LeaderboardBoard />
+
     <!-- 排序 + 标签筛选 -->
     <div class="flex items-center gap-2">
       <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs">
@@ -75,6 +94,9 @@ async function removePost(id: string) {
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.sort === 'hot' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
           @click="store.setSort('hot')">热门</button>
+        <button class="px-3 py-1.5 rounded-md transition-colors"
+          :class="store.typeFilter === 'question' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="toggleQuestionFilter">❓ 提问</button>
       </div>
       <div class="flex gap-1.5 overflow-x-auto flex-1 py-1">
         <TagBadge tag="全部" :active="!store.tag" @click="filterTag('')" />
@@ -89,7 +111,8 @@ async function removePost(id: string) {
         @tag="filterTag"
         @open="router.push(`/community/post/${p.id}`)"
         @pin="togglePin(p.id)"
-        @hide="toggleHide(p.id)">
+        @hide="toggleHide(p.id)"
+        @report="openReport(p.id)">
         <template v-if="isAdmin" #actions>
           <button class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost(p.id)">删除</button>
         </template>
@@ -106,6 +129,7 @@ async function removePost(id: string) {
     <div v-if="store.feedLoading" class="text-center text-xs text-slate-400 py-2">加载中…</div>
     <div v-else-if="!store.hasMore && store.posts.length" class="text-center text-xs text-slate-400 py-2">没有更多了</div>
 
-    <PostComposer v-model:show="showComposer" type="share" />
+    <PostComposer v-model:show="showComposer" type="share" allow-type-switch />
+    <ReportDialog v-model:show="showReport" target-type="post" :target-id="reportPostId" />
   </div>
 </template>

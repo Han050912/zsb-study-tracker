@@ -12,8 +12,8 @@ function getToken(): string | null {
   return localStorage.getItem('jwt_token')
 }
 
-/** 401 全局处理：清除 token、通知清空内存数据、跳转登录页 */
-function handleUnauthorized(): never {
+/** 401 全局处理：清除 token、通知清空内存数据、跳转登录页（导出供 XHR 上传等非 fetch 通道复用） */
+export function handleUnauthorized(): never {
   localStorage.removeItem('jwt_token')
   // 通知应用清空内存中的用户数据（防止 401 后串号到下一个账号）
   window.dispatchEvent(new CustomEvent('auth:expired'))

@@ -22,10 +22,11 @@ export interface SubjectTree {
 
 /** 拉取某用户全部科目并组装为前端树形结构 */
 export async function getSubjectTree(env: Env, userId: string): Promise<SubjectTree[]> {
-  const subjects = await all(env, 'SELECT * FROM subjects WHERE user_id = ?', userId)
+  // 按 rowid（即插入顺序）排序：无 ORDER BY 时 SQLite 不保证返回顺序，反复全量同步后章节/知识点顺序会漂移
+  const subjects = await all(env, 'SELECT * FROM subjects WHERE user_id = ? ORDER BY rowid', userId)
   if (!subjects.length) return []
-  const chapters = await all(env, 'SELECT * FROM chapters WHERE user_id = ?', userId)
-  const topics = await all(env, 'SELECT * FROM topics WHERE user_id = ?', userId)
+  const chapters = await all(env, 'SELECT * FROM chapters WHERE user_id = ? ORDER BY rowid', userId)
+  const topics = await all(env, 'SELECT * FROM topics WHERE user_id = ? ORDER BY rowid', userId)
 
   const topicsByChapter = new Map<string, any[]>()
   for (const t of topics) {

@@ -22,11 +22,13 @@ import { registerReleaseRoutes } from './api/release'
 import { registerCommunityRoutes } from './api/community'
 import { registerAdminRoutes } from './api/admin'
 import { registerPdfRoutes } from './api/pdfs'
+import { registerUploadRoutes } from './api/uploads'
 import { HttpError } from './db'
 import { canCache, getCached, putCache } from './middleware/cache'
 
 export interface Env {
   DB: D1Database
+  IMAGES: R2Bucket
   JWT_SECRET: string
   TURNSTILE_SECRET: string
   GITHUB_TOKEN?: string
@@ -122,3 +124,4 @@ registerReleaseRoutes()
 registerCommunityRoutes()
 registerAdminRoutes()
 registerPdfRoutes()
+registerUploadRoutes()

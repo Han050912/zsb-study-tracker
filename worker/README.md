@@ -32,10 +32,26 @@ npm run smoke
 ```bash
 # 1. 在 Cloudflare 控制台为 Worker 设置加密变量 JWT_SECRET
 #    （Workers & Pages → zsb-study-api → Settings → Variables → Encrypt）
-# 2. 初始化线上 D1 表结构
+# 2. 创建社区图片 R2 bucket（社区增强 P0 新增，仅需一次）
+npx wrangler r2 bucket create zsb-study-images
+# 3. 初始化线上 D1 表结构
 npx wrangler d1 execute zsb-study-db --remote --file=./schema.sql
-# 3. 部署
+# 4. 部署
 npx wrangler deploy
+```
+
+已有线上库升级（社区增强 P0：图片/提问帖/举报/审核留痕），执行一次 schema.sql 头部注释中的
+ALTER/CREATE 语句（`--remote`），或直接粘贴执行：
+
+```bash
+npx wrangler d1 execute zsb-study-db --remote --command "ALTER TABLE community_posts ADD COLUMN image_urls TEXT NOT NULL DEFAULT '[]'"
+npx wrangler d1 execute zsb-study-db --remote --command "ALTER TABLE community_posts ADD COLUMN is_resolved INTEGER NOT NULL DEFAULT 0"
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS community_uploads ( id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL DEFAULT '', r2_key TEXT NOT NULL, url TEXT NOT NULL, size INTEGER NOT NULL, content_type TEXT NOT NULL, created_at INTEGER NOT NULL )"
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id)"
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS community_reports ( id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL REFERENCES users(id), target_type TEXT NOT NULL, target_id TEXT NOT NULL, reason TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL )"
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at)"
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS community_moderation_log ( id TEXT PRIMARY KEY, admin_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, report_id TEXT, reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL )"
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at)"
 ```
 
 ## 部署风险提示

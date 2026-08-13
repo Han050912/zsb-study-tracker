@@ -7,7 +7,7 @@ import UserAvatar from './UserAvatar.vue'
 import LikeButton from './LikeButton.vue'
 
 const props = defineProps<{ comment: CommunityComment }>()
-const emit = defineEmits<{ like: []; reply: []; remove: []; hide: [] }>()
+const emit = defineEmits<{ like: []; reply: []; remove: []; hide: []; report: [] }>()
 
 const isMine = computed(() => props.comment.userId === sessionUser.value?.id)
 const canDelete = computed(() => isMine.value || isAdmin.value)
@@ -27,6 +27,7 @@ const canHide = computed(() => isAdmin.value)
       <div class="flex items-center gap-4 mt-1">
         <LikeButton :liked="comment.likedByMe" :count="comment.likesCount" @toggle="emit('like')" />
         <button class="text-xs text-slate-400 hover:text-primary-500" @click="emit('reply')">回复</button>
+        <button v-if="!isMine" class="text-xs text-slate-400 hover:text-orange-500" @click="emit('report')">举报</button>
         <button v-if="canHide" class="text-xs text-slate-400 hover:text-red-500" @click="emit('hide')">
           {{ comment.isHidden ? '取消隐藏' : '隐藏' }}
         </button>

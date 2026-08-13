@@ -3,7 +3,7 @@ import { computed, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import { useCommunityStore } from './stores/community'
-import { sessionUser, logout, isLoggedIn } from './services/auth'
+import { sessionUser, logout, isLoggedIn, isAdmin } from './services/auth'
 import { restartReminder } from './services/reminder'
 import Toast from './components/Toast.vue'
 import AchievementModal from './components/AchievementModal.vue'
@@ -39,7 +39,9 @@ const NAV = computed(() => {
     { path: '/habits', icon: '✅', label: '习惯', subject: false },
     { path: '/rewards', icon: '🏆', label: '成就', subject: false },
     { path: '/materials', icon: '📚', label: '资料', subject: false },
-    { path: '/settings', icon: '⚙️', label: '设置', subject: false }
+    { path: '/settings', icon: '⚙️', label: '设置', subject: false },
+    // 管理员专属：审核中心（举报队列）
+    ...(isAdmin.value ? [{ path: '/admin', icon: '🛡️', label: '审核', subject: false }] : [])
   ]
 })
 // 移动端底部导航：首页 + 第一个科目 + 社区/专注/总结/设置（最多 6 项，超出时减少科目位，避免挤压截断）

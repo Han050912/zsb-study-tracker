@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { isLoggedIn } from '../services/auth'
+import { isLoggedIn, isAdmin } from '../services/auth'
 
 
 const routes = [
@@ -15,6 +15,7 @@ const routes = [
   { path: '/community', name: 'community', component: () => import('../pages/Community.vue'), meta: { title: '社区广场' } },
   { path: '/community/post/:id', name: 'community-post', component: () => import('../pages/CommunityPost.vue'), meta: { title: '帖子详情' } },
   { path: '/community/notifications', name: 'community-notifications', component: () => import('../pages/CommunityNotifications.vue'), meta: { title: '通知中心' } },
+  { path: '/admin', name: 'admin', component: () => import('../pages/AdminReports.vue'), meta: { title: '审核中心' } },
   { path: '/notes', name: 'notes', component: () => import('../pages/Notes.vue'), meta: { title: '笔记' } },
   { path: '/daily-summary/:date', redirect: '/daily-summary' },
   { path: '/statistics', name: 'statistics', component: () => import('../pages/Statistics.vue'), meta: { title: '数据统计' } },
@@ -33,6 +34,8 @@ export const router = createRouter({
 router.beforeEach((to) => {
   if (!isLoggedIn.value && to.name !== 'login') return { name: 'login' }
   if (isLoggedIn.value && to.name === 'login') return { name: 'dashboard' }
+  // 管理员守卫：审核中心仅管理员可见
+  if (to.name === 'admin' && !isAdmin.value) return { name: 'community' }
 })
 
 // 异步页面组件加载失败（dev server 重启/版本更新后，旧标签页持有的模块 URL 失效）时，

@@ -5,6 +5,15 @@
 -- 已建库升级：users 表新增 role 列（管理员体系），执行一次：
 --   ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user';
 -- 将指定用户设为管理员：UPDATE users SET role = 'admin' WHERE username = '你的用户名';
+-- 已建库升级：社区增强 P0（图片/提问帖/举报/审核留痕），执行一次：
+--   ALTER TABLE community_posts ADD COLUMN image_urls TEXT NOT NULL DEFAULT '[]';
+--   ALTER TABLE community_posts ADD COLUMN is_resolved INTEGER NOT NULL DEFAULT 0;
+--   CREATE TABLE IF NOT EXISTS community_uploads ( id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL DEFAULT '', r2_key TEXT NOT NULL, url TEXT NOT NULL, size INTEGER NOT NULL, content_type TEXT NOT NULL, created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id);
+--   CREATE TABLE IF NOT EXISTS community_reports ( id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL REFERENCES users(id), target_type TEXT NOT NULL, target_id TEXT NOT NULL, reason TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at);
+--   CREATE TABLE IF NOT EXISTS community_moderation_log ( id TEXT PRIMARY KEY, admin_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, report_id TEXT, reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at);
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -293,9 +302,11 @@ CREATE TABLE IF NOT EXISTS default_quotes (
 CREATE TABLE IF NOT EXISTS community_posts (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
-  type TEXT NOT NULL DEFAULT 'share',  -- 'checkin' | 'share' | 'achievement' | 'longform'
+  type TEXT NOT NULL DEFAULT 'share',  -- 'checkin' | 'share' | 'achievement' | 'longform' | 'question'
   content TEXT NOT NULL,
   tags TEXT NOT NULL DEFAULT '[]',     -- JSON 数组：['#每日打卡', '#高等数学']
+  image_urls TEXT NOT NULL DEFAULT '[]', -- JSON 数组：帖子配图路径（/api/community/images/<id>，最多 9 张）
+  is_resolved INTEGER NOT NULL DEFAULT 0, -- 提问帖是否已被楼主标记解决
   ref_type TEXT,                       -- 关联源类型：'summary' | 'record' | 'achievement' | 'habit' | 'vocab'
   ref_id TEXT,                         -- 关联源 ID
   likes_count INTEGER NOT NULL DEFAULT 0,
@@ -338,7 +349,7 @@ CREATE INDEX IF NOT EXISTS idx_likes_target ON community_likes(target_type, targ
 CREATE TABLE IF NOT EXISTS community_notifications (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),  -- 接收者
-  type TEXT NOT NULL,                   -- 'like' | 'comment' | 'follow' | 'achievement'
+  type TEXT NOT NULL,                   -- 'like' | 'comment' | 'follow' | 'achievement' | 'system'
   actor_id TEXT,                        -- 触发者
   post_id TEXT,
   comment_id TEXT,
@@ -358,3 +369,43 @@ CREATE TABLE IF NOT EXISTS pdf_chunks (
   data BLOB NOT NULL,
   PRIMARY KEY (user_id, pdf_id, chunk_index)
 );
+
+-- ========== 社区增强：图片上传 / 举报 / 审核留痕 ==========
+-- 图片上传记录：二进制存 R2（绑定 IMAGES），本表仅存元数据；读取走 /api/community/images/:id 代理路由
+CREATE TABLE IF NOT EXISTS community_uploads (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  filename TEXT NOT NULL DEFAULT '',
+  r2_key TEXT NOT NULL,
+  url TEXT NOT NULL,                -- 读取路径 /api/community/images/<id>
+  size INTEGER NOT NULL,
+  content_type TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id);
+
+-- 内容举报：举报人匿名（列表仅管理员可见）；status: 'pending' | 'resolved' | 'rejected'
+CREATE TABLE IF NOT EXISTS community_reports (
+  id TEXT PRIMARY KEY,
+  reporter_id TEXT NOT NULL REFERENCES users(id),
+  target_type TEXT NOT NULL,        -- 'post' | 'comment'
+  target_id TEXT NOT NULL,
+  reason TEXT NOT NULL,             -- 预设原因：广告 / 人身攻击 / 不相关内容 / 其他
+  detail TEXT NOT NULL DEFAULT '',  -- 补充说明（选填）
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at);
+
+-- 审核操作日志：所有治理动作留痕（action: 'hide' | 'delete' | 'reject' 等）
+CREATE TABLE IF NOT EXISTS community_moderation_log (
+  id TEXT PRIMARY KEY,
+  admin_id TEXT NOT NULL REFERENCES users(id),
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL,        -- 'post' | 'comment' | 'report'
+  target_id TEXT NOT NULL,
+  report_id TEXT,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at);
