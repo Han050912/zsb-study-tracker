@@ -10,6 +10,7 @@
 import { computed, ref, watch } from 'vue'
 import { today } from '../utils/date'
 import type { MaimemoWordDetail } from '../services/maimemo'
+import PostComposer from './community/PostComposer.vue'
 
 // ---- Props & Emits ----
 const props = defineProps<{
@@ -138,6 +139,13 @@ const progressPercent = computed(() =>
   totalCount.value ? Math.round((validatedCount.value / totalCount.value) * 100) : 0
 )
 
+// ---- 分享打卡成果到社区广场 ----
+const showShare = ref(false)
+const shareContent = computed(() => [
+  '📖 今日背单词打卡',
+  `✅ 已校验 ${validatedCount.value}/${totalCount.value} · 答对 ${correctCount.value} 个（进度 ${progressPercent.value}%）`
+].join('\n'))
+
 // ---- 语义校验（英译汉） ----
 /** 常见中文虚词/连接字，匹配时降权处理 */
 const STOP_CHARS = new Set('的地得着了过在和与或及而其又因所以但是如果就是都也很还'.split(''))
@@ -259,6 +267,12 @@ function inputClass(w: AnswerState): string {
             />
           </div>
           <span class="text-[10px] font-semibold text-indigo-500 dark:text-indigo-400">{{ progressPercent }}%</span>
+          <!-- 分享到社区广场 -->
+          <button
+            v-if="totalCount"
+            class="text-[11px] px-2.5 py-1 rounded-lg bg-white/80 dark:bg-slate-700 text-indigo-500 dark:text-indigo-300 border border-indigo-200 dark:border-slate-600 hover:bg-indigo-50 dark:hover:bg-slate-600 active:scale-95 transition-all duration-300"
+            @click="showShare = true"
+          >📣 分享</button>
           <!-- 拉取/刷新 -->
           <button
             class="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-500 text-white hover:bg-indigo-600 active:scale-95 transition-all duration-300 disabled:opacity-50"
@@ -380,6 +394,10 @@ function inputClass(w: AnswerState): string {
       <!-- 底部遮罩 -->
       <div class="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-white/90 dark:from-slate-800/90 to-transparent z-[5] pointer-events-none" />
     </div>
+
+    <!-- 背单词成果分享 -->
+    <PostComposer v-model:show="showShare" type="checkin" ref-type="vocab"
+      :preset-content="shareContent" :preset-tags="['#每日打卡', '#英语']" />
   </div>
 </template>
 

@@ -7,6 +7,7 @@ import { useChart, chartTextColor } from '../composables/useChart'
 import { problemTypesFor } from '../data/problemTypes'
 import StarRating from './StarRating.vue'
 import Modal from './Modal.vue'
+import PostComposer from './community/PostComposer.vue'
 import type { Note, TopicImportance } from '../types'
 
 const props = defineProps<{ subjectId: string }>()
@@ -74,6 +75,29 @@ const accuracy = computed(() => {
   const c = subjectProblems.value.reduce((s, p) => s + p.correct, 0)
   return t ? Math.round((c / t) * 100) : 0
 })
+
+// ---- 分享刷题成果到社区广场 ----
+const showShareComposer = ref(false)
+const shareContent = ref('')
+const shareTags = ref<string[]>([])
+const todayProblemStats = computed(() => {
+  const list = subjectProblems.value.filter(p => p.date === today())
+  const total = list.reduce((s, p) => s + p.total, 0)
+  const correct = list.reduce((s, p) => s + p.correct, 0)
+  return { total, correct, acc: total ? Math.round((correct / total) * 100) : 0 }
+})
+function openProblemShare() {
+  const { total, correct, acc } = todayProblemStats.value
+  if (!total) { toast('今天还没有刷题记录，先刷几道题吧'); return }
+  shareContent.value = [
+    '✏️ 今日刷题打卡',
+    `${subject.value?.icon || '📚'} ${subject.value?.name}：${total} 题，答对 ${correct}，正确率 ${acc}%`,
+    `🔥 连续打卡 ${store.gamification.streak} 天`
+  ].join('\n')
+  shareTags.value = ['#每日打卡',
+    ...(props.subjectId === 'math' ? ['#高等数学'] : props.subjectId === 'english' ? ['#英语'] : [])]
+  showShareComposer.value = true
+}
 
 // ---- 掌握度雷达 ----
 const radarTopics = computed(() => {
@@ -449,7 +473,10 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
         <button class="btn-primary w-full" @click="addProblems">保存刷题记录</button>
       </div>
       <div class="card">
-        <div class="section-title">刷题历史</div>
+        <div class="flex items-center justify-between mb-2">
+          <div class="section-title !mb-0">刷题历史</div>
+          <button class="btn-ghost !py-1 !text-xs" @click="openProblemShare">📣 分享到广场</button>
+        </div>
         <div class="space-y-1.5 max-h-72 overflow-y-auto">
           <div v-for="p in subjectProblems" :key="p.id" class="flex items-center gap-2 text-sm group">
             <span class="text-xs text-slate-400 w-20">{{ p.date }}</span>
@@ -549,6 +576,10 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
         <button class="btn-primary" @click="addExam">保存</button>
       </template>
     </Modal>
+
+    <!-- 刷题成果分享 -->
+    <PostComposer v-model:show="showShareComposer" type="checkin" ref-type="record"
+      :preset-content="shareContent" :preset-tags="shareTags" />
 
   </div>
 </template>
