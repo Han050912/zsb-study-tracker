@@ -76,7 +76,10 @@ export const useAppStore = defineStore('app', {
         return true
       }
       try {
-        await syncApi.pushAll(this.$state)
+        const res = await syncApi.pushAll(this.$state)
+        // 服务端在推送时发放的积分（学习时长/连续打卡里程碑）回写本地，
+        // 否则下一次推送会用本地旧总值覆盖掉这部分积分
+        if (res.gamification) this.$patch({ gamification: res.gamification })
         return true
       } catch (e) {
         console.error('保存数据失败', e)
