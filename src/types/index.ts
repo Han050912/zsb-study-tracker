@@ -212,7 +212,7 @@ export interface AppState {
 /** ========== 社区广场 ========== */
 
 /** 帖子类型 */
-export type PostType = 'checkin' | 'share' | 'achievement' | 'longform'
+export type PostType = 'checkin' | 'share' | 'achievement' | 'longform' | 'question'
 
 /** 社区帖子（userName/userPoints/likedByMe 为服务端 JOIN 填充） */
 export interface CommunityPost {
@@ -224,6 +224,10 @@ export interface CommunityPost {
   type: PostType
   content: string
   tags: string[]
+  /** 配图路径列表（/api/community/images/<id>，最多 9 张），经 imageUrl() 转绝对地址 */
+  imageUrls: string[]
+  /** 提问帖是否已被楼主标记解决 */
+  isResolved: boolean
   refType?: string
   refId?: string
   likesCount: number
@@ -253,7 +257,7 @@ export interface CommunityComment {
 /** 社区通知 */
 export interface CommunityNotification {
   id: string
-  type: 'like' | 'comment' | 'follow' | 'achievement'
+  type: 'like' | 'comment' | 'follow' | 'achievement' | 'system'
   actorId?: string
   actorName?: string
   postId?: string
@@ -261,4 +265,43 @@ export interface CommunityNotification {
   content: string
   isRead: boolean
   createdAt: number // Unix 秒
+}
+
+/** 今日打卡榜条目 */
+export interface LeaderboardTodayEntry {
+  userName: string
+  todayPoints: number
+  streak: number
+  totalPoints: number
+  /** 今日打卡科目名列表 */
+  subjects: string[]
+}
+
+/** 连续打卡王条目 */
+export interface LeaderboardStreakEntry {
+  userName: string
+  streak: number
+  totalPoints: number
+}
+
+export interface CommunityLeaderboard {
+  today: LeaderboardTodayEntry[]
+  streak: LeaderboardStreakEntry[]
+}
+
+/** 管理端举报队列条目（target 为 null 表示内容已被作者删除） */
+export interface AdminReport {
+  id: string
+  targetType: 'post' | 'comment'
+  targetId: string
+  reason: string
+  detail: string
+  createdAt: number
+  reporterName: string
+  target: {
+    authorName: string
+    excerpt: string
+    isHidden: boolean
+    postId: string
+  } | null
 }

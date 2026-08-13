@@ -8,6 +8,8 @@ import type { CommunityComment, CommunityPost } from '../types'
 import PostCard from '../components/community/PostCard.vue'
 import CommentItem from '../components/community/CommentItem.vue'
 import CommentInput from '../components/community/CommentInput.vue'
+import Lightbox from '../components/community/Lightbox.vue'
+import ReportDialog from '../components/community/ReportDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -124,6 +126,34 @@ async function removePost() {
   }
 }
 
+// ---- 图片灯箱 ----
+const showLightbox = ref(false)
+const lightboxIndex = ref(0)
+function openLightbox(i: number) {
+  lightboxIndex.value = i
+  showLightbox.value = true
+}
+
+// ---- 举报 ----
+const showReport = ref(false)
+const reportTarget = ref<{ type: 'post' | 'comment'; id: string }>({ type: 'post', id: '' })
+function openReport(type: 'post' | 'comment', id: string) {
+  reportTarget.value = { type, id }
+  showReport.value = true
+}
+
+// ---- 提问帖标记解决 ----
+async function toggleResolve() {
+  if (!post.value) return
+  try {
+    const { isResolved } = await communityApi.resolvePost(postId)
+    post.value.isResolved = isResolved
+    const p = store.posts.find(x => x.id === postId)
+    if (p) p.isResolved = isResolved
+    toast(isResolved ? '已标记为已解答 🎉' : '已重新开放为待解答')
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
 // ---- 管理员操作 ----
 async function togglePin() {
   if (!post.value) return
@@ -167,8 +197,11 @@ async function toggleHideComment(c: CommunityComment) {
     </div>
 
     <template v-else-if="post">
-      <PostCard :post="post" detail @like="likePost" @pin="togglePin" @hide="toggleHidePost">
+      <PostCard :post="post" detail @like="likePost" @pin="togglePin" @hide="toggleHidePost"
+        @image="openLightbox" @report="openReport('post', post.id)">
         <template #actions>
+          <button v-if="isMine && post.type === 'question'" class="text-xs text-slate-400 hover:text-emerald-500"
+            @click.stop="toggleResolve">{{ post.isResolved ? '取消已解答' : '标记已解答' }}</button>
           <button v-if="canDeletePost" class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost">删除</button>
         </template>
       </PostCard>
@@ -186,14 +219,19 @@ async function toggleHideComment(c: CommunityComment) {
 
         <div v-if="!commentTree.length" class="text-center text-xs text-slate-400 py-4">暂无评论，来抢沙发～</div>
         <div v-for="c in commentTree" :key="c.id" class="space-y-3">
-          <CommentItem :comment="c" @like="likeComment(c)" @reply="reply(c)" @remove="removeComment(c)" @hide="toggleHideComment(c)" />
+          <CommentItem :comment="c" @like="likeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
+            @hide="toggleHideComment(c)" @report="openReport('comment', c.id)" />
           <!-- 二级回复 -->
           <div v-if="c.replies?.length" class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
             <CommentItem v-for="r in c.replies" :key="r.id" :comment="r"
-              @like="likeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)" />
+              @like="likeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
+              @report="openReport('comment', r.id)" />
           </div>
         </div>
       </div>
+
+      <Lightbox v-model:show="showLightbox" v-model:index="lightboxIndex" :urls="post.imageUrls" />
+      <ReportDialog v-model:show="showReport" :target-type="reportTarget.type" :target-id="reportTarget.id" />
     </template>
   </div>
 </template>
