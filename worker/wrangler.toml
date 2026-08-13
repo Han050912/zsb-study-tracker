@@ -12,6 +12,11 @@ binding = "DB"
 database_name = "zsb-study-db"
 database_id = "627fbd6f-d81b-48d2-9603-ef5ae333c2a3"
 
+# 社区帖子图片存储（P0 图片上传）。首次部署前需创建一次：npx wrangler r2 bucket create zsb-study-images
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "zsb-study-images"
+
 [vars]
 # 非敏感配置（JWT_SECRET 通过 Cloudflare 控制台设置加密变量，不写入此文件）
 # GITHUB_TOKEN 也需通过 Cloudflare Dashboard > Workers > Settings > Secrets 配置
