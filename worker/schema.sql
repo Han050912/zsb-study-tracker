@@ -14,6 +14,30 @@
 --   CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at);
 --   CREATE TABLE IF NOT EXISTS community_moderation_log ( id TEXT PRIMARY KEY, admin_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, report_id TEXT, reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL );
 --   CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at);
+-- 已建库升级：社区增强 P1（最佳答案/精华帖/评论图片），执行一次：
+--   ALTER TABLE community_posts ADD COLUMN accepted_answer_id TEXT;
+--   ALTER TABLE community_posts ADD COLUMN is_featured INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE community_comments ADD COLUMN image_urls TEXT NOT NULL DEFAULT '[]';
+--   ALTER TABLE community_comments ADD COLUMN is_accepted INTEGER NOT NULL DEFAULT 0;
+--   CREATE INDEX IF NOT EXISTS idx_posts_featured ON community_posts(is_featured, created_at);
+-- 已建库升级：社区增强 P1 第二批（专家认证/徽章系统），执行一次：
+--   ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE users ADD COLUMN expertise TEXT NOT NULL DEFAULT '';
+--   CREATE TABLE IF NOT EXISTS user_badges ( user_id TEXT NOT NULL REFERENCES users(id), badge_key TEXT NOT NULL, awarded_at INTEGER NOT NULL, PRIMARY KEY (user_id, badge_key) );
+-- 已建库升级：社区增强 P1 第三批（好友关注/每日一题），执行一次：
+--   CREATE TABLE IF NOT EXISTS user_follows ( follower_id TEXT NOT NULL REFERENCES users(id), followee_id TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL, PRIMARY KEY (follower_id, followee_id) );
+--   CREATE INDEX IF NOT EXISTS idx_follows_followee ON user_follows(followee_id);
+--   ALTER TABLE community_posts ADD COLUMN is_daily INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：社区增强 P1 第四批（话题圈子），执行一次：
+--   CREATE TABLE IF NOT EXISTS community_circles ( id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', creator_id TEXT NOT NULL REFERENCES users(id), is_public INTEGER NOT NULL DEFAULT 1, member_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
+--   CREATE TABLE IF NOT EXISTS circle_members ( circle_id TEXT NOT NULL REFERENCES community_circles(id), user_id TEXT NOT NULL REFERENCES users(id), role TEXT NOT NULL DEFAULT 'member', status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, PRIMARY KEY (circle_id, user_id) );
+--   CREATE INDEX IF NOT EXISTS idx_cmembers_user ON circle_members(user_id);
+--   ALTER TABLE community_posts ADD COLUMN circle_id TEXT;
+--   CREATE INDEX IF NOT EXISTS idx_posts_circle ON community_posts(circle_id, created_at);
+-- 已建库升级：社区增强 P2（私信），执行一次：
+--   CREATE TABLE IF NOT EXISTS community_messages ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES users(id), to_id TEXT NOT NULL REFERENCES users(id), content TEXT NOT NULL, is_read INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_messages_to ON community_messages(to_id, is_read);
+--   CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -22,6 +46,8 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'user',   -- 'user' | 'admin'
+  verified INTEGER NOT NULL DEFAULT 0, -- 专家认证标记（蓝 V），管理员后台授予
+  expertise TEXT NOT NULL DEFAULT '',  -- 专长领域（如 "高等数学,英语"）
   created_at INTEGER NOT NULL
 );
 
@@ -307,6 +333,10 @@ CREATE TABLE IF NOT EXISTS community_posts (
   tags TEXT NOT NULL DEFAULT '[]',     -- JSON 数组：['#每日打卡', '#高等数学']
   image_urls TEXT NOT NULL DEFAULT '[]', -- JSON 数组：帖子配图路径（/api/community/images/<id>，最多 9 张）
   is_resolved INTEGER NOT NULL DEFAULT 0, -- 提问帖是否已被楼主标记解决
+  accepted_answer_id TEXT,             -- 被采纳最佳答案的评论 ID（采纳即已解答；可取消/改采纳）
+  is_featured INTEGER NOT NULL DEFAULT 0, -- 管理员加精标记（精华 Tab）
+  is_daily INTEGER NOT NULL DEFAULT 0,    -- 每日一题标记（管理员设置，广场顶部展示最新一题）
+  circle_id TEXT,                      -- 所属圈子（NULL = 广场公开帖；圈子帖不进公共广场，保持圈内专属）
   ref_type TEXT,                       -- 关联源类型：'summary' | 'record' | 'achievement' | 'habit' | 'vocab'
   ref_id TEXT,                         -- 关联源 ID
   likes_count INTEGER NOT NULL DEFAULT 0,
@@ -319,6 +349,8 @@ CREATE TABLE IF NOT EXISTS community_posts (
 CREATE INDEX IF NOT EXISTS idx_posts_created_at ON community_posts(created_at);
 CREATE INDEX IF NOT EXISTS idx_posts_user_id ON community_posts(user_id);
 CREATE INDEX IF NOT EXISTS idx_posts_type ON community_posts(type);
+CREATE INDEX IF NOT EXISTS idx_posts_featured ON community_posts(is_featured, created_at);
+CREATE INDEX IF NOT EXISTS idx_posts_circle ON community_posts(circle_id, created_at);
 
 -- 评论表：parent_id NULL 为一级评论，非 NULL 为二级回复（最多二级）
 CREATE TABLE IF NOT EXISTS community_comments (
@@ -327,7 +359,9 @@ CREATE TABLE IF NOT EXISTS community_comments (
   user_id TEXT NOT NULL REFERENCES users(id),
   parent_id TEXT,
   content TEXT NOT NULL,
+  image_urls TEXT NOT NULL DEFAULT '[]', -- JSON 数组：评论配图路径（最多 3 张）
   likes_count INTEGER NOT NULL DEFAULT 0,
+  is_accepted INTEGER NOT NULL DEFAULT 0, -- 是否被采纳为最佳答案（与 posts.accepted_answer_id 冗余保持一致）
   is_hidden INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -396,6 +430,57 @@ CREATE TABLE IF NOT EXISTS community_reports (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at);
+
+-- 好友关注关系：复合主键保证仅关注一次；关注流 = 筛选关注作者的帖子
+CREATE TABLE IF NOT EXISTS user_follows (
+  follower_id TEXT NOT NULL REFERENCES users(id),
+  followee_id TEXT NOT NULL REFERENCES users(id),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (follower_id, followee_id)
+);
+CREATE INDEX IF NOT EXISTS idx_follows_followee ON user_follows(followee_id);
+
+-- 话题圈子：圈内专属讨论（圈子帖 circle_id 非空，不进公共广场）
+CREATE TABLE IF NOT EXISTS community_circles (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,                    -- 1-30 字
+  description TEXT NOT NULL DEFAULT '',  -- 0-200 字
+  creator_id TEXT NOT NULL REFERENCES users(id),
+  is_public INTEGER NOT NULL DEFAULT 1,  -- 1 公开直接加入；0 审核加入（pending 需圈主批准）
+  member_count INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+
+-- 圈子成员：role 区分圈主；status=pending 表示审核圈待批准（不计入 member_count）
+CREATE TABLE IF NOT EXISTS circle_members (
+  circle_id TEXT NOT NULL REFERENCES community_circles(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  role TEXT NOT NULL DEFAULT 'member',   -- 'owner' | 'member'
+  status TEXT NOT NULL DEFAULT 'active', -- 'active' | 'pending'
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (circle_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cmembers_user ON circle_members(user_id);
+
+-- 私信：一对一消息（单向模式，无需互关；发送即通知对方，举报复用 community_reports target_type='message'）
+CREATE TABLE IF NOT EXISTS community_messages (
+  id TEXT PRIMARY KEY,
+  from_id TEXT NOT NULL REFERENCES users(id),
+  to_id TEXT NOT NULL REFERENCES users(id),
+  content TEXT NOT NULL,
+  is_read INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_to ON community_messages(to_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
+
+-- 用户徽章：服务端事件驱动发放（发帖/提问/打卡里程碑/获赞/被采纳/上传），主键去重保证仅发放一次
+CREATE TABLE IF NOT EXISTS user_badges (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  badge_key TEXT NOT NULL,          -- 见 worker/src/api/badges.ts BADGE_DEFS
+  awarded_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, badge_key)
+);
 
 -- 审核操作日志：所有治理动作留痕（action: 'hide' | 'delete' | 'reject' 等）
 CREATE TABLE IF NOT EXISTS community_moderation_log (
