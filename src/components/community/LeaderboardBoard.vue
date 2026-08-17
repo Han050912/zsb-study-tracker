@@ -28,6 +28,7 @@ const medal = (i: number) => MEDALS[i] ?? `${i + 1}.`
           <span class="w-6 text-center shrink-0">{{ medal(i) }}</span>
           <UserAvatar :name="e.userName" size="sm" />
           <span class="font-medium truncate max-w-[7rem]">{{ e.userName }}</span>
+          <span v-if="e.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
           <span class="text-[10px] px-1 rounded-full shrink-0"
             :style="{ background: levelOf(e.totalPoints).color + '1a', color: levelOf(e.totalPoints).color }">
             {{ levelOf(e.totalPoints).name }}
@@ -45,6 +46,7 @@ const medal = (i: number) => MEDALS[i] ?? `${i + 1}.`
           class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-slate-50 dark:bg-slate-700/50 text-xs">
           <UserAvatar :name="e.userName" size="sm" />
           <span class="font-medium max-w-[5rem] truncate">{{ e.userName }}</span>
+          <span v-if="e.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
           <span class="text-orange-500 font-semibold shrink-0">🔥{{ e.streak }}天</span>
         </div>
       </div>

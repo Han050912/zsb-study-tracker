@@ -6,7 +6,7 @@ import { communityApi } from '../../api/community'
 /** 举报弹窗：预设原因单选 + 补充说明（选「其他」时必填） */
 const props = withDefaults(defineProps<{
   show: boolean
-  targetType: 'post' | 'comment'
+  targetType: 'post' | 'comment' | 'message'
   targetId: string
 }>(), { targetId: '' })
 

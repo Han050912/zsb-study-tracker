@@ -10,6 +10,7 @@ import CommentItem from '../components/community/CommentItem.vue'
 import CommentInput from '../components/community/CommentInput.vue'
 import Lightbox from '../components/community/Lightbox.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
+import UserProfileModal from '../components/community/UserProfileModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,7 +38,7 @@ onMounted(async () => {
 const isMine = computed(() => post.value?.userId === sessionUser.value?.id)
 const canDeletePost = computed(() => isMine.value || isAdmin.value)
 
-/** 一级评论 + 二级回复树（回复的 parentId 始终指向一级评论） */
+/** 一级评论 + 二级回复树（回复的 parentId 始终指向一级评论）；被采纳的最佳答案置顶展示 */
 const commentTree = computed(() => {
   const roots = comments.value.filter(c => !c.parentId)
   const byParent = new Map<string, CommunityComment[]>()
@@ -47,6 +48,7 @@ const commentTree = computed(() => {
     list.push(c)
     byParent.set(c.parentId, list)
   }
+  roots.sort((a, b) => Number(b.isAccepted) - Number(a.isAccepted))
   return roots.map(r => ({ ...r, replies: byParent.get(r.id) || [] }))
 })
 
@@ -85,9 +87,9 @@ function reply(c: CommunityComment) {
   requestAnimationFrame(() => { presetText.value = `@${c.userName} ` })
 }
 
-async function send(text: string) {
+async function send(text: string, imageUrls: string[]) {
   try {
-    const c = await store.postComment(postId, text, replyTarget.value?.id)
+    const c = await store.postComment(postId, text, replyTarget.value?.id, imageUrls)
     comments.value.push(c)
     // store.postComment 已同步广场列表内的计数，此处仅当本帖不在列表时手动 +1，避免重复计数
     if (post.value && !store.posts.some(p => p.id === postId)) post.value.commentsCount++
@@ -108,6 +110,13 @@ async function removeComment(c: CommunityComment) {
     // 同上：仅当本帖不在广场列表时手动回退，避免与 store 重复扣减
     if (post.value && !store.posts.some(p => p.id === postId)) {
       post.value.commentsCount = Math.max(0, post.value.commentsCount - removed)
+    }
+    // 删除的若为最佳答案：服务端级联已解除采纳并回退为待解答，本地同步（含广场列表副本）
+    if (c.isAccepted && post.value) {
+      post.value.acceptedAnswerId = undefined
+      post.value.isResolved = false
+      const p = store.posts.find(x => x.id === postId)
+      if (p) { p.acceptedAnswerId = undefined; p.isResolved = false }
     }
   } catch (e: any) {
     toast(e?.message || '删除失败')
@@ -154,6 +163,57 @@ async function toggleResolve() {
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
+// ---- 最佳答案采纳（仅提问帖楼主；仅一级评论；不能采纳自己的评论） ----
+const canAccept = computed(() =>
+  !!post.value && post.value.type === 'question' && isMine.value && !post.value.isHidden
+)
+
+function acceptVisible(c: CommunityComment) {
+  return canAccept.value && !c.parentId && !c.isHidden && c.userId !== sessionUser.value?.id
+}
+
+const accepting = ref(false) // 采纳请求在途标记：防止双击并发采纳导致积分重复发放
+
+async function accept(c: CommunityComment) {
+  if (!post.value || accepting.value) return
+  const current = post.value.acceptedAnswerId
+  if (current === c.id) {
+    if (!window.confirm('取消采纳这条最佳答案？双方将扣除相应积分。')) return
+  } else if (current) {
+    if (!window.confirm('改采纳这条评论？原最佳答案的采纳将被撤销。')) return
+  } else {
+    if (!window.confirm(`采纳 @${c.userName} 的回答为最佳答案？对方 +10 积分，你 +3 积分。`)) return
+  }
+  accepting.value = true
+  try {
+    const res = await store.acceptAnswer(postId, c.id)
+    post.value.acceptedAnswerId = res.acceptedAnswerId ?? undefined
+    post.value.isResolved = res.isResolved
+    // 同步评论标记：旧采纳清除，新采纳置位（commentTree 为展开副本，必须改原始数组）
+    for (const x of comments.value) x.isAccepted = x.id === res.acceptedAnswerId
+    toast(res.acceptedAnswerId ? '已采纳最佳答案 🎉' : '已取消采纳，帖子重新开放为待解答')
+  } catch (e: any) { toast(e?.message || '操作失败') }
+  finally { accepting.value = false }
+}
+
+// ---- 评论图片灯箱 ----
+const showCommentLightbox = ref(false)
+const commentLightboxIndex = ref(0)
+const commentLightboxUrls = ref<string[]>([])
+function openCommentLightbox(c: CommunityComment, i: number) {
+  commentLightboxUrls.value = c.imageUrls
+  commentLightboxIndex.value = i
+  showCommentLightbox.value = true
+}
+
+// ---- 用户资料卡 ----
+const showProfile = ref(false)
+const profileUserId = ref('')
+function openProfile(userId: string) {
+  profileUserId.value = userId
+  showProfile.value = true
+}
+
 // ---- 管理员操作 ----
 async function togglePin() {
   if (!post.value) return
@@ -161,6 +221,15 @@ async function togglePin() {
     const pinned = await store.adminPinPost(postId)
     post.value.isPinned = pinned
     toast(pinned ? '已置顶' : '已取消置顶')
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
+async function toggleFeature() {
+  if (!post.value) return
+  try {
+    const featured = await store.adminFeaturePost(postId)
+    post.value.isFeatured = featured
+    toast(featured ? '已加精 🌟' : '已取消加精')
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
@@ -197,10 +266,11 @@ async function toggleHideComment(c: CommunityComment) {
     </div>
 
     <template v-else-if="post">
-      <PostCard :post="post" detail @like="likePost" @pin="togglePin" @hide="toggleHidePost"
-        @image="openLightbox" @report="openReport('post', post.id)">
+      <PostCard :post="post" detail @like="likePost" @pin="togglePin" @feature="toggleFeature" @hide="toggleHidePost"
+        @image="openLightbox" @report="openReport('post', post.id)" @profile="openProfile(post.userId)">
         <template #actions>
-          <button v-if="isMine && post.type === 'question'" class="text-xs text-slate-400 hover:text-emerald-500"
+          <!-- 已采纳最佳答案时禁用手动标记（需先取消采纳），避免出现矛盾态 -->
+          <button v-if="isMine && post.type === 'question' && !post.acceptedAnswerId" class="text-xs text-slate-400 hover:text-emerald-500"
             @click.stop="toggleResolve">{{ post.isResolved ? '取消已解答' : '标记已解答' }}</button>
           <button v-if="canDeletePost" class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost">删除</button>
         </template>
@@ -219,19 +289,22 @@ async function toggleHideComment(c: CommunityComment) {
 
         <div v-if="!commentTree.length" class="text-center text-xs text-slate-400 py-4">暂无评论，来抢沙发～</div>
         <div v-for="c in commentTree" :key="c.id" class="space-y-3">
-          <CommentItem :comment="c" @like="likeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
-            @hide="toggleHideComment(c)" @report="openReport('comment', c.id)" />
+          <CommentItem :comment="c" :show-accept="acceptVisible(c)" @like="likeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
+            @hide="toggleHideComment(c)" @report="openReport('comment', c.id)" @accept="accept(c)" @image="openCommentLightbox(c, $event)"
+            @profile="openProfile(c.userId)" />
           <!-- 二级回复 -->
           <div v-if="c.replies?.length" class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
             <CommentItem v-for="r in c.replies" :key="r.id" :comment="r"
               @like="likeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
-              @report="openReport('comment', r.id)" />
+              @report="openReport('comment', r.id)" @image="openCommentLightbox(r, $event)" @profile="openProfile(r.userId)" />
           </div>
         </div>
       </div>
 
       <Lightbox v-model:show="showLightbox" v-model:index="lightboxIndex" :urls="post.imageUrls" />
+      <Lightbox v-model:show="showCommentLightbox" v-model:index="commentLightboxIndex" :urls="commentLightboxUrls" />
       <ReportDialog v-model:show="showReport" :target-type="reportTarget.type" :target-id="reportTarget.id" />
+      <UserProfileModal v-model:show="showProfile" :user-id="profileUserId" />
     </template>
   </div>
 </template>

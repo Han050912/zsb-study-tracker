@@ -14,6 +14,7 @@ const TYPE_ICON: Record<CommunityNotification['type'], string> = {
   comment: '💬',
   follow: '👤',
   achievement: '🏆',
+  message: '✉️',
   system: '📢'
 }
 
@@ -21,10 +22,11 @@ onMounted(() => {
   store.fetchNotifications(true).catch(e => toast(e?.message || '加载失败'))
 })
 
-/** 点击通知：标记已读并跳转关联帖子（system 通知不携带跳转目标，仅标记已读） */
+/** 点击通知：标记已读并跳转（system 无跳转目标；message 进聊天页；其余进帖子详情） */
 async function open(n: CommunityNotification) {
   store.markRead(n).catch(() => {})
-  if (n.type !== 'system' && n.postId) router.push(`/community/post/${n.postId}`)
+  if (n.type === 'message' && n.actorId) router.push(`/community/messages/${n.actorId}`)
+  else if (n.type !== 'system' && n.postId) router.push(`/community/post/${n.postId}`)
 }
 
 async function readAll() {

@@ -4,24 +4,29 @@ import Modal from '../Modal.vue'
 import TagBadge from './TagBadge.vue'
 import { useCommunityStore } from '../../stores/community'
 import { COMMUNITY_TAGS } from '../../data/defaults'
-import { uploadImage, IMAGE_MAX_BYTES, IMAGE_MAX_PER_POST } from '../../api/community'
-import type { PostType } from '../../types'
+import { communityApi, uploadImage, IMAGE_MAX_BYTES, IMAGE_MAX_PER_POST } from '../../api/community'
+import { renderMarkdown } from '../../utils/markdown'
+import type { CommunityCircle, PostType } from '../../types'
 
 /**
  * 发帖/分享编辑器：普通发帖、提问帖与各页面「分享到广场」共用。
  * 打开时（show 变为 true）以 preset 内容重置表单。
  * 图片支持点击选择 / 拖拽 / Ctrl+V 粘贴三种方式，上传中展示进度条（XHR upload progress）。
+ * Markdown：工具栏插入粗体/代码/代码块/引用/列表/公式语法，编辑/预览 Tab 切换（KaTeX 渲染）。
+ * circleId 传入时发到圈子（仅成员）；未传入且用户有已加入圈子时展示圈子选择器。
  */
 const props = withDefaults(defineProps<{
   show: boolean
   type: PostType
   presetContent?: string
   presetTags?: string[]
+  /** 指定发到圈子（圈子详情页发帖入口）；不传则展示圈子选择器（可选发广场） */
+  circleId?: string
   refType?: string
   refId?: string
   /** 允许在「分享 / 提问」之间切换（仅广场主发帖入口开启） */
   allowTypeSwitch?: boolean
-}>(), { presetContent: '', presetTags: () => [], refType: undefined, refId: undefined, allowTypeSwitch: false })
+}>(), { presetContent: '', presetTags: () => [], circleId: undefined, refType: undefined, refId: undefined, allowTypeSwitch: false })
 
 const emit = defineEmits<{ 'update:show': [boolean]; posted: [] }>()
 
@@ -50,6 +55,25 @@ const subject = ref('')
 const images = ref<PendingImage[]>([])
 const submitting = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const textareaRef = ref<HTMLTextAreaElement | null>(null)
+
+/** Markdown 预览开关 */
+const preview = ref(false)
+const previewHtml = computed(() => renderMarkdown(content.value))
+
+/** 我的活跃圈子（广场发帖时可选发入圈内） */
+const myCircles = ref<CommunityCircle[]>([])
+/** 选中的圈子（'' = 发广场） */
+const selectedCircle = ref('')
+
+watch(() => props.show, async v => {
+  if (v && props.circleId === undefined && !myCircles.value.length) {
+    try {
+      const res = await communityApi.circles()
+      myCircles.value = res.circles.filter(c => c.myStatus === 'owner' || c.myStatus === 'member')
+    } catch { /* 圈子列表加载失败不阻塞发帖 */ }
+  }
+})
 
 const isQuestion = computed(() => postType.value === 'question')
 /** 存在未完成的图片上传时禁止提交 */
@@ -65,11 +89,41 @@ watch(() => props.show, v => {
     tags.value = [...props.presetTags]
     subject.value = QUESTION_SUBJECT_TAGS.find(t => props.presetTags.includes(t)) ?? ''
     images.value = []
+    preview.value = false
+    selectedCircle.value = props.circleId ?? ''
   } else {
     // 关闭时释放本地预览地址
     for (const i of images.value) URL.revokeObjectURL(i.localUrl)
   }
 })
+
+// ---------- Markdown 工具栏 ----------
+
+/** 在光标处包裹/插入 Markdown 语法（选中文本作为内容，否则插入占位符） */
+function insertMd(before: string, after: string, placeholder = '') {
+  const el = textareaRef.value
+  if (!el) return
+  const start = el.selectionStart
+  const end = el.selectionEnd
+  const selected = content.value.slice(start, end) || placeholder
+  content.value = content.value.slice(0, start) + before + selected + after + content.value.slice(end)
+  // 恢复光标到内容末尾
+  const pos = start + before.length + selected.length
+  requestAnimationFrame(() => {
+    el.focus()
+    el.setSelectionRange(pos, pos)
+  })
+}
+
+const mdActions = [
+  { icon: 'B', title: '粗体', run: () => insertMd('**', '**', '粗体') },
+  { icon: '< >', title: '行内代码', run: () => insertMd('`', '`', 'code') },
+  { icon: '{ }', title: '代码块', run: () => insertMd('\n```\n', '\n```\n', '代码') },
+  { icon: '❝', title: '引用', run: () => insertMd('\n> ', '\n', '引用内容') },
+  { icon: '•', title: '无序列表', run: () => insertMd('\n- ', '', '列表项') },
+  { icon: 'Σ', title: '行内公式', run: () => insertMd('$', '$', 'E=mc^2') },
+  { icon: 'ΣΣ', title: '块级公式', run: () => insertMd('\n$$\n', '\n$$\n', 'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}') }
+]
 
 function switchType(t: PostType) {
   postType.value = t
@@ -156,6 +210,7 @@ async function submit() {
     await store.publishPost({
       type: postType.value, content: text, tags: finalTags,
       imageUrls: images.value.map(i => i.url!),
+      circleId: selectedCircle.value || undefined,
       refType: props.refType, refId: props.refId
     })
     toast('已发布到社区广场')
@@ -181,11 +236,32 @@ async function submit() {
         @click="switchType('question')">❓ 提问</button>
     </div>
 
-    <div @dragover.prevent @drop.prevent="onDrop">
-      <textarea v-model="content" rows="6" maxlength="5000" class="input"
-        :placeholder="placeholder" @paste="onPaste"></textarea>
+    <!-- Markdown 工具栏 + 预览切换 -->
+    <div class="flex items-center gap-1 mb-1.5 flex-wrap">
+      <button v-for="a in mdActions" :key="a.title" type="button"
+        class="px-1.5 py-1 rounded text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-primary-500 transition-colors"
+        :title="a.title" :disabled="preview" @click="a.run">{{ a.icon }}</button>
+      <div class="flex-1"></div>
+      <div class="flex bg-slate-100 dark:bg-slate-700 rounded-md p-0.5 text-[10px]">
+        <button class="px-2 py-1 rounded transition-colors"
+          :class="!preview ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="preview = false">编辑</button>
+        <button class="px-2 py-1 rounded transition-colors"
+          :class="preview ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="preview = true">预览</button>
+      </div>
     </div>
-    <div class="text-right text-[10px] text-slate-400 mt-0.5">{{ content.length }}/5000</div>
+
+    <div @dragover.prevent @drop.prevent="onDrop">
+      <textarea v-show="!preview" ref="textareaRef" v-model="content" rows="6" maxlength="5000" class="input"
+        :placeholder="placeholder" @paste="onPaste"></textarea>
+      <div v-if="preview" class="input min-h-[9rem] overflow-y-auto md-body text-sm"
+        v-html="previewHtml || '<span style=&quot;color:#94a3b8&quot;>暂无内容</span>'"></div>
+    </div>
+    <div class="flex items-center justify-between text-[10px] text-slate-400 mt-0.5">
+      <span>支持 Markdown：粗体 / 代码 / 引用 / 列表 / $公式$ / $$块级公式$$</span>
+      <span>{{ content.length }}/5000</span>
+    </div>
 
     <!-- 图片区 -->
     <div class="mt-2">
@@ -225,6 +301,19 @@ async function submit() {
       <TagBadge v-for="t in COMMUNITY_TAGS.filter(t => !isQuestion || !QUESTION_SUBJECT_TAGS.includes(t))" :key="t"
         :tag="t" :active="tags.includes(t)" @click="toggleTag(t)" />
     </div>
+
+    <!-- 圈子选择器（仅广场入口且已加入圈子时展示；圈子帖不进公共广场） -->
+    <template v-if="circleId === undefined && myCircles.length">
+      <div class="label mt-2">发布到（圈子帖仅圈内可见）</div>
+      <div class="flex flex-wrap gap-1.5">
+        <button class="px-2.5 py-1 rounded-full text-xs transition-colors"
+          :class="!selectedCircle ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'"
+          @click="selectedCircle = ''">🌐 广场</button>
+        <button v-for="c in myCircles" :key="c.id" class="px-2.5 py-1 rounded-full text-xs transition-colors"
+          :class="selectedCircle === c.id ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'"
+          @click="selectedCircle = c.id">🫧 {{ c.name }}</button>
+      </div>
+    </template>
 
     <template #footer>
       <button class="btn-ghost" @click="emit('update:show', false)">取消</button>
