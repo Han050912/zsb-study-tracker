@@ -4,6 +4,7 @@ import { all, first, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { notifyStatement, postCascadeStatements, commentCascadeStatements } from './community'
 import { deleteUploads, uploadIdsOf } from './uploads'
+import { assertClean } from './sensitive'
 
 /**
  * 社区管理端点：帖子置顶/隐藏、评论隐藏、举报处理。
@@ -62,6 +63,74 @@ export function registerAdminRoutes() {
     return Response.json({ isHidden: !!next })
   })
 
+  // 帖子加精/取消加精（精华帖在广场「精华」Tab 展示）
+  on('PUT', '/api/admin/posts/:id/feature', true, async (ctx) => {
+    rateLimit(ctx.request, 'admin', 20)
+    await requireAdmin(ctx)
+    const post = await first<{ is_featured: number }>(ctx.env,
+      'SELECT is_featured FROM community_posts WHERE id = ?', ctx.params.id)
+    if (!post) throw new HttpError(404, '帖子不存在')
+    const next = post.is_featured ? 0 : 1
+    await batch(ctx.env, [
+      ctx.env.DB.prepare('UPDATE community_posts SET is_featured = ? WHERE id = ?').bind(next, ctx.params.id),
+      modLogStatement(ctx.env, ctx.userId, next ? 'feature' : 'unfeature', 'post', ctx.params.id, null, '')
+    ])
+    return Response.json({ isFeatured: !!next })
+  })
+
+  // 专家认证授予/更新（蓝 V + 专长领域；处理结果通知用户并留痕）
+  on('PUT', '/api/admin/users/:id/verify', true, async (ctx) => {
+    rateLimit(ctx.request, 'admin', 20)
+    await requireAdmin(ctx)
+    const b = await body(ctx.request)
+    const expertise = String(b?.expertise ?? '').trim().slice(0, 50)
+    if (!expertise) throw new HttpError(400, '请填写专长领域（1-50 字）')
+    assertClean(expertise) // 专长随蓝 V 公开展示，过敏感词
+    const target = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await batch(ctx.env, [
+      ctx.env.DB.prepare('UPDATE users SET verified = 1, expertise = ? WHERE id = ?').bind(expertise, ctx.params.id),
+      modLogStatement(ctx.env, ctx.userId, 'verify', 'user', ctx.params.id, null, expertise),
+      notifyStatement(ctx.env, {
+        userId: ctx.params.id, type: 'system',
+        content: `🎓 你已被认证为「${expertise}」学科专家，你的帖子与评论将展示蓝 V 标识`
+      })
+    ])
+    return Response.json({ verified: true, expertise })
+  })
+
+  // 撤销专家认证
+  on('DELETE', '/api/admin/users/:id/verify', true, async (ctx) => {
+    rateLimit(ctx.request, 'admin', 20)
+    await requireAdmin(ctx)
+    const target = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await batch(ctx.env, [
+      ctx.env.DB.prepare("UPDATE users SET verified = 0, expertise = '' WHERE id = ?").bind(ctx.params.id),
+      modLogStatement(ctx.env, ctx.userId, 'unverify', 'user', ctx.params.id, null, ''),
+      notifyStatement(ctx.env, {
+        userId: ctx.params.id, type: 'system',
+        content: '你的专家认证已被撤销，如有疑问可联系管理员'
+      })
+    ])
+    return Response.json({ verified: false })
+  })
+
+  // 每日一题设置/取消（广场顶部展示最新一条被标记的未隐藏帖子）
+  on('PUT', '/api/admin/posts/:id/daily', true, async (ctx) => {
+    rateLimit(ctx.request, 'admin', 20)
+    await requireAdmin(ctx)
+    const post = await first<{ is_daily: number }>(ctx.env,
+      'SELECT is_daily FROM community_posts WHERE id = ?', ctx.params.id)
+    if (!post) throw new HttpError(404, '帖子不存在')
+    const next = post.is_daily ? 0 : 1
+    await batch(ctx.env, [
+      ctx.env.DB.prepare('UPDATE community_posts SET is_daily = ? WHERE id = ?').bind(next, ctx.params.id),
+      modLogStatement(ctx.env, ctx.userId, next ? 'daily' : 'undaily', 'post', ctx.params.id, null, '')
+    ])
+    return Response.json({ isDaily: !!next })
+  })
+
   // 评论隐藏/取消隐藏
   on('PUT', '/api/admin/comments/:id/hide', true, async (ctx) => {
     rateLimit(ctx.request, 'admin', 20)
@@ -91,6 +160,7 @@ export function registerAdminRoutes() {
       LIMIT 100`)
     const postIds = rows.filter(r => r.target_type === 'post').map(r => r.target_id)
     const commentIds = rows.filter(r => r.target_type === 'comment').map(r => r.target_id)
+    const messageIds = rows.filter(r => r.target_type === 'message').map(r => r.target_id)
     const posts = postIds.length ? await all<any>(ctx.env, `
       SELECT p.id, p.content, p.is_hidden, COALESCE(s.user_name, u.username) AS author_name
       FROM community_posts p
@@ -103,14 +173,23 @@ export function registerAdminRoutes() {
       JOIN users u ON u.id = c.user_id
       LEFT JOIN user_settings s ON s.user_id = c.user_id
       WHERE c.id IN (${commentIds.map(() => '?').join(',')})`, ...commentIds) : []
+    const messages = messageIds.length ? await all<any>(ctx.env, `
+      SELECT m.id, m.content, 0 AS is_hidden, COALESCE(s.user_name, u.username) AS author_name
+      FROM community_messages m
+      JOIN users u ON u.id = m.from_id
+      LEFT JOIN user_settings s ON s.user_id = m.from_id
+      WHERE m.id IN (${messageIds.map(() => '?').join(',')})`, ...messageIds) : []
     const postMap = new Map(posts.map(p => [p.id, p]))
     const commentMap = new Map(comments.map(c => [c.id, c]))
+    const messageMap = new Map(messages.map(m => [m.id, m]))
     return Response.json({
       reports: rows.map(r => {
-        const t = r.target_type === 'post' ? postMap.get(r.target_id) : commentMap.get(r.target_id)
+        const t = r.target_type === 'post' ? postMap.get(r.target_id)
+          : r.target_type === 'comment' ? commentMap.get(r.target_id)
+          : messageMap.get(r.target_id)
         return {
           id: r.id,
-          targetType: r.target_type as 'post' | 'comment',
+          targetType: r.target_type as 'post' | 'comment' | 'message',
           targetId: r.target_id,
           reason: r.reason,
           detail: r.detail,
@@ -120,7 +199,7 @@ export function registerAdminRoutes() {
             authorName: t.author_name || '升本人',
             excerpt: String(t.content).slice(0, 120),
             isHidden: !!t.is_hidden,
-            postId: r.target_type === 'comment' ? t.post_id : t.id
+            postId: r.target_type === 'comment' ? t.post_id : r.target_type === 'post' ? t.id : undefined
           } : null
         }
       })
@@ -141,12 +220,16 @@ export function registerAdminRoutes() {
       "SELECT * FROM community_reports WHERE id = ? AND status = 'pending'", ctx.params.id)
     if (!report) throw new HttpError(404, '举报不存在或已处理')
     const isPost = report.target_type === 'post'
-    const table = isPost ? 'community_posts' : 'community_comments'
-    const typeLabel = isPost ? '帖子' : '评论'
+    const isMessage = report.target_type === 'message'
+    const table = isPost ? 'community_posts' : isMessage ? 'community_messages' : 'community_comments'
+    const typeLabel = isPost ? '帖子' : isMessage ? '私信' : '评论'
+    // 私信举报 hide 无意义（私信本身仅会话双方可见），只允许删除/驳回
+    if (isMessage && action === 'hide') throw new HttpError(400, '私信不支持隐藏操作（仅会话双方可见），请选择删除或驳回')
     const target = await first<any>(ctx.env,
-      `SELECT user_id${isPost ? ', image_urls' : ', post_id'} FROM ${table} WHERE id = ?`, report.target_id)
+      `SELECT ${isMessage ? 'from_id AS user_id' : 'user_id'}${isPost ? ', image_urls' : isMessage ? '' : ', post_id'} FROM ${table} WHERE id = ?`, report.target_id)
 
     const stmts: D1PreparedStatement[] = []
+    const imageIds: string[] = [] // 删除动作待清理的 R2 上传 id（帖子配图 + 评论配图）
     if (!target) {
       // 目标已被作者自行删除：直接结案并回告举报人
       stmts.push(ctx.env.DB.prepare("UPDATE community_reports SET status = 'resolved' WHERE id = ?").bind(report.id))
@@ -179,11 +262,20 @@ export function registerAdminRoutes() {
         content: `你举报的${typeLabel}已被隐藏。感谢你的监督`
       }))
     } else {
-      // delete：复用社区级联删除（不回收积分——管理操作不惩罚用户）
-      if (isPost) {
+      // delete：帖子/评论复用社区级联删除（不回收积分——管理操作不惩罚用户）；私信直接删除
+      // （私信通知含内容预览但不携带跳转 ref，删除消息后通知自然失效，无需撤回）
+      if (isMessage) {
+        stmts.push(ctx.env.DB.prepare('DELETE FROM community_messages WHERE id = ?').bind(report.target_id))
+      } else if (isPost) {
         stmts.push(...postCascadeStatements(ctx.env, report.target_id))
+        // 帖子配图 + 该帖全部评论配图，随删帖一并清理
+        const commentImgRows = await all<{ image_urls: string }>(ctx.env,
+          'SELECT image_urls FROM community_comments WHERE post_id = ?', report.target_id)
+        imageIds.push(...uploadIdsOf(target.image_urls), ...commentImgRows.flatMap(r => uploadIdsOf(r.image_urls)))
       } else {
-        stmts.push(...(await commentCascadeStatements(ctx.env, report.target_id, target.post_id)).statements)
+        const cascade = await commentCascadeStatements(ctx.env, report.target_id, target.post_id)
+        stmts.push(...cascade.statements)
+        imageIds.push(...cascade.imageIds)
       }
       stmts.push(ctx.env.DB.prepare("UPDATE community_reports SET status = 'resolved' WHERE id = ?").bind(report.id))
       stmts.push(modLogStatement(ctx.env, ctx.userId, 'delete', report.target_type, report.target_id, report.id, note))
@@ -197,8 +289,8 @@ export function registerAdminRoutes() {
       }))
     }
     await batch(ctx.env, stmts)
-    // 删帖成功后清理 R2 图片（失败仅留孤儿对象，不影响主流程）
-    if (action === 'delete' && isPost) await deleteUploads(ctx.env, uploadIdsOf(target.image_urls))
+    // DB 删除成功后清理 R2 图片（失败仅留孤儿对象，不影响主流程）
+    if (imageIds.length) await deleteUploads(ctx.env, imageIds)
     return Response.json({ ok: true })
   })
 }

@@ -73,6 +73,25 @@ export const LEVELS = [
 /** 社区广场预设话题标签（与科目体系对应） */
 export const COMMUNITY_TAGS = ['#每日打卡', '#高等数学', '#英语', '#升本经验', '#笔记分享', '#心情树洞']
 
+/** 社区徽章目录：key 与 worker/src/api/badges.ts BADGE_DEFS 一一对应（服务端发放、公开可见、永久保留） */
+export interface CommunityBadgeDef {
+  key: string
+  name: string
+  desc: string
+  icon: string
+}
+
+export const COMMUNITY_BADGES: CommunityBadgeDef[] = [
+  { key: 'first_post', name: '首次发帖', desc: '发布第一篇社区帖子', icon: '🌱' },
+  { key: 'first_question', name: '首次提问', desc: '提出第一个问题', icon: '❓' },
+  { key: 'streak_7', name: '连续打卡 7 天', desc: '连续学习打卡满 7 天', icon: '🔥' },
+  { key: 'streak_30', name: '连续打卡 30 天', desc: '连续学习打卡满 30 天', icon: '🌕' },
+  { key: 'streak_100', name: '连续打卡 100 天', desc: '连续学习打卡满 100 天', icon: '👑' },
+  { key: 'likes_100', name: '百赞达人', desc: '帖子与评论累计获赞 100', icon: '❤️' },
+  { key: 'answer_expert', name: '答疑专家', desc: '回答被采纳满 10 次', icon: '🎓' },
+  { key: 'image_50', name: '图片达人', desc: '累计上传 50 张图片', icon: '📸' }
+]
+
 /** 按积分换算等级（与 store.level getter 同一口径） */
 export function levelOf(points: number) {
   let cur = LEVELS[0]

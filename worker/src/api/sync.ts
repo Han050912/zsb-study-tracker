@@ -6,6 +6,7 @@ import { getHabits, habitReplaceStatements } from './habits'
 import { getGamification, gamificationReplaceStatements, serverAwardStatements } from './gamification'
 import { getPomodoro, pomodoroReplaceStatements } from './pomodoro'
 import { getSettings, settingsReplaceStatements } from './settings'
+import { awardBadge } from './badges'
 import { recordsMapping } from './records'
 import { problemsMapping } from './problems'
 import { errorsMapping } from './errors'
@@ -182,6 +183,10 @@ export function registerSyncRoutes() {
       // 单条 SQL 批量删除孤儿分片，原子性由 D1 保证
       const placeholders = orphans.map(() => '?').join(',')
       await run(ctx.env, `DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id IN (${placeholders})`, ctx.userId, ...orphans)
+    }
+    // 连续打卡里程碑徽章（与积分同机触发，主键去重保证仅发放一次；放在全量替换之后避免中间态）
+    for (const days of [7, 30, 100] as const) {
+      if (streak >= days) await awardBadge(ctx.env, ctx.userId, `streak_${days}`)
     }
     // 发放了新积分时回传最新 gamification，前端据此刷新本地，避免下次推送用旧总值覆盖
     const res: Record<string, unknown> = { ok: true }

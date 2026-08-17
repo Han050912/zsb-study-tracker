@@ -221,13 +221,25 @@ export interface CommunityPost {
   userName: string
   /** 作者当前总积分，前端据此换算等级称号（LEVELS） */
   userPoints: number
+  /** 作者是否为认证专家（蓝 V） */
+  userVerified: boolean
   type: PostType
   content: string
   tags: string[]
   /** 配图路径列表（/api/community/images/<id>，最多 9 张），经 imageUrl() 转绝对地址 */
   imageUrls: string[]
-  /** 提问帖是否已被楼主标记解决 */
+  /** 提问帖是否已被楼主标记解决（采纳最佳答案时自动置位） */
   isResolved: boolean
+  /** 被采纳最佳答案的评论 ID（仅提问帖；取消采纳后为 undefined） */
+  acceptedAnswerId?: string
+  /** 是否为管理员加精的精华帖 */
+  isFeatured: boolean
+  /** 是否为每日一题（管理员设置，广场顶部展示最新一题） */
+  isDaily: boolean
+  /** 所属圈子 ID（undefined = 广场公开帖） */
+  circleId?: string
+  /** 所属圈子名（服务端 JOIN 填充） */
+  circleName?: string
   refType?: string
   refId?: string
   likesCount: number
@@ -246,7 +258,13 @@ export interface CommunityComment {
   userName: string
   parentId?: string
   content: string
+  /** 评论配图路径列表（最多 3 张），经 imageUrl() 转绝对地址 */
+  imageUrls: string[]
+  /** 作者是否为认证专家（蓝 V） */
+  userVerified: boolean
   likesCount: number
+  /** 是否被楼主采纳为最佳答案 */
+  isAccepted: boolean
   isHidden: boolean
   likedByMe: boolean
   createdAt: number // Unix 秒
@@ -257,7 +275,7 @@ export interface CommunityComment {
 /** 社区通知 */
 export interface CommunityNotification {
   id: string
-  type: 'like' | 'comment' | 'follow' | 'achievement' | 'system'
+  type: 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system'
   actorId?: string
   actorName?: string
   postId?: string
@@ -273,6 +291,8 @@ export interface LeaderboardTodayEntry {
   todayPoints: number
   streak: number
   totalPoints: number
+  /** 认证专家（蓝 V） */
+  verified: boolean
   /** 今日打卡科目名列表 */
   subjects: string[]
 }
@@ -282,6 +302,8 @@ export interface LeaderboardStreakEntry {
   userName: string
   streak: number
   totalPoints: number
+  /** 认证专家（蓝 V） */
+  verified: boolean
 }
 
 export interface CommunityLeaderboard {
@@ -289,10 +311,89 @@ export interface CommunityLeaderboard {
   streak: LeaderboardStreakEntry[]
 }
 
-/** 管理端举报队列条目（target 为 null 表示内容已被作者删除） */
+/** 用户徽章记录（key 目录见 defaults.ts COMMUNITY_BADGES） */
+export interface UserBadge {
+  key: string
+  awardedAt: number // Unix 秒
+}
+
+/** 社区用户资料卡（公开荣誉信息，不含私有学习数据） */
+export interface CommunityUserProfile {
+  userId: string
+  userName: string
+  points: number
+  streak: number
+  verified: boolean
+  expertise: string
+  /** 可见帖子 + 评论总数 */
+  postCount: number
+  /** 帖子 + 评论累计获赞 */
+  likesReceived: number
+  badges: UserBadge[]
+  /** 粉丝数 */
+  followers: number
+  /** 当前登录用户是否已关注该用户 */
+  followedByMe: boolean
+}
+
+/** 话题圈子（myStatus 为当前登录用户的加入状态） */
+export interface CommunityCircle {
+  id: string
+  name: string
+  description: string
+  creatorId: string
+  isPublic: boolean
+  memberCount: number
+  createdAt: number
+  /** 'owner' 圈主 | 'member' 已加入 | 'pending' 待审批 | null 未加入 */
+  myStatus: 'owner' | 'member' | 'pending' | null
+}
+
+/** 圈子成员 */
+export interface CircleMember {
+  userId: string
+  userName: string
+  role: 'owner' | 'member'
+  verified: boolean
+}
+
+/** 圈子详情响应 */
+export interface CircleDetail {
+  circle: CommunityCircle
+  members: CircleMember[]
+  /** 待审批申请（仅圈主可见） */
+  pending: { userId: string; userName: string; createdAt: number }[]
+}
+
+/** 私信消息 */
+export interface CommunityMessage {
+  id: string
+  fromId: string
+  toId: string
+  content: string
+  isRead: boolean
+  createdAt: number // Unix 秒
+  /** 是否我发出的 */
+  fromMe: boolean
+}
+
+/** 私信会话条目 */
+export interface MessageConversation {
+  peerId: string
+  peerName: string
+  peerVerified: boolean
+  /** 最后一条消息截断预览 */
+  lastContent: string
+  lastAt: number
+  lastFromMe: boolean
+  /** 对方发给我的未读数 */
+  unread: number
+}
+
+/** 管理端举报队列条目（target 为 null 表示内容已被作者删除；message 举报无 postId/isHidden） */
 export interface AdminReport {
   id: string
-  targetType: 'post' | 'comment'
+  targetType: 'post' | 'comment' | 'message'
   targetId: string
   reason: string
   detail: string
@@ -302,6 +403,6 @@ export interface AdminReport {
     authorName: string
     excerpt: string
     isHidden: boolean
-    postId: string
+    postId?: string
   } | null
 }

@@ -2,6 +2,7 @@ import type { Env } from '../index'
 import { on } from '../router'
 import { all, first, run, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
+import { awardBadge, hasBadge } from './badges'
 
 /**
  * 社区图片上传：R2 存储 + Worker 代理读取。
@@ -14,6 +15,8 @@ import { rateLimit } from '../middleware/rateLimit'
 export const IMAGE_MAX_BYTES = 5 * 1024 * 1024
 /** 单帖最多 9 张 */
 export const IMAGE_MAX_PER_POST = 9
+/** 单条评论最多 3 张 */
+export const IMAGE_MAX_PER_COMMENT = 3
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
@@ -165,6 +168,12 @@ export function registerUploadRoutes() {
     await run(ctx.env,
       'INSERT INTO community_uploads (id, user_id, filename, r2_key, url, size, content_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       id, ctx.userId, filename, key, url, data.byteLength, kind.mime, nowSec())
+    // 徽章：图片达人（累计上传 ≥50 张；已持有者跳过统计查询）
+    if (!(await hasBadge(ctx.env, ctx.userId, 'image_50'))) {
+      const cnt = await first<{ n: number }>(ctx.env,
+        'SELECT COUNT(*) AS n FROM community_uploads WHERE user_id = ?', ctx.userId)
+      if ((cnt?.n ?? 0) >= 50) await awardBadge(ctx.env, ctx.userId, 'image_50')
+    }
     return Response.json({ id, url, size: data.byteLength, contentType: kind.mime }, { status: 201 })
   })
 

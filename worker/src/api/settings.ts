@@ -1,6 +1,7 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { first, batch } from '../db'
+import { first, batch, HttpError } from '../db'
+import { assertClean } from './sensitive'
 
 /** 用户设置（user_settings 单行 + default_quotes ↔ 前端 Settings） */
 
@@ -93,6 +94,13 @@ export function registerSettingsRoutes() {
 
   on('PUT', '/api/settings', true, async (ctx) => {
     const b = await body<SettingsFull>(ctx.request)
+    // 昵称在社区公开可见（发帖/评论/榜单/资料卡），过敏感词 + 长度限制
+    if (typeof b?.userName === 'string' && b.userName.trim()) {
+      const name = b.userName.trim()
+      if (name.length > 30) throw new HttpError(400, '昵称最多 30 个字符')
+      assertClean(name)
+      b.userName = name
+    }
     await batch(ctx.env, settingsReplaceStatements(ctx.env, ctx.userId, b))
     return Response.json(await getSettings(ctx.env, ctx.userId))
   })
