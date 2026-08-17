@@ -82,6 +82,7 @@ temp/
 .codebuddy/
 .claude/
 .codex/
+.opensquilla/
 
 # ===== Cloudflare Worker 本地状态与密钥 =====
 worker/.dev.vars
