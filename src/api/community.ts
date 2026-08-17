@@ -1,6 +1,6 @@
 import { request, API_BASE, handleUnauthorized } from './client'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, MessageConversation, PostType
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, MessageConversation, PostType, UserStudyStats
 } from '../types'
 
 export interface FeedQuery {
@@ -113,6 +113,8 @@ export const communityApi = {
   leaderboard: () => request<CommunityLeaderboard>('/api/community/leaderboard'),
   /** 用户资料卡（等级/徽章墙/认证状态等公开荣誉信息） */
   profile: (userId: string) => request<CommunityUserProfile>(`/api/community/users/${userId}/profile`),
+  /** 个人主页学习统计（热力图 + 总览 + 科目分布） */
+  stats: (userId: string) => request<UserStudyStats>(`/api/community/users/${userId}/stats`),
   /** 关注/取关（toggle） */
   follow: (userId: string) =>
     request<{ following: boolean }>(`/api/community/users/${userId}/follow`, { method: 'PUT' }),

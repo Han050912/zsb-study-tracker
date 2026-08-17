@@ -336,6 +336,15 @@ export interface CommunityUserProfile {
   followedByMe: boolean
 }
 
+/** 个人主页学习统计（热力图 + 总览 + 科目分布） */
+export interface UserStudyStats {
+  heatmap: { date: string; minutes: number }[]
+  totalStudy: { minutes: number; days: number }
+  monthStudy: { minutes: number }
+  problems: { total: number; correct: number; sessions: number; accuracy: number }
+  subjects: { id: string; name: string; minutes: number }[]
+}
+
 /** 话题圈子（myStatus 为当前登录用户的加入状态） */
 export interface CommunityCircle {
   id: string
