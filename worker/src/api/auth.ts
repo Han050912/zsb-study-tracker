@@ -2,6 +2,7 @@ import { on, body } from '../router'
 import { hashPassword, verifyPassword, signToken } from '../auth'
 import { first, run, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
+import { assertClean } from './sensitive'
 import type { Env } from '../index'
 
 const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
@@ -45,6 +46,7 @@ function validateCredentials(username: unknown, password: unknown): { username: 
   const p = typeof password === 'string' ? password : ''
   if (u.length < 2) throw new HttpError(400, '用户名至少 2 个字符')
   if (u.length > 20) throw new HttpError(400, '用户名最多 20 个字符')
+  assertClean(u) // 用户名会在社区公开展示（发帖/评论/榜单/资料卡），过敏感词
   if (p.length < 6) throw new HttpError(400, '密码至少 6 位')
   if (p.length > 128) throw new HttpError(400, '密码最多 128 位')
   return { username: u, password: p }
