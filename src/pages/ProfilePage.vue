@@ -8,8 +8,8 @@ import { inject, onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import { COMMUNITY_BADGES, levelOf, LEVELS } from '../data/defaults'
-import { fromNow } from '../../utils/date'
-import { isAdmin, sessionUser } from '../../services/auth'
+import { fromNow } from '../utils/date'
+import { sessionUser } from '../services/auth'
 import StreakHeatmap from '../components/community/StreakHeatmap.vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import type { CommunityUserProfile, UserStudyStats } from '../types'
@@ -31,13 +31,6 @@ const isSelf = computed(() => userId === (sessionUser.value?.id ?? ''))
 
 // 徽章目录：已获得的高亮，未获得的置灰
 const earnedKeys = computed(() => new Set(profile.value?.badges?.map(b => b.key) ?? []))
-const lastBadge = computed(() => {
-  const bs = profile.value?.badges
-  if (!bs?.length) return null
-  const latest = bs.reduce((a, b) => a.awardedAt > b.awardedAt ? a : b)
-  const def = COMMUNITY_BADGES.find(d => d.key === latest.key)
-  return def ? { ...def, awardedAt: latest.awardedAt } : null
-})
 
 // 学习时长格式化
 const totalHours = computed(() => Math.floor((stats.value?.totalStudy.minutes ?? 0) / 60))
