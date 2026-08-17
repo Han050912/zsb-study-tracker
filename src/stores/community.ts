@@ -21,6 +21,10 @@ interface CommunityState {
   tag: string
   /** 当前筛选帖子类型（'' = 全部；本期用于「提问」筛选） */
   typeFilter: PostType | ''
+  /** 仅看精华帖（与 typeFilter 互斥） */
+  featured: boolean
+  /** 仅看我关注的作者的帖子（与 typeFilter/featured 互斥） */
+  followFilter: boolean
   notifications: CommunityNotification[]
   notifyCursor: string | null
   hasMoreNotify: boolean
@@ -36,6 +40,8 @@ export const useCommunityStore = defineStore('community', {
     sort: 'latest',
     tag: '',
     typeFilter: '',
+    featured: false,
+    followFilter: false,
     notifications: [],
     notifyCursor: null,
     hasMoreNotify: true,
@@ -76,6 +82,21 @@ export const useCommunityStore = defineStore('community', {
     async setTypeFilter(t: PostType | '') {
       if (this.typeFilter === t) return
       this.typeFilter = t
+      if (t) { this.featured = false; this.followFilter = false } // 与精华/关注筛选互斥，避免组合出空结果困惑
+      await this.fetchFeed(true)
+    },
+
+    async setFeatured(v: boolean) {
+      if (this.featured === v) return
+      this.featured = v
+      if (v) { this.typeFilter = ''; this.followFilter = false }
+      await this.fetchFeed(true)
+    },
+
+    async setFollowFilter(v: boolean) {
+      if (this.followFilter === v) return
+      this.followFilter = v
+      if (v) { this.typeFilter = ''; this.featured = false }
       await this.fetchFeed(true)
     },
 
@@ -94,7 +115,8 @@ export const useCommunityStore = defineStore('community', {
       this.feedLoading = true
       try {
         const res = await communityApi.feed({
-          sort: this.sort, tag: this.tag || undefined, type: this.typeFilter || undefined, cursor: this.feedCursor
+          sort: this.sort, tag: this.tag || undefined, type: this.typeFilter || undefined,
+          featured: this.featured || undefined, follow: this.followFilter || undefined, cursor: this.feedCursor
         })
         if (ticket !== feedTicket) return // 已有更新的请求，丢弃本次过期结果
         const existing = new Set(this.posts.map(p => p.id))
@@ -106,10 +128,11 @@ export const useCommunityStore = defineStore('community', {
       }
     },
 
-    /** 发帖成功返回新帖；仅当命中当前筛选时插入列表头部 */
-    async publishPost(data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; refType?: string; refId?: string }) {
+    /** 发帖成功返回新帖；仅当命中当前筛选时插入列表头部（精华/关注筛选下新帖必未加精、作者非关注对象，不插入；圈子帖不进广场） */
+    async publishPost(data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; refType?: string; refId?: string }) {
       const post = await communityApi.createPost(data)
-      if (this.sort === 'latest' && !this.typeFilter && (!this.tag || post.tags.includes(this.tag))) {
+      if (this.sort === 'latest' && !this.typeFilter && !this.featured && !this.followFilter && !data.circleId
+        && (!this.tag || post.tags.includes(this.tag))) {
         this.posts.unshift(post)
       }
       await this.syncGamification()
@@ -141,12 +164,24 @@ export const useCommunityStore = defineStore('community', {
     },
 
     /** 发表评论，返回新评论；同步列表内帖子评论数 */
-    async postComment(postId: string, content: string, parentId?: string): Promise<CommunityComment> {
-      const c = await communityApi.addComment(postId, { content, parentId })
+    async postComment(postId: string, content: string, parentId?: string, imageUrls?: string[]): Promise<CommunityComment> {
+      const c = await communityApi.addComment(postId, { content, parentId, imageUrls })
       const p = this.posts.find(x => x.id === postId)
       if (p) p.commentsCount++
       await this.syncGamification()
       return c
+    },
+
+    /** 采纳/取消采纳最佳答案；同步列表内帖子状态并刷新积分（提问者 +3/被采纳者 +10 由服务端发放） */
+    async acceptAnswer(postId: string, commentId: string): Promise<{ acceptedAnswerId: string | null; isResolved: boolean }> {
+      const res = await communityApi.acceptAnswer(postId, commentId)
+      const p = this.posts.find(x => x.id === postId)
+      if (p) {
+        p.acceptedAnswerId = res.acceptedAnswerId ?? undefined
+        p.isResolved = res.isResolved
+      }
+      await this.syncGamification()
+      return res
     },
 
     /** 删除评论；removed 为级联删除的总条数（含二级回复），用于回退计数 */
@@ -208,6 +243,20 @@ export const useCommunityStore = defineStore('community', {
     async adminHideComment(id: string): Promise<boolean> {
       const { isHidden } = await communityApi.adminHideComment(id)
       return isHidden
+    },
+
+    async adminFeaturePost(id: string): Promise<boolean> {
+      const { isFeatured } = await communityApi.adminFeaturePost(id)
+      const p = this.posts.find(x => x.id === id)
+      if (p) p.isFeatured = isFeatured
+      return isFeatured
+    },
+
+    async adminDailyPost(id: string): Promise<boolean> {
+      const { isDaily } = await communityApi.adminDailyPost(id)
+      const p = this.posts.find(x => x.id === id)
+      if (p) p.isDaily = isDaily
+      return isDaily
     }
   }
 })

@@ -1,12 +1,18 @@
 import { request, API_BASE, handleUnauthorized } from './client'
 import type {
-  AdminReport, CommunityComment, CommunityLeaderboard, CommunityNotification, CommunityPost, PostType
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, MessageConversation, PostType
 } from '../types'
 
 export interface FeedQuery {
   sort?: 'latest' | 'hot'
   tag?: string
   type?: PostType
+  /** 仅看精华帖 */
+  featured?: boolean
+  /** 仅看我关注的作者的帖子 */
+  follow?: boolean
+  /** 指定圈子内的帖子流（未指定时仅返回广场公开帖） */
+  circle?: string
   cursor?: string | null
   limit?: number
 }
@@ -31,6 +37,8 @@ export interface NotificationResult {
 export const IMAGE_MAX_BYTES = 5 * 1024 * 1024
 /** 单帖最多 9 张 */
 export const IMAGE_MAX_PER_POST = 9
+/** 单条评论最多 3 张 */
+export const IMAGE_MAX_PER_COMMENT = 3
 
 /** 服务端返回的图片路径转绝对地址（图片为公开路由，<img> 直接引用） */
 export const imageUrl = (path: string) => `${API_BASE}${path}`
@@ -77,27 +85,71 @@ export const communityApi = {
     if (q.sort) params.set('sort', q.sort)
     if (q.tag) params.set('tag', q.tag)
     if (q.type) params.set('type', q.type)
+    if (q.featured) params.set('featured', '1')
+    if (q.follow) params.set('follow', '1')
+    if (q.circle) params.set('circle', q.circle)
     if (q.cursor) params.set('cursor', q.cursor)
     if (q.limit) params.set('limit', String(q.limit))
     const qs = params.toString()
     return request<FeedResult>(`/api/community/posts${qs ? `?${qs}` : ''}`)
   },
   post: (id: string) => request<PostDetail>(`/api/community/posts/${id}`),
-  createPost: (data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; refType?: string; refId?: string }) =>
+  createPost: (data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; refType?: string; refId?: string }) =>
     request<CommunityPost>('/api/community/posts', { method: 'POST', body: JSON.stringify(data) }),
   deletePost: (id: string) =>
     request<{ ok: boolean }>(`/api/community/posts/${id}`, { method: 'DELETE' }),
-  /** 提问帖标记解决/取消解决（仅楼主） */
+  /** 提问帖标记解决/取消解决（仅楼主；已采纳最佳答案时需先取消采纳） */
   resolvePost: (id: string) =>
     request<{ isResolved: boolean }>(`/api/community/posts/${id}/resolve`, { method: 'PUT' }),
-  addComment: (postId: string, data: { content: string; parentId?: string }) =>
+  /** 采纳/取消采纳最佳答案（仅提问帖楼主；重复调用同一评论为取消采纳） */
+  acceptAnswer: (postId: string, commentId: string) =>
+    request<{ acceptedAnswerId: string | null; isResolved: boolean }>(`/api/community/posts/${postId}/accept`, { method: 'PUT', body: JSON.stringify({ commentId }) }),
+  addComment: (postId: string, data: { content: string; parentId?: string; imageUrls?: string[] }) =>
     request<CommunityComment>(`/api/community/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
   deleteComment: (id: string) =>
     request<{ ok: boolean }>(`/api/community/comments/${id}`, { method: 'DELETE' }),
   toggleLike: (targetType: 'post' | 'comment', targetId: string) =>
     request<{ liked: boolean }>('/api/community/likes', { method: 'POST', body: JSON.stringify({ targetType, targetId }) }),
   leaderboard: () => request<CommunityLeaderboard>('/api/community/leaderboard'),
-  report: (targetType: 'post' | 'comment', targetId: string, reason: string, detail?: string) =>
+  /** 用户资料卡（等级/徽章墙/认证状态等公开荣誉信息） */
+  profile: (userId: string) => request<CommunityUserProfile>(`/api/community/users/${userId}/profile`),
+  /** 关注/取关（toggle） */
+  follow: (userId: string) =>
+    request<{ following: boolean }>(`/api/community/users/${userId}/follow`, { method: 'PUT' }),
+  /** 每日一题：最新一条被标记且未隐藏的帖子（无则 post 为 null） */
+  daily: () => request<{ post: CommunityPost | null }>('/api/community/daily'),
+  /** 圈子列表（按成员数倒序） */
+  circles: () => request<{ circles: CommunityCircle[] }>('/api/community/circles'),
+  /** 建圈 */
+  createCircle: (data: { name: string; description?: string; isPublic?: boolean }) =>
+    request<CommunityCircle>('/api/community/circles', { method: 'POST', body: JSON.stringify(data) }),
+  /** 圈子详情（信息 + 活跃成员 + 圈主可见的待审批列表） */
+  circleDetail: (id: string) => request<CircleDetail>(`/api/community/circles/${id}`),
+  /** 加入/退圈/取消申请（toggle） */
+  joinCircle: (id: string) =>
+    request<{ status: 'active' | 'pending' | null }>(`/api/community/circles/${id}/join`, { method: 'PUT' }),
+  /** 圈主批准申请 */
+  approveCircleMember: (circleId: string, userId: string) =>
+    request<{ ok: boolean }>(`/api/community/circles/${circleId}/members/${userId}/approve`, { method: 'PUT' }),
+  /** 圈主移除成员/拒绝申请 */
+  removeCircleMember: (circleId: string, userId: string) =>
+    request<{ ok: boolean }>(`/api/community/circles/${circleId}/members/${userId}`, { method: 'DELETE' }),
+  /** 私信会话列表（每 peer 最新一条 + 未读数） */
+  conversations: () => request<{ conversations: MessageConversation[] }>('/api/community/messages/conversations'),
+  /** 与某用户的消息记录（游标分页；打开即已读对方消息） */
+  messagesWith: (peerId: string, cursor?: string | null) => {
+    const params = new URLSearchParams()
+    if (cursor) params.set('cursor', cursor)
+    const qs = params.toString()
+    return request<{ messages: CommunityMessage[]; nextCursor: string | null }>(
+      `/api/community/messages/with/${peerId}${qs ? `?${qs}` : ''}`)
+  },
+  /** 发送私信 */
+  sendMessage: (peerId: string, content: string) =>
+    request<CommunityMessage>(`/api/community/messages/${peerId}`, { method: 'POST', body: JSON.stringify({ content }) }),
+  /** 私信未读总数（并入顶栏角标） */
+  messageUnreadCount: () => request<{ count: number }>('/api/community/messages/unread-count'),
+  report: (targetType: 'post' | 'comment' | 'message', targetId: string, reason: string, detail?: string) =>
     request<{ ok: boolean }>('/api/community/reports', { method: 'POST', body: JSON.stringify({ targetType, targetId, reason, detail }) }),
   notifications: (cursor?: string | null, limit?: number) => {
     const params = new URLSearchParams()
@@ -114,6 +166,8 @@ export const communityApi = {
   // ---- 管理员操作 ----
   adminPinPost: (id: string) =>
     request<{ isPinned: boolean }>(`/api/admin/posts/${id}/pin`, { method: 'PUT' }),
+  adminFeaturePost: (id: string) =>
+    request<{ isFeatured: boolean }>(`/api/admin/posts/${id}/feature`, { method: 'PUT' }),
   adminHidePost: (id: string) =>
     request<{ isHidden: boolean }>(`/api/admin/posts/${id}/hide`, { method: 'PUT' }),
   adminHideComment: (id: string) =>
@@ -121,5 +175,14 @@ export const communityApi = {
   adminReports: () =>
     request<{ reports: AdminReport[] }>('/api/admin/reports'),
   adminResolveReport: (id: string, action: 'hide' | 'delete' | 'reject', reason?: string) =>
-    request<{ ok: boolean }>(`/api/admin/reports/${id}/resolve`, { method: 'PUT', body: JSON.stringify({ action, reason }) })
+    request<{ ok: boolean }>(`/api/admin/reports/${id}/resolve`, { method: 'PUT', body: JSON.stringify({ action, reason }) }),
+  /** 授予/更新专家认证（蓝 V） */
+  adminVerifyUser: (userId: string, expertise: string) =>
+    request<{ verified: boolean; expertise: string }>(`/api/admin/users/${userId}/verify`, { method: 'PUT', body: JSON.stringify({ expertise }) }),
+  /** 撤销专家认证 */
+  adminUnverifyUser: (userId: string) =>
+    request<{ verified: boolean }>(`/api/admin/users/${userId}/verify`, { method: 'DELETE' }),
+  /** 设置/取消每日一题 */
+  adminDailyPost: (id: string) =>
+    request<{ isDaily: boolean }>(`/api/admin/posts/${id}/daily`, { method: 'PUT' })
 }
