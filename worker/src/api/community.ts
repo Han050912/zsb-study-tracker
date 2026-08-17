@@ -952,6 +952,70 @@ export function registerCommunityRoutes() {
     })
   })
 
+  // 用户学习统计：用于个人主页成长可视化（热力图/总学习时长/做题数/科目分布）
+  on('GET', '/api/community/users/:id/stats', true, async (ctx) => {
+    const userId = ctx.params.id
+    // 确认用户存在
+    const u = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', userId)
+    if (!u) throw new HttpError(404, '用户不存在')
+
+    // 365 天热力图：按日期汇总学习分钟数
+    const oneYearAgo = new Date(Date.now() - 86400000 * 365)
+    const startDate = oneYearAgo.toISOString().slice(0, 10)
+    const heatmapRows = await all<{ date: string; minutes: number }>(ctx.env, `
+      SELECT date, SUM(minutes) AS minutes FROM study_records
+      WHERE user_id = ? AND date >= ?
+      GROUP BY date ORDER BY date ASC`, userId, startDate)
+    const heatmapMap = new Map<string, number>()
+    for (const r of heatmapRows) heatmapMap.set(r.date, r.minutes)
+    // 填充无记录的日期为 0
+    const heatmap: { date: string; minutes: number }[] = []
+    const cursor = new Date(oneYearAgo.getTime())
+    const today = new Date()
+    while (cursor <= today) {
+      const d = cursor.toISOString().slice(0, 10)
+      heatmap.push({ date: d, minutes: heatmapMap.get(d) ?? 0 })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+
+    // 总学习时长
+    const totalStudy = await first<{ minutes: number; days: number }>(ctx.env, `
+      SELECT COALESCE(SUM(minutes), 0) AS minutes, COUNT(DISTINCT date) AS days
+      FROM study_records WHERE user_id = ?`, userId)
+
+    // 本月学习时长
+    const monthStart = new Date()
+    monthStart.setDate(1)
+    monthStart.setHours(0, 0, 0, 0)
+    const monthStudy = await first<{ minutes: number }>(ctx.env, `
+      SELECT COALESCE(SUM(minutes), 0) AS minutes FROM study_records
+      WHERE user_id = ? AND date >= ?`, userId, monthStart.toISOString().slice(0, 10))
+
+    // 做题统计
+    const problemStats = await first<{ total: number; correct: number; sessions: number }>(ctx.env, `
+      SELECT COALESCE(SUM(total), 0) AS total, COALESCE(SUM(correct), 0) AS correct, COUNT(*) AS sessions
+      FROM problem_sessions WHERE user_id = ?`, userId)
+
+    // 科目分布（学习时长 Top 5 科目）
+    const subjectRows = await all<{ subject_id: string; name: string; minutes: number }>(ctx.env, `
+      SELECT r.subject_id, COALESCE(s.name, r.subject_id) AS name, SUM(r.minutes) AS minutes
+      FROM study_records r
+      LEFT JOIN subjects s ON s.user_id = r.user_id AND s.id = r.subject_id
+      WHERE r.user_id = ?
+      GROUP BY r.subject_id ORDER BY minutes DESC LIMIT 5`, userId)
+
+    return Response.json({
+      heatmap,
+      totalStudy: { minutes: totalStudy?.minutes ?? 0, days: totalStudy?.days ?? 0 },
+      monthStudy: { minutes: monthStudy?.minutes ?? 0 },
+      problems: { total: problemStats?.total ?? 0, correct: problemStats?.correct ?? 0,
+                  sessions: problemStats?.sessions ?? 0,
+                  accuracy: (problemStats?.total ?? 0) > 0
+                    ? Math.round((problemStats?.correct ?? 0) / (problemStats?.total ?? 0) * 100) : 0 },
+      subjects: subjectRows.map(r => ({ id: r.subject_id, name: r.name, minutes: r.minutes }))
+    })
+  })
+
   // 关注/取关（toggle；关注时向对方推 follow 通知，取关撤回——与点赞同口径）
   on('PUT', '/api/community/users/:id/follow', true, async (ctx) => {
     rateLimit(ctx.request, 'community:follow', 30)
