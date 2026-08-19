@@ -145,6 +145,10 @@ const { el: examTrendEl } = useChart(() => ({
 
 // ---- 笔记（点击跳转全屏笔记页面，弹窗编辑已废弃） ----
 const router = useRouter()
+/** 跳转知识点讨论区（P2-6）：以「科目 + 章节」为讨论单元 */
+function openTopicDiscussion(chapterName: string) {
+  router.push({ path: `/community/topic/${props.subjectId}`, query: { chapter: chapterName } })
+}
 function openNote(n?: Note) {
   if (n) router.push({ path: '/notes', query: { id: n.id } })
   else router.push({ path: '/notes', query: { new: '1', subject: props.subjectId } })
@@ -380,6 +384,8 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
                 </template>
               </span>
               <span class="flex items-center gap-2 shrink-0">
+                <span class="text-primary-500 text-xs hover:underline cursor-pointer" title="去社区讨论本章节知识点"
+                  @click.stop="openTopicDiscussion(ch.name)">💬 讨论</span>
                 <span class="text-red-400 text-xs hover:underline" @click.stop="removeChapter(ch.id)">删除</span>
                 <span class="text-slate-400 text-xs">{{ expanded[ch.id] ? '▲' : '▼' }}</span>
               </span>

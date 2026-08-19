@@ -13,6 +13,9 @@ export interface FeedQuery {
   follow?: boolean
   /** 指定圈子内的帖子流（未指定时仅返回广场公开帖） */
   circle?: string
+  /** 知识点讨论流（与 circle 互斥）：章节讨论帖归属 */
+  topicSubject?: string
+  topicChapter?: string
   cursor?: string | null
   limit?: number
 }
@@ -88,13 +91,14 @@ export const communityApi = {
     if (q.featured) params.set('featured', '1')
     if (q.follow) params.set('follow', '1')
     if (q.circle) params.set('circle', q.circle)
+    if (q.topicSubject && q.topicChapter) { params.set('topicSubject', q.topicSubject); params.set('topicChapter', q.topicChapter) }
     if (q.cursor) params.set('cursor', q.cursor)
     if (q.limit) params.set('limit', String(q.limit))
     const qs = params.toString()
     return request<FeedResult>(`/api/community/posts${qs ? `?${qs}` : ''}`)
   },
   post: (id: string) => request<PostDetail>(`/api/community/posts/${id}`),
-  createPost: (data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; refType?: string; refId?: string }) =>
+  createPost: (data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; topicRef?: string; refType?: string; refId?: string }) =>
     request<CommunityPost>('/api/community/posts', { method: 'POST', body: JSON.stringify(data) }),
   deletePost: (id: string) =>
     request<{ ok: boolean }>(`/api/community/posts/${id}`, { method: 'DELETE' }),

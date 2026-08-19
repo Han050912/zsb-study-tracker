@@ -15,6 +15,7 @@ const routes = [
   { path: '/community', name: 'community', component: () => import('../pages/Community.vue'), meta: { title: '社区广场' } },
   { path: '/community/circles', name: 'circles', component: () => import('../pages/Circles.vue'), meta: { title: '话题圈子' } },
   { path: '/community/circles/:id', name: 'circle-detail', component: () => import('../pages/CircleDetail.vue'), meta: { title: '圈子详情' } },
+  { path: '/community/topic/:subjectId', name: 'topic-discussion', component: () => import('../pages/TopicDiscussion.vue'), meta: { title: '知识点讨论' } },
   { path: '/community/post/:id', name: 'community-post', component: () => import('../pages/CommunityPost.vue'), meta: { title: '帖子详情' } },
   { path: '/community/messages', name: 'messages', component: () => import('../pages/Messages.vue'), meta: { title: '私信' } },
   { path: '/community/messages/:peerId', name: 'message-chat', component: () => import('../pages/MessageChat.vue'), meta: { title: '私信对话' } },

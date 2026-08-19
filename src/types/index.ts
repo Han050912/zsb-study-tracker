@@ -240,6 +240,8 @@ export interface CommunityPost {
   circleId?: string
   /** 所属圈子名（服务端 JOIN 填充） */
   circleName?: string
+  /** 知识点讨论帖归属（'subjectId|chapterName'；非空 = 章节讨论帖，不进公共广场） */
+  topicRef?: string
   refType?: string
   refId?: string
   likesCount: number
