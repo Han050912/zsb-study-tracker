@@ -50,6 +50,7 @@ function mapPost(r: any) {
     isDaily: !!r.is_daily,
     circleId: r.circle_id ?? undefined,
     circleName: r.circle_name ?? undefined,
+    topicRef: r.topic_ref ?? undefined,
     refType: r.ref_type ?? undefined,
     refId: r.ref_id ?? undefined,
     likesCount: r.likes_count,
@@ -273,6 +274,9 @@ export function registerCommunityRoutes() {
     const featured = url.searchParams.get('featured') === '1'
     const follow = url.searchParams.get('follow') === '1'
     const circleId = (url.searchParams.get('circle') || '').trim()
+    // 知识点讨论流：subjectId + chapter（经「去社区讨论」入口；讨论帖不进公共广场）
+    const topicSubject = (url.searchParams.get('topicSubject') || '').trim()
+    const topicChapter = (url.searchParams.get('topicChapter') || '').trim()
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const cursor = url.searchParams.get('cursor') || ''
 
@@ -285,12 +289,17 @@ export function registerCommunityRoutes() {
     if (featured) where.push('p.is_featured = 1')
     // 关注流：仅展示我关注的作者的帖子（子查询走 user_follows 主键索引）
     if (follow) { where.push('p.user_id IN (SELECT followee_id FROM user_follows WHERE follower_id = ?)'); params.push(ctx.userId) }
-    // 圈子流：审核圈仅活跃成员可见；未指定 circle 时默认排除圈子帖（圈内专属）
-    if (circleId) {
+    // 知识点讨论流：按 topic_ref 精确匹配（'subjectId|chapterName'）
+    if (topicSubject && topicChapter) {
+      where.push('p.topic_ref = ?'); params.push(`${topicSubject}|${topicChapter}`)
+    } else if (circleId) {
+      // 圈子流：审核圈仅活跃成员可见；未指定 circle 时默认排除圈子帖（圈内专属）
       await assertCircleReadable(ctx, circleId)
       where.push('p.circle_id = ?'); params.push(circleId)
     } else {
+      // 广场公开流：排除圈子帖与知识点讨论帖
       where.push('p.circle_id IS NULL')
+      where.push('p.topic_ref IS NULL')
     }
 
     let sql = `${POST_SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`
@@ -380,13 +389,26 @@ export function registerCommunityRoutes() {
       if (!member) throw new HttpError(403, '仅圈子成员可在圈内发帖')
     }
 
+    // 知识点讨论帖：topicRef = 'subjectId|chapterName'（与圈子互斥，不进公共广场）
+    let topicRef: string | null = null
+    if (typeof b?.topicRef === 'string' && b.topicRef) {
+      const sep = b.topicRef.indexOf('|')
+      const subjectId = b.topicRef.slice(0, sep)
+      const chapterName = b.topicRef.slice(sep + 1)
+      if (sep <= 0 || !subjectId || !chapterName || subjectId.length > 40 || chapterName.length > 60) {
+        throw new HttpError(400, '讨论区参数无效')
+      }
+      topicRef = `${subjectId}|${chapterName}`
+    }
+    if (circleId && topicRef) throw new HttpError(400, '不能同时发到圈子和讨论区')
+
     const id = uid()
     const now = nowSec()
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare(
-        'INSERT INTO community_posts (id, user_id, type, content, tags, image_urls, circle_id, ref_type, ref_id, created_at, updated_at) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(id, ctx.userId, type, content, JSON.stringify(tags), JSON.stringify(imageUrls), circleId,
+        'INSERT INTO community_posts (id, user_id, type, content, tags, image_urls, circle_id, topic_ref, ref_type, ref_id, created_at, updated_at) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, ctx.userId, type, content, JSON.stringify(tags), JSON.stringify(imageUrls), circleId, topicRef,
         typeof b?.refType === 'string' ? b.refType.slice(0, 20) : null,
         typeof b?.refId === 'string' ? b.refId.slice(0, 64) : null, now, now)
     ]
