@@ -129,9 +129,9 @@ export const useCommunityStore = defineStore('community', {
     },
 
     /** 发帖成功返回新帖；仅当命中当前筛选时插入列表头部（精华/关注筛选下新帖必未加精、作者非关注对象，不插入；圈子帖不进广场） */
-    async publishPost(data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; refType?: string; refId?: string }) {
+    async publishPost(data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; topicRef?: string; refType?: string; refId?: string }) {
       const post = await communityApi.createPost(data)
-      if (this.sort === 'latest' && !this.typeFilter && !this.featured && !this.followFilter && !data.circleId
+      if (this.sort === 'latest' && !this.typeFilter && !this.featured && !this.followFilter && !data.circleId && !data.topicRef
         && (!this.tag || post.tags.includes(this.tag))) {
         this.posts.unshift(post)
       }

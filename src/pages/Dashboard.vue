@@ -7,6 +7,7 @@ import Heatmap from '../components/Heatmap.vue'
 import ProgressRing from '../components/ProgressRing.vue'
 import Modal from '../components/Modal.vue'
 import PostComposer from '../components/community/PostComposer.vue'
+import LearningPathCard from '../components/LearningPathCard.vue'
 import dayjs from 'dayjs'
 
 const store = useAppStore()
@@ -194,6 +195,9 @@ onUnmounted(() => {
         <p class="text-sm font-medium leading-relaxed">{{ quote }}</p>
       </div>
     </div>
+
+    <!-- 周学习计划（学习路径推荐） -->
+    <LearningPathCard />
 
     <!-- 今日概览 -->
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">

@@ -32,11 +32,20 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 async function load(reset = false) {
   try {
     const res = await communityApi.messagesWith(peerId, reset ? null : nextCursor.value)
-    // 合并去重（轮询增量 + 翻页历史共用）
-    const known = new Set(messages.value.map(m => m.id))
-    const fresh = res.messages.filter(m => !known.has(m.id))
-    messages.value = reset ? res.messages : [...messages.value, ...fresh]
-    nextCursor.value = res.nextCursor
+    if (reset) {
+      // 刷新最新一页：保留已向上翻页加载的更早历史（否则 5s 轮询会把历史冲掉）；
+      // 更早历史必然比最新一页更旧，直接拼接在后面仍保持倒序
+      const latestIds = new Set(res.messages.map(m => m.id))
+      const older = messages.value.filter(m => !latestIds.has(m.id))
+      messages.value = [...res.messages, ...older]
+      // 翻页游标只在首屏建立；轮询刷新不得回退已推进的游标
+      if (nextCursor.value === null) nextCursor.value = res.nextCursor
+    } else {
+      // 向上翻页：追加更早的消息（按 id 去重）
+      const known = new Set(messages.value.map(m => m.id))
+      messages.value = [...messages.value, ...res.messages.filter(m => !known.has(m.id))]
+      nextCursor.value = res.nextCursor
+    }
     // 会话列表接口拿不到对方名，从资料卡补
     if (!peerName.value) {
       const p = await communityApi.profile(peerId)

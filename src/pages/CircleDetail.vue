@@ -50,7 +50,9 @@ async function loadFeed(reset = false) {
     posts.value = reset ? res.posts : [...posts.value, ...res.posts]
     feedCursor.value = res.nextCursor
   } catch (e: any) {
-    feedError.value = e?.message || '加载失败'
+    // 首屏失败展示错误态；追加失败仅提示，保留已加载内容
+    if (reset) feedError.value = e?.message || '加载失败'
+    else toast(e?.message || '加载失败')
   } finally {
     feedLoading.value = false
   }
@@ -107,13 +109,9 @@ async function likePost(id: string) {
   const p = posts.value.find(x => x.id === id)
   if (!p) return
   try {
-    if (p.likedByMe) {
-      await communityApi.unlike('post', id)
-      p.likedByMe = false; p.likesCount--
-    } else {
-      await communityApi.like('post', id)
-      p.likedByMe = true; p.likesCount++
-    }
+    const { liked } = await communityApi.toggleLike('post', id)
+    p.likedByMe = liked
+    p.likesCount = Math.max(0, p.likesCount + (liked ? 1 : -1))
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
 

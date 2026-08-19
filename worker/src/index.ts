@@ -21,6 +21,7 @@ import { registerWallpaperRoutes } from './proxy/wallpaper'
 import { registerReleaseRoutes } from './api/release'
 import { registerCommunityRoutes } from './api/community'
 import { registerAdminRoutes } from './api/admin'
+import { registerLearningPathRoutes } from './api/learningPath'
 import { registerPdfRoutes } from './api/pdfs'
 import { registerUploadRoutes } from './api/uploads'
 import { HttpError } from './db'
@@ -123,5 +124,6 @@ registerWallpaperRoutes()
 registerReleaseRoutes()
 registerCommunityRoutes()
 registerAdminRoutes()
+registerLearningPathRoutes()
 registerPdfRoutes()
 registerUploadRoutes()

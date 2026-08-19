@@ -22,11 +22,13 @@ const props = withDefaults(defineProps<{
   presetTags?: string[]
   /** 指定发到圈子（圈子详情页发帖入口）；不传则展示圈子选择器（可选发广场） */
   circleId?: string
+  /** 知识点讨论帖归属（'subjectId|chapterName'，与 circleId 互斥） */
+  topicRef?: string
   refType?: string
   refId?: string
   /** 允许在「分享 / 提问」之间切换（仅广场主发帖入口开启） */
   allowTypeSwitch?: boolean
-}>(), { presetContent: '', presetTags: () => [], circleId: undefined, refType: undefined, refId: undefined, allowTypeSwitch: false })
+}>(), { presetContent: '', presetTags: () => [], circleId: undefined, topicRef: undefined, refType: undefined, refId: undefined, allowTypeSwitch: false })
 
 const emit = defineEmits<{ 'update:show': [boolean]; posted: [] }>()
 
@@ -210,10 +212,11 @@ async function submit() {
     await store.publishPost({
       type: postType.value, content: text, tags: finalTags,
       imageUrls: images.value.map(i => i.url!),
-      circleId: selectedCircle.value || undefined,
+      circleId: props.topicRef ? undefined : (selectedCircle.value || undefined),
+      topicRef: props.topicRef,
       refType: props.refType, refId: props.refId
     })
-    toast('已发布到社区广场')
+    toast(props.topicRef ? '已发布到讨论区' : '已发布到社区广场')
     emit('update:show', false)
     emit('posted')
   } catch (e: any) {
@@ -302,8 +305,8 @@ async function submit() {
         :tag="t" :active="tags.includes(t)" @click="toggleTag(t)" />
     </div>
 
-    <!-- 圈子选择器（仅广场入口且已加入圈子时展示；圈子帖不进公共广场） -->
-    <template v-if="circleId === undefined && myCircles.length">
+    <!-- 圈子选择器（仅广场入口且已加入圈子、非讨论区发帖时展示；圈子帖不进公共广场） -->
+    <template v-if="circleId === undefined && topicRef === undefined && myCircles.length">
       <div class="label mt-2">发布到（圈子帖仅圈内可见）</div>
       <div class="flex flex-wrap gap-1.5">
         <button class="px-2.5 py-1 rounded-full text-xs transition-colors"

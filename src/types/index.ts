@@ -240,6 +240,8 @@ export interface CommunityPost {
   circleId?: string
   /** 所属圈子名（服务端 JOIN 填充） */
   circleName?: string
+  /** 知识点讨论帖归属（'subjectId|chapterName'；非空 = 章节讨论帖，不进公共广场） */
+  topicRef?: string
   refType?: string
   refId?: string
   likesCount: number
@@ -334,6 +336,25 @@ export interface CommunityUserProfile {
   followers: number
   /** 当前登录用户是否已关注该用户 */
   followedByMe: boolean
+}
+
+/** 个人主页学习统计（热力图 + 总览 + 科目分布） */
+export interface UserStudyStats {
+  heatmap: { date: string; minutes: number }[]
+  totalStudy: { minutes: number; days: number }
+  monthStudy: { minutes: number }
+  problems: { total: number; correct: number; sessions: number; accuracy: number }
+  subjects: { id: string; name: string; minutes: number }[]
+}
+
+/** 学习路径推荐（P2-4）：考试倒计时 + 按科目权重分配的周学习计划 */
+export interface LearningPath {
+  examDate: string | null
+  /** 距离考试天数（未设置/已过期为 null） */
+  daysLeft: number | null
+  dailyGoalMinutes: number
+  subjects: { id: string; name: string; icon: string; weight: number; dailyMinutes: number }[]
+  weeklyTotalMinutes: number
 }
 
 /** 话题圈子（myStatus 为当前登录用户的加入状态） */

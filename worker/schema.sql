@@ -38,6 +38,8 @@
 --   CREATE TABLE IF NOT EXISTS community_messages ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES users(id), to_id TEXT NOT NULL REFERENCES users(id), content TEXT NOT NULL, is_read INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
 --   CREATE INDEX IF NOT EXISTS idx_messages_to ON community_messages(to_id, is_read);
 --   CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
+-- 已建库升级：社区增强 P2（知识点讨论区），执行一次：
+--   ALTER TABLE community_posts ADD COLUMN topic_ref TEXT;
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -337,6 +339,7 @@ CREATE TABLE IF NOT EXISTS community_posts (
   is_featured INTEGER NOT NULL DEFAULT 0, -- 管理员加精标记（精华 Tab）
   is_daily INTEGER NOT NULL DEFAULT 0,    -- 每日一题标记（管理员设置，广场顶部展示最新一题）
   circle_id TEXT,                      -- 所属圈子（NULL = 广场公开帖；圈子帖不进公共广场，保持圈内专属）
+  topic_ref TEXT,                     -- 知识点讨论帖标记（'subjectId|chapterName'；非空不进公共广场）
   ref_type TEXT,                       -- 关联源类型：'summary' | 'record' | 'achievement' | 'habit' | 'vocab'
   ref_id TEXT,                         -- 关联源 ID
   likes_count INTEGER NOT NULL DEFAULT 0,
@@ -422,7 +425,7 @@ CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id);
 CREATE TABLE IF NOT EXISTS community_reports (
   id TEXT PRIMARY KEY,
   reporter_id TEXT NOT NULL REFERENCES users(id),
-  target_type TEXT NOT NULL,        -- 'post' | 'comment'
+  target_type TEXT NOT NULL,        -- 'post' | 'comment' | 'message'
   target_id TEXT NOT NULL,
   reason TEXT NOT NULL,             -- 预设原因：广告 / 人身攻击 / 不相关内容 / 其他
   detail TEXT NOT NULL DEFAULT '',  -- 补充说明（选填）

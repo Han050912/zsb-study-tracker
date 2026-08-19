@@ -116,7 +116,9 @@ async function revokeVerify() {
           </div>
         </div>
         <div v-if="!isSelf" class="shrink-0 flex items-center gap-1.5">
-          <button class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
+          <button class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
+            @click="emit('update:show', false); router.push(`/profile/${userId}`)">📊 主页</button>
+          <button class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
             @click="emit('update:show', false); router.push(`/community/messages/${userId}`)">✉️ 私信</button>
           <button class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors"
             :class="profile.followedByMe
