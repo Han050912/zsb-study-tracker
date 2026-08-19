@@ -335,6 +335,8 @@ export function registerCommunityRoutes() {
     const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0'
     const post = await first(ctx.env, `${POST_SELECT} WHERE ${postWhere}`, ctx.userId, ctx.params.id)
     if (!post) throw new HttpError(404, '帖子不存在')
+    // 圈子帖：与列表接口同一口径校验可读性（审核圈仅活跃成员/管理员可见）
+    if (post.circle_id) await assertCircleReadable(ctx, post.circle_id)
     const commentWhere = admin ? 'c.post_id = ?' : 'c.post_id = ? AND c.is_hidden = 0'
     const comments = await all(ctx.env, `
       SELECT c.*, COALESCE(s.user_name, u.username) AS user_name,
@@ -427,7 +429,9 @@ export function registerCommunityRoutes() {
       if (myQCount?.n === 1) await awardBadge(ctx.env, ctx.userId, 'first_question')
     }
 
+    // 刚写入的帖子被并发删除/隐藏时读不回，明确报错而非 500 崩溃
     const created = await first(ctx.env, `${POST_SELECT} WHERE p.id = ?`, ctx.userId, id)
+    if (!created) throw new HttpError(500, '发布成功但读取详情失败，请刷新查看')
     return Response.json(mapPost(created), { status: 201 })
   })
 
@@ -467,9 +471,11 @@ export function registerCommunityRoutes() {
   on('POST', '/api/community/posts/:id/comments', true, async (ctx) => {
     rateLimit(ctx.request, 'community:comment', 10)
     const postId = ctx.params.id
-    const post = await first<{ user_id: string }>(ctx.env,
-      'SELECT user_id FROM community_posts WHERE id = ? AND is_hidden = 0', postId)
+    const post = await first<{ user_id: string; circle_id: string | null }>(ctx.env,
+      'SELECT user_id, circle_id FROM community_posts WHERE id = ? AND is_hidden = 0', postId)
     if (!post) throw new HttpError(404, '帖子不存在')
+    // 圈子帖：仅可读者可评论（审核圈非成员既看不了也不应能写）
+    if (post.circle_id) await assertCircleReadable(ctx, post.circle_id)
 
     const b = await body(ctx.request)
     const content = String(b?.content ?? '').trim()
@@ -502,6 +508,8 @@ export function registerCommunityRoutes() {
     const id = uid()
     const now = nowSec()
     const myName = await displayName(ctx.env, ctx.userId)
+    // 蓝 V 标记随评论一并返回（前端直接插入评论树，避免刷新前缺失认证标识）
+    const me = await first<{ verified: number }>(ctx.env, 'SELECT verified FROM users WHERE id = ?', ctx.userId)
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare(
         'INSERT INTO community_comments (id, post_id, user_id, parent_id, content, image_urls, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
@@ -526,7 +534,8 @@ export function registerCommunityRoutes() {
     return Response.json({
       id, postId, userId: ctx.userId, userName: myName,
       parentId: parent ? b.parentId : undefined,
-      content, imageUrls, likesCount: 0, isAccepted: false, isHidden: false, likedByMe: false, createdAt: now
+      content, imageUrls, userVerified: !!me?.verified,
+      likesCount: 0, isAccepted: false, isHidden: false, likedByMe: false, createdAt: now
     }, { status: 201 })
   })
 
@@ -582,12 +591,16 @@ export function registerCommunityRoutes() {
       return Response.json({ liked: false })
     }
 
-    // 评论需额外取 post_id，让「赞了你的评论」通知可跳转到所属帖子
-    const target = await first<{ user_id: string; post_id?: string }>(ctx.env,
+    // 评论需额外取 post_id，让「赞了你的评论」通知可跳转到所属帖子；帖子带 circle_id 供圈子可读性校验
+    const target = await first<{ user_id: string; post_id?: string; circle_id?: string | null }>(ctx.env,
       targetType === 'post'
-        ? 'SELECT user_id FROM community_posts WHERE id = ? AND is_hidden = 0'
-        : 'SELECT user_id, post_id FROM community_comments WHERE id = ? AND is_hidden = 0', targetId)
+        ? 'SELECT user_id, circle_id FROM community_posts WHERE id = ? AND is_hidden = 0'
+        : `SELECT c.user_id, c.post_id, p.circle_id FROM community_comments c
+           JOIN community_posts p ON p.id = c.post_id
+           WHERE c.id = ? AND c.is_hidden = 0`, targetId)
     if (!target) throw new HttpError(404, '内容不存在')
+    // 圈子内容：仅可读者可点赞（与详情/评论同一口径）
+    if (target.circle_id) await assertCircleReadable(ctx, target.circle_id)
 
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare('INSERT INTO community_likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)')
@@ -710,19 +723,23 @@ export function registerCommunityRoutes() {
     const unreadRows = await all<{ from_id: string; n: number }>(ctx.env,
       'SELECT from_id, COUNT(*) AS n FROM community_messages WHERE to_id = ? AND is_read = 0 GROUP BY from_id', ctx.userId)
     const unreadMap = new Map(unreadRows.map(r => [r.from_id, r.n]))
+    // 同一对话方收发消息若落在同一秒，JOIN 可能带出多行；按 peer 去重只保留最新一行
+    const seenPeers = new Set<string>()
     return Response.json({
-      conversations: rows.map(r => {
-        const peerId = r.from_id === ctx.userId ? r.to_id : r.from_id
-        return {
-          peerId,
-          peerName: r.peer_name || '升本人',
-          peerVerified: !!r.peer_verified,
-          lastContent: r.content.slice(0, 60),
-          lastAt: r.created_at,
-          lastFromMe: r.from_id === ctx.userId,
-          unread: unreadMap.get(peerId) ?? 0
-        }
-      })
+      conversations: rows
+        .map(r => {
+          const peerId = r.from_id === ctx.userId ? r.to_id : r.from_id
+          return {
+            peerId,
+            peerName: r.peer_name || '升本人',
+            peerVerified: !!r.peer_verified,
+            lastContent: r.content.slice(0, 60),
+            lastAt: r.created_at,
+            lastFromMe: r.from_id === ctx.userId,
+            unread: unreadMap.get(peerId) ?? 0
+          }
+        })
+        .filter(c => (seenPeers.has(c.peerId) ? false : seenPeers.add(c.peerId)))
     })
   })
 
@@ -874,11 +891,14 @@ export function registerCommunityRoutes() {
       return Response.json({ status: null })
     }
     if (mine?.status === 'pending') {
-      // 取消申请：同时撤回给圈主的申请通知（按内容精确匹配，与采纳通知撤回同口径）
+      // 取消申请：同时撤回给圈主的申请通知（按「申请加入圈子「<圈名>」」精确匹配，
+      // 避免误删同一圈主名下其他圈子的申请通知；LIKE 通配符转义同 tags 查询口径）
       await batch(ctx.env, [
         ctx.env.DB.prepare('DELETE FROM circle_members WHERE circle_id = ? AND user_id = ?').bind(ctx.params.id, ctx.userId),
-        ctx.env.DB.prepare("DELETE FROM community_notifications WHERE type = 'system' AND actor_id = ? AND user_id = ? AND content LIKE '%申请加入圈子%'")
-          .bind(ctx.userId, circle.creator_id)
+        ctx.env.DB.prepare(
+          "DELETE FROM community_notifications WHERE type = 'system' AND actor_id = ? AND user_id = ? " +
+          "AND content LIKE ? ESCAPE '\\'"
+        ).bind(ctx.userId, circle.creator_id, `%申请加入圈子「${escapeLike(circle.name)}」%`)
       ])
       return Response.json({ status: null })
     }
@@ -981,8 +1001,8 @@ export function registerCommunityRoutes() {
     const u = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', userId)
     if (!u) throw new HttpError(404, '用户不存在')
 
-    // 365 天热力图：按日期汇总学习分钟数
-    const oneYearAgo = new Date(Date.now() - 86400000 * 365)
+    // 365 天热力图：按日期汇总学习分钟数（日期口径与 utc8Today 一致：UTC+8）
+    const oneYearAgo = new Date(Date.now() + 8 * 3600_000 - 86400_000 * 365)
     const startDate = oneYearAgo.toISOString().slice(0, 10)
     const heatmapRows = await all<{ date: string; minutes: number }>(ctx.env, `
       SELECT date, SUM(minutes) AS minutes FROM study_records
@@ -993,11 +1013,11 @@ export function registerCommunityRoutes() {
     // 填充无记录的日期为 0
     const heatmap: { date: string; minutes: number }[] = []
     const cursor = new Date(oneYearAgo.getTime())
-    const today = new Date()
+    const today = new Date(Date.now() + 8 * 3600_000)
     while (cursor <= today) {
       const d = cursor.toISOString().slice(0, 10)
       heatmap.push({ date: d, minutes: heatmapMap.get(d) ?? 0 })
-      cursor.setDate(cursor.getDate() + 1)
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
     }
 
     // 总学习时长
@@ -1005,10 +1025,10 @@ export function registerCommunityRoutes() {
       SELECT COALESCE(SUM(minutes), 0) AS minutes, COUNT(DISTINCT date) AS days
       FROM study_records WHERE user_id = ?`, userId)
 
-    // 本月学习时长
-    const monthStart = new Date()
-    monthStart.setDate(1)
-    monthStart.setHours(0, 0, 0, 0)
+    // 本月学习时长（按 UTC+8 日历月，与记录日期口径一致）
+    const monthStart = new Date(Date.now() + 8 * 3600_000)
+    monthStart.setUTCDate(1)
+    monthStart.setUTCHours(0, 0, 0, 0)
     const monthStudy = await first<{ minutes: number }>(ctx.env, `
       SELECT COALESCE(SUM(minutes), 0) AS minutes FROM study_records
       WHERE user_id = ? AND date >= ?`, userId, monthStart.toISOString().slice(0, 10))

@@ -339,7 +339,7 @@ CREATE TABLE IF NOT EXISTS community_posts (
   is_featured INTEGER NOT NULL DEFAULT 0, -- 管理员加精标记（精华 Tab）
   is_daily INTEGER NOT NULL DEFAULT 0,    -- 每日一题标记（管理员设置，广场顶部展示最新一题）
   circle_id TEXT,                      -- 所属圈子（NULL = 广场公开帖；圈子帖不进公共广场，保持圈内专属）
-  topic_ref TEXT,                     -- 知识点讨论帖标记（'subject_id:chapter_name'；非空不进公共广场）
+  topic_ref TEXT,                     -- 知识点讨论帖标记（'subjectId|chapterName'；非空不进公共广场）
   ref_type TEXT,                       -- 关联源类型：'summary' | 'record' | 'achievement' | 'habit' | 'vocab'
   ref_id TEXT,                         -- 关联源 ID
   likes_count INTEGER NOT NULL DEFAULT 0,
@@ -425,7 +425,7 @@ CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id);
 CREATE TABLE IF NOT EXISTS community_reports (
   id TEXT PRIMARY KEY,
   reporter_id TEXT NOT NULL REFERENCES users(id),
-  target_type TEXT NOT NULL,        -- 'post' | 'comment'
+  target_type TEXT NOT NULL,        -- 'post' | 'comment' | 'message'
   target_id TEXT NOT NULL,
   reason TEXT NOT NULL,             -- 预设原因：广告 / 人身攻击 / 不相关内容 / 其他
   detail TEXT NOT NULL DEFAULT '',  -- 补充说明（选填）
