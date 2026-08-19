@@ -345,6 +345,16 @@ export interface UserStudyStats {
   subjects: { id: string; name: string; minutes: number }[]
 }
 
+/** 学习路径推荐（P2-4）：考试倒计时 + 按科目权重分配的周学习计划 */
+export interface LearningPath {
+  examDate: string | null
+  /** 距离考试天数（未设置/已过期为 null） */
+  daysLeft: number | null
+  dailyGoalMinutes: number
+  subjects: { id: string; name: string; icon: string; weight: number; dailyMinutes: number }[]
+  weeklyTotalMinutes: number
+}
+
 /** 话题圈子（myStatus 为当前登录用户的加入状态） */
 export interface CommunityCircle {
   id: string
