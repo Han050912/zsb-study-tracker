@@ -53,7 +53,9 @@ async function loadFeed(reset = false) {
     posts.value = reset ? res.posts : [...posts.value, ...res.posts]
     feedCursor.value = res.nextCursor
   } catch (e: any) {
-    feedError.value = e?.message || '加载失败'
+    // 首屏失败展示错误态；追加失败仅提示，保留已加载内容
+    if (reset) feedError.value = e?.message || '加载失败'
+    else toast(e?.message || '加载失败')
   } finally {
     feedLoading.value = false
   }
