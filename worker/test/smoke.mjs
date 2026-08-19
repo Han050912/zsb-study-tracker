@@ -727,6 +727,21 @@ async function main() {
   check('周总时长 = 每日目标 × 7', lp.data?.weeklyTotalMinutes === lp.data?.dailyGoalMinutes * 7)
   check('无科目用户返回空计划', (await api('/api/learning-path', { token: tokenB })).data?.subjects?.length === 0)
 
+  // ---- 知识点讨论区（P2-6）----
+  console.log('[知识点讨论区]')
+  console.log('  … 等待 61s 让发帖限流窗口滑动')
+  await new Promise(r => setTimeout(r, 61000))
+  check('无效 topicRef 发帖被拒（400）', (await api('/api/community/posts', { method: 'POST', token: tokenA, body: { type: 'share', content: '无效讨论', tags: [], topicRef: 'badformat' } })).status === 400)
+  const topicPost = await api('/api/community/posts', { method: 'POST', token: tokenA, body: { type: 'share', content: '极限的保号性怎么证明？', tags: [], topicRef: 'math|第一章 函数与极限' } })
+  check('知识点讨论帖发布成功（topicRef 回填）', topicPost.status === 201 && topicPost.data?.topicRef === 'math|第一章 函数与极限', JSON.stringify(topicPost.data))
+  const pubFeedAfterTopic = await api('/api/community/posts?sort=latest', { token: tokenA })
+  check('讨论帖不进公共广场', !pubFeedAfterTopic.data?.posts?.some(p => p.id === topicPost.data?.id))
+  const topicFeed = await api(`/api/community/posts?topicSubject=math&topicChapter=${encodeURIComponent('第一章 函数与极限')}`, { token: tokenA })
+  check('讨论流按章节拉取', topicFeed.data?.posts?.some(p => p.id === topicPost.data?.id))
+  const otherTopic = await api(`/api/community/posts?topicSubject=math&topicChapter=${encodeURIComponent('第二章 导数与微分')}`, { token: tokenA })
+  check('其他章节不包含该讨论帖', !otherTopic.data?.posts?.some(p => p.id === topicPost.data?.id))
+  check('同时发圈子和讨论区被拒（400）', (await api('/api/community/posts', { method: 'POST', token: tokenA, body: { type: 'share', content: '冲突', tags: [], circleId: pubId, topicRef: 'math|第一章 函数与极限' } })).status === 400)
+
   // ---- 404 ----
   console.log('[路由]')
   check('未知路径返回 404', (await api('/api/nonexistent', { token: tokenA })).status === 404)
