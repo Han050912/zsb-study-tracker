@@ -717,6 +717,16 @@ async function main() {
   check('管理员删除被举报私信', (await api(`/api/admin/reports/${msgReport?.id}/resolve`, { method: 'PUT', token: tokenA, body: { action: 'delete', reason: '违规' } })).status === 200)
   check('删除后私信不存在', (await api(`/api/community/messages/with/${userIdB}`, { token: tokenA })).data?.messages?.every(m => m.id !== msg1.data.id))
 
+  // ---- 学习路径推荐（P2-4）----
+  console.log('[学习路径推荐]')
+  check('未登录访问学习路径被拒（401）', (await api('/api/learning-path')).status === 401)
+  const lp = await api('/api/learning-path', { token: tokenA })
+  check('学习路径返回 200 + 考试日期', lp.status === 200 && lp.data?.examDate === '2027-04-01', JSON.stringify(lp.data))
+  check('倒计时为正（未来考试）', typeof lp.data?.daysLeft === 'number' && lp.data.daysLeft > 0)
+  check('科目按权重分配每日时长', Array.isArray(lp.data?.subjects) && lp.data.subjects.some(s => s.id === 'math' && s.dailyMinutes > 0))
+  check('周总时长 = 每日目标 × 7', lp.data?.weeklyTotalMinutes === lp.data?.dailyGoalMinutes * 7)
+  check('无科目用户返回空计划', (await api('/api/learning-path', { token: tokenB })).data?.subjects?.length === 0)
+
   // ---- 404 ----
   console.log('[路由]')
   check('未知路径返回 404', (await api('/api/nonexistent', { token: tokenA })).status === 404)
