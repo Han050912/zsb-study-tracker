@@ -198,6 +198,8 @@ export interface Settings {
   /** 墨墨背单词开放 API Token（可选，App 内 我的→更多设置→实验功能→开放 API 获取） */
   maimemoToken?: string
   onboarded: boolean
+  /** 参与学习进步榜（社区展示昵称与学习时长/刷题数排名；默认关闭） */
+  joinProgressBoard: boolean
 }
 
 export interface AppState {
@@ -319,6 +321,30 @@ export interface LeaderboardStreakEntry {
 export interface CommunityLeaderboard {
   today: LeaderboardTodayEntry[]
   streak: LeaderboardStreakEntry[]
+}
+
+/** 进步榜条目（本周时长 / 本月刷题 TOP 50，仅参与用户） */
+export interface ProgressBoardEntry {
+  userId: string
+  userName: string
+  verified: boolean
+  totalPoints: number
+  value: number
+  isMe: boolean
+}
+
+/** 本人排名信息（未参与时 rank/percentile 为 null） */
+export interface ProgressBoardMe {
+  value: number
+  rank: number | null
+  percentile: number | null
+}
+
+/** 学习进度对比（进步榜）响应 */
+export interface ProgressBoardData {
+  joined: boolean
+  weekMinutes: { list: ProgressBoardEntry[]; me: ProgressBoardMe }
+  monthProblems: { list: ProgressBoardEntry[]; me: ProgressBoardMe }
 }
 
 /** 上周学习周报（惰性计算，无快照） */

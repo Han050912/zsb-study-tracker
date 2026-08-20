@@ -1,6 +1,6 @@
 import { request, API_BASE, handleUnauthorized } from './client'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, MessageConversation, PostType, UserStudyStats, WeeklyReport
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, MessageConversation, PostType, ProgressBoardData, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -117,6 +117,8 @@ export const communityApi = {
   leaderboard: () => request<CommunityLeaderboard>('/api/community/leaderboard'),
   /** 上周学习周报（惰性计算） */
   weeklyReport: () => request<WeeklyReport>('/api/community/weekly-report'),
+  /** 学习进步榜（本周时长 / 本月刷题 TOP 50 + 本人百分位） */
+  progressBoard: () => request<ProgressBoardData>('/api/community/progress-board'),
   /** 用户资料卡（等级/徽章墙/认证状态等公开荣誉信息） */
   profile: (userId: string) => request<CommunityUserProfile>(`/api/community/users/${userId}/profile`),
   /** 个人主页学习统计（热力图 + 总览 + 科目分布） */

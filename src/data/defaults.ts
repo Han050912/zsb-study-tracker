@@ -136,7 +136,8 @@ export function createDefaultState(): AppState {
       reminderEnabled: false,
       reminderTime: '08:00',
       quotes: [...DEFAULT_QUOTES],
-      onboarded: false
+      onboarded: false,
+      joinProgressBoard: false,
     }
   }
 }

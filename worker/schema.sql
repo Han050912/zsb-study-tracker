@@ -40,6 +40,8 @@
 --   CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
 -- 已建库升级：社区增强 P2（知识点讨论区），执行一次：
 --   ALTER TABLE community_posts ADD COLUMN topic_ref TEXT;
+-- 已建库升级：社区 P1 进步榜（学习进度对比），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN join_progress_board INTEGER NOT NULL DEFAULT 0;
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -66,7 +68,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   reminder_time TEXT DEFAULT '08:00',
   maimemo_token TEXT,           -- 墨墨 Token（用户自行获取填入）
   netease_uid TEXT,             -- 网易云 UID（用户手动填写）
-  onboarded INTEGER DEFAULT 0   -- 是否完成新手引导
+  onboarded INTEGER DEFAULT 0,  -- 是否完成新手引导
+  join_progress_board INTEGER NOT NULL DEFAULT 0  -- 参与学习进步榜（本周时长/本月刷题榜；默认不参与）
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========

@@ -19,7 +19,7 @@ const medal = (i: number) => MEDALS[i] ?? `${i + 1}.`
 </script>
 
 <template>
-  <div v-if="data && (data.today.length || data.streak.length)" class="card !py-3 space-y-3">
+  <div v-if="data && (data.today.length || data.streak.length)" class="space-y-3">
     <!-- 今日打卡榜 -->
     <div v-if="data.today.length">
       <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">🔥 今日打卡榜</div>

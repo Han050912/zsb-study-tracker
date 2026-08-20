@@ -196,6 +196,14 @@ function addQuote() {
             @click="toggleReminder(!s.reminderEnabled)">{{ s.reminderEnabled ? '已开启' : '已关闭' }}</button>
         </div>
       </div>
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm">参与学习进步榜</span>
+          <p class="text-[10px] text-slate-400 mt-0.5">在社区「进步榜」展示昵称与学习时长/刷题数排名，默认关闭</p>
+        </div>
+        <button class="btn !text-xs" :class="s.joinProgressBoard ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="update('joinProgressBoard', !s.joinProgressBoard)">{{ s.joinProgressBoard ? '已参与' : '未参与' }}</button>
+      </div>
       <p v-if="!notifSupported" class="text-xs text-amber-500">当前浏览器不支持通知功能，无法使用每日提醒。</p>
       <p v-else-if="notifPermission === 'denied'" class="text-xs text-red-500">
         通知权限已被拒绝。请点击浏览器地址栏左侧的 🔒 图标，将「通知」改为「允许」，然后重新打开此页面并开启提醒。

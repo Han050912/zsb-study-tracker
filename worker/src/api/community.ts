@@ -1174,6 +1174,66 @@ export function registerCommunityRoutes() {
     })
   })
 
+  // 学习进度对比：本周学习时长榜 / 本月刷题数榜（仅 join_progress_board=1 用户上榜，TOP 50；不展示末位排名）
+  on('GET', '/api/community/progress-board', true, async (ctx) => {
+    const t = new Date(Date.now() + 8 * 3600_000)
+    const fmt = (d: Date) => d.toISOString().slice(0, 10)
+    const daysSinceMonday = (t.getUTCDay() + 6) % 7
+    const weekStart = fmt(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() - daysSinceMonday)))
+    const today = fmt(t)
+    const monthStart = today.slice(0, 8) + '01'
+
+    /** 参与者聚合行：user_id、展示名、蓝V、总积分、区间内 SUM 值 */
+    const participantsSql = (table: string, valueCol: string) => `
+      SELECT r.user_id, COALESCE(s.user_name, u.username) AS user_name, u.verified,
+        COALESCE(g.points, 0) AS total_points, SUM(r.${valueCol}) AS value
+      FROM ${table} r
+      JOIN user_settings us ON us.user_id = r.user_id AND us.join_progress_board = 1
+      JOIN users u ON u.id = r.user_id
+      LEFT JOIN user_settings s ON s.user_id = r.user_id
+      LEFT JOIN gamification g ON g.user_id = r.user_id
+      WHERE r.date >= ? AND r.date <= ?
+      GROUP BY r.user_id`
+
+    /** 本人区间内总值（无论是否参与榜单，都返回用于自我对照） */
+    const myValueSql = (table: string, valueCol: string, start: string, end: string) =>
+      first<{ v: number }>(ctx.env,
+        `SELECT COALESCE(SUM(${valueCol}), 0) AS v FROM ${table} WHERE user_id = ? AND date >= ? AND date <= ?`,
+        ctx.userId, start, end)
+
+    const [weekRows, monthRows, meWeek, meMonth] = await Promise.all([
+      all<any>(ctx.env, participantsSql('study_records', 'minutes'), weekStart, today),
+      all<any>(ctx.env, participantsSql('problem_sessions', 'total'), monthStart, today),
+      myValueSql('study_records', 'minutes', weekStart, today),
+      myValueSql('problem_sessions', 'total', monthStart, today)
+    ])
+
+    /** 榜单块：TOP 50 + 本人排名/百分位（rank = 参与者中严格大于本人值的人数 + 1；无参与者时 rank/percentile 为 null） */
+    const boardBlock = (rows: any[], myValue: number) => {
+      const sorted = rows.sort((a, b) => b.value - a.value || b.total_points - a.total_points)
+      const list = sorted.slice(0, 50).map((r, i) => ({
+        userId: r.user_id, userName: r.user_name || '升本人', verified: !!r.verified,
+        totalPoints: r.total_points, value: r.value, isMe: r.user_id === ctx.userId
+      }))
+      const greater = sorted.filter(r => r.value > myValue).length
+      const total = sorted.length
+      const me = total
+        ? { value: myValue, rank: greater + 1, percentile: Math.round(((total - greater - 1) / total) * 100) }
+        : { value: myValue, rank: null, percentile: null }
+      return { list, me }
+    }
+
+    const joinedRow = await first<{ joined: number }>(ctx.env,
+      'SELECT (join_progress_board = 1) AS joined FROM user_settings WHERE user_id = ?', ctx.userId)
+    const joined = !!joinedRow?.joined
+
+    return Response.json({
+      joined,
+      weekMinutes: boardBlock(weekRows, meWeek?.v ?? 0),
+      monthProblems: boardBlock(monthRows, meMonth?.v ?? 0)
+    })
+  })
+
   // 举报帖子/评论/私信（举报人匿名，仅管理员可见；同一内容重复举报去重）
   on('POST', '/api/community/reports', true, async (ctx) => {
     rateLimit(ctx.request, 'community:report', 10)

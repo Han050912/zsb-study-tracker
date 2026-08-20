@@ -10,6 +10,7 @@ import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import TagBadge from '../components/community/TagBadge.vue'
 import LeaderboardBoard from '../components/community/LeaderboardBoard.vue'
+import ProgressBoard from '../components/community/ProgressBoard.vue'
 import WeeklyReportCard from '../components/community/WeeklyReportCard.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
@@ -19,6 +20,7 @@ const router = useRouter()
 const toast = inject<(m: string) => void>('toast', () => {})
 
 const showComposer = ref(false)
+const boardTab = ref<'checkin' | 'progress'>('checkin')
 
 onMounted(() => {
   store.fetchFeed(true).catch(e => toast(e?.message || '加载失败'))
@@ -158,8 +160,19 @@ async function removePost(id: string) {
     <!-- 上周学习周报（无数据时自动隐藏） -->
     <WeeklyReportCard />
 
-    <!-- 每日打卡榜 -->
-    <LeaderboardBoard />
+    <!-- 榜单：打卡榜 / 进步榜 -->
+    <div class="card !py-3">
+      <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit mb-3">
+        <button class="px-3 py-1.5 rounded-md transition-colors"
+          :class="boardTab === 'checkin' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="boardTab = 'checkin'">打卡榜</button>
+        <button class="px-3 py-1.5 rounded-md transition-colors"
+          :class="boardTab === 'progress' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="boardTab = 'progress'">进步榜</button>
+      </div>
+      <LeaderboardBoard v-show="boardTab === 'checkin'" />
+      <ProgressBoard v-show="boardTab === 'progress'" />
+    </div>
 
     <!-- 每日一题：管理员设置的最新一题，点击进入详情参与解答 -->
     <button v-if="dailyPost" class="card !p-4 text-left w-full flex items-center gap-3 border-l-4 !border-l-primary-400"
