@@ -160,9 +160,11 @@ function addFiles(files: Iterable<File>) {
     if (file.size > IMAGE_MAX_BYTES) { toast(`图片「${file.name}」超过 5MB 上限`); continue }
     const item: PendingImage = { localUrl: URL.createObjectURL(file), progress: 0 }
     images.value.push(item)
-    uploadImage(file, r => { item.progress = r })
-      .then(res => { item.url = res.url })
-      .catch((e: any) => { item.error = e?.message || '上传失败' })
+    // 通过响应式代理引用更新：数组内保存的是 reactive(item)，直接改原始 item 不会触发重渲染
+    const img = images.value[images.value.length - 1]
+    uploadImage(file, r => { img.progress = r })
+      .then(res => { if (res?.url) img.url = res.url; else img.error = '上传返回异常，请重试' })
+      .catch((e: any) => { img.error = e?.message || '上传失败' })
   }
 }
 
