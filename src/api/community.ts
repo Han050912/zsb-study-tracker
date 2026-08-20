@@ -1,6 +1,6 @@
 import { request, API_BASE, handleUnauthorized } from './client'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, MessageConversation, PostType, ProgressBoardData, UserStudyStats, WeeklyReport
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, HotTopic, HotTopicOverride, MessageConversation, PostType, ProgressBoardData, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -119,6 +119,8 @@ export const communityApi = {
   weeklyReport: () => request<WeeklyReport>('/api/community/weekly-report'),
   /** 学习进步榜（本周时长 / 本月刷题 TOP 50 + 本人百分位） */
   progressBoard: () => request<ProgressBoardData>('/api/community/progress-board'),
+  /** 热门话题运营位（近 7 天自动统计 + 管理员干预） */
+  hotTopics: () => request<{ topics: HotTopic[] }>('/api/community/hot-topics'),
   /** 用户资料卡（等级/徽章墙/认证状态等公开荣誉信息） */
   profile: (userId: string) => request<CommunityUserProfile>(`/api/community/users/${userId}/profile`),
   /** 个人主页学习统计（热力图 + 总览 + 科目分布） */
@@ -194,5 +196,14 @@ export const communityApi = {
     request<{ verified: boolean }>(`/api/admin/users/${userId}/verify`, { method: 'DELETE' }),
   /** 设置/取消每日一题 */
   adminDailyPost: (id: string) =>
-    request<{ isDaily: boolean }>(`/api/admin/posts/${id}/daily`, { method: 'PUT' })
+    request<{ isDaily: boolean }>(`/api/admin/posts/${id}/daily`, { method: 'PUT' }),
+  /** 热门话题：自动统计快照 + 干预名单 */
+  adminHotTopics: () =>
+    request<{ stats: { tag: string; count: number }[]; overrides: HotTopicOverride[] }>('/api/admin/hot-topics'),
+  /** 热门话题：添加置顶/屏蔽 */
+  adminAddHotTopic: (data: { text: string; tag: string; action: 'pin' | 'block' }) =>
+    request<HotTopicOverride>('/api/admin/hot-topics', { method: 'POST', body: JSON.stringify(data) }),
+  /** 热门话题：删除干预条目 */
+  adminDeleteHotTopic: (id: string) =>
+    request<{ ok: boolean }>(`/api/admin/hot-topics/${id}`, { method: 'DELETE' })
 }

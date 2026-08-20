@@ -347,6 +347,23 @@ export interface ProgressBoardData {
   monthProblems: { list: ProgressBoardEntry[]; me: ProgressBoardMe }
 }
 
+/** 热门话题运营位条目（pinned = 管理员置顶） */
+export interface HotTopic {
+  text: string
+  tag: string
+  count: number
+  pinned: boolean
+}
+
+/** 热门话题干预名单条目（管理员配置） */
+export interface HotTopicOverride {
+  id: string
+  text: string
+  tag: string
+  action: 'pin' | 'block'
+  createdAt: number
+}
+
 /** 上周学习周报（惰性计算，无快照） */
 export interface WeeklyReport {
   weekStart: string

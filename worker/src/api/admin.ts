@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { all, first, batch, uid, HttpError } from '../db'
+import { all, first, batch, run, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { notifyStatement, postCascadeStatements, commentCascadeStatements } from './community'
 import { deleteUploads, uploadIdsOf } from './uploads'
@@ -291,6 +291,51 @@ export function registerAdminRoutes() {
     await batch(ctx.env, stmts)
     // DB 删除成功后清理 R2 图片（失败仅留孤儿对象，不影响主流程）
     if (imageIds.length) await deleteUploads(ctx.env, imageIds)
+    return Response.json({ ok: true })
+  })
+
+  // ---- 热门话题运营位（纯运营配置，非治理动作，不写 moderation_log）----
+
+  // 自动统计快照 + 现有干预名单
+  on('GET', '/api/admin/hot-topics', true, async (ctx) => {
+    rateLimit(ctx.request, 'admin', 20)
+    await requireAdmin(ctx)
+    const weekAgo = nowSec() - 7 * 86400
+    const [stats, overrides] = await Promise.all([
+      all<{ tag: string; count: number }>(ctx.env,
+        `SELECT t.value AS tag, COUNT(*) AS count FROM community_posts p, json_each(p.tags) t
+         WHERE p.created_at >= ? AND p.is_hidden = 0 GROUP BY t.value ORDER BY count DESC LIMIT 20`, weekAgo),
+      all(ctx.env, 'SELECT id, text, tag, action, created_at FROM community_hot_topics ORDER BY created_at DESC')
+    ])
+    return Response.json({ stats, overrides })
+  })
+
+  // 添加干预条目（置顶/屏蔽）
+  on('POST', '/api/admin/hot-topics', true, async (ctx) => {
+    rateLimit(ctx.request, 'admin', 20)
+    await requireAdmin(ctx)
+    const b = await body(ctx.request)
+    const text = String(b?.text ?? '').trim().slice(0, 20)
+    const tag = String(b?.tag ?? '').trim()
+    const action = b?.action === 'pin' || b?.action === 'block' ? b.action : null
+    if (!text) throw new HttpError(400, '请填写展示文案（1-20 字）')
+    if (!/^#.{1,19}$/.test(tag)) throw new HttpError(400, 'tag 需为 # 开头且不超过 20 字')
+    if (!action) throw new HttpError(400, 'action 需为 pin 或 block')
+    assertClean(text)
+    assertClean(tag)
+    const id = uid()
+    await run(ctx.env,
+      'INSERT INTO community_hot_topics (id, text, tag, action, created_at) VALUES (?, ?, ?, ?, ?)',
+      id, text, tag, action, nowSec())
+    return Response.json({ id, text, tag, action, createdAt: nowSec() }, { status: 201 })
+  })
+
+  // 删除干预条目
+  on('DELETE', '/api/admin/hot-topics/:id', true, async (ctx) => {
+    rateLimit(ctx.request, 'admin', 20)
+    await requireAdmin(ctx)
+    const res = await run(ctx.env, 'DELETE FROM community_hot_topics WHERE id = ?', ctx.params.id)
+    if (!res.meta.changes) throw new HttpError(404, '条目不存在')
     return Response.json({ ok: true })
   })
 }

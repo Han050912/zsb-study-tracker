@@ -5,7 +5,7 @@ import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
 import { isAdmin } from '../services/auth'
 import { COMMUNITY_TAGS } from '../data/defaults'
-import type { CommunityPost } from '../types'
+import type { CommunityPost, HotTopic } from '../types'
 import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import TagBadge from '../components/community/TagBadge.vue'
@@ -21,11 +21,13 @@ const toast = inject<(m: string) => void>('toast', () => {})
 
 const showComposer = ref(false)
 const boardTab = ref<'checkin' | 'progress'>('checkin')
+const hotTopics = ref<HotTopic[]>([])
 
 onMounted(() => {
   store.fetchFeed(true).catch(e => toast(e?.message || '加载失败'))
   store.fetchUnreadCount().catch(() => {})
   loadDaily()
+  loadHotTopics()
 })
 
 // ---- 无限滚动：哨兵元素进入视口时加载下一页 ----
@@ -89,6 +91,14 @@ async function loadDaily() {
     const res = await communityApi.daily()
     dailyPost.value = res.post
   } catch { dailyPost.value = null }
+}
+
+// ---- 热门话题运营位 ----
+async function loadHotTopics() {
+  try {
+    const res = await communityApi.hotTopics()
+    hotTopics.value = res.topics
+  } catch { /* 静默降级 */ }
 }
 
 // ---- 举报 ----
@@ -159,6 +169,15 @@ async function removePost(id: string) {
 
     <!-- 上周学习周报（无数据时自动隐藏） -->
     <WeeklyReportCard />
+
+    <!-- 热门话题运营位：点击按 tag 筛选帖子流 -->
+    <div v-if="hotTopics.length" class="card !py-2.5">
+      <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 shrink-0 pl-1">🔥 本周热门</span>
+        <TagBadge v-for="t in hotTopics" :key="t.tag" :tag="t.text"
+          :active="store.tag === t.tag" @click="filterTag(store.tag === t.tag ? '' : t.tag)" />
+      </div>
+    </div>
 
     <!-- 榜单：打卡榜 / 进步榜 -->
     <div class="card !py-3">

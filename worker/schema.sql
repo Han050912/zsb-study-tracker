@@ -42,6 +42,8 @@
 --   ALTER TABLE community_posts ADD COLUMN topic_ref TEXT;
 -- 已建库升级：社区 P1 进步榜（学习进度对比），执行一次：
 --   ALTER TABLE user_settings ADD COLUMN join_progress_board INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：热门话题运营位（P1），执行一次：
+--   CREATE TABLE IF NOT EXISTS community_hot_topics ( id TEXT PRIMARY KEY, text TEXT NOT NULL, tag TEXT NOT NULL, action TEXT NOT NULL, created_at INTEGER NOT NULL );
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -500,3 +502,12 @@ CREATE TABLE IF NOT EXISTS community_moderation_log (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at);
+
+-- 热门话题运营位（P1）：只存管理员干预名单（置顶/屏蔽），自动统计部分不落表
+CREATE TABLE IF NOT EXISTS community_hot_topics (
+  id TEXT PRIMARY KEY,
+  text TEXT NOT NULL,                     -- 展示文案（置顶条目可自定义，≤20 字）
+  tag TEXT NOT NULL,                      -- 关联话题 tag（含 # 前缀，与帖子 tags 同格式）
+  action TEXT NOT NULL,                   -- 'pin'（强制前置展示） | 'block'（从自动统计剔除）
+  created_at INTEGER NOT NULL
+);

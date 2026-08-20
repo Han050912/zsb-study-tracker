@@ -3,7 +3,7 @@ import { inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import { fromNow } from '../utils/date'
-import type { AdminReport } from '../types'
+import type { AdminReport, HotTopicOverride } from '../types'
 
 /**
  * 管理员后台（首个模块：举报处理队列）。
@@ -19,7 +19,7 @@ const confirming = ref<{ id: string; action: 'hide' | 'delete' | 'reject' } | nu
 const note = ref('')
 const submitting = ref(false)
 
-onMounted(load)
+onMounted(() => { load(); loadHotTopics() })
 
 async function load() {
   loading.value = true
@@ -56,6 +56,52 @@ async function confirmResolve() {
   } finally {
     submitting.value = false
   }
+}
+
+// ---- 热门话题运营位管理 ----
+const hotStats = ref<{ tag: string; count: number }[]>([])
+const hotOverrides = ref<HotTopicOverride[]>([])
+const hotLoading = ref(false)
+const hotForm = ref({ text: '', tag: '', action: 'pin' as 'pin' | 'block' })
+
+async function loadHotTopics() {
+  hotLoading.value = true
+  try {
+    const res = await communityApi.adminHotTopics()
+    hotStats.value = res.stats
+    hotOverrides.value = res.overrides
+  } catch (e: any) {
+    toast(e?.message || '加载热门话题失败')
+  } finally {
+    hotLoading.value = false
+  }
+}
+
+async function pinOrBlockHot(tag: string, action: 'pin' | 'block') {
+  try {
+    await communityApi.adminAddHotTopic({ text: tag, tag, action })
+    toast(action === 'pin' ? '已置顶展示' : '已从自动统计屏蔽')
+    await loadHotTopics()
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
+async function addHotTopic() {
+  const f = hotForm.value
+  if (!f.text.trim() || !f.tag.trim()) { toast('请填写文案与 tag'); return }
+  try {
+    await communityApi.adminAddHotTopic({ text: f.text.trim(), tag: f.tag.trim(), action: f.action })
+    hotForm.value = { text: '', tag: '', action: 'pin' }
+    toast('已添加')
+    await loadHotTopics()
+  } catch (e: any) { toast(e?.message || '添加失败') }
+}
+
+async function removeHotTopic(id: string) {
+  try {
+    await communityApi.adminDeleteHotTopic(id)
+    hotOverrides.value = hotOverrides.value.filter(o => o.id !== id)
+    toast('已删除')
+  } catch (e: any) { toast(e?.message || '删除失败') }
 }
 </script>
 
@@ -122,6 +168,55 @@ async function confirmResolve() {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 热门话题运营位管理 -->
+    <div class="card space-y-3">
+      <div class="section-title !mb-0">🔥 热门话题管理</div>
+      <div v-if="hotLoading" class="text-xs text-slate-400 text-center py-3">加载中…</div>
+      <template v-else>
+        <!-- 近 7 天自动统计 -->
+        <div v-if="hotStats.length">
+          <div class="text-[11px] text-slate-400 mb-1.5">近 7 天话题频次（可一键置顶/屏蔽）</div>
+          <div class="flex flex-wrap gap-1.5">
+            <div v-for="s in hotStats" :key="s.tag"
+              class="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-50 dark:bg-slate-700/50 text-xs">
+              <span>{{ s.tag }}</span>
+              <span class="text-[10px] text-slate-400">{{ s.count }} 帖</span>
+              <button class="text-[10px] text-primary-500 hover:underline" @click="pinOrBlockHot(s.tag, 'pin')">置顶</button>
+              <button class="text-[10px] text-red-400 hover:underline" @click="pinOrBlockHot(s.tag, 'block')">屏蔽</button>
+            </div>
+          </div>
+        </div>
+        <div v-else class="text-xs text-slate-400">近 7 天暂无带话题的帖子</div>
+
+        <!-- 手动添加 -->
+        <div class="flex flex-wrap gap-2 items-center border-t border-slate-100 dark:border-slate-700 pt-3">
+          <input v-model="hotForm.text" maxlength="20" class="input !py-1.5 !text-xs flex-1 min-w-[8rem]" placeholder="展示文案（≤20 字）" />
+          <input v-model="hotForm.tag" maxlength="20" class="input !py-1.5 !text-xs flex-1 min-w-[8rem]" placeholder="关联 tag（如 #高等数学）" />
+          <select v-model="hotForm.action" class="input !py-1.5 !text-xs !w-auto">
+            <option value="pin">置顶</option>
+            <option value="block">屏蔽</option>
+          </select>
+          <button class="btn-primary !text-xs" @click="addHotTopic">添加</button>
+        </div>
+
+        <!-- 现有干预名单 -->
+        <div v-if="hotOverrides.length">
+          <div class="text-[11px] text-slate-400 mb-1.5">干预名单</div>
+          <div class="space-y-1">
+            <div v-for="o in hotOverrides" :key="o.id" class="flex items-center gap-2 text-xs">
+              <span class="px-1.5 py-0.5 rounded font-medium"
+                :class="o.action === 'pin' ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600' : 'bg-red-50 dark:bg-red-900/30 text-red-500'">
+                {{ o.action === 'pin' ? '置顶' : '屏蔽' }}
+              </span>
+              <span class="font-medium">{{ o.text }}</span>
+              <span class="text-slate-400">{{ o.tag }}</span>
+              <button class="ml-auto text-[10px] text-red-400 hover:underline" @click="removeHotTopic(o.id)">删除</button>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>

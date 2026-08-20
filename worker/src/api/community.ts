@@ -1234,6 +1234,24 @@ export function registerCommunityRoutes() {
     })
   })
 
+  // 热门话题运营位：近 7 天帖子 tag 频次自动统计（D1 JSON1），叠加管理员 pin/block 干预，上限 5 条
+  on('GET', '/api/community/hot-topics', false, async (ctx) => {
+    const overrides = await all<{ id: string; text: string; tag: string; action: string }>(ctx.env,
+      'SELECT id, text, tag, action FROM community_hot_topics')
+    const pins = overrides.filter(o => o.action === 'pin')
+    const blocks = new Set(overrides.filter(o => o.action === 'block').map(o => o.tag))
+    const weekAgo = nowSec() - 7 * 86400
+    const rows = await all<{ tag: string; count: number }>(ctx.env,
+      `SELECT t.value AS tag, COUNT(*) AS count FROM community_posts p, json_each(p.tags) t
+       WHERE p.created_at >= ? AND p.is_hidden = 0 GROUP BY t.value ORDER BY count DESC LIMIT 50`, weekAgo)
+    const pinnedTags = new Set(pins.map(p => p.tag))
+    const auto = rows
+      .filter(r => r.tag.startsWith('#') && r.tag.length <= 20 && !blocks.has(r.tag) && !pinnedTags.has(r.tag))
+      .map(r => ({ text: r.tag, tag: r.tag, count: r.count, pinned: false }))
+    const pinned = pins.map(p => ({ text: p.text, tag: p.tag, count: 0, pinned: true }))
+    return Response.json({ topics: [...pinned, ...auto].slice(0, 5) })
+  })
+
   // 举报帖子/评论/私信（举报人匿名，仅管理员可见；同一内容重复举报去重）
   on('POST', '/api/community/reports', true, async (ctx) => {
     rateLimit(ctx.request, 'community:report', 10)
