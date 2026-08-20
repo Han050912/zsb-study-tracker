@@ -174,6 +174,14 @@ export interface Todo {
   order: number
   /** 标记完成的具体时间（时间戳），随待办永久保存；未完成/取消完成时该字段不存在 */
   completedAt?: number
+  /** 计划开始时间（时间戳）：到点提醒任务已开始；未设置则不提醒 */
+  startAt?: number
+  /** 最晚截止时间（时间戳）：到点仍未完成则提醒；未设置则不提醒 */
+  dueAt?: number
+  /** 开始提醒已发出的时间（去重用，避免重复提醒）；重设开始时间时清除 */
+  startNotifiedAt?: number
+  /** 截止提醒已发出的时间（去重用）；重设截止时间时清除 */
+  dueNotifiedAt?: number
 }
 
 /** 设置 */
@@ -313,6 +321,18 @@ export interface CommunityLeaderboard {
   streak: LeaderboardStreakEntry[]
 }
 
+/** 上周学习周报（惰性计算，无快照） */
+export interface WeeklyReport {
+  weekStart: string
+  weekEnd: string
+  minutes: number
+  studyDays: number
+  problems: number
+  correct: number
+  points: number
+  interactions: number
+}
+
 /** 用户徽章记录（key 目录见 defaults.ts COMMUNITY_BADGES） */
 export interface UserBadge {
   key: string
@@ -426,4 +446,51 @@ export interface AdminReport {
     isHidden: boolean
     postId?: string
   } | null
+}
+
+/** 学习小组 */
+export interface StudyTeam {
+  id: string
+  name: string
+  description: string
+  creatorId: string
+  memberCount: number
+  maxMembers: number
+  isPublic: boolean
+  myRole?: 'leader' | 'member'
+  createdAt: number
+}
+
+/** 小组成员 */
+export interface TeamMember {
+  userId: string
+  userName: string
+  role: 'leader' | 'member'
+  joinedAt: number
+}
+
+/** 挑战类型 */
+export type ChallengeType = 'streak' | 'minutes' | 'problems'
+
+/** 组队挑战 */
+export interface TeamChallenge {
+  id: string
+  teamId: string
+  type: ChallengeType
+  target: number
+  durationDays: number
+  startDate: string
+  endDate: string
+  completedCount: number
+  isCompleted: boolean
+  myProgress: number
+  myCompleted: boolean
+  createdAt: number
+}
+
+/** 小组详情 */
+export interface TeamDetail {
+  team: StudyTeam
+  members: TeamMember[]
+  challenges: TeamChallenge[]
 }

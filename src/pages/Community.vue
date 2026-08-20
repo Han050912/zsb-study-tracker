@@ -10,6 +10,7 @@ import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import TagBadge from '../components/community/TagBadge.vue'
 import LeaderboardBoard from '../components/community/LeaderboardBoard.vue'
+import WeeklyReportCard from '../components/community/WeeklyReportCard.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
 
@@ -56,6 +57,28 @@ function toggleFeaturedFilter() {
 function toggleFollowFilter() {
   store.setFollowFilter(!store.followFilter).catch(e => toast(e?.message || '加载失败'))
 }
+
+// ---- 标签横向滑动提示（超出可视区可滑动查看，右侧渐变 + 文字提示） ----
+const tagScrollRef = ref<HTMLElement | null>(null)
+const tagHasMore = ref(false)   // 存在未展示完的标签
+const tagAtEnd = ref(false)     // 已滑动到最右
+const tagTouched = ref(false)   // 用户已滑动过（之后不再显示文字提示）
+
+function updateTagScroll() {
+  const el = tagScrollRef.value
+  if (!el) return
+  tagHasMore.value = el.scrollWidth > el.clientWidth + 4
+  tagAtEnd.value = el.scrollWidth - el.clientWidth - el.scrollLeft <= 4
+}
+function onTagScroll() {
+  tagTouched.value = true
+  updateTagScroll()
+}
+onMounted(() => {
+  updateTagScroll()
+  window.addEventListener('resize', updateTagScroll)
+})
+onUnmounted(() => window.removeEventListener('resize', updateTagScroll))
 
 // ---- 每日一题 ----
 const dailyPost = ref<CommunityPost | null>(null)
@@ -132,6 +155,9 @@ async function removePost(id: string) {
       </div>
     </div>
 
+    <!-- 上周学习周报（无数据时自动隐藏） -->
+    <WeeklyReportCard />
+
     <!-- 每日打卡榜 -->
     <LeaderboardBoard />
 
@@ -147,8 +173,9 @@ async function removePost(id: string) {
     </button>
 
     <!-- 排序 + 标签筛选 -->
-    <div class="flex items-center gap-2">
-      <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs">
+    <div class="flex flex-col gap-2">
+      <!-- 排序/筛选按钮组：独占一行 -->
+      <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit">
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.sort === 'latest' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
           @click="store.setSort('latest')">最新</button>
@@ -165,9 +192,25 @@ async function removePost(id: string) {
           :class="store.followFilter ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
           @click="toggleFollowFilter">👥 关注</button>
       </div>
-      <div class="flex gap-1.5 overflow-x-auto flex-1 py-1">
-        <TagBadge tag="全部" :active="!store.tag" @click="filterTag('')" />
-        <TagBadge v-for="t in COMMUNITY_TAGS" :key="t" :tag="t" :active="store.tag === t" @click="filterTag(store.tag === t ? '' : t)" />
+
+      <!-- 预设话题标签：横向单行排列，超出可视区可滑动查看 -->
+      <div class="relative">
+        <div ref="tagScrollRef" class="flex gap-1.5 overflow-x-auto py-1 no-scrollbar scroll-smooth"
+          @scroll.passive="onTagScroll">
+          <TagBadge tag="全部" :active="!store.tag" @click="filterTag('')" />
+          <TagBadge v-for="t in COMMUNITY_TAGS" :key="t" :tag="t" :active="store.tag === t" @click="filterTag(store.tag === t ? '' : t)" />
+        </div>
+        <!-- 右侧渐变遮罩：暗示还有更多标签 -->
+        <div v-if="tagHasMore && !tagAtEnd"
+          class="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-slate-50 dark:from-slate-900 to-transparent"></div>
+        <!-- 滑动提示：仅未滑动过时显示，明确告知可滑动查看 -->
+        <transition name="fade">
+          <div v-if="tagHasMore && !tagAtEnd && !tagTouched"
+            class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-full bg-white/90 dark:bg-slate-800/90 px-1.5 py-0.5 text-[10px] text-slate-500 dark:text-slate-400 shadow-sm">
+            <span>滑动查看</span>
+            <span aria-hidden="true">›</span>
+          </div>
+        </transition>
       </div>
     </div>
 
@@ -204,3 +247,11 @@ async function removePost(id: string) {
     <UserProfileModal v-model:show="showProfile" :user-id="profileUserId" />
   </div>
 </template>
+
+<style scoped>
+/* 隐藏横向滚动条，保留滑动能力（以渐变遮罩替代视觉提示） */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+</style>

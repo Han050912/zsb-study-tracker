@@ -1,6 +1,6 @@
 import { request, API_BASE, handleUnauthorized } from './client'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, MessageConversation, PostType, UserStudyStats
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, MessageConversation, PostType, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -115,6 +115,8 @@ export const communityApi = {
   toggleLike: (targetType: 'post' | 'comment', targetId: string) =>
     request<{ liked: boolean }>('/api/community/likes', { method: 'POST', body: JSON.stringify({ targetType, targetId }) }),
   leaderboard: () => request<CommunityLeaderboard>('/api/community/leaderboard'),
+  /** 上周学习周报（惰性计算） */
+  weeklyReport: () => request<WeeklyReport>('/api/community/weekly-report'),
   /** 用户资料卡（等级/徽章墙/认证状态等公开荣誉信息） */
   profile: (userId: string) => request<CommunityUserProfile>(`/api/community/users/${userId}/profile`),
   /** 个人主页学习统计（热力图 + 总览 + 科目分布） */

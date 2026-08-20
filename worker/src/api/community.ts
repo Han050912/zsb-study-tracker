@@ -1134,6 +1134,46 @@ export function registerCommunityRoutes() {
     })
   })
 
+  // 每周学习周报：上周一至周日（UTC+8）惰性聚合，纯读无缓存，周界变更自动刷新
+  on('GET', '/api/community/weekly-report', true, async (ctx) => {
+    // 上周区间：以 UTC+8 当前时刻推算，周一为一周起点
+    const t = new Date(Date.now() + 8 * 3600_000)
+    const daysSinceMonday = (t.getUTCDay() + 6) % 7
+    const monday = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() - daysSinceMonday - 7))
+    const fmt = (d: Date) => d.toISOString().slice(0, 10)
+    const weekStart = fmt(monday)
+    const weekEnd = fmt(new Date(monday.getTime() + 6 * 86400_000))
+    // created_at（unix 秒）区间：周一起点 至 下周一 00:00（开区间）
+    const startTs = Math.floor(monday.getTime() / 1000)
+    const endTs = startTs + 7 * 86400
+    const [study, problems, points, posts, comments] = await Promise.all([
+      first<{ minutes: number; days: number }>(ctx.env,
+        'SELECT COALESCE(SUM(minutes), 0) AS minutes, COUNT(DISTINCT date) AS days FROM study_records WHERE user_id = ? AND date >= ? AND date <= ?',
+        ctx.userId, weekStart, weekEnd),
+      first<{ total: number; correct: number }>(ctx.env,
+        'SELECT COALESCE(SUM(total), 0) AS total, COALESCE(SUM(correct), 0) AS correct FROM problem_sessions WHERE user_id = ? AND date >= ? AND date <= ?',
+        ctx.userId, weekStart, weekEnd),
+      first<{ points: number }>(ctx.env,
+        'SELECT COALESCE(SUM(points), 0) AS points FROM points_log WHERE user_id = ? AND date >= ? AND date <= ?',
+        ctx.userId, weekStart, weekEnd),
+      first<{ n: number }>(ctx.env,
+        'SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ? AND created_at >= ? AND created_at < ?',
+        ctx.userId, startTs, endTs),
+      first<{ n: number }>(ctx.env,
+        'SELECT COUNT(*) AS n FROM community_comments WHERE user_id = ? AND created_at >= ? AND created_at < ?',
+        ctx.userId, startTs, endTs)
+    ])
+    return Response.json({
+      weekStart, weekEnd,
+      minutes: study?.minutes ?? 0,
+      studyDays: study?.days ?? 0,
+      problems: problems?.total ?? 0,
+      correct: problems?.correct ?? 0,
+      points: points?.points ?? 0,
+      interactions: (posts?.n ?? 0) + (comments?.n ?? 0)
+    })
+  })
+
   // 举报帖子/评论/私信（举报人匿名，仅管理员可见；同一内容重复举报去重）
   on('POST', '/api/community/reports', true, async (ctx) => {
     rateLimit(ctx.request, 'community:report', 10)
