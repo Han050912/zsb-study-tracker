@@ -1144,7 +1144,7 @@ export function registerCommunityRoutes() {
     const weekStart = fmt(monday)
     const weekEnd = fmt(new Date(monday.getTime() + 6 * 86400_000))
     // created_at（unix 秒）区间：周一起点 至 下周一 00:00（开区间）
-    const startTs = Math.floor(monday.getTime() / 1000)
+    const startTs = Math.floor(monday.getTime() / 1000) - 8 * 3600
     const endTs = startTs + 7 * 86400
     const [study, problems, points, posts, comments] = await Promise.all([
       first<{ minutes: number; days: number }>(ctx.env,
