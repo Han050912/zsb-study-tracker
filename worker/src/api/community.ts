@@ -422,11 +422,11 @@ export function registerCommunityRoutes() {
     // 徽章：首次发帖 / 首次提问（主键去重，仅首次发放并通知）
     const myPostCount = await first<{ n: number }>(ctx.env,
       'SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ?', ctx.userId)
-    if (myPostCount?.n === 1) await awardBadge(ctx.env, ctx.userId, 'first_post')
+    if (myPostCount?.n === 1) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_post'))
     if (type === 'question') {
       const myQCount = await first<{ n: number }>(ctx.env,
         "SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ? AND type = 'question'", ctx.userId)
-      if (myQCount?.n === 1) await awardBadge(ctx.env, ctx.userId, 'first_question')
+      if (myQCount?.n === 1) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_question'))
     }
 
     // 刚写入的帖子被并发删除/隐藏时读不回，明确报错而非 500 崩溃
@@ -625,7 +625,7 @@ export function registerCommunityRoutes() {
         `SELECT (SELECT COALESCE(SUM(likes_count), 0) FROM community_posts WHERE user_id = ?)
               + (SELECT COALESCE(SUM(likes_count), 0) FROM community_comments WHERE user_id = ?) AS n`,
         target.user_id, target.user_id)
-      if ((total?.n ?? 0) >= 100) await awardBadge(ctx.env, target.user_id, 'likes_100')
+      if ((total?.n ?? 0) >= 100) await batch(ctx.env, await awardBadge(ctx.env, target.user_id, 'likes_100'))
     }
     return Response.json({ liked: true })
   })
@@ -697,7 +697,7 @@ export function registerCommunityRoutes() {
     if (!(await hasBadge(ctx.env, comment.user_id, 'answer_expert'))) {
       const accepted = await first<{ n: number }>(ctx.env,
         'SELECT COUNT(*) AS n FROM community_comments WHERE user_id = ? AND is_accepted = 1', comment.user_id)
-      if ((accepted?.n ?? 0) >= 10) await awardBadge(ctx.env, comment.user_id, 'answer_expert')
+      if ((accepted?.n ?? 0) >= 10) await batch(ctx.env, await awardBadge(ctx.env, comment.user_id, 'answer_expert'))
     }
     return Response.json({ acceptedAnswerId: commentId, isResolved: true })
   })

@@ -186,7 +186,7 @@ export function registerSyncRoutes() {
     }
     // 连续打卡里程碑徽章（与积分同机触发，主键去重保证仅发放一次；放在全量替换之后避免中间态）
     for (const days of [7, 30, 100] as const) {
-      if (streak >= days) await awardBadge(ctx.env, ctx.userId, `streak_${days}`)
+      if (streak >= days) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, `streak_${days}`))
     }
     // 发放了新积分时回传最新 gamification，前端据此刷新本地，避免下次推送用旧总值覆盖
     const res: Record<string, unknown> = { ok: true }

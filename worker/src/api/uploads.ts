@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on } from '../router'
-import { all, first, run, uid, HttpError } from '../db'
+import { all, first, run, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { awardBadge, hasBadge } from './badges'
 
@@ -172,7 +172,7 @@ export function registerUploadRoutes() {
     if (!(await hasBadge(ctx.env, ctx.userId, 'image_50'))) {
       const cnt = await first<{ n: number }>(ctx.env,
         'SELECT COUNT(*) AS n FROM community_uploads WHERE user_id = ?', ctx.userId)
-      if ((cnt?.n ?? 0) >= 50) await awardBadge(ctx.env, ctx.userId, 'image_50')
+      if ((cnt?.n ?? 0) >= 50) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'image_50'))
     }
     return Response.json({ id, url, size: data.byteLength, contentType: kind.mime }, { status: 201 })
   })
