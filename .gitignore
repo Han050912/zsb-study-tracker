@@ -59,6 +59,8 @@ coverage/
 Thumbs.db
 
 # ===== 系统文件 =====
+docs/
+.superpowers/
 .vscode-server/
 .vs/
 .ssh/
