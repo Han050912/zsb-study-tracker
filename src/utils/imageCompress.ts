@@ -8,8 +8,8 @@ function loadImage(file: File | Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error('图片解码失败'))
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img) }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片解码失败')) }
     img.src = url
   })
 }
