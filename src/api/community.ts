@@ -1,4 +1,5 @@
 import { request, API_BASE, handleUnauthorized } from './client'
+import { compressImage } from '../utils/imageCompress'
 import type {
   AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, HotTopic, HotTopicOverride, MessageConversation, PostType, ProgressBoardData, UserStudyStats, WeeklyReport
 } from '../types'
@@ -59,26 +60,44 @@ export interface UploadResult {
  * onProgress 收到 0-1 的进度值；失败抛出带服务端提示的 Error。
  */
 export function uploadImage(file: File, onProgress?: (ratio: number) => void): Promise<UploadResult> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', `${API_BASE}/api/community/upload?filename=${encodeURIComponent(file.name.slice(0, 100))}`)
-    const token = localStorage.getItem('jwt_token')
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
-    xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress?.(e.loaded / e.total) }
-    xhr.onload = () => {
-      let data: any = null
-      try { data = JSON.parse(xhr.responseText) } catch { /* 非 JSON 响应 */ }
-      if (xhr.status >= 200 && xhr.status < 300) { resolve(data as UploadResult); return }
-      if (xhr.status === 401) {
-        // 与 fetch 通道同一全局处理：清会话 + 跳登录（handleUnauthorized 内部会抛错，捕获后转为 reject）
-        try { handleUnauthorized() } catch (e) { reject(e) }
-        return
-      }
-      reject(Object.assign(new Error(data?.message || `上传失败（HTTP ${xhr.status}）`), { status: xhr.status }))
+  return new Promise(async (resolve, reject) => {
+    // 前端压缩：full（原图 WebP/GIF）+ thumb（640 缩略图 WebP）
+    let full: Blob, thumb: Blob
+    try {
+      const c = await compressImage(file)
+      full = c.full
+      thumb = c.thumb
+    } catch (e: any) {
+      reject(e)
+      return
     }
-    xhr.onerror = () => reject(new Error('网络错误，上传失败'))
-    xhr.send(file)
+
+    const postBlob = (url: string, blob: Blob, onDone: (data: any) => void) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', url)
+      const token = localStorage.getItem('jwt_token')
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      xhr.setRequestHeader('Content-Type', blob.type || 'application/octet-stream')
+      xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress?.(Math.min(1, e.loaded / e.total)) }
+      xhr.onload = () => {
+        let data: any = null
+        try { data = JSON.parse(xhr.responseText) } catch { /* 非 JSON */ }
+        if (xhr.status >= 200 && xhr.status < 300) { onDone(data); return }
+        if (xhr.status === 401) { try { handleUnauthorized() } catch (e) { reject(e) }; return }
+        reject(Object.assign(new Error(data?.message || `上传失败（HTTP ${xhr.status}）`), { status: xhr.status }))
+      }
+      xhr.onerror = () => reject(new Error('网络错误，上传失败'))
+      xhr.send(blob)
+    }
+
+    // 1. 上传原图 → 拿 id
+    postBlob(`${API_BASE}/api/community/upload?filename=${encodeURIComponent(file.name.slice(0, 100))}`, full, (res) => {
+      if (!res?.id) { reject(new Error('上传返回异常')); return }
+      // 2. 上传缩略图，关联到原图 id
+      postBlob(`${API_BASE}/api/community/upload?variant=thumb&id=${encodeURIComponent(res.id)}`, thumb, () => {
+        resolve(res as UploadResult)
+      })
+    })
   })
 }
 

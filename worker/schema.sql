@@ -114,6 +114,8 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   CREATE TABLE IF NOT EXISTS community_dislikes ( user_id TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, target_type, target_id) );
 -- 已建库升级：主页可见性设置（P1），执行一次：
 --   ALTER TABLE user_settings ADD COLUMN profile_visibility TEXT NOT NULL DEFAULT 'login';
+-- 已建库升级：社区图片缩略图（P1），执行一次：
+--   ALTER TABLE community_uploads ADD COLUMN thumb_r2_key TEXT;
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -499,6 +501,7 @@ CREATE TABLE IF NOT EXISTS community_uploads (
   url TEXT NOT NULL,                -- 读取路径 /api/community/images/<id>
   size INTEGER NOT NULL,
   content_type TEXT NOT NULL,
+  thumb_r2_key TEXT,               -- 缩略图 R2 key（前端 canvas 压缩后上传）
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id);

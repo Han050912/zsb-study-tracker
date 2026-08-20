@@ -141,6 +141,9 @@ export function registerUploadRoutes() {
   // 上传图片（裸二进制；?filename= 可选，仅用于记录原始文件名）
   on('POST', '/api/community/upload', true, async (ctx) => {
     rateLimit(ctx.request, 'community:upload', 20)
+    const q = new URL(ctx.request.url).searchParams
+    const variant = q.get('variant')
+    const thumbFor = q.get('id')
     const declared = Number(ctx.request.headers.get('Content-Length') || 0)
     if (declared > IMAGE_MAX_BYTES) throw new HttpError(413, '图片超过 5MB 上限')
     const buf = new Uint8Array(await ctx.request.arrayBuffer())
@@ -158,6 +161,21 @@ export function registerUploadRoutes() {
         : buf
     } catch {
       throw new HttpError(400, '图片文件损坏，无法处理')
+    }
+
+    // 缩略图：关联到已有原图记录（原图必须先上传成功）
+    if (variant === 'thumb') {
+      if (!thumbFor || !/^[a-f0-9]{16}$/.test(thumbFor)) throw new HttpError(400, '参数错误')
+      const owner = await first<{ id: string }>(ctx.env,
+        'SELECT id FROM community_uploads WHERE id = ? AND user_id = ?', thumbFor, ctx.userId)
+      if (!owner) throw new HttpError(404, '原图不存在')
+      const tKind = sniff(buf)
+      if (!tKind || tKind.ext === 'gif') throw new HttpError(400, '缩略图须为 PNG/JPEG/WebP')
+      const tData = tKind.ext === 'jpg' ? stripJpeg(buf) : tKind.ext === 'png' ? stripPng(buf) : stripWebp(buf)
+      const tKey = `posts/${thumbFor}.thumb.${tKind.ext}`
+      await ctx.env.IMAGES.put(tKey, tData, { httpMetadata: { contentType: tKind.mime } })
+      await run(ctx.env, 'UPDATE community_uploads SET thumb_r2_key = ? WHERE id = ?', tKey, thumbFor)
+      return Response.json({ id: thumbFor, url: `/api/community/images/${thumbFor}` }, { status: 201 })
     }
 
     const id = uid()
