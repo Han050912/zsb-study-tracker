@@ -117,6 +117,7 @@ async function loadHotTopics() {
 const showReport = ref(false)
 const reportPostId = ref('')
 function openReport(postId: string) {
+  if (requireLogin(router)) return
   reportPostId.value = postId
   showReport.value = true
 }
