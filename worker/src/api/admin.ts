@@ -305,7 +305,7 @@ export function registerAdminRoutes() {
       all<{ tag: string; count: number }>(ctx.env,
         `SELECT t.value AS tag, COUNT(*) AS count FROM community_posts p, json_each(p.tags) t
          WHERE p.created_at >= ? AND p.is_hidden = 0 GROUP BY t.value ORDER BY count DESC LIMIT 20`, weekAgo),
-      all(ctx.env, 'SELECT id, text, tag, action, created_at FROM community_hot_topics ORDER BY created_at DESC')
+      all(ctx.env, 'SELECT id, text, tag, action, created_at AS createdAt FROM community_hot_topics ORDER BY created_at DESC')
     ])
     return Response.json({ stats, overrides })
   })
