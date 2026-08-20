@@ -177,6 +177,12 @@ async function isAdmin(env: Env, userId: string): Promise<boolean> {
   return u?.role === 'admin'
 }
 
+/** 主页可见性校验：private 仅本人、login 需登录、public 放行 */
+async function assertProfileVisible(ctx: { env: Env; userId: string }, targetUserId: string, visibility: string): Promise<void> {
+  if (visibility === 'private' && ctx.userId !== targetUserId) throw new HttpError(403, '对方设置了主页仅自己可见')
+  if (visibility === 'login' && !ctx.userId) throw new HttpError(401, '请登录后查看')
+}
+
 /** LIKE 通配符转义（tags JSON 子串匹配用） */
 function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, c => '\\' + c)
@@ -1040,15 +1046,16 @@ export function registerCommunityRoutes() {
   })
 
   // 用户资料卡：社区公开荣誉信息（等级/连续打卡/徽章墙/专家认证），不含私有学习数据
-  on('GET', '/api/community/users/:id/profile', true, async (ctx) => {
+  on('GET', '/api/community/users/:id/profile', false, async (ctx) => {
     const u = await first<any>(ctx.env, `
       SELECT u.id, COALESCE(s.user_name, u.username) AS user_name, u.verified, u.expertise,
-        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak
+        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak, s.profile_visibility
       FROM users u
       LEFT JOIN user_settings s ON s.user_id = u.id
       LEFT JOIN gamification g ON g.user_id = u.id
       WHERE u.id = ?`, ctx.params.id)
     if (!u) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, ctx.params.id, u.profile_visibility ?? 'login')
     const [stats, badges, followers, followedByMe] = await Promise.all([
       first<{ posts: number; likes: number }>(ctx.env, `
         SELECT (SELECT COUNT(*) FROM community_posts WHERE user_id = ? AND is_hidden = 0)
@@ -1077,8 +1084,10 @@ export function registerCommunityRoutes() {
   on('GET', '/api/community/users/:id/stats', true, async (ctx) => {
     const userId = ctx.params.id
     // 确认用户存在
-    const u = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', userId)
+    const u = await first<{ id: string; profile_visibility: string }>(ctx.env,
+      `SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?`, userId)
     if (!u) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, userId, u.profile_visibility ?? 'login')
 
     // 365 天热力图：按日期汇总学习分钟数（日期口径与 utc8Today 一致：UTC+8）
     const oneYearAgo = new Date(Date.now() + 8 * 3600_000 - 86400_000 * 365)

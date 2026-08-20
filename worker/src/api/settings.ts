@@ -18,6 +18,7 @@ export interface SettingsFull {
   maimemoToken?: string
   onboarded: boolean
   joinProgressBoard: boolean
+  profileVisibility: 'public' | 'login' | 'private'
 }
 
 /** 容错解析 quotes JSON：数据损坏时降级为 undefined（用默认值），不拖垮整个设置接口 */
@@ -46,7 +47,8 @@ export async function getSettings(env: Env, userId: string): Promise<SettingsFul
     quotes: quotesRow ? parseQuotes((quotesRow as any).quotes) : undefined,
     maimemoToken: row?.maimemo_token ?? undefined,
     onboarded: !!row?.onboarded,
-    joinProgressBoard: !!row?.join_progress_board
+    joinProgressBoard: !!row?.join_progress_board,
+    profileVisibility: (row?.profile_visibility as 'public' | 'login' | 'private') ?? 'login'
   }
 }
 
@@ -55,26 +57,26 @@ export async function getSettings(env: Env, userId: string): Promise<SettingsFul
 export function settingsReplaceStatements(env: Env, userId: string, s: SettingsFull): D1PreparedStatement[] {
   const commonCols = 'user_name = excluded.user_name, daily_goal_minutes = excluded.daily_goal_minutes, word_goal = excluded.word_goal, ' +
     'problem_goal = excluded.problem_goal, exam_date = excluded.exam_date, theme = excluded.theme, reminder_enabled = excluded.reminder_enabled, ' +
-    'reminder_time = excluded.reminder_time, onboarded = excluded.onboarded, join_progress_board = excluded.join_progress_board'
+    'reminder_time = excluded.reminder_time, onboarded = excluded.onboarded, join_progress_board = excluded.join_progress_board, profile_visibility = excluded.profile_visibility'
   const baseParams = [
     userId, s.userName ?? '升本人', s.dailyGoalMinutes ?? 240, s.wordGoal ?? 50, s.problemGoal ?? 30,
     s.examDate ?? '', s.theme ?? 'light', s.reminderEnabled ? 1 : 0, s.reminderTime ?? '08:00', s.onboarded ? 1 : 0,
-    s.joinProgressBoard ? 1 : 0
+    s.joinProgressBoard ? 1 : 0, s.profileVisibility ?? 'login'
   ]
   const stmts: D1PreparedStatement[] = []
   if (s.maimemoToken === undefined) {
     stmts.push(
       env.DB.prepare(
-        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
         `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}`
       ).bind(...baseParams)
     )
   } else {
     stmts.push(
       env.DB.prepare(
-        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, maimemo_token) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, maimemo_token) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
         `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}, maimemo_token = excluded.maimemo_token`
       ).bind(...baseParams, s.maimemoToken)
     )

@@ -204,6 +204,18 @@ function addQuote() {
         <button class="btn !text-xs" :class="s.joinProgressBoard ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
           @click="update('joinProgressBoard', !s.joinProgressBoard)">{{ s.joinProgressBoard ? '已参与' : '未参与' }}</button>
       </div>
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm">主页可见性</span>
+          <p class="text-[10px] text-slate-400 mt-0.5">控制他人访问你成长主页的权限</p>
+        </div>
+        <select class="input !w-auto !py-1.5 !text-xs" :value="s.profileVisibility"
+          @change="update('profileVisibility', ($event.target as HTMLSelectElement).value as 'public' | 'login' | 'private')">
+          <option value="public">公开（所有人可见）</option>
+          <option value="login">仅登录用户可见</option>
+          <option value="private">仅自己可见</option>
+        </select>
+      </div>
       <p v-if="!notifSupported" class="text-xs text-amber-500">当前浏览器不支持通知功能，无法使用每日提醒。</p>
       <p v-else-if="notifPermission === 'denied'" class="text-xs text-red-500">
         通知权限已被拒绝。请点击浏览器地址栏左侧的 🔒 图标，将「通知」改为「允许」，然后重新打开此页面并开启提醒。

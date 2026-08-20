@@ -138,6 +138,7 @@ export function createDefaultState(): AppState {
       quotes: [...DEFAULT_QUOTES],
       onboarded: false,
       joinProgressBoard: false,
+      profileVisibility: 'login',
     }
   }
 }

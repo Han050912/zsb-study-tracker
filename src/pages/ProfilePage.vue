@@ -4,7 +4,7 @@
  * 公开信息：等级/积分/徽章墙/连续打卡/学习时长热力图/做题统计/科目分布。
  * 隐私控制：仅公开为主，后续可扩展可见性设置。
  */
-import { inject, onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import { COMMUNITY_BADGES, levelOf, LEVELS } from '../data/defaults'
@@ -16,7 +16,6 @@ import type { CommunityUserProfile, UserStudyStats } from '../types'
 
 const route = useRoute()
 const router = useRouter()
-const toast = inject<(m: string) => void>('toast', () => {})
 
 const userId = route.params.id as string
 
@@ -47,8 +46,9 @@ onMounted(async () => {
     profile.value = p
     stats.value = s
   } catch (e: any) {
-    error.value = e?.message || '用户不存在'
-    toast('用户不存在')
+    if (e?.status === 403) error.value = '对方设置了主页仅自己可见'
+    else if (e?.status === 401) error.value = '请登录后查看'
+    else error.value = '用户不存在或已注销'
   } finally {
     loading.value = false
   }
@@ -68,7 +68,7 @@ onMounted(async () => {
 
     <!-- 错误/不存在 -->
     <div v-else-if="error" class="card text-center py-20">
-      <p class="text-slate-400">用户不存在或已注销</p>
+      <p class="text-slate-400">{{ error }}</p>
       <button class="btn mt-4" @click="router.push('/community')">返回广场</button>
     </div>
 

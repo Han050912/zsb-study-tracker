@@ -200,6 +200,8 @@ export interface Settings {
   onboarded: boolean
   /** 参与学习进步榜（社区展示昵称与学习时长/刷题数排名；默认关闭） */
   joinProgressBoard: boolean
+  /** 主页可见性：public 所有人 / login 登录(默认) / private 仅自己 */
+  profileVisibility: 'public' | 'login' | 'private'
 }
 
 export interface AppState {

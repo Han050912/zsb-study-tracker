@@ -112,6 +112,8 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   ALTER TABLE community_posts ADD COLUMN dislikes_count INTEGER NOT NULL DEFAULT 0;
 --   ALTER TABLE community_comments ADD COLUMN dislikes_count INTEGER NOT NULL DEFAULT 0;
 --   CREATE TABLE IF NOT EXISTS community_dislikes ( user_id TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, target_type, target_id) );
+-- 已建库升级：主页可见性设置（P1），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN profile_visibility TEXT NOT NULL DEFAULT 'login';
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -139,7 +141,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   maimemo_token TEXT,           -- 墨墨 Token（用户自行获取填入）
   netease_uid TEXT,             -- 网易云 UID（用户手动填写）
   onboarded INTEGER DEFAULT 0,  -- 是否完成新手引导
-  join_progress_board INTEGER NOT NULL DEFAULT 0  -- 参与学习进步榜（本周时长/本月刷题榜；默认不参与）
+  join_progress_board INTEGER NOT NULL DEFAULT 0,  -- 参与学习进步榜（本周时长/本月刷题榜；默认不参与）
+  profile_visibility TEXT NOT NULL DEFAULT 'login'  -- 主页可见性：'public'所有人 / 'login'登录(默认) / 'private'仅自己
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========
