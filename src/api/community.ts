@@ -1,7 +1,7 @@
 import { request, API_BASE, handleUnauthorized } from './client'
 import { compressImage } from '../utils/imageCompress'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, HotTopic, HotTopicOverride, MessageConversation, PostType, ProgressBoardData, UserStudyStats, WeeklyReport
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, HotTopic, HotTopicOverride, MessageConversation, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -229,5 +229,15 @@ export const communityApi = {
     request<HotTopicOverride>('/api/admin/hot-topics', { method: 'POST', body: JSON.stringify(data) }),
   /** 热门话题：删除干预条目 */
   adminDeleteHotTopic: (id: string) =>
-    request<{ ok: boolean }>(`/api/admin/hot-topics/${id}`, { method: 'DELETE' })
+    request<{ ok: boolean }>(`/api/admin/hot-topics/${id}`, { method: 'DELETE' }),
+  /** 学习搭子推荐 */
+  partnerSuggestions: () => request<{ suggestions: PartnerSuggestion[] }>('/api/community/partners/suggestions'),
+  /** 我的搭子 + 收到的请求 */
+  partners: () => request<{ partners: PartnerItem[]; incoming: PartnerItem[] }>('/api/community/partners'),
+  /** 发起搭子请求 */
+  sendPartner: (userId: string) =>
+    request<{ accepted: boolean }>(`/api/community/partners/${userId}`, { method: 'POST' }),
+  /** 接受/拒绝请求 */
+  respondPartner: (requestId: string, action: 'accept' | 'reject') =>
+    request<{ ok: boolean }>(`/api/community/partners/${requestId}`, { method: 'PUT', body: JSON.stringify({ action }) })
 }

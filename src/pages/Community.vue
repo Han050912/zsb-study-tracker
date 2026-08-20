@@ -181,6 +181,7 @@ async function removePost(id: string) {
       <h1 class="page-title">💬 社区广场</h1>
       <div class="flex items-center gap-2">
         <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/messages')">✉️ 私信</button>
+        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/partners')">🧑‍🤝‍🧑 搭子</button>
         <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/circles')">🫧 圈子</button>
         <button class="btn-primary" @click="openComposer">✏️ 发帖</button>
       </div>

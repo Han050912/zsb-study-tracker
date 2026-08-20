@@ -545,3 +545,22 @@ export interface TeamDetail {
   members: TeamMember[]
   challenges: TeamChallenge[]
 }
+
+/** 学习搭子推荐条目 */
+export interface PartnerSuggestion {
+  userId: string
+  userName: string
+  verified: boolean
+  totalPoints: number
+  score: number
+  reasons: string[]
+}
+
+/** 学习搭子 / 收到的请求条目 */
+export interface PartnerItem {
+  reqId: string
+  userId: string
+  userName: string
+  verified: boolean
+  totalPoints: number
+}
