@@ -3,7 +3,7 @@ import { inject, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
-import { isAdmin } from '../services/auth'
+import { isAdmin, isLoggedIn, requireLogin } from '../services/auth'
 import { COMMUNITY_TAGS } from '../data/defaults'
 import type { CommunityPost, HotTopic } from '../types'
 import PostCard from '../components/community/PostCard.vue'
@@ -25,7 +25,7 @@ const hotTopics = ref<HotTopic[]>([])
 
 onMounted(() => {
   store.fetchFeed(true).catch(e => toast(e?.message || '加载失败'))
-  store.fetchUnreadCount().catch(() => {})
+  if (isLoggedIn.value) store.fetchUnreadCount().catch(() => {})
   loadDaily()
   loadHotTopics()
 })
@@ -39,11 +39,22 @@ onMounted(() => { if (sentinel.value) observer.observe(sentinel.value) })
 onUnmounted(() => observer.disconnect())
 
 async function like(id: string) {
+  if (requireLogin(router)) return
   try { await store.likePost(id) } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
 function filterTag(tag: string) {
   store.setTag(tag).catch(e => toast(e?.message || '加载失败'))
+}
+
+function goRequireLogin(path: string) {
+  if (requireLogin(router)) return
+  router.push(path)
+}
+
+function openComposer() {
+  if (requireLogin(router)) return
+  showComposer.value = true
 }
 
 /** 「提问」类型筛选（再点一次取消） */
@@ -59,6 +70,7 @@ function toggleFeaturedFilter() {
 
 /** 「关注」筛选（再点一次取消；与类型/精华筛选互斥） */
 function toggleFollowFilter() {
+  if (requireLogin(router)) return
   store.setFollowFilter(!store.followFilter).catch(e => toast(e?.message || '加载失败'))
 }
 
@@ -113,6 +125,7 @@ function openReport(postId: string) {
 const showProfile = ref(false)
 const profileUserId = ref('')
 function openProfile(userId: string) {
+  if (requireLogin(router)) return
   profileUserId.value = userId
   showProfile.value = true
 }
@@ -161,9 +174,9 @@ async function removePost(id: string) {
     <div class="flex items-center justify-between">
       <h1 class="page-title">💬 社区广场</h1>
       <div class="flex items-center gap-2">
-        <button class="btn-ghost !text-xs" @click="router.push('/community/messages')">✉️ 私信</button>
-        <button class="btn-ghost !text-xs" @click="router.push('/community/circles')">🫧 圈子</button>
-        <button class="btn-primary" @click="showComposer = true">✏️ 发帖</button>
+        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/messages')">✉️ 私信</button>
+        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/circles')">🫧 圈子</button>
+        <button class="btn-primary" @click="openComposer">✏️ 发帖</button>
       </div>
     </div>
 

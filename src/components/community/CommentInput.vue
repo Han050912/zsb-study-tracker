@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue'
 import { uploadImage, IMAGE_MAX_BYTES, IMAGE_MAX_PER_COMMENT } from '../../api/community'
+import { isLoggedIn } from '../../services/auth'
 
 /**
  * 评论输入框：presetText 变化时填充（用于「回复 @某人」前缀）。
@@ -85,9 +86,10 @@ function send() {
   <div class="space-y-2">
     <div class="flex gap-2 items-end">
       <textarea ref="inputRef" v-model="text" rows="1" maxlength="1000" class="input flex-1"
-        :placeholder="placeholder" @keydown.enter.exact.prevent="send" @paste="onPaste"></textarea>
-      <button class="btn-ghost !px-2.5 shrink-0" title="添加图片（最多 3 张）" @click="fileInput?.click()">🖼️</button>
-      <button class="btn-primary shrink-0" :disabled="!text.trim() || uploading" @click="send">
+        :disabled="!isLoggedIn" :placeholder="isLoggedIn ? placeholder : '登录后参与评论…'"
+        @keydown.enter.exact.prevent="send" @paste="onPaste"></textarea>
+      <button v-if="isLoggedIn" class="btn-ghost !px-2.5 shrink-0" title="添加图片（最多 3 张）" @click="fileInput?.click()">🖼️</button>
+      <button v-if="isLoggedIn" class="btn-primary shrink-0" :disabled="!text.trim() || uploading" @click="send">
         {{ uploading ? '上传中…' : '发送' }}
       </button>
     </div>

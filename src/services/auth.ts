@@ -68,3 +68,10 @@ export async function login(username: string, password: string, cfTurnstileToken
 export function logout(): void {
   setSession(null)
 }
+
+/** 访客触发需登录操作时跳转登录页；返回 true 表示「已因未登录而拦截」 */
+export function requireLogin(router: { push: (p: string) => void }): boolean {
+  if (isLoggedIn.value) return false
+  router.push('/login')
+  return true
+}

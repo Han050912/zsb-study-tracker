@@ -266,7 +266,7 @@ export async function commentCascadeStatements(env: Env, commentId: string, post
 
 export function registerCommunityRoutes() {
   // 帖子列表（游标分页；默认仅广场公开帖，circle 参数显式指定圈内流）
-  on('GET', '/api/community/posts', true, async (ctx) => {
+  on('GET', '/api/community/posts', false, async (ctx) => {
     const url = new URL(ctx.request.url)
     const sort = url.searchParams.get('sort') === 'hot' ? 'hot' : 'latest'
     const tag = (url.searchParams.get('tag') || '').trim()
@@ -330,7 +330,7 @@ export function registerCommunityRoutes() {
   })
 
   // 帖子详情（含评论列表，前端组装二级树；管理员可见隐藏内容）
-  on('GET', '/api/community/posts/:id', true, async (ctx) => {
+  on('GET', '/api/community/posts/:id', false, async (ctx) => {
     const admin = await isAdmin(ctx.env, ctx.userId)
     const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0'
     const post = await first(ctx.env, `${POST_SELECT} WHERE ${postWhere}`, ctx.userId, ctx.params.id)
@@ -1083,7 +1083,7 @@ export function registerCommunityRoutes() {
   })
 
   // 每日一题：最新一条被标记且未隐藏的帖子（广场顶部展示）
-  on('GET', '/api/community/daily', true, async (ctx) => {
+  on('GET', '/api/community/daily', false, async (ctx) => {
     const row = await first<any>(ctx.env,
       `${POST_SELECT} WHERE p.is_daily = 1 AND p.is_hidden = 0 ORDER BY p.created_at DESC LIMIT 1`, ctx.userId)
     return Response.json({ post: row ? mapPost(row) : null })

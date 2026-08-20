@@ -3,7 +3,7 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
-import { sessionUser, isAdmin } from '../services/auth'
+import { sessionUser, isAdmin, requireLogin } from '../services/auth'
 import type { CommunityComment, CommunityPost } from '../types'
 import PostCard from '../components/community/PostCard.vue'
 import CommentItem from '../components/community/CommentItem.vue'
@@ -58,6 +58,7 @@ function findComment(id: string): CommunityComment | undefined {
 
 // ---- 点赞 ----
 async function likePost() {
+  if (requireLogin(router)) return
   if (!post.value) return
   const liked = await store.likePost(postId).catch((e: any) => { toast(e?.message || '操作失败'); return null })
   if (liked === null) return
@@ -66,6 +67,7 @@ async function likePost() {
 }
 
 async function likeComment(c: CommunityComment) {
+  if (requireLogin(router)) return
   const liked = await store.likeComment(c.id).catch((e: any) => { toast(e?.message || '操作失败'); return null })
   if (liked === null) return
   // 一级评论在 commentTree 中被展开为副本（携带 replies），必须更新原始数组中的对象
@@ -81,6 +83,7 @@ const replyTarget = ref<CommunityComment | null>(null)
 const presetText = ref('')
 
 function reply(c: CommunityComment) {
+  if (requireLogin(router)) return
   // 回复二级评论时，parentId 仍指向其一级评论（最多二级）
   replyTarget.value = c.parentId ? (findComment(c.parentId) || c) : c
   presetText.value = ''
@@ -88,6 +91,7 @@ function reply(c: CommunityComment) {
 }
 
 async function send(text: string, imageUrls: string[]) {
+  if (requireLogin(router)) return
   try {
     const c = await store.postComment(postId, text, replyTarget.value?.id, imageUrls)
     comments.value.push(c)
@@ -147,12 +151,14 @@ function openLightbox(i: number) {
 const showReport = ref(false)
 const reportTarget = ref<{ type: 'post' | 'comment'; id: string }>({ type: 'post', id: '' })
 function openReport(type: 'post' | 'comment', id: string) {
+  if (requireLogin(router)) return
   reportTarget.value = { type, id }
   showReport.value = true
 }
 
 // ---- 提问帖标记解决 ----
 async function toggleResolve() {
+  if (requireLogin(router)) return
   if (!post.value) return
   try {
     const { isResolved } = await communityApi.resolvePost(postId)
@@ -175,6 +181,7 @@ function acceptVisible(c: CommunityComment) {
 const accepting = ref(false) // 采纳请求在途标记：防止双击并发采纳导致积分重复发放
 
 async function accept(c: CommunityComment) {
+  if (requireLogin(router)) return
   if (!post.value || accepting.value) return
   const current = post.value.acceptedAnswerId
   if (current === c.id) {
@@ -210,6 +217,7 @@ function openCommentLightbox(c: CommunityComment, i: number) {
 const showProfile = ref(false)
 const profileUserId = ref('')
 function openProfile(userId: string) {
+  if (requireLogin(router)) return
   profileUserId.value = userId
   showProfile.value = true
 }

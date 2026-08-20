@@ -192,27 +192,30 @@ if (window.nav) {
       <div v-if="!navCollapsed" class="px-5 py-3 text-[10px] text-slate-400">积分 {{ store.gamification.points }} · 🔥{{ store.gamification.streak }}天</div>
     </aside>
 
-    <!-- 右上角通知铃铛 + 账号头像入口（个人中心 / 切换账号 / 退出登录）；笔记编辑态隐藏 -->
+    <!-- 右上角：登录态显示通知铃铛 + 账号头像入口；访客态显示登录按钮 -->
     <div v-if="!hideNav && !isNotesEditing" class="fixed top-3 right-4 z-40 flex items-center gap-2">
-      <button class="relative w-9 h-9 rounded-full bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-base flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
-        title="通知中心" @click="router.push('/community/notifications')">
-        🔔
-        <span v-if="community.unreadCount"
-          class="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">
-          {{ community.unreadCount > 99 ? '99+' : community.unreadCount }}
-        </span>
-      </button>
-      <button class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
-        title="账号菜单" @click.stop="avatarOpen = !avatarOpen">
-        {{ avatarLetter }}
-      </button>
-      <!-- 点击遮罩关闭下拉 -->
-      <div v-if="avatarOpen" class="fixed inset-0 z-40" @click="avatarOpen = false"></div>
-      <div v-if="avatarOpen" class="absolute right-0 top-11 z-50 w-40 rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-lg py-1.5">
-        <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goAccount">👤 个人中心</button>
-        <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="accountLogout(true)">🔁 切换账号</button>
-        <button class="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" @click="accountLogout(false)">🚪 退出登录</button>
-      </div>
+      <template v-if="isLoggedIn">
+        <button class="relative w-9 h-9 rounded-full bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-base flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
+          title="通知中心" @click="router.push('/community/notifications')">
+          🔔
+          <span v-if="community.unreadCount"
+            class="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">
+            {{ community.unreadCount > 99 ? '99+' : community.unreadCount }}
+          </span>
+        </button>
+        <button class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
+          title="账号菜单" @click.stop="avatarOpen = !avatarOpen">
+          {{ avatarLetter }}
+        </button>
+        <div v-if="avatarOpen" class="fixed inset-0 z-40" @click="avatarOpen = false"></div>
+        <div v-if="avatarOpen" class="absolute right-0 top-11 z-50 w-40 rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-lg py-1.5">
+          <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goAccount">👤 个人中心</button>
+          <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="accountLogout(true)">🔁 切换账号</button>
+          <button class="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" @click="accountLogout(false)">🚪 退出登录</button>
+        </div>
+      </template>
+      <button v-else class="px-4 py-2 rounded-full bg-primary-500 text-white text-sm font-semibold shadow-md hover:bg-primary-600 hover:shadow-lg transition-colors"
+        @click="router.push('/login')">登录</button>
     </div>
 
     <!-- 主内容（非全屏页顶部预留头像入口空间，避免遮挡页面标题栏右侧操作区；笔记编辑态不预留，工具栏置顶） -->
