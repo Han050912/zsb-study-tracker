@@ -14,6 +14,55 @@
 --   CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at);
 --   CREATE TABLE IF NOT EXISTS community_moderation_log ( id TEXT PRIMARY KEY, admin_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, report_id TEXT, reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL );
 --   CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at);
+
+-- ========== 组队挑战（P2-2）==========
+-- 学习小组：多人组队完成打卡/刷题目标，达标全员获团队徽章
+CREATE TABLE IF NOT EXISTS study_teams (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,                    -- 1-30 字
+  description TEXT NOT NULL DEFAULT '',  -- 0-200 字
+  creator_id TEXT NOT NULL REFERENCES users(id),
+  member_count INTEGER NOT NULL DEFAULT 0,
+  max_members INTEGER NOT NULL DEFAULT 10, -- 最大成员数（默认 10 人）
+  is_public INTEGER NOT NULL DEFAULT 1,    -- 1 公开可见可加入；0 仅邀请
+  created_at INTEGER NOT NULL
+);
+
+-- 小组成员：role 区分队长；active_challenges 冗余当前活跃挑战数（用于列表展示）
+CREATE TABLE IF NOT EXISTS team_members (
+  team_id TEXT NOT NULL REFERENCES study_teams(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  role TEXT NOT NULL DEFAULT 'member',   -- 'leader' | 'member'
+  joined_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tmembers_user ON team_members(user_id);
+
+-- 组队挑战：目标类型支持打卡天数/学习时长/刷题数
+CREATE TABLE IF NOT EXISTS team_challenges (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES study_teams(id),
+  type TEXT NOT NULL,                    -- 'streak' | 'minutes' | 'problems'
+  target INTEGER NOT NULL,               -- 目标值（天数/分钟数/题数）
+  duration_days INTEGER NOT NULL,        -- 挑战持续天数
+  start_date TEXT NOT NULL,              -- 'YYYY-MM-DD'
+  end_date TEXT NOT NULL,                -- 'YYYY-MM-DD'（含当天）
+  completed_count INTEGER NOT NULL DEFAULT 0, -- 已达标成员数
+  is_completed INTEGER NOT NULL DEFAULT 0,    -- 全员达标标记
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tchallenges_team ON team_challenges(team_id, created_at);
+
+-- 挑战成员进度：记录每个成员的完成情况
+CREATE TABLE IF NOT EXISTS team_challenge_progress (
+  challenge_id TEXT NOT NULL REFERENCES team_challenges(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  current_value INTEGER NOT NULL DEFAULT 0, -- 当前进度值
+  is_completed INTEGER NOT NULL DEFAULT 0,  -- 是否已达标
+  completed_at INTEGER,                     -- 达标时间
+  PRIMARY KEY (challenge_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id);
 -- 已建库升级：社区增强 P1（最佳答案/精华帖/评论图片），执行一次：
 --   ALTER TABLE community_posts ADD COLUMN accepted_answer_id TEXT;
 --   ALTER TABLE community_posts ADD COLUMN is_featured INTEGER NOT NULL DEFAULT 0;
@@ -40,6 +89,16 @@
 --   CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
 -- 已建库升级：社区增强 P2（知识点讨论区），执行一次：
 --   ALTER TABLE community_posts ADD COLUMN topic_ref TEXT;
+--   ALTER TABLE community_posts ADD COLUMN ref_type TEXT;
+--   ALTER TABLE community_posts ADD COLUMN ref_id TEXT;
+-- 已建库升级：组队挑战（P2-2），执行一次：
+--   CREATE TABLE IF NOT EXISTS study_teams ( id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', creator_id TEXT NOT NULL REFERENCES users(id), member_count INTEGER NOT NULL DEFAULT 0, max_members INTEGER NOT NULL DEFAULT 10, is_public INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL );
+--   CREATE TABLE IF NOT EXISTS team_members ( team_id TEXT NOT NULL REFERENCES study_teams(id), user_id TEXT NOT NULL REFERENCES users(id), role TEXT NOT NULL DEFAULT 'member', joined_at INTEGER NOT NULL, PRIMARY KEY (team_id, user_id) );
+--   CREATE INDEX IF NOT EXISTS idx_tmembers_user ON team_members(user_id);
+--   CREATE TABLE IF NOT EXISTS team_challenges ( id TEXT PRIMARY KEY, team_id TEXT NOT NULL REFERENCES study_teams(id), type TEXT NOT NULL, target INTEGER NOT NULL, duration_days INTEGER NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL, completed_count INTEGER NOT NULL DEFAULT 0, is_completed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_tchallenges_team ON team_challenges(team_id, created_at);
+--   CREATE TABLE IF NOT EXISTS team_challenge_progress ( challenge_id TEXT NOT NULL REFERENCES team_challenges(id), user_id TEXT NOT NULL REFERENCES users(id), current_value INTEGER NOT NULL DEFAULT 0, is_completed INTEGER NOT NULL DEFAULT 0, completed_at INTEGER, PRIMARY KEY (challenge_id, user_id) );
+--   CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id);
 -- 已建库升级：社区 P1 进步榜（学习进度对比），执行一次：
 --   ALTER TABLE user_settings ADD COLUMN join_progress_board INTEGER NOT NULL DEFAULT 0;
 -- 已建库升级：热门话题运营位（P1），执行一次：
