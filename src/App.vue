@@ -5,6 +5,7 @@ import { useAppStore } from './stores/app'
 import { useCommunityStore } from './stores/community'
 import { sessionUser, logout, isLoggedIn, isAdmin } from './services/auth'
 import { restartReminder } from './services/reminder'
+import { startTodoReminder, checkTodoReminders } from './services/todoReminder'
 import Toast from './components/Toast.vue'
 import AchievementModal from './components/AchievementModal.vue'
 import Onboarding from './components/Onboarding.vue'
@@ -82,6 +83,21 @@ watch(
     )
   },
   { immediate: true }
+)
+
+// ---- 待办开始 / 最晚截止提醒（见 src/services/todoReminder.ts）----
+// 应用运行期间后台轮询，到点弹系统通知；桌面端最小化到托盘后仍可收到
+onMounted(() => {
+  startTodoReminder({
+    getTodos: () => store.todos,
+    onNotified: (ids, kind) => store.markTodosNotified(ids, kind),
+    onFallback: msg => toastRef.value?.show(msg)
+  })
+})
+// 云端数据到位、新增待办或改动时间后立即检查一次，无需等下一轮轮询
+watch(
+  () => store.todos.map(t => `${t.id}:${t.startAt ?? ''}:${t.dueAt ?? ''}:${t.done ? 1 : 0}`).join('|'),
+  () => checkTodoReminders()
 )
 
 const isPomodoro = computed(() => route.path === '/pomodoro')
