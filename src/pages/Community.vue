@@ -294,7 +294,7 @@ async function removePost(id: string) {
     <div v-if="store.feedLoading" class="text-center text-xs text-slate-400 py-2">加载中…</div>
     <div v-else-if="!store.hasMore && store.posts.length" class="text-center text-xs text-slate-400 py-2">没有更多了</div>
 
-    <PostComposer v-model:show="showComposer" type="share" allow-type-switch />
+    <PostComposer v-model:show="showComposer" type="share" allow-type-switch allow-template />
     <ReportDialog v-model:show="showReport" target-type="post" :target-id="reportPostId" />
     <UserProfileModal v-model:show="showProfile" :user-id="profileUserId" />
   </div>

@@ -28,7 +28,9 @@ const props = withDefaults(defineProps<{
   refId?: string
   /** 允许在「分享 / 提问」之间切换（仅广场主发帖入口开启） */
   allowTypeSwitch?: boolean
-}>(), { presetContent: '', presetTags: () => [], circleId: undefined, topicRef: undefined, refType: undefined, refId: undefined, allowTypeSwitch: false })
+  /** 允许填入「经验帖」结构化模板（仅广场主发帖入口开启） */
+  allowTemplate?: boolean
+}>(), { presetContent: '', presetTags: () => [], circleId: undefined, topicRef: undefined, refType: undefined, refId: undefined, allowTypeSwitch: false, allowTemplate: false })
 
 const emit = defineEmits<{ 'update:show': [boolean]; posted: [] }>()
 
@@ -126,6 +128,20 @@ const mdActions = [
   { icon: 'Σ', title: '行内公式', run: () => insertMd('$', '$', 'E=mc^2') },
   { icon: 'ΣΣ', title: '块级公式', run: () => insertMd('\n$$\n', '\n$$\n', 'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}') }
 ]
+
+/** 经验帖结构化模板文案（科目/方法/心得/建议四段） */
+const EXPERIENCE_TEMPLATE = [
+  '📚 科目：',
+  '💡 学习方法：',
+  '🎯 心得体会：',
+  '📮 给后来人的建议：'
+].join('\n')
+
+function applyExperienceTemplate() {
+  if (content.value.trim() && !window.confirm('替换当前内容为经验帖模板？')) return
+  content.value = EXPERIENCE_TEMPLATE
+  if (!tags.value.includes('#升本经验') && tags.value.length < 5) tags.value.push('#升本经验')
+}
 
 function switchType(t: PostType) {
   postType.value = t
@@ -246,6 +262,9 @@ async function submit() {
       <button v-for="a in mdActions" :key="a.title" type="button"
         class="px-1.5 py-1 rounded text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-primary-500 transition-colors"
         :title="a.title" :disabled="preview" @click="a.run">{{ a.icon }}</button>
+      <button v-if="allowTemplate && !isQuestion" type="button"
+        class="px-1.5 py-1 rounded text-[11px] font-medium text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 hover:text-emerald-600 transition-colors"
+        title="填入经验帖结构化模板" @click="applyExperienceTemplate">📝 经验帖</button>
       <div class="flex-1"></div>
       <div class="flex bg-slate-100 dark:bg-slate-700 rounded-md p-0.5 text-[10px]">
         <button class="px-2 py-1 rounded transition-colors"
