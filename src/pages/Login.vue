@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
+import { Eye, EyeOff } from '@lucide/vue'
 import { login, register } from '../services/auth'
 import { useAppStore } from '../stores/app'
 
@@ -11,6 +12,8 @@ const mode = ref<'login' | 'register'>('login')
 const username = ref('')
 const password = ref('')
 const confirmPassword = ref('')
+const showPassword = ref(false)
+const showConfirmPassword = ref(false)
 const errorMsg = ref('')
 const loading = ref(false)
 
@@ -37,6 +40,8 @@ function switchMode(m: 'login' | 'register') {
   errorMsg.value = ''
   password.value = ''
   confirmPassword.value = ''
+  showPassword.value = false
+  showConfirmPassword.value = false
   turnstileWidget.value?.reset()
 }
 
@@ -110,13 +115,34 @@ async function submit() {
           </div>
           <div>
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">密码</label>
-            <input v-model="password" type="password" class="input" maxlength="128"
-              :placeholder="mode === 'register' ? '至少 6 位' : '请输入密码'"
-              :autocomplete="mode === 'register' ? 'new-password' : 'current-password'" />
+            <div class="relative">
+              <input v-model="password" :type="showPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
+                :placeholder="mode === 'register' ? '至少 6 位' : '请输入密码'"
+                :autocomplete="mode === 'register' ? 'new-password' : 'current-password'" />
+              <button type="button"
+                class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                :class="showPassword ? 'text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'"
+                :aria-label="showPassword ? '隐藏密码' : '显示密码'" :aria-pressed="showPassword"
+                @click="showPassword = !showPassword">
+                <Eye v-if="!showPassword" :size="16" aria-hidden="true" />
+                <EyeOff v-else :size="16" aria-hidden="true" />
+              </button>
+            </div>
           </div>
           <div v-if="mode === 'register'">
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">确认密码</label>
-            <input v-model="confirmPassword" type="password" class="input" maxlength="128" placeholder="再次输入密码" autocomplete="new-password" />
+            <div class="relative">
+              <input v-model="confirmPassword" :type="showConfirmPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
+                placeholder="再次输入密码" autocomplete="new-password" />
+              <button type="button"
+                class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                :class="showConfirmPassword ? 'text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'"
+                :aria-label="showConfirmPassword ? '隐藏密码' : '显示密码'" :aria-pressed="showConfirmPassword"
+                @click="showConfirmPassword = !showConfirmPassword">
+                <Eye v-if="!showConfirmPassword" :size="16" aria-hidden="true" />
+                <EyeOff v-else :size="16" aria-hidden="true" />
+              </button>
+            </div>
           </div>
 
           <!-- Turnstile 人机验证（仅 Web 端渲染，桌面端产物不含此组件） -->
