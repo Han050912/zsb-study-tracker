@@ -59,8 +59,8 @@ export function registerPartnerRoutes() {
       LEFT JOIN user_settings s ON s.user_id = u.id
       LEFT JOIN gamification g ON g.user_id = u.id
       WHERE u.id != ?
-        AND u.id NOT IN (SELECT to_id FROM study_partners WHERE from_id = ?)
-        AND u.id NOT IN (SELECT from_id FROM study_partners WHERE to_id = ?)
+        AND u.id NOT IN (SELECT to_id FROM study_partners WHERE from_id = ? AND status != 'rejected')
+        AND u.id NOT IN (SELECT from_id FROM study_partners WHERE to_id = ? AND status != 'rejected')
       ORDER BY g.points DESC
       LIMIT 50`, ctx.userId, ctx.userId, ctx.userId)
 
@@ -111,30 +111,44 @@ export function registerPartnerRoutes() {
     return Response.json({ partners, incoming })
   })
 
-  // 发起搭子请求（若对方已向我发 pending，则自动互相接受）
+  // 发起搭子请求（pair_key 唯一约束根治并发；pending 反向 = 互相接受；rejected 后重发回 pending）
   on('POST', '/api/community/partners/:userId', true, async (ctx) => {
     rateLimit(ctx.request, 'community:partner', 10)
     const targetId = ctx.params.userId
     if (targetId === ctx.userId) throw new HttpError(400, '不能与自己成为搭子')
     const target = await first(ctx.env, 'SELECT id FROM users WHERE id = ?', targetId)
     if (!target) throw new HttpError(404, '用户不存在')
-    const reverse = await first<{ id: string }>(ctx.env,
-      `SELECT id FROM study_partners WHERE from_id = ? AND to_id = ? AND status = 'pending'`, targetId, ctx.userId)
-    if (reverse) {
+    const pairKey = [ctx.userId, targetId].sort().join(':')
+
+    const existing = await first<{ id: string; from_id: string; to_id: string; status: string }>(ctx.env,
+      'SELECT id, from_id, to_id, status FROM study_partners WHERE pair_key = ?', pairKey)
+    if (existing) {
+      if (existing.status === 'accepted') throw new HttpError(400, '你们已是搭子')
+      if (existing.status === 'pending') {
+        if (existing.to_id === ctx.userId) {
+          // 对方已向我发 pending → 互相接受
+          await batch(ctx.env, [
+            ctx.env.DB.prepare('UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?').bind('accepted', nowSec(), existing.id),
+            notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '🤝 有人已成为你的学习搭子' })
+          ])
+          return Response.json({ accepted: true })
+        }
+        throw new HttpError(400, '已发送过请求')
+      }
+      // rejected → 重新发起：方向改为我→对方
       await batch(ctx.env, [
-        ctx.env.DB.prepare(`UPDATE study_partners SET status = 'accepted', updated_at = ? WHERE id = ?`).bind(nowSec(), reverse.id),
-        notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '🤝 有人已成为你的学习搭子' })
+        ctx.env.DB.prepare('UPDATE study_partners SET from_id = ?, to_id = ?, status = ?, updated_at = ? WHERE id = ?')
+          .bind(ctx.userId, targetId, 'pending', nowSec(), existing.id),
+        notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '有人想成为你的学习搭子，去看看' })
       ])
-      return Response.json({ accepted: true })
+      return Response.json({ accepted: false }, { status: 201 })
     }
-    const existing = await first(ctx.env,
-      `SELECT 1 AS x FROM study_partners WHERE ((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)) AND status != 'rejected'`,
-      ctx.userId, targetId, targetId, ctx.userId)
-    if (existing) throw new HttpError(400, '已发送过请求或已是搭子')
+
+    // 不存在 → INSERT（UNIQUE 约束防并发重复；并发时一方会因冲突 500，重试即命中「reverse pending → accepted」）
     const id = uid()
     await batch(ctx.env, [
-      ctx.env.DB.prepare('INSERT INTO study_partners (id, from_id, to_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .bind(id, ctx.userId, targetId, 'pending', nowSec(), nowSec()),
+      ctx.env.DB.prepare('INSERT INTO study_partners (id, pair_key, from_id, to_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .bind(id, pairKey, ctx.userId, targetId, 'pending', nowSec(), nowSec()),
       notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '有人想成为你的学习搭子，去看看' })
     ])
     return Response.json({ accepted: false }, { status: 201 })
