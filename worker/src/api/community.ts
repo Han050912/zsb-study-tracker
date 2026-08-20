@@ -363,6 +363,19 @@ export function registerCommunityRoutes() {
   on('POST', '/api/community/posts', true, async (ctx) => {
     rateLimit(ctx.request, 'community:post', 5)
     const b = await body(ctx.request)
+    // 分级发帖冷却：青铜(0-499)10min / 白银(500-1499)5min / 黄金(1500+)不限
+    const myPoints = await first<{ points: number }>(ctx.env,
+      'SELECT COALESCE(points, 0) AS points FROM gamification WHERE user_id = ?', ctx.userId)
+    const pts = myPoints?.points ?? 0
+    const cooldown = pts < 500 ? 600 : pts < 1500 ? 300 : 0
+    if (cooldown > 0) {
+      const last = await first<{ created_at: number }>(ctx.env,
+        'SELECT created_at FROM community_posts WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', ctx.userId)
+      if (last && nowSec() - last.created_at < cooldown) {
+        const wait = Math.ceil((cooldown - (nowSec() - last.created_at)) / 60)
+        throw new HttpError(429, `发帖过于频繁，请 ${wait} 分钟后再试`)
+      }
+    }
     const content = String(b?.content ?? '').trim()
     if (!content || content.length > 5000) throw new HttpError(400, '帖子内容需为 1-5000 字')
     assertClean(content)
