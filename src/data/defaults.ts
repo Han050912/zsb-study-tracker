@@ -89,7 +89,8 @@ export const COMMUNITY_BADGES: CommunityBadgeDef[] = [
   { key: 'streak_100', name: '连续打卡 100 天', desc: '连续学习打卡满 100 天', icon: '👑' },
   { key: 'likes_100', name: '百赞达人', desc: '帖子与评论累计获赞 100', icon: '❤️' },
   { key: 'answer_expert', name: '答疑专家', desc: '回答被采纳满 10 次', icon: '🎓' },
-  { key: 'image_50', name: '图片达人', desc: '累计上传 50 张图片', icon: '📸' }
+  { key: 'image_50', name: '图片达人', desc: '累计上传 50 张图片', icon: '📸' },
+  { key: 'team_champion', name: '团队冠军', desc: '参与的小组挑战全员达标', icon: '🏆' }
 ]
 
 /** 按积分换算等级（与 store.level getter 同一口径） */

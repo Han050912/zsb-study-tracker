@@ -65,6 +65,7 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
         </div>
       </div>
       <!-- 状态徽章 -->
+      <span v-if="post.refType === 'badge'" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">🎖 成就达成</span>
       <span v-if="post.isPinned" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">📌 置顶</span>
       <span v-if="post.isFeatured" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">🌟 精华</span>
       <span v-if="post.isDaily" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400">📅 每日一题</span>
