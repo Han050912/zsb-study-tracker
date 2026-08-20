@@ -1323,6 +1323,89 @@ export function registerCommunityRoutes() {
     })
   })
 
+  // 个性化推荐：帖子(关注作者/常用tag) + 圈子(人气) + 用户(活跃同科目)；冷启动回退热门
+  on('GET', '/api/community/recommend', true, async (ctx) => {
+    const weekAgoDate = new Date(Date.now() + 8 * 3600_000 - 7 * 86400_000).toISOString().slice(0, 10)
+
+    // 1. 我的常用 tag（近 30 天我发过/赞过/评论过的帖子 tags）
+    const myTags = await all<{ tag: string }>(ctx.env, `
+      SELECT t.value AS tag FROM (
+        SELECT p.tags FROM community_posts p WHERE p.user_id = ? AND p.created_at >= ?
+        UNION ALL SELECT p.tags FROM community_posts p
+          JOIN community_likes l ON l.target_type = 'post' AND l.target_id = p.id AND l.user_id = ?
+        UNION ALL SELECT p.tags FROM community_posts p
+          JOIN community_comments c ON c.post_id = p.id AND c.user_id = ?
+      ) x, json_each(x.tags) t
+      WHERE t.value LIKE '#%' GROUP BY t.value ORDER BY COUNT(*) DESC LIMIT 5`,
+      ctx.userId, nowSec() - 30 * 86400, ctx.userId, ctx.userId)
+    const tags = myTags.map(r => r.tag)
+    const followIds = (await all<{ followee_id: string }>(ctx.env,
+      'SELECT followee_id FROM user_follows WHERE follower_id = ?', ctx.userId)).map(r => r.followee_id)
+
+    // 2. 帖子推荐：关注作者 OR 常用 tag；无信号或结果为空则回退热门
+    let postRows: any[]
+    const postsParams: unknown[] = []
+    let postWhere = 'p.is_hidden = 0 AND p.circle_id IS NULL'
+    if (followIds.length || tags.length) {
+      const ors: string[] = []
+      if (followIds.length) { ors.push(`p.user_id IN (${followIds.map(() => '?').join(',')})`); postsParams.push(...followIds) }
+      if (tags.length) { ors.push(`EXISTS (SELECT 1 FROM json_each(p.tags) j WHERE j.value IN (${tags.map(() => '?').join(',')}))`); postsParams.push(...tags) }
+      postWhere += ` AND (${ors.join(' OR ')})`
+    }
+    postRows = await all<any>(ctx.env,
+      `${POST_SELECT} WHERE ${postWhere} ORDER BY (p.likes_count * 2 + p.comments_count * 3) DESC, p.created_at DESC LIMIT 10`,
+      ctx.userId, ctx.userId, ...postsParams)
+    if (!postRows.length) {
+      postRows = await all<any>(ctx.env,
+        `${POST_SELECT} WHERE p.is_hidden = 0 AND p.circle_id IS NULL ORDER BY (p.likes_count * 2 + p.comments_count * 3) DESC, p.created_at DESC LIMIT 10`,
+        ctx.userId, ctx.userId)
+    }
+
+    // 3. 圈子推荐：人气降序，排除已加入
+    const circles = await all<any>(ctx.env, `
+      SELECT c.id, c.name, c.description, c.creator_id, c.is_public, c.member_count, c.created_at,
+        (cm.user_id IS NOT NULL) AS joined
+      FROM community_circles c
+      LEFT JOIN community_circle_members cm ON cm.circle_id = c.id AND cm.user_id = ?
+      WHERE c.is_public = 1
+      ORDER BY c.member_count DESC, c.created_at DESC
+      LIMIT 5`, ctx.userId)
+    const circleList = circles.map((r: any) => ({
+      id: r.id, name: r.name, description: r.description, creatorId: r.creator_id,
+      isPublic: !!r.is_public, memberCount: r.member_count, createdAt: r.created_at,
+      myStatus: r.joined ? 'member' : null
+    }))
+
+    // 4. 用户推荐：近 7 天活跃 + 同薄弱科目；排除自己/已关注
+    const weakMine = await all<{ subject_id: string }>(ctx.env, `
+      SELECT c.subject_id FROM topics t JOIN chapters c ON c.id = t.chapter_id AND c.user_id = t.user_id
+      WHERE t.user_id = ? AND t.mastery > 0 GROUP BY c.subject_id HAVING AVG(t.mastery) < 3`, ctx.userId)
+    const myWeak = weakMine.map(r => r.subject_id)
+    const activeUsers = await all<any>(ctx.env, `
+      SELECT r.user_id, COALESCE(s.user_name, u.username) AS user_name, u.verified,
+        COALESCE(g.points, 0) AS total_points, SUM(r.minutes) AS minutes
+      FROM study_records r
+      JOIN users u ON u.id = r.user_id
+      LEFT JOIN user_settings s ON s.user_id = r.user_id
+      LEFT JOIN gamification g ON g.user_id = r.user_id
+      WHERE r.date >= ? AND r.user_id != ?
+        AND r.user_id NOT IN (SELECT followee_id FROM user_follows WHERE follower_id = ?)
+      GROUP BY r.user_id ORDER BY minutes DESC LIMIT 20`, weekAgoDate, ctx.userId, ctx.userId)
+    const users = []
+    for (const u of activeUsers) {
+      const uWeak = (await all<{ subject_id: string }>(ctx.env, `
+        SELECT c.subject_id FROM topics t JOIN chapters c ON c.id = t.chapter_id AND c.user_id = t.user_id
+        WHERE t.user_id = ? AND t.mastery > 0 GROUP BY c.subject_id HAVING AVG(t.mastery) < 3`, u.user_id)).map(r => r.subject_id)
+      const overlap = uWeak.filter((s: string) => myWeak.includes(s)).length
+      users.push({
+        userId: u.user_id, userName: u.user_name || '升本人', verified: !!u.verified,
+        totalPoints: u.total_points, reason: overlap ? '与你有相同的薄弱科目' : '近一周学习活跃'
+      })
+    }
+
+    return Response.json({ posts: postRows.map(mapPost), circles: circleList, users: users.slice(0, 5) })
+  })
+
   // 热门话题运营位：近 7 天帖子 tag 频次自动统计（D1 JSON1），叠加管理员 pin/block 干预，上限 5 条
   on('GET', '/api/community/hot-topics', false, async (ctx) => {
     const overrides = await all<{ id: string; text: string; tag: string; action: string }>(ctx.env,
