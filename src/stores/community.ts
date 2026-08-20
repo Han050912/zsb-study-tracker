@@ -175,12 +175,15 @@ export const useCommunityStore = defineStore('community', {
           p.likesCount = Math.max(0, p.likesCount - 1)
         }
       }
+      await this.syncGamification()
       return res
     },
 
     /** 评论踩 toggle（与赞互斥）；返回 { disliked, likeRevoked }，详情页自行更新评论树计数 */
     async dislikeComment(id: string): Promise<{ disliked: boolean; likeRevoked?: boolean }> {
-      return await communityApi.dislike('comment', id)
+      const res = await communityApi.dislike('comment', id)
+      await this.syncGamification()
+      return res
     },
 
     /** 发表评论，返回新评论；同步列表内帖子评论数 */

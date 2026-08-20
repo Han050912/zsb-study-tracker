@@ -47,7 +47,6 @@ onMounted(async () => {
     stats.value = s
   } catch (e: any) {
     if (e?.status === 403) error.value = '对方设置了主页仅自己可见'
-    else if (e?.status === 401) error.value = '请登录后查看'
     else error.value = '用户不存在或已注销'
   } finally {
     loading.value = false
