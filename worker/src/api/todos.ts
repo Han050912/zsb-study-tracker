@@ -11,7 +11,11 @@ export const todosMapping = crudHandlers({
     text: b.text,
     done: b.done ? 1 : 0,
     order: b.order ?? 0,
-    completed_at: b.completedAt ?? null
+    completed_at: b.completedAt ?? null,
+    start_at: b.startAt ?? null,
+    due_at: b.dueAt ?? null,
+    start_notified_at: b.startNotifiedAt ?? null,
+    due_notified_at: b.dueNotifiedAt ?? null
   }),
   fromRow: (r) => ({
     id: r.id,
@@ -19,7 +23,11 @@ export const todosMapping = crudHandlers({
     text: r.text,
     done: !!r.done,
     order: r.order ?? 0,
-    completedAt: r.completed_at ?? undefined
+    completedAt: r.completed_at ?? undefined,
+    startAt: r.start_at ?? undefined,
+    dueAt: r.due_at ?? undefined,
+    startNotifiedAt: r.start_notified_at ?? undefined,
+    dueNotifiedAt: r.due_notified_at ?? undefined
   })
 })
 
