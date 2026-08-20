@@ -44,6 +44,7 @@ function mapPost(r: any) {
     content: r.content,
     tags: parseStrArray(r.tags),
     imageUrls: parseStrArray(r.image_urls),
+    imageThumbs: parseStrArray(r.image_urls).map(u => u + '?thumb=1'),
     isResolved: !!r.is_resolved,
     acceptedAnswerId: r.accepted_answer_id ?? undefined,
     isFeatured: !!r.is_featured,

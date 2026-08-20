@@ -130,9 +130,32 @@ export function uploadIdsOf(raw: unknown): string[] {
 export async function deleteUploads(env: Env, ids: string[]): Promise<void> {
   if (!ids.length) return
   const ph = ids.map(() => '?').join(',')
-  const rows = await all<{ r2_key: string }>(env, `SELECT r2_key FROM community_uploads WHERE id IN (${ph})`, ...ids)
-  await Promise.all(rows.map(r => env.IMAGES.delete(r.r2_key).catch(e => console.error('R2 删除失败', r.r2_key, e))))
+  const rows = await all<{ r2_key: string; thumb_r2_key: string | null }>(env,
+    `SELECT r2_key, thumb_r2_key FROM community_uploads WHERE id IN (${ph})`, ...ids)
+  await Promise.all(rows.flatMap(r => {
+    const dels: Promise<void>[] = [env.IMAGES.delete(r.r2_key).catch(e => console.error('R2 删除失败', r.r2_key, e))]
+    if (r.thumb_r2_key) dels.push(env.IMAGES.delete(r.thumb_r2_key).catch(e => console.error('R2 删除失败', r.thumb_r2_key, e)))
+    return dels
+  }))
   await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...ids)
+}
+
+/** 惰性清理：删除 30 天前且未被任何帖子/评论引用的孤图（上传时顺带调用，无 cron） */
+export async function cleanupOrphanUploads(env: Env): Promise<void> {
+  const cutoff = nowSec() - 30 * 86400
+  const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null }>(env,
+    'SELECT id, r2_key, thumb_r2_key FROM community_uploads WHERE created_at < ? LIMIT 50', cutoff)
+  for (const r of rows) {
+    const refPost = await first(env,
+      `SELECT 1 AS x FROM community_posts WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
+    const refComment = refPost ? null : await first(env,
+      `SELECT 1 AS x FROM community_comments WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
+    if (!refPost && !refComment) {
+      await env.IMAGES.delete(r.r2_key).catch(() => {})
+      if (r.thumb_r2_key) await env.IMAGES.delete(r.thumb_r2_key).catch(() => {})
+      await run(env, 'DELETE FROM community_uploads WHERE id = ?', r.id)
+    }
+  }
 }
 
 // ---------- 路由 ----------
@@ -192,6 +215,7 @@ export function registerUploadRoutes() {
         'SELECT COUNT(*) AS n FROM community_uploads WHERE user_id = ?', ctx.userId)
       if ((cnt?.n ?? 0) >= 50) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'image_50'))
     }
+    await cleanupOrphanUploads(ctx.env)
     return Response.json({ id, url, size: data.byteLength, contentType: kind.mime }, { status: 201 })
   })
 
@@ -199,14 +223,16 @@ export function registerUploadRoutes() {
   on('GET', '/api/community/images/:id', false, async (ctx) => {
     const { id } = ctx.params
     if (!/^[a-f0-9]{16}$/.test(id)) throw new HttpError(400, '非法图片 ID')
-    const row = await first<{ r2_key: string; content_type: string }>(ctx.env,
-      'SELECT r2_key, content_type FROM community_uploads WHERE id = ?', id)
+    const thumb = new URL(ctx.request.url).searchParams.get('thumb') === '1'
+    const row = await first<{ r2_key: string; thumb_r2_key: string | null; content_type: string }>(ctx.env,
+      'SELECT r2_key, thumb_r2_key, content_type FROM community_uploads WHERE id = ?', id)
     if (!row) throw new HttpError(404, '图片不存在')
-    const obj = await ctx.env.IMAGES.get(row.r2_key)
+    const key = thumb && row.thumb_r2_key ? row.thumb_r2_key : row.r2_key
+    const obj = await ctx.env.IMAGES.get(key)
     if (!obj) throw new HttpError(404, '图片不存在')
     return new Response(obj.body, {
       headers: {
-        'Content-Type': row.content_type,
+        'Content-Type': (thumb && row.thumb_r2_key) ? 'image/webp' : row.content_type,
         'Cache-Control': 'public, max-age=31536000, immutable',
         'X-Content-Type-Options': 'nosniff'
       }

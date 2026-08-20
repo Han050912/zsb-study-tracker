@@ -240,6 +240,8 @@ export interface CommunityPost {
   tags: string[]
   /** 配图路径列表（/api/community/images/<id>，最多 9 张），经 imageUrl() 转绝对地址 */
   imageUrls: string[]
+  /** 列表缩略图路径（对应 imageUrls 加 ?thumb=1，未生成缩略图时回退原图） */
+  imageThumbs: string[]
   /** 提问帖是否已被楼主标记解决（采纳最佳答案时自动置位） */
   isResolved: boolean
   /** 被采纳最佳答案的评论 ID（仅提问帖；取消采纳后为 undefined） */

@@ -90,7 +90,7 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
     <!-- 配图：列表页仅首图 16:9 裁剪缩略；详情页全部展示，点击进灯箱 -->
     <template v-if="post.imageUrls?.length">
       <div v-if="!detail" class="rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700">
-        <img :src="imageUrl(post.imageUrls[0])" loading="lazy"
+        <img :src="imageUrl(post.imageThumbs?.[0] || post.imageUrls[0])" loading="lazy"
           class="w-full aspect-video object-cover" alt="帖子配图" />
         <div v-if="post.imageUrls.length > 1"
           class="text-right text-[10px] text-slate-400 px-1 py-0.5">共 {{ post.imageUrls.length }} 张</div>
