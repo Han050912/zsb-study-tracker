@@ -54,10 +54,12 @@ function mapPost(r: any) {
     refType: r.ref_type ?? undefined,
     refId: r.ref_id ?? undefined,
     likesCount: r.likes_count,
+    dislikesCount: r.dislikes_count,
     commentsCount: r.comments_count,
     isPinned: !!r.is_pinned,
     isHidden: !!r.is_hidden,
     likedByMe: !!r.liked_by_me,
+    dislikedByMe: !!r.disliked_by_me,
     createdAt: r.created_at
   }
 }
@@ -73,9 +75,11 @@ function mapComment(r: any) {
     imageUrls: parseStrArray(r.image_urls),
     userVerified: !!r.user_verified,
     likesCount: r.likes_count,
+    dislikesCount: r.dislikes_count,
     isAccepted: !!r.is_accepted,
     isHidden: !!r.is_hidden,
     likedByMe: !!r.liked_by_me,
+    dislikedByMe: !!r.disliked_by_me,
     createdAt: r.created_at
   }
 }
@@ -96,17 +100,19 @@ function mapNotification(r: any) {
 
 // ---------- 通用 SQL 片段 ----------
 
-/** 帖子查询：JOIN 作者展示名/积分 + 当前用户点赞态。参数顺序固定为 [viewerId, ...] */
+/** 帖子查询：JOIN 作者展示名/积分 + 当前用户点赞/踩态。参数顺序固定为 [viewerId, viewerId, ...] */
 const POST_SELECT = `
   SELECT p.*, COALESCE(s.user_name, u.username) AS user_name, COALESCE(g.points, 0) AS user_points,
     u.verified AS user_verified, ci.name AS circle_name,
-    (l.user_id IS NOT NULL) AS liked_by_me
+    (l.user_id IS NOT NULL) AS liked_by_me,
+    (d.user_id IS NOT NULL) AS disliked_by_me
   FROM community_posts p
   JOIN users u ON u.id = p.user_id
   LEFT JOIN user_settings s ON s.user_id = p.user_id
   LEFT JOIN gamification g ON g.user_id = p.user_id
   LEFT JOIN community_circles ci ON ci.id = p.circle_id
-  LEFT JOIN community_likes l ON l.target_type = 'post' AND l.target_id = p.id AND l.user_id = ?`
+  LEFT JOIN community_likes l ON l.target_type = 'post' AND l.target_id = p.id AND l.user_id = ?
+  LEFT JOIN community_dislikes d ON d.target_type = 'post' AND d.target_id = p.id AND d.user_id = ?`
 
 // ---------- 积分 / 通知 ----------
 
@@ -283,7 +289,7 @@ export function registerCommunityRoutes() {
     const admin = await isAdmin(ctx.env, ctx.userId)
     const where: string[] = []
     if (!admin) where.push('p.is_hidden = 0')
-    const params: unknown[] = [ctx.userId]
+    const params: unknown[] = [ctx.userId, ctx.userId]
     if (type && POST_TYPES.includes(type)) { where.push('p.type = ?'); params.push(type) }
     if (tag) { where.push(`p.tags LIKE ? ESCAPE '\\'`); params.push(`%"${escapeLike(tag)}"%`) }
     if (featured) where.push('p.is_featured = 1')
@@ -333,7 +339,7 @@ export function registerCommunityRoutes() {
   on('GET', '/api/community/posts/:id', false, async (ctx) => {
     const admin = await isAdmin(ctx.env, ctx.userId)
     const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0'
-    const post = await first(ctx.env, `${POST_SELECT} WHERE ${postWhere}`, ctx.userId, ctx.params.id)
+    const post = await first(ctx.env, `${POST_SELECT} WHERE ${postWhere}`, ctx.userId, ctx.userId, ctx.params.id)
     if (!post) throw new HttpError(404, '帖子不存在')
     // 圈子帖：与列表接口同一口径校验可读性（审核圈仅活跃成员/管理员可见）
     if (post.circle_id) await assertCircleReadable(ctx, post.circle_id)
@@ -341,13 +347,15 @@ export function registerCommunityRoutes() {
     const comments = await all(ctx.env, `
       SELECT c.*, COALESCE(s.user_name, u.username) AS user_name,
         u.verified AS user_verified,
-        (l.user_id IS NOT NULL) AS liked_by_me
+        (l.user_id IS NOT NULL) AS liked_by_me,
+        (d.user_id IS NOT NULL) AS disliked_by_me
       FROM community_comments c
       JOIN users u ON u.id = c.user_id
       LEFT JOIN user_settings s ON s.user_id = c.user_id
       LEFT JOIN community_likes l ON l.target_type = 'comment' AND l.target_id = c.id AND l.user_id = ?
+      LEFT JOIN community_dislikes d ON d.target_type = 'comment' AND d.target_id = c.id AND d.user_id = ?
       WHERE ${commentWhere}
-      ORDER BY c.created_at ASC, c.id ASC`, ctx.userId, ctx.params.id)
+      ORDER BY c.created_at ASC, c.id ASC`, ctx.userId, ctx.userId, ctx.params.id)
     return Response.json({ post: mapPost(post), comments: comments.map(mapComment) })
   })
 
@@ -430,7 +438,7 @@ export function registerCommunityRoutes() {
     }
 
     // 刚写入的帖子被并发删除/隐藏时读不回，明确报错而非 500 崩溃
-    const created = await first(ctx.env, `${POST_SELECT} WHERE p.id = ?`, ctx.userId, id)
+    const created = await first(ctx.env, `${POST_SELECT} WHERE p.id = ?`, ctx.userId, ctx.userId, id)
     if (!created) throw new HttpError(500, '发布成功但读取详情失败，请刷新查看')
     return Response.json(mapPost(created), { status: 201 })
   })
@@ -628,6 +636,64 @@ export function registerCommunityRoutes() {
       if ((total?.n ?? 0) >= 100) await batch(ctx.env, await awardBadge(ctx.env, target.user_id, 'likes_100'))
     }
     return Response.json({ liked: true })
+  })
+
+  // 踩/取消踩（toggle，幂等；与赞互斥：踩时若已赞则取消赞并回收积分，防刷分）
+  on('POST', '/api/community/dislikes', true, async (ctx) => {
+    rateLimit(ctx.request, 'community:dislike', 30)
+    const b = await body(ctx.request)
+    const targetType = b?.targetType === 'comment' ? 'comment' : b?.targetType === 'post' ? 'post' : null
+    const targetId = typeof b?.targetId === 'string' ? b.targetId : ''
+    if (!targetType || !targetId) throw new HttpError(400, '参数错误')
+    const table = targetType === 'post' ? 'community_posts' : 'community_comments'
+
+    const existing = await first(ctx.env,
+      'SELECT 1 AS x FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?',
+      ctx.userId, targetType, targetId)
+    if (existing) {
+      await batch(ctx.env, [
+        ctx.env.DB.prepare('DELETE FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?')
+          .bind(ctx.userId, targetType, targetId),
+        ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = MAX(dislikes_count - 1, 0) WHERE id = ?`).bind(targetId)
+      ])
+      return Response.json({ disliked: false })
+    }
+
+    // 校验目标存在 + 圈子可读性
+    const target = await first<{ user_id: string; circle_id?: string | null }>(ctx.env,
+      targetType === 'post'
+        ? 'SELECT user_id, circle_id FROM community_posts WHERE id = ? AND is_hidden = 0'
+        : `SELECT c.user_id, p.circle_id FROM community_comments c
+           JOIN community_posts p ON p.id = c.post_id
+           WHERE c.id = ? AND c.is_hidden = 0`, targetId)
+    if (!target) throw new HttpError(404, '内容不存在')
+    if (target.circle_id) await assertCircleReadable(ctx, target.circle_id)
+
+    // 与赞互斥：若已赞，完整取消赞（删记录 + 计数-1 + 撤通知 + 回收积分）
+    const liked = await first(ctx.env,
+      'SELECT 1 AS x FROM community_likes WHERE user_id = ? AND target_type = ? AND target_id = ?',
+      ctx.userId, targetType, targetId)
+    let likeRevoked = false
+    if (liked) {
+      likeRevoked = true
+      const unlikeStmts: D1PreparedStatement[] = [
+        ctx.env.DB.prepare('DELETE FROM community_likes WHERE user_id = ? AND target_type = ? AND target_id = ?')
+          .bind(ctx.userId, targetType, targetId),
+        ctx.env.DB.prepare(`UPDATE ${table} SET likes_count = MAX(likes_count - 1, 0) WHERE id = ?`).bind(targetId),
+        ctx.env.DB.prepare(
+          `DELETE FROM community_notifications WHERE type = 'like' AND actor_id = ? AND ${targetType === 'post' ? 'post_id' : 'comment_id'} = ?`
+        ).bind(ctx.userId, targetId),
+        ...(await revokeStatements(ctx.env, `srv:like:${ctx.userId}:${targetType}:${targetId}`))
+      ]
+      await batch(ctx.env, unlikeStmts)
+    }
+
+    await batch(ctx.env, [
+      ctx.env.DB.prepare('INSERT INTO community_dislikes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)')
+        .bind(ctx.userId, targetType, targetId, nowSec()),
+      ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = dislikes_count + 1 WHERE id = ?`).bind(targetId)
+    ])
+    return Response.json({ disliked: true, likeRevoked })
   })
 
   // 提问帖标记解决/取消解决（仅楼主；已采纳最佳答案时需先取消采纳，避免「已采纳但未解答」矛盾态）
@@ -1085,7 +1151,7 @@ export function registerCommunityRoutes() {
   // 每日一题：最新一条被标记且未隐藏的帖子（广场顶部展示）
   on('GET', '/api/community/daily', false, async (ctx) => {
     const row = await first<any>(ctx.env,
-      `${POST_SELECT} WHERE p.is_daily = 1 AND p.is_hidden = 0 ORDER BY p.created_at DESC LIMIT 1`, ctx.userId)
+      `${POST_SELECT} WHERE p.is_daily = 1 AND p.is_hidden = 0 ORDER BY p.created_at DESC LIMIT 1`, ctx.userId, ctx.userId)
     return Response.json({ post: row ? mapPost(row) : null })
   })
 

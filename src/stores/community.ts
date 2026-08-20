@@ -163,6 +163,26 @@ export const useCommunityStore = defineStore('community', {
       return liked
     },
 
+    /** 帖子踩 toggle（与赞互斥），同步列表内计数；返回 { disliked, likeRevoked } */
+    async dislikePost(id: string): Promise<{ disliked: boolean; likeRevoked?: boolean }> {
+      const res = await communityApi.dislike('post', id)
+      const p = this.posts.find(x => x.id === id)
+      if (p) {
+        p.dislikedByMe = res.disliked
+        p.dislikesCount = Math.max(0, p.dislikesCount + (res.disliked ? 1 : -1))
+        if (res.likeRevoked) {
+          p.likedByMe = false
+          p.likesCount = Math.max(0, p.likesCount - 1)
+        }
+      }
+      return res
+    },
+
+    /** 评论踩 toggle（与赞互斥）；返回 { disliked, likeRevoked }，详情页自行更新评论树计数 */
+    async dislikeComment(id: string): Promise<{ disliked: boolean; likeRevoked?: boolean }> {
+      return await communityApi.dislike('comment', id)
+    },
+
     /** 发表评论，返回新评论；同步列表内帖子评论数 */
     async postComment(postId: string, content: string, parentId?: string, imageUrls?: string[]): Promise<CommunityComment> {
       const c = await communityApi.addComment(postId, { content, parentId, imageUrls })

@@ -108,6 +108,10 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   ALTER TABLE user_settings ADD COLUMN join_progress_board INTEGER NOT NULL DEFAULT 0;
 -- 已建库升级：热门话题运营位（P1），执行一次：
 --   CREATE TABLE IF NOT EXISTS community_hot_topics ( id TEXT PRIMARY KEY, text TEXT NOT NULL, tag TEXT NOT NULL, action TEXT NOT NULL, created_at INTEGER NOT NULL );
+-- 已建库升级：社区踩投票（P1），执行一次：
+--   ALTER TABLE community_posts ADD COLUMN dislikes_count INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE community_comments ADD COLUMN dislikes_count INTEGER NOT NULL DEFAULT 0;
+--   CREATE TABLE IF NOT EXISTS community_dislikes ( user_id TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, target_type, target_id) );
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -416,6 +420,7 @@ CREATE TABLE IF NOT EXISTS community_posts (
   ref_type TEXT,                       -- 关联源类型：'summary' | 'record' | 'achievement' | 'habit' | 'vocab'
   ref_id TEXT,                         -- 关联源 ID
   likes_count INTEGER NOT NULL DEFAULT 0,
+  dislikes_count INTEGER NOT NULL DEFAULT 0,
   comments_count INTEGER NOT NULL DEFAULT 0,
   is_pinned INTEGER NOT NULL DEFAULT 0,
   is_hidden INTEGER NOT NULL DEFAULT 0,
@@ -437,6 +442,7 @@ CREATE TABLE IF NOT EXISTS community_comments (
   content TEXT NOT NULL,
   image_urls TEXT NOT NULL DEFAULT '[]', -- JSON 数组：评论配图路径（最多 3 张）
   likes_count INTEGER NOT NULL DEFAULT 0,
+  dislikes_count INTEGER NOT NULL DEFAULT 0,
   is_accepted INTEGER NOT NULL DEFAULT 0, -- 是否被采纳为最佳答案（与 posts.accepted_answer_id 冗余保持一致）
   is_hidden INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
@@ -578,4 +584,13 @@ CREATE TABLE IF NOT EXISTS community_hot_topics (
   tag TEXT NOT NULL,                      -- 关联话题 tag（含 # 前缀，与帖子 tags 同格式）
   action TEXT NOT NULL,                   -- 'pin'（强制前置展示） | 'block'（从自动统计剔除）
   created_at INTEGER NOT NULL
+);
+
+-- 踩投票记录：主键 (user_id, target_type, target_id) 去重，保证一人一内容至多一踩
+CREATE TABLE IF NOT EXISTS community_dislikes (
+  user_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,   -- 'post' | 'comment'
+  target_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, target_type, target_id)
 );

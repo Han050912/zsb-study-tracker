@@ -114,6 +114,11 @@ export const communityApi = {
     request<{ ok: boolean }>(`/api/community/comments/${id}`, { method: 'DELETE' }),
   toggleLike: (targetType: 'post' | 'comment', targetId: string) =>
     request<{ liked: boolean }>('/api/community/likes', { method: 'POST', body: JSON.stringify({ targetType, targetId }) }),
+  /** 踩/取消踩（toggle，与赞互斥） */
+  dislike: (targetType: 'post' | 'comment', targetId: string) =>
+    request<{ disliked: boolean; likeRevoked?: boolean }>('/api/community/dislikes', {
+      method: 'POST', body: JSON.stringify({ targetType, targetId })
+    }),
   leaderboard: () => request<CommunityLeaderboard>('/api/community/leaderboard'),
   /** 上周学习周报（惰性计算） */
   weeklyReport: () => request<WeeklyReport>('/api/community/weekly-report'),

@@ -43,6 +43,11 @@ async function like(id: string) {
   try { await store.likePost(id) } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
+async function dislike(id: string) {
+  if (requireLogin(router)) return
+  try { await store.dislikePost(id) } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
 function filterTag(tag: string) {
   store.setTag(tag).catch(e => toast(e?.message || '加载失败'))
 }
@@ -264,6 +269,7 @@ async function removePost(id: string) {
     <div class="space-y-3">
       <PostCard v-for="p in store.posts" :key="p.id" :post="p"
         @like="like(p.id)"
+        @dislike="dislike(p.id)"
         @tag="filterTag"
         @open="router.push(`/community/post/${p.id}`)"
         @pin="togglePin(p.id)"

@@ -255,10 +255,12 @@ export interface CommunityPost {
   refType?: string
   refId?: string
   likesCount: number
+  dislikesCount: number
   commentsCount: number
   isPinned: boolean
   isHidden: boolean
   likedByMe: boolean
+  dislikedByMe: boolean
   createdAt: number // Unix 秒
 }
 
@@ -275,10 +277,12 @@ export interface CommunityComment {
   /** 作者是否为认证专家（蓝 V） */
   userVerified: boolean
   likesCount: number
+  dislikesCount: number
   /** 是否被楼主采纳为最佳答案 */
   isAccepted: boolean
   isHidden: boolean
   likedByMe: boolean
+  dislikedByMe: boolean
   createdAt: number // Unix 秒
   /** 前端组装的二级回复 */
   replies?: CommunityComment[]

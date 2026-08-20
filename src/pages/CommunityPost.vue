@@ -78,6 +78,35 @@ async function likeComment(c: CommunityComment) {
   }
 }
 
+// ---- 踩 ----
+async function dislikePost() {
+  if (requireLogin(router)) return
+  if (!post.value) return
+  const res = await store.dislikePost(postId).catch((e: any) => { toast(e?.message || '操作失败'); return null })
+  if (res === null) return
+  post.value.dislikedByMe = res.disliked
+  post.value.dislikesCount = Math.max(0, post.value.dislikesCount + (res.disliked ? 1 : -1))
+  if (res.likeRevoked) {
+    post.value.likedByMe = false
+    post.value.likesCount = Math.max(0, post.value.likesCount - 1)
+  }
+}
+
+async function dislikeComment(c: CommunityComment) {
+  if (requireLogin(router)) return
+  const res = await store.dislikeComment(c.id).catch((e: any) => { toast(e?.message || '操作失败'); return null })
+  if (res === null) return
+  const target = findComment(c.id)
+  if (target) {
+    target.dislikedByMe = res.disliked
+    target.dislikesCount = Math.max(0, target.dislikesCount + (res.disliked ? 1 : -1))
+    if (res.likeRevoked) {
+      target.likedByMe = false
+      target.likesCount = Math.max(0, target.likesCount - 1)
+    }
+  }
+}
+
 // ---- 评论 / 回复 ----
 const replyTarget = ref<CommunityComment | null>(null)
 const presetText = ref('')
@@ -274,7 +303,7 @@ async function toggleHideComment(c: CommunityComment) {
     </div>
 
     <template v-else-if="post">
-      <PostCard :post="post" detail @like="likePost" @pin="togglePin" @feature="toggleFeature" @hide="toggleHidePost"
+      <PostCard :post="post" detail @like="likePost" @dislike="dislikePost" @pin="togglePin" @feature="toggleFeature" @hide="toggleHidePost"
         @image="openLightbox" @report="openReport('post', post.id)" @profile="openProfile(post.userId)">
         <template #actions>
           <!-- 已采纳最佳答案时禁用手动标记（需先取消采纳），避免出现矛盾态 -->
@@ -297,13 +326,13 @@ async function toggleHideComment(c: CommunityComment) {
 
         <div v-if="!commentTree.length" class="text-center text-xs text-slate-400 py-4">暂无评论，来抢沙发～</div>
         <div v-for="c in commentTree" :key="c.id" class="space-y-3">
-          <CommentItem :comment="c" :show-accept="acceptVisible(c)" @like="likeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
+          <CommentItem :comment="c" :show-accept="acceptVisible(c)" @like="likeComment(c)" @dislike="dislikeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
             @hide="toggleHideComment(c)" @report="openReport('comment', c.id)" @accept="accept(c)" @image="openCommentLightbox(c, $event)"
             @profile="openProfile(c.userId)" />
           <!-- 二级回复 -->
           <div v-if="c.replies?.length" class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
             <CommentItem v-for="r in c.replies" :key="r.id" :comment="r"
-              @like="likeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
+              @like="likeComment(r)" @dislike="dislikeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
               @report="openReport('comment', r.id)" @image="openCommentLightbox(r, $event)" @profile="openProfile(r.userId)" />
           </div>
         </div>

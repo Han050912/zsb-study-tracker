@@ -9,10 +9,12 @@ import { renderMarkdown } from '../../utils/markdown'
 import UserAvatar from './UserAvatar.vue'
 import TagBadge from './TagBadge.vue'
 import LikeButton from './LikeButton.vue'
+import DislikeButton from './DislikeButton.vue'
 
 const props = withDefaults(defineProps<{ post: CommunityPost; detail?: boolean }>(), { detail: false })
 const emit = defineEmits<{
   like: []
+  dislike: []
   tag: [tag: string]
   open: []
   pin: []
@@ -109,6 +111,7 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
     <!-- 互动行 -->
     <div class="flex items-center gap-5 pt-1 border-t border-slate-50 dark:border-slate-700/50">
       <LikeButton :liked="post.likedByMe" :count="post.likesCount" @toggle="emit('like')" />
+      <DislikeButton :disliked="post.dislikedByMe" :count="post.dislikesCount" @toggle="emit('dislike')" />
       <span class="inline-flex items-center gap-1 text-xs text-slate-400">
         💬 <span>{{ post.commentsCount || '' }}</span>
       </span>

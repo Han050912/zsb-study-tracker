@@ -6,13 +6,14 @@ import { fromNow } from '../../utils/date'
 import { imageUrl } from '../../api/community'
 import UserAvatar from './UserAvatar.vue'
 import LikeButton from './LikeButton.vue'
+import DislikeButton from './DislikeButton.vue'
 
 const props = withDefaults(defineProps<{
   comment: CommunityComment
   /** 是否展示「采纳」按钮（提问帖楼主可见，仅一级评论） */
   showAccept?: boolean
 }>(), { showAccept: false })
-const emit = defineEmits<{ like: []; reply: []; remove: []; hide: []; report: []; accept: []; image: [index: number]; profile: [] }>()
+const emit = defineEmits<{ like: []; dislike: []; reply: []; remove: []; hide: []; report: []; accept: []; image: [index: number]; profile: [] }>()
 
 const isMine = computed(() => props.comment.userId === sessionUser.value?.id)
 const canDelete = computed(() => isMine.value || isAdmin.value)
@@ -42,6 +43,7 @@ const canHide = computed(() => isAdmin.value)
       </div>
       <div class="flex items-center gap-4 mt-1">
         <LikeButton :liked="comment.likedByMe" :count="comment.likesCount" @toggle="emit('like')" />
+        <DislikeButton :disliked="comment.dislikedByMe" :count="comment.dislikesCount" @toggle="emit('dislike')" />
         <button class="text-xs text-slate-400 hover:text-primary-500" @click="emit('reply')">回复</button>
         <button v-if="showAccept" class="text-xs font-medium"
           :class="comment.isAccepted ? 'text-emerald-500 hover:text-orange-500' : 'text-slate-400 hover:text-emerald-500'"
