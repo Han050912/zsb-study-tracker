@@ -50,7 +50,7 @@ async function respond(reqId: string, action: 'accept' | 'reject') {
     <button class="btn-ghost !text-xs" @click="router.push('/community')">← 返回广场</button>
     <div class="section-title !mb-0">🧑‍🤝‍🧑 学习搭子</div>
 
-    <div v-if="loading" class="text-center text-slate-400 text-xs py-10">加载中…</div>
+    <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
 
     <template v-else>
       <!-- 收到的请求 -->
@@ -67,12 +67,12 @@ async function respond(reqId: string, action: 'accept' | 'reject') {
       <!-- 推荐 -->
       <div class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">为你推荐</div>
-        <div v-if="!suggestions.length" class="text-xs text-slate-400 text-center py-4">暂无可推荐的搭子</div>
+        <div v-if="!suggestions.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">暂无可推荐的搭子</div>
         <div v-for="s in suggestions" :key="s.userId" class="flex items-center gap-2 text-xs border-b border-slate-50 dark:border-slate-700 last:border-0 py-1.5">
           <UserAvatar :name="s.userName" size="sm" />
           <div class="min-w-0">
             <div class="font-medium truncate">{{ s.userName }}</div>
-            <div class="text-[10px] text-slate-400 truncate">{{ s.reasons.join(' · ') || '缘分推荐' }}</div>
+            <div class="text-[10px] text-slate-400 dark:text-slate-500 truncate">{{ s.reasons.join(' · ') || '缘分推荐' }}</div>
           </div>
           <button class="ml-auto btn-primary !text-xs shrink-0" @click="send(s.userId)">加搭子</button>
         </div>
@@ -81,7 +81,7 @@ async function respond(reqId: string, action: 'accept' | 'reject') {
       <!-- 我的搭子 -->
       <div class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">我的搭子（{{ partners.length }}）</div>
-        <div v-if="!partners.length" class="text-xs text-slate-400 text-center py-4">还没有搭子，去上方推荐里找一个吧</div>
+        <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">还没有搭子，去上方推荐里找一个吧</div>
         <div v-for="p in partners" :key="p.reqId" class="flex items-center gap-2 text-xs">
           <UserAvatar :name="p.userName" size="sm" />
           <span class="font-medium">{{ p.userName }}</span>

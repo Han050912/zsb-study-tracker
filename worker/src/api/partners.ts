@@ -91,8 +91,8 @@ export function registerPartnerRoutes() {
   // 我的搭子列表 + 收到的请求
   on('GET', '/api/community/partners', true, async (ctx) => {
     const partners = await all<any>(ctx.env, `
-      SELECT sp.id AS req_id, sp.updated_at, u.id AS user_id, u.username, u.verified,
-        COALESCE(s.user_name, u.username) AS user_name, COALESCE(g.points, 0) AS total_points
+      SELECT sp.id AS reqId, sp.updated_at, u.id AS userId, u.username, u.verified,
+        COALESCE(s.user_name, u.username) AS userName, COALESCE(g.points, 0) AS totalPoints
       FROM study_partners sp
       JOIN users u ON u.id = CASE WHEN sp.from_id = ? THEN sp.to_id ELSE sp.from_id END
       LEFT JOIN user_settings s ON s.user_id = u.id
@@ -100,8 +100,8 @@ export function registerPartnerRoutes() {
       WHERE sp.status = 'accepted' AND (sp.from_id = ? OR sp.to_id = ?)
       ORDER BY sp.updated_at DESC`, ctx.userId, ctx.userId, ctx.userId)
     const incoming = await all<any>(ctx.env, `
-      SELECT sp.id AS req_id, sp.created_at, u.id AS user_id, u.username, u.verified,
-        COALESCE(s.user_name, u.username) AS user_name, COALESCE(g.points, 0) AS total_points
+      SELECT sp.id AS reqId, sp.created_at, u.id AS userId, u.username, u.verified,
+        COALESCE(s.user_name, u.username) AS userName, COALESCE(g.points, 0) AS totalPoints
       FROM study_partners sp
       JOIN users u ON u.id = sp.from_id
       LEFT JOIN user_settings s ON s.user_id = u.id
