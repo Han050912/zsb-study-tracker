@@ -31,6 +31,7 @@ const NAV = computed(() => {
   return [
     { path: '/', icon: '🏠', label: '首页', subject: false },
     { path: '/community', icon: '💬', label: '社区', subject: false },
+    { path: '/teams', icon: '👥', label: '组队', subject: false },
     ...subjectItems,
     { path: '/pomodoro', icon: '🍅', label: '专注', subject: false },
     { path: '/notes', icon: '📔', label: '笔记', subject: false },
