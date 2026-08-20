@@ -1366,7 +1366,7 @@ export function registerCommunityRoutes() {
       SELECT c.id, c.name, c.description, c.creator_id, c.is_public, c.member_count, c.created_at,
         (cm.user_id IS NOT NULL) AS joined
       FROM community_circles c
-      LEFT JOIN community_circle_members cm ON cm.circle_id = c.id AND cm.user_id = ?
+      LEFT JOIN circle_members cm ON cm.circle_id = c.id AND cm.user_id = ? AND cm.status = 'active'
       WHERE c.is_public = 1
       ORDER BY c.member_count DESC, c.created_at DESC
       LIMIT 5`, ctx.userId)
