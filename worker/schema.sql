@@ -116,6 +116,10 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   ALTER TABLE user_settings ADD COLUMN profile_visibility TEXT NOT NULL DEFAULT 'login';
 -- 已建库升级：社区图片缩略图（P1），执行一次：
 --   ALTER TABLE community_uploads ADD COLUMN thumb_r2_key TEXT;
+-- 已建库升级：学习搭子（P2-7），执行一次：
+--   CREATE TABLE IF NOT EXISTS study_partners ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL, to_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_partners_to ON study_partners(to_id, status);
+--   CREATE INDEX IF NOT EXISTS idx_partners_from ON study_partners(from_id, status);
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -600,3 +604,15 @@ CREATE TABLE IF NOT EXISTS community_dislikes (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, target_type, target_id)
 );
+
+-- 学习搭子关系（P2-7）：from 发起、to 接收；status: pending/accepted/rejected
+CREATE TABLE IF NOT EXISTS study_partners (
+  id TEXT PRIMARY KEY,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_partners_to ON study_partners(to_id, status);
+CREATE INDEX IF NOT EXISTS idx_partners_from ON study_partners(from_id, status);
