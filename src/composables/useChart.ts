@@ -2,7 +2,7 @@ import { onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
 import * as echarts from 'echarts'
 
 /** ECharts 封装：自动初始化、响应式 resize、主题感知；onClick 可选，绑定图表点击事件 */
-export function useChart(optionFn: () => echarts.EChartsOption, deps: Ref<any>[] = [], onClick?: (params: echarts.ECElementEvent) => void) {
+export function useChart(optionFn: () => echarts.EChartsOption | null | undefined, deps: Ref<any>[] = [], onClick?: (params: echarts.ECElementEvent) => void) {
   const el = ref<HTMLElement>()
   let chart: echarts.ECharts | null = null
 
@@ -14,7 +14,12 @@ export function useChart(optionFn: () => echarts.EChartsOption, deps: Ref<any>[]
       chart = echarts.init(el.value)
       if (onClick) chart.on('click', onClick)
     }
-    chart.setOption(optionFn())
+    const option = optionFn()
+    if (option == null) {
+      chart.clear()
+      return
+    }
+    chart.setOption(option)
   }
 
   const onResize = () => chart?.resize()

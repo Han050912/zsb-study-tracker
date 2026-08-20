@@ -8,6 +8,7 @@ import { problemTypesFor } from '../data/problemTypes'
 import StarRating from './StarRating.vue'
 import Modal from './Modal.vue'
 import PostComposer from './community/PostComposer.vue'
+import EnhancedRadarChart from './EnhancedRadarChart.vue'
 import type { Note, TopicImportance } from '../types'
 
 const props = defineProps<{ subjectId: string }>()
@@ -99,31 +100,22 @@ function openProblemShare() {
   showShareComposer.value = true
 }
 
-// ---- 掌握度雷达 ----
-const radarTopics = computed(() => {
+// ---- 掌握度雷达（支持超过8个知识点，按章节分组） ----
+const radarChapters = computed(() => {
   const s = subject.value
   if (!s) return []
-  return s.chapters.flatMap(c => c.topics).slice(0, 8)
+  
+  // 按章节组织数据
+  return s.chapters.map(ch => ({
+    chapterId: ch.id,
+    chapterName: ch.name,
+    topics: ch.topics.map(topic => ({
+      name: topic,
+      value: s.mastery[topic] || 0,
+      max: 5
+    }))
+  }))
 })
-/** 掌握度数值快照：computed 读取每个 topic 的掌握度，属性变更时重算并产出新数组（配合 useChart 浅监听触发重绘） */
-const radarValues = computed(() => radarTopics.value.map(t => subject.value?.mastery[t] || 0))
-const { el: radarEl } = useChart(() => ({
-  radar: {
-    indicator: radarTopics.value.map(t => ({ name: t, max: 5 })),
-    radius: '65%',
-    axisName: { color: chartTextColor(), fontSize: 10 }
-  },
-  series: [{
-    type: 'radar',
-    data: [{
-      value: radarValues.value,
-      name: '掌握度',
-      areaStyle: { color: (subject.value?.color || '#3b82f6') + '44' },
-      lineStyle: { color: subject.value?.color || '#3b82f6' },
-      itemStyle: { color: subject.value?.color || '#3b82f6' }
-    }]
-  }]
-}), [radarTopics, radarValues])
 
 // ---- 真题 ----
 const showExamModal = ref(false)
@@ -357,9 +349,11 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
 
     <!-- 章节树 + 掌握度 -->
     <div v-show="tab === 'chapters'" class="space-y-3">
-      <div v-if="radarTopics.length" class="card">
-        <div class="section-title">🎯 掌握度雷达（薄弱环节一目了然）</div>
-        <div ref="radarEl" class="h-64"></div>
+      <div v-if="radarChapters.length" class="card">
+        <EnhancedRadarChart 
+          :chapters="radarChapters" 
+          :color="subject?.color"
+          title="🎯 掌握度雷达（薄弱环节一目了然）" />
       </div>
       <div class="card">
         <div class="section-title">章节知识点（点击星星评估掌握度，双击知识点可编辑内容与重要程度）</div>
