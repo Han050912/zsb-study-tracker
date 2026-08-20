@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { communityApi } from '../api/community'
 import { gamificationApi } from '../api/gamification'
 import { useAppStore } from './app'
-import type { CommunityComment, CommunityNotification, CommunityPost, PostType } from '../types'
+import type { CommunityCircle, CommunityComment, CommunityNotification, CommunityPost, PostType, RecommendUser } from '../types'
 
 /**
  * 社区广场状态。动态流为公共数据，通知为当前用户私有；
@@ -16,7 +16,11 @@ interface CommunityState {
   feedCursor: string | null
   hasMore: boolean
   feedLoading: boolean
-  sort: 'latest' | 'hot'
+  sort: 'latest' | 'hot' | 'recommend'
+  /** 推荐附加信息（圈子 + 用户；仅 recommend 排序下填充） */
+  recommendExtras: { circles: CommunityCircle[]; users: RecommendUser[] } | null
+  /** 加载错误信息（推荐等场景） */
+  error: string | null
   /** 当前筛选标签（'' = 全部） */
   tag: string
   /** 当前筛选帖子类型（'' = 全部；本期用于「提问」筛选） */
@@ -38,6 +42,8 @@ export const useCommunityStore = defineStore('community', {
     hasMore: true,
     feedLoading: false,
     sort: 'latest',
+    recommendExtras: null,
+    error: null,
     tag: '',
     typeFilter: '',
     featured: false,
@@ -67,7 +73,7 @@ export const useCommunityStore = defineStore('community', {
       }
     },
 
-    async setSort(sort: 'latest' | 'hot') {
+    async setSort(sort: 'latest' | 'hot' | 'recommend') {
       if (this.sort === sort) return
       this.sort = sort
       await this.fetchFeed(true)
@@ -103,6 +109,21 @@ export const useCommunityStore = defineStore('community', {
     /** 拉取动态流；reset 清空重来，否则按游标追加（按 id 去重防重复）。
      *  请求令牌防止竞态：旧请求返回时若令牌已失效则丢弃结果，避免快速切换筛选后旧数据覆盖新数据。 */
     async fetchFeed(reset = false) {
+      if (this.sort === 'recommend') {
+        if (!reset && this.posts.length) return
+        this.feedLoading = true
+        try {
+          const res = await communityApi.recommend()
+          this.posts = res.posts
+          this.recommendExtras = { circles: res.circles, users: res.users }
+          this.hasMore = false
+        } catch (e: any) {
+          this.error = e?.message || '推荐加载失败'
+        } finally {
+          this.feedLoading = false
+        }
+        return
+      }
       // 追加加载期间忽略重复触发（哨兵可见期间可能多次进入）；reset 走令牌竞态丢弃
       if (this.feedLoading && !reset) return
       const ticket = ++feedTicket

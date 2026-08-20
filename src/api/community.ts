@@ -1,7 +1,7 @@
 import { request, API_BASE, handleUnauthorized } from './client'
 import { compressImage } from '../utils/imageCompress'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, HotTopic, HotTopicOverride, MessageConversation, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, UserStudyStats, WeeklyReport
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, HotTopic, HotTopicOverride, MessageConversation, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -156,6 +156,8 @@ export const communityApi = {
   daily: () => request<{ post: CommunityPost | null }>('/api/community/daily'),
   /** 圈子列表（按成员数倒序） */
   circles: () => request<{ circles: CommunityCircle[] }>('/api/community/circles'),
+  /** 个性化推荐（帖子 + 圈子 + 用户） */
+  recommend: () => request<RecommendFeedData>('/api/community/recommend'),
   /** 建圈 */
   createCircle: (data: { name: string; description?: string; isPublic?: boolean }) =>
     request<CommunityCircle>('/api/community/circles', { method: 'POST', body: JSON.stringify(data) }),

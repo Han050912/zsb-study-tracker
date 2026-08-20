@@ -564,3 +564,19 @@ export interface PartnerItem {
   verified: boolean
   totalPoints: number
 }
+
+/** 推荐关注用户条目 */
+export interface RecommendUser {
+  userId: string
+  userName: string
+  verified: boolean
+  totalPoints: number
+  reason: string
+}
+
+/** 个性化推荐响应 */
+export interface RecommendFeedData {
+  posts: CommunityPost[]
+  circles: CommunityCircle[]
+  users: RecommendUser[]
+}

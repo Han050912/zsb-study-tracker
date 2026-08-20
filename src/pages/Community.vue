@@ -14,6 +14,7 @@ import ProgressBoard from '../components/community/ProgressBoard.vue'
 import WeeklyReportCard from '../components/community/WeeklyReportCard.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
+import UserAvatar from '../components/community/UserAvatar.vue'
 
 const store = useCommunityStore()
 const router = useRouter()
@@ -235,6 +236,9 @@ async function removePost(id: string) {
           :class="store.sort === 'hot' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
           @click="store.setSort('hot')">热门</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
+          :class="store.sort === 'recommend' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="store.setSort('recommend')">✨ 推荐</button>
+        <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.typeFilter === 'question' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
           @click="toggleQuestionFilter">❓ 提问</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
@@ -263,6 +267,27 @@ async function removePost(id: string) {
             <span aria-hidden="true">›</span>
           </div>
         </transition>
+      </div>
+    </div>
+
+    <!-- 推荐附加：圈子 + 用户（仅 recommend 排序显示） -->
+    <div v-if="store.sort === 'recommend' && store.recommendExtras" class="space-y-3">
+      <div v-if="store.recommendExtras.circles.length" class="card space-y-2">
+        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">🫧 推荐圈子</div>
+        <div v-for="c in store.recommendExtras.circles" :key="c.id" class="flex items-center gap-2 text-xs">
+          <span class="font-medium">{{ c.name }}</span>
+          <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ c.memberCount }} 人</span>
+          <button class="ml-auto btn-ghost !text-xs" @click="router.push(`/community/circles/${c.id}`)">去看看</button>
+        </div>
+      </div>
+      <div v-if="store.recommendExtras.users.length" class="card space-y-2">
+        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">👥 推荐关注</div>
+        <div v-for="u in store.recommendExtras.users" :key="u.userId" class="flex items-center gap-2 text-xs">
+          <UserAvatar :name="u.userName" size="sm" />
+          <span class="font-medium">{{ u.userName }}</span>
+          <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ u.reason }}</span>
+          <button class="ml-auto btn-ghost !text-xs" @click="openProfile(u.userId)">看主页</button>
+        </div>
       </div>
     </div>
 
