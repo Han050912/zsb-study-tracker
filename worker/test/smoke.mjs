@@ -742,6 +742,47 @@ async function main() {
   check('其他章节不包含该讨论帖', !otherTopic.data?.posts?.some(p => p.id === topicPost.data?.id))
   check('同时发圈子和讨论区被拒（400）', (await api('/api/community/posts', { method: 'POST', token: tokenA, body: { type: 'share', content: '冲突', tags: [], circleId: pubId, topicRef: 'math|第一章 函数与极限' } })).status === 400)
 
+  // ---- 组队挑战 ----
+  console.log('[组队挑战]')
+  const teamPub = await api('/api/teams', { method: 'POST', token: tokenA, body: { name: '高数打卡队', description: '一起刷高数', maxMembers: 2, isPublic: true } })
+  check('创建公开小组', teamPub.status === 200 && !!teamPub.data?.id, JSON.stringify(teamPub.data))
+  const teamId = teamPub.data.id
+  const teamPriv = await api('/api/teams', { method: 'POST', token: tokenA, body: { name: '英语私密组', isPublic: false } })
+  const privTeamId = teamPriv.data?.id
+
+  check('B 加入公开组成功', (await api(`/api/teams/${teamId}/join`, { method: 'POST', token: tokenB })).status === 200)
+  check('公开组满员后拒绝加入', (await api(`/api/teams/${teamId}/join`, { method: 'POST', token: tokenC })).status === 400)
+  check('重复加入被拒绝', (await api(`/api/teams/${teamId}/join`, { method: 'POST', token: tokenB })).status === 400)
+  check('私密组非成员加入被拒绝', (await api(`/api/teams/${privTeamId}/join`, { method: 'POST', token: tokenB })).status === 403)
+
+  const teamDetail = await api(`/api/teams/${teamId}`, { token: tokenA })
+  check('详情含成员与队长角色', teamDetail.data?.members?.length === 2 && teamDetail.data.team.myRole === 'leader', JSON.stringify(teamDetail.data))
+
+  check('普通成员创建挑战被拒绝', (await api(`/api/teams/${teamId}/challenges`, { method: 'POST', token: tokenB, body: { type: 'streak', target: 7, durationDays: 7, startDate: todayUtc8 } })).status === 403)
+  const ch = await api(`/api/teams/${teamId}/challenges`, { method: 'POST', token: tokenA, body: { type: 'streak', target: 7, durationDays: 7, startDate: todayUtc8 } })
+  check('队长创建挑战成功', ch.status === 200 && !!ch.data?.id, JSON.stringify(ch.data))
+  const chId = ch.data.id
+
+  const sync1 = await api(`/api/teams/challenges/${chId}/sync`, { method: 'POST', token: tokenA })
+  check('同步挑战进度', sync1.status === 200 && typeof sync1.data?.currentValue === 'number', JSON.stringify(sync1.data))
+
+  check('非队长编辑挑战被拒绝', (await api(`/api/teams/challenges/${chId}`, { method: 'PUT', token: tokenB, body: { target: 10, durationDays: 7, startDate: todayUtc8 } })).status === 403)
+  check('队长编辑挑战', (await api(`/api/teams/challenges/${chId}`, { method: 'PUT', token: tokenA, body: { target: 10, durationDays: 7, startDate: todayUtc8 } })).status === 200)
+
+  check('取消进行中的挑战', (await api(`/api/teams/challenges/${chId}/cancel`, { method: 'POST', token: tokenA })).status === 200)
+  check('取消后同步被拒绝', (await api(`/api/teams/challenges/${chId}/sync`, { method: 'POST', token: tokenA })).status === 400)
+  check('恢复挑战', (await api(`/api/teams/challenges/${chId}/resume`, { method: 'POST', token: tokenA })).status === 200)
+  check('恢复后可同步', (await api(`/api/teams/challenges/${chId}/sync`, { method: 'POST', token: tokenA })).status === 200)
+
+  check('非队长删除挑战被拒绝', (await api(`/api/teams/challenges/${chId}`, { method: 'DELETE', token: tokenB })).status === 403)
+  check('队长删除挑战', (await api(`/api/teams/challenges/${chId}`, { method: 'DELETE', token: tokenA })).status === 200)
+
+  const memberUserId = teamDetail.data.members.find(m => m.role === 'member')?.userId
+  check('转让队长给 B', (await api(`/api/teams/${teamId}/transfer-leader`, { method: 'POST', token: tokenA, body: { newLeaderId: memberUserId } })).status === 200)
+  check('转让后 A 为成员可退出', (await api(`/api/teams/${teamId}/leave`, { method: 'POST', token: tokenA })).status === 200)
+  check('解散小组', (await api(`/api/teams/${teamId}/disband`, { method: 'POST', token: tokenB })).status === 200)
+  check('解散后详情 404', (await api(`/api/teams/${teamId}`, { token: tokenB })).status === 404)
+
   // ---- 404 ----
   console.log('[路由]')
   check('未知路径返回 404', (await api('/api/nonexistent', { token: tokenA })).status === 404)
