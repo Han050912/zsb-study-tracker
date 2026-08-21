@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getTeamDetail, joinTeam, leaveTeam, transferLeader, disbandTeam, createChallenge, syncChallengeProgress } from '../api/teams'
+import { getTeamDetail, joinTeam, leaveTeam, transferLeader, disbandTeam, createChallenge, syncChallengeProgress, updateChallenge, deleteChallenge, cancelChallenge, resumeChallenge } from '../api/teams'
 import type { ChallengeType, TeamChallenge, TeamDetail } from '../types'
 import Modal from '../components/Modal.vue'
 
@@ -147,6 +147,64 @@ async function handleCreate() {
   } catch (e: any) { toast(e?.message || '创建失败') }
   finally { creating.value = false }
 }
+
+// ---- 挑战管理（仅队长） ----
+const editingId = ref<string | null>(null)
+const editForm = ref({ target: 7, durationDays: 7, startDate: '' })
+const editSubmitting = ref(false)
+const manageSubmitting = ref<Record<string, boolean>>({})
+
+function openEdit(c: TeamChallenge) {
+  editingId.value = c.id
+  editForm.value = { target: c.target, durationDays: c.durationDays, startDate: c.startDate }
+}
+
+async function handleEdit() {
+  if (!editingId.value || editSubmitting.value) return
+  editSubmitting.value = true
+  try {
+    await updateChallenge(editingId.value, editForm.value)
+    toast('挑战已更新')
+    editingId.value = null
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '更新失败') }
+  finally { editSubmitting.value = false }
+}
+
+async function handleDelete(c: TeamChallenge) {
+  if (manageSubmitting.value[c.id]) return
+  if (!window.confirm('确认删除该挑战？所有成员进度将一并删除。')) return
+  manageSubmitting.value[c.id] = true
+  try {
+    await deleteChallenge(c.id)
+    toast('挑战已删除')
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '删除失败') }
+  finally { manageSubmitting.value[c.id] = false }
+}
+
+async function handleCancel(c: TeamChallenge) {
+  if (manageSubmitting.value[c.id]) return
+  if (!window.confirm('确认取消该挑战？取消后将暂停进度同步。')) return
+  manageSubmitting.value[c.id] = true
+  try {
+    await cancelChallenge(c.id)
+    toast('挑战已取消')
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '取消失败') }
+  finally { manageSubmitting.value[c.id] = false }
+}
+
+async function handleResume(c: TeamChallenge) {
+  if (manageSubmitting.value[c.id]) return
+  manageSubmitting.value[c.id] = true
+  try {
+    await resumeChallenge(c.id)
+    toast('挑战已恢复')
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '恢复失败') }
+  finally { manageSubmitting.value[c.id] = false }
+}
 </script>
 
 <template>
@@ -231,9 +289,17 @@ async function handleCreate() {
             </div>
             <div class="flex items-center justify-between mt-2">
               <span class="text-[10px] text-slate-400">团队达标 {{ c.completedCount }}/{{ detail.members.length }} 人</span>
-              <button v-if="challengeStatus(c) === 'active'" class="btn-ghost !text-xs" :disabled="syncSubmitting[c.id]" @click="syncChallenge(c)">
-                {{ syncSubmitting[c.id] ? '同步中…' : '同步进度' }}
-              </button>
+              <div class="flex items-center gap-1.5 flex-wrap justify-end">
+                <button v-if="challengeStatus(c) === 'active'" class="btn-ghost !text-xs" :disabled="syncSubmitting[c.id]" @click="syncChallenge(c)">
+                  {{ syncSubmitting[c.id] ? '同步中…' : '同步进度' }}
+                </button>
+                <template v-if="team.myRole === 'leader'">
+                  <button v-if="challengeStatus(c) === 'upcoming' || challengeStatus(c) === 'active'" class="btn-ghost !text-xs" @click="openEdit(c)">编辑</button>
+                  <button v-if="challengeStatus(c) === 'active'" class="btn-ghost !text-xs !text-amber-500" :disabled="manageSubmitting[c.id]" @click="handleCancel(c)">取消</button>
+                  <button v-if="challengeStatus(c) === 'cancelled'" class="btn-ghost !text-xs !text-emerald-500" :disabled="manageSubmitting[c.id]" @click="handleResume(c)">恢复</button>
+                  <button class="btn-ghost !text-xs !text-red-500" :disabled="manageSubmitting[c.id]" @click="handleDelete(c)">删除</button>
+                </template>
+              </div>
             </div>
           </div>
         </div>
@@ -268,6 +334,27 @@ async function handleCreate() {
     <template #footer>
       <button class="btn-ghost" @click="showCreate = false">取消</button>
       <button class="btn-primary" :disabled="creating" @click="handleCreate">{{ creating ? '创建中…' : '创建' }}</button>
+    </template>
+  </Modal>
+
+  <Modal :show="!!editingId" title="编辑挑战" @close="editingId = null">
+    <div class="space-y-3">
+      <div>
+        <div class="label">目标值（1-10000）</div>
+        <input v-model.number="editForm.target" type="number" min="1" max="10000" class="input" />
+      </div>
+      <div>
+        <div class="label">挑战天数（1-90）</div>
+        <input v-model.number="editForm.durationDays" type="number" min="1" max="90" class="input" />
+      </div>
+      <div>
+        <div class="label">开始日期</div>
+        <input v-model="editForm.startDate" type="date" class="input" />
+      </div>
+    </div>
+    <template #footer>
+      <button class="btn-ghost" @click="editingId = null">取消</button>
+      <button class="btn-primary" :disabled="editSubmitting" @click="handleEdit">{{ editSubmitting ? '保存中…' : '保存' }}</button>
     </template>
   </Modal>
 </template>
