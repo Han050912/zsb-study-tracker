@@ -58,7 +58,8 @@
         <div
           v-for="team in teams"
           :key="team.id"
-          class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 transition-shadow"
+          @click="openTeam(team.id)"
+          class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 transition-shadow cursor-pointer hover:shadow-md"
         >
           <div class="flex items-start justify-between">
             <div class="flex-1">
@@ -161,11 +162,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted, inject } from 'vue'
+import { useRouter } from 'vue-router'
 import { getTeams, createTeam } from '../api/teams'
 import type { StudyTeam } from '../types'
 import Modal from '../components/Modal.vue'
 
 const toast = inject<(m: string) => void>('toast', () => {})
+const router = useRouter()
 
 const activeTab = ref<'my' | 'public'>('my')
 const loading = ref(false)
@@ -229,6 +232,10 @@ function formatDate(timestamp: number): string {
   if (days === 1) return '昨天'
   if (days < 7) return `${days} 天前`
   return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+}
+
+function openTeam(id: string) {
+  router.push('/teams/' + id)
 }
 
 onMounted(loadTeams)
