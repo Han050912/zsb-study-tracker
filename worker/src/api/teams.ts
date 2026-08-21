@@ -82,6 +82,12 @@ async function assertTeamMember(env: Env, userId: string, teamId: string): Promi
   return member
 }
 
+/** 校验当前用户为队长（供创建挑战、转让、解散、挑战管理使用） */
+async function assertTeamLeader(env: Env, userId: string, teamId: string): Promise<void> {
+  const member = await assertTeamMember(env, userId, teamId)
+  if (member.role !== 'leader') throw new HttpError(403, '仅队长可操作')
+}
+
 /** 计算日期范围的结束日期（含当天） */
 function calcEndDate(startDate: string, durationDays: number): string {
   const d = new Date(startDate)
@@ -290,12 +296,55 @@ on('POST', '/api/teams/:id/leave', true, async ctx => {
   return Response.json({ success: true })
 })
 
+/** POST /api/teams/:id/transfer-leader - 转让队长（仅队长） */
+on('POST', '/api/teams/:id/transfer-leader', true, async ctx => {
+  const teamId = ctx.params.id
+  await assertTeamLeader(ctx.env, ctx.userId, teamId)
+
+  const { newLeaderId } = await body<{ newLeaderId: string }>(ctx.request)
+  if (typeof newLeaderId !== 'string' || !newLeaderId || newLeaderId === ctx.userId) {
+    throw new HttpError(400, '目标成员无效')
+  }
+
+  const target = await first<{ user_id: string }>(ctx.env,
+    'SELECT user_id FROM team_members WHERE team_id = ? AND user_id = ?', teamId, newLeaderId)
+  if (!target) throw new HttpError(400, '目标成员不在该小组中')
+
+  await batch(ctx.env, [
+    ctx.env.DB.prepare("UPDATE team_members SET role = 'member' WHERE team_id = ? AND user_id = ?")
+      .bind(teamId, ctx.userId),
+    ctx.env.DB.prepare("UPDATE team_members SET role = 'leader' WHERE team_id = ? AND user_id = ?")
+      .bind(teamId, newLeaderId),
+    ctx.env.DB.prepare('UPDATE study_teams SET creator_id = ? WHERE id = ?')
+      .bind(newLeaderId, teamId)
+  ])
+
+  return Response.json({ success: true })
+})
+
+/** POST /api/teams/:id/disband - 解散小组（仅队长，级联删除成员/挑战/进度） */
+on('POST', '/api/teams/:id/disband', true, async ctx => {
+  const teamId = ctx.params.id
+  await assertTeamLeader(ctx.env, ctx.userId, teamId)
+
+  await batch(ctx.env, [
+    ctx.env.DB.prepare(
+      'DELETE FROM team_challenge_progress WHERE challenge_id IN (SELECT id FROM team_challenges WHERE team_id = ?)'
+    ).bind(teamId),
+    ctx.env.DB.prepare('DELETE FROM team_challenges WHERE team_id = ?').bind(teamId),
+    ctx.env.DB.prepare('DELETE FROM team_members WHERE team_id = ?').bind(teamId),
+    ctx.env.DB.prepare('DELETE FROM study_teams WHERE id = ?').bind(teamId)
+  ])
+
+  return Response.json({ success: true })
+})
+
 /** POST /api/teams/:id/challenges - 创建挑战 */
 on('POST', '/api/teams/:id/challenges', true, async ctx => {
   await rateLimit(ctx.request, 'create_challenge', 10, 60_000)
   
   const teamId = ctx.params.id
-  await assertTeamMember(ctx.env, ctx.userId, teamId)
+  await assertTeamLeader(ctx.env, ctx.userId, teamId)
   
   const { type, target, durationDays, startDate } = await body<{
     type: ChallengeType
