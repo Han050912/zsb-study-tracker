@@ -177,6 +177,11 @@ export const useCommunityStore = defineStore('community', {
       if (p) {
         p.likedByMe = liked
         p.likesCount = Math.max(0, p.likesCount + (liked ? 1 : -1))
+        // 后端点赞会反向取消踩（赞踩互斥），本地同步清除踩状态
+        if (liked && p.dislikedByMe) {
+          p.dislikedByMe = false
+          p.dislikesCount = Math.max(0, p.dislikesCount - 1)
+        }
       }
       await this.syncGamification()
       return liked

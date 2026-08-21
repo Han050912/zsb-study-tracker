@@ -635,6 +635,18 @@ export function registerCommunityRoutes() {
     // 圈子内容：仅可读者可点赞（与详情/评论同一口径）
     if (target.circle_id) await assertCircleReadable(ctx, target.circle_id)
 
+    // 与踩互斥：若已踩则取消踩（删记录 + 计数-1），保证赞/踩二选一，避免同时点亮的状态矛盾
+    const disliked = await first(ctx.env,
+      'SELECT 1 AS x FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?',
+      ctx.userId, targetType, targetId)
+    if (disliked) {
+      await batch(ctx.env, [
+        ctx.env.DB.prepare('DELETE FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?')
+          .bind(ctx.userId, targetType, targetId),
+        ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = MAX(dislikes_count - 1, 0) WHERE id = ?`).bind(targetId)
+      ])
+    }
+
     // 原子 INSERT OR IGNORE 抢占点赞记录，消除并发双击导致的「主键冲突 500」（changes=0 表示已赞，幂等返回）
     const inserted = await run(ctx.env,
       'INSERT OR IGNORE INTO community_likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)',
