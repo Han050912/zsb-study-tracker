@@ -59,3 +59,43 @@ export async function syncChallengeProgress(challengeId: string): Promise<{
     allCompleted: boolean
   }>(`/api/teams/challenges/${challengeId}/sync`, { method: 'POST' })
 }
+
+/** 转让队长 */
+export async function transferLeader(teamId: string, newLeaderId: string): Promise<void> {
+  await request(`/api/teams/${teamId}/transfer-leader`, {
+    method: 'POST',
+    body: JSON.stringify({ newLeaderId })
+  })
+}
+
+/** 解散小组 */
+export async function disbandTeam(teamId: string): Promise<void> {
+  await request(`/api/teams/${teamId}/disband`, { method: 'POST' })
+}
+
+/** 编辑挑战（不含 type） */
+export async function updateChallenge(challengeId: string, data: {
+  target: number
+  durationDays: number
+  startDate: string
+}): Promise<void> {
+  await request(`/api/teams/challenges/${challengeId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  })
+}
+
+/** 删除挑战 */
+export async function deleteChallenge(challengeId: string): Promise<void> {
+  await request(`/api/teams/challenges/${challengeId}`, { method: 'DELETE' })
+}
+
+/** 取消挑战 */
+export async function cancelChallenge(challengeId: string): Promise<void> {
+  await request(`/api/teams/challenges/${challengeId}/cancel`, { method: 'POST' })
+}
+
+/** 恢复挑战 */
+export async function resumeChallenge(challengeId: string): Promise<void> {
+  await request(`/api/teams/challenges/${challengeId}/resume`, { method: 'POST' })
+}

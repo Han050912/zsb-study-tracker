@@ -536,6 +536,8 @@ export interface TeamChallenge {
   isCompleted: boolean
   myProgress: number
   myCompleted: boolean
+  isCancelled: boolean
+  remainingDays?: number
   createdAt: number
 }
 

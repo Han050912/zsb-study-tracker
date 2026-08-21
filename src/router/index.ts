@@ -14,6 +14,7 @@ const routes = [
   { path: '/daily-summary', name: 'daily-summary', component: () => import('../pages/DailySummary.vue'), meta: { title: '每日总结' } },
   { path: '/community', name: 'community', component: () => import('../pages/Community.vue'), meta: { title: '社区广场' } },
   { path: '/teams', name: 'teams', component: () => import('../pages/Teams.vue'), meta: { title: '组队挑战' } },
+  { path: '/teams/:id', name: 'team-detail', component: () => import('../pages/TeamDetail.vue'), meta: { title: '小组详情' } },
   { path: '/community/circles', name: 'circles', component: () => import('../pages/Circles.vue'), meta: { title: '话题圈子' } },
   { path: '/community/circles/:id', name: 'circle-detail', component: () => import('../pages/CircleDetail.vue'), meta: { title: '圈子详情' } },
   { path: '/community/topic/:subjectId', name: 'topic-discussion', component: () => import('../pages/TopicDiscussion.vue'), meta: { title: '知识点讨论' } },
