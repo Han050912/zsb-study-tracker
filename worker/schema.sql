@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS team_challenges (
   end_date TEXT NOT NULL,                -- 'YYYY-MM-DD'（含当天）
   completed_count INTEGER NOT NULL DEFAULT 0, -- 已达标成员数
   is_completed INTEGER NOT NULL DEFAULT 0,    -- 全员达标标记
+  is_cancelled INTEGER NOT NULL DEFAULT 0,    -- 取消标记（1=已取消，暂停同步）
+  remaining_days INTEGER,                     -- 取消时记录的剩余天数（恢复时顺延用）
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tchallenges_team ON team_challenges(team_id, created_at);
@@ -99,6 +101,9 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   CREATE INDEX IF NOT EXISTS idx_tchallenges_team ON team_challenges(team_id, created_at);
 --   CREATE TABLE IF NOT EXISTS team_challenge_progress ( challenge_id TEXT NOT NULL REFERENCES team_challenges(id), user_id TEXT NOT NULL REFERENCES users(id), current_value INTEGER NOT NULL DEFAULT 0, is_completed INTEGER NOT NULL DEFAULT 0, completed_at INTEGER, PRIMARY KEY (challenge_id, user_id) );
 --   CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id);
+-- 已建库升级：组队挑战管理（P2-2 补充：取消/恢复/编辑/删除），执行一次：
+--   ALTER TABLE team_challenges ADD COLUMN is_cancelled INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE team_challenges ADD COLUMN remaining_days INTEGER;
 -- 已建库升级：待办新增开始 / 最晚截止时间与提醒去重标记，执行一次：
 --   ALTER TABLE todos ADD COLUMN start_at INTEGER;
 --   ALTER TABLE todos ADD COLUMN due_at INTEGER;
