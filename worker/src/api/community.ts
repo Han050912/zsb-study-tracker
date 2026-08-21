@@ -237,6 +237,10 @@ export function postCascadeStatements(env: Env, postId: string): D1PreparedState
       `DELETE FROM community_likes WHERE (target_type = 'post' AND target_id = ?)
        OR (target_type = 'comment' AND target_id IN (SELECT id FROM community_comments WHERE post_id = ?))`
     ).bind(postId, postId),
+    env.DB.prepare(
+      `DELETE FROM community_dislikes WHERE (target_type = 'post' AND target_id = ?)
+       OR (target_type = 'comment' AND target_id IN (SELECT id FROM community_comments WHERE post_id = ?))`
+    ).bind(postId, postId),
     env.DB.prepare('DELETE FROM community_notifications WHERE post_id = ?').bind(postId),
     env.DB.prepare(
       `DELETE FROM community_reports WHERE (target_type = 'post' AND target_id = ?)
@@ -264,6 +268,7 @@ export async function commentCascadeStatements(env: Env, commentId: string, post
       // 清理这些评论触发的通知（被评论/被回复/被赞评论），避免通知指向已删除内容
       env.DB.prepare(`DELETE FROM community_notifications WHERE comment_id IN (${ph})`).bind(...removedIds),
       env.DB.prepare(`DELETE FROM community_likes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
+      env.DB.prepare(`DELETE FROM community_dislikes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
       env.DB.prepare(`DELETE FROM community_reports WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
       env.DB.prepare(`DELETE FROM community_comments WHERE id IN (${ph})`).bind(...removedIds),
       env.DB.prepare('UPDATE community_posts SET comments_count = MAX(comments_count - ?, 0) WHERE id = ?')
@@ -630,9 +635,13 @@ export function registerCommunityRoutes() {
     // 圈子内容：仅可读者可点赞（与详情/评论同一口径）
     if (target.circle_id) await assertCircleReadable(ctx, target.circle_id)
 
+    // 原子 INSERT OR IGNORE 抢占点赞记录，消除并发双击导致的「主键冲突 500」（changes=0 表示已赞，幂等返回）
+    const inserted = await run(ctx.env,
+      'INSERT OR IGNORE INTO community_likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)',
+      ctx.userId, targetType, targetId, nowSec())
+    if (!inserted.meta.changes) return Response.json({ liked: true })
+
     const stmts: D1PreparedStatement[] = [
-      ctx.env.DB.prepare('INSERT INTO community_likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)')
-        .bind(ctx.userId, targetType, targetId, nowSec()),
       ctx.env.DB.prepare(`UPDATE ${table} SET likes_count = likes_count + 1 WHERE id = ?`).bind(targetId)
     ]
     // 被赞 +1 积分 + 通知（自己赞自己不加、不通知）；refId 编码点赞者身份，取消点赞时可精确回收
@@ -708,9 +717,13 @@ export function registerCommunityRoutes() {
       await batch(ctx.env, unlikeStmts)
     }
 
+    // 原子 INSERT OR IGNORE 抢占踩记录，防并发双击 500（changes=0 表示已踩，幂等返回）
+    const inserted = await run(ctx.env,
+      'INSERT OR IGNORE INTO community_dislikes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)',
+      ctx.userId, targetType, targetId, nowSec())
+    if (!inserted.meta.changes) return Response.json({ disliked: true, likeRevoked })
+
     await batch(ctx.env, [
-      ctx.env.DB.prepare('INSERT INTO community_dislikes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)')
-        .bind(ctx.userId, targetType, targetId, nowSec()),
       ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = dislikes_count + 1 WHERE id = ?`).bind(targetId)
     ])
     return Response.json({ disliked: true, likeRevoked })

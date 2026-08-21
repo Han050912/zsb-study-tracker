@@ -72,7 +72,11 @@ async function onImport(e: Event) {
     if (store.importJSON(reader.result as string)) {
       toast('导入成功！')
       // 立即推送到云端，避免防抖 save() 与 location.reload() 竞态导致数据丢失
-      await store.saveAsync()
+      try {
+        await store.saveAsync()
+      } catch {
+        toast('云端同步失败，请稍后重试')
+      }
       setTimeout(() => location.reload(), 300)
     } else toast('导入失败：文件格式不正确')
   }
@@ -87,7 +91,11 @@ async function clearAll() {
   showClearConfirm.value = false
   toast('数据已清除')
   // 立即推送到云端，避免防抖 save() 与 location.reload() 竞态
-  await store.saveAsync()
+  try {
+    await store.saveAsync()
+  } catch {
+    toast('云端同步失败，请稍后重试')
+  }
   setTimeout(() => location.reload(), 300)
 }
 

@@ -131,7 +131,7 @@ const { el: examTrendEl } = useChart(() => ({
   grid: { left: 40, right: 16, top: 20, bottom: 24 },
   xAxis: { type: 'category', data: subjectExams.value.slice().reverse().map(e => e.date), axisLabel: { color: chartTextColor(), fontSize: 10 } },
   yAxis: { type: 'value', axisLabel: { color: chartTextColor() } },
-  series: [{ type: 'line', smooth: true, data: subjectExams.value.slice().reverse().map(e => Math.round(e.score / e.totalScore * 100)), name: '得分率%', lineStyle: { color: subject.value?.color }, itemStyle: { color: subject.value?.color }, areaStyle: { opacity: 0.15 } }],
+  series: [{ type: 'line', smooth: true, data: subjectExams.value.slice().reverse().map(e => e.totalScore > 0 ? Math.round(e.score / e.totalScore * 100) : 0), name: '得分率%', lineStyle: { color: subject.value?.color }, itemStyle: { color: subject.value?.color }, areaStyle: { opacity: 0.15 } }],
   tooltip: { trigger: 'axis' }
 }), [subjectExams])
 
@@ -230,6 +230,7 @@ onUnmounted(() => {
   window.removeEventListener('dragend', resetDragState)
   window.removeEventListener('drop', resetDragState)
   window.removeEventListener('dragleave', onWindowDragLeave)
+  if (timerHandle) clearInterval(timerHandle)
 })
 
 // ---- 章节管理 ----
@@ -481,8 +482,8 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
           <div v-for="p in subjectProblems" :key="p.id" class="flex items-center gap-2 text-sm group">
             <span class="text-xs text-slate-400 w-20">{{ p.date }}</span>
             <span class="flex-1">{{ p.correct }}/{{ p.total }} 题</span>
-            <span class="text-xs font-semibold" :class="p.correct / p.total >= 0.8 ? 'text-emerald-500' : p.correct / p.total >= 0.6 ? 'text-amber-500' : 'text-red-400'">
-              {{ Math.round(p.correct / p.total * 100) }}%
+            <span class="text-xs font-semibold" :class="p.total > 0 && p.correct / p.total >= 0.8 ? 'text-emerald-500' : p.total > 0 && p.correct / p.total >= 0.6 ? 'text-amber-500' : 'text-red-400'">
+              {{ p.total > 0 ? Math.round(p.correct / p.total * 100) : 0 }}%
             </span>
             <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" @click="store.deleteProblemSession(p.id)">删除</button>
           </div>

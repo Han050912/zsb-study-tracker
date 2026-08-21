@@ -116,6 +116,7 @@ export const useCommunityStore = defineStore('community', {
           const res = await communityApi.recommend()
           this.posts = res.posts
           this.recommendExtras = { circles: res.circles, users: res.users }
+          this.error = null
           this.hasMore = false
         } catch (e: any) {
           this.error = e?.message || '推荐加载失败'
@@ -131,6 +132,8 @@ export const useCommunityStore = defineStore('community', {
         this.posts = []
         this.feedCursor = null
         this.hasMore = true
+        this.recommendExtras = null
+        this.error = null
       }
       if (!this.hasMore) return
       this.feedLoading = true
@@ -144,6 +147,8 @@ export const useCommunityStore = defineStore('community', {
         this.posts.push(...res.posts.filter(p => !existing.has(p.id)))
         this.feedCursor = res.nextCursor
         this.hasMore = !!res.nextCursor
+      } catch (e: any) {
+        this.error = e?.message || '动态加载失败'
       } finally {
         if (ticket === feedTicket) this.feedLoading = false
       }

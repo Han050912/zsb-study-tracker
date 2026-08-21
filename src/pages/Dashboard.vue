@@ -113,7 +113,10 @@ function isOverdue(t: Todo) {
   return !!t.dueAt && !t.done && t.dueAt <= now.value
 }
 
-const goalPercent = computed(() => Math.min(100, (store.todayMinutes / store.settings.dailyGoalMinutes) * 100))
+const goalPercent = computed(() => {
+  const goal = store.settings.dailyGoalMinutes
+  return goal > 0 ? Math.min(100, (store.todayMinutes / goal) * 100) : 0
+})
 
 // ---- 分享打卡到社区广场 ----
 const showComposer = ref(false)

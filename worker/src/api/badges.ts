@@ -1,5 +1,5 @@
 import type { Env } from '../index'
-import { first, uid } from '../db'
+import { first, run, uid } from '../db'
 import { notifyStatement } from './community'
 
 /**
@@ -31,13 +31,13 @@ const nowSec = () => Math.floor(Date.now() / 1000)
 
 /** 发放徽章（幂等）；首次获得时推送 achievement 通知；重大徽章附带成就广播帖语句；返回批处理语句数组（供外部事务调用） */
 export async function awardBadge(env: Env, userId: string, key: BadgeKey): Promise<D1PreparedStatement[]> {
-  // 先检查是否已有（幂等）
-  const exists = await first(env, 'SELECT 1 AS x FROM user_badges WHERE user_id = ? AND badge_key = ?', userId, key)
-  if (exists) return []
+  // 原子抢占：INSERT OR IGNORE 保证并发下仅一次 changes=1，消除「读-检查-写」导致的通知/广播帖重复窗口
+  const inserted = await run(env,
+    'INSERT OR IGNORE INTO user_badges (user_id, badge_key, awarded_at) VALUES (?, ?, ?)',
+    userId, key, nowSec())
+  if (!inserted.meta.changes) return [] // 已持有，幂等返回空
 
   const stmts: D1PreparedStatement[] = [
-    env.DB.prepare('INSERT OR IGNORE INTO user_badges (user_id, badge_key, awarded_at) VALUES (?, ?, ?)')
-      .bind(userId, key, nowSec()),
     notifyStatement(env, {
       userId, type: 'achievement', content: `🎖️ 你获得了徽章「${BADGE_DEFS[key]}」`
     })

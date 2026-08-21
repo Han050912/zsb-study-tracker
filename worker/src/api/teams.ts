@@ -256,9 +256,9 @@ on('POST', '/api/teams/:id/join', true, async ctx => {
     ).bind(teamId, ctx.userId, now)
   ])
   
-  // 为所有进行中的挑战初始化进度
+  // 为所有进行中的挑战初始化进度（排除已取消的挑战，避免残留无意义进度记录）
   const activeChallenges = await all<{ id: string }>(ctx.env, `
-    SELECT id FROM team_challenges WHERE team_id = ? AND end_date >= ?
+    SELECT id FROM team_challenges WHERE team_id = ? AND end_date >= ? AND is_cancelled = 0
   `, teamId, utc8Today())
   
   if (activeChallenges.length > 0) {
@@ -294,7 +294,13 @@ on('POST', '/api/teams/:id/leave', true, async ctx => {
     ctx.env.DB.prepare(
       'DELETE FROM team_challenge_progress WHERE user_id = ? AND challenge_id IN ' +
       '(SELECT id FROM team_challenges WHERE team_id = ? AND is_completed = 0)'
-    ).bind(ctx.userId, teamId)
+    ).bind(ctx.userId, teamId),
+    // 退组者可能已达标，删除其进度后重算达标人数，避免 completed_count 虚增导致「全员达标」误判
+    ctx.env.DB.prepare(
+      'UPDATE team_challenges SET completed_count = ' +
+      '(SELECT COUNT(*) FROM team_challenge_progress p WHERE p.challenge_id = team_challenges.id AND p.is_completed = 1) ' +
+      'WHERE team_id = ? AND is_completed = 0'
+    ).bind(teamId)
   ])
   
   return Response.json({ success: true })
@@ -457,12 +463,6 @@ on('POST', '/api/teams/challenges/:id/sync', true, async ctx => {
     challengeId, ctx.userId)
   
   if (isCompleted && !oldProgress?.is_completed) {
-    stmts.push(
-      ctx.env.DB.prepare(
-        'UPDATE team_challenges SET completed_count = completed_count + 1 WHERE id = ?'
-      ).bind(challengeId)
-    )
-    
     const team = await first<{ name: string }>(ctx.env,
       'SELECT name FROM study_teams WHERE id = ?', challenge.team_id)
     
@@ -472,6 +472,14 @@ on('POST', '/api/teams/challenges/:id/sync', true, async ctx => {
       content: `恭喜！您完成了「${team?.name}」的挑战目标`
     }))
   }
+  
+  // 重算达标人数（而非 +1），消除并发重复同步导致的 completed_count 虚增
+  stmts.push(
+    ctx.env.DB.prepare(
+      'UPDATE team_challenges SET completed_count = ' +
+      '(SELECT COUNT(*) FROM team_challenge_progress WHERE challenge_id = ? AND is_completed = 1) WHERE id = ?'
+    ).bind(challengeId, challengeId)
+  )
   
   await batch(ctx.env, stmts)
   

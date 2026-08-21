@@ -28,7 +28,8 @@ function renderKatex(tex: string, display: boolean): string {
   try {
     return katex.renderToString(tex.trim(), { displayMode: display, throwOnError: false })
   } catch {
-    return tex
+    // 极端情况下 KaTeX 抛错时，返回转义后的原文，防止未转义用户输入注入 HTML（XSS）
+    return md.utils.escapeHtml(tex)
   }
 }
 

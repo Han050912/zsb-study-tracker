@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { all, first, batch, uid, HttpError } from '../db'
+import { all, first, run, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { notifyStatement } from './community'
 
@@ -90,7 +90,7 @@ export function registerPartnerRoutes() {
 
   // 我的搭子列表 + 收到的请求
   on('GET', '/api/community/partners', true, async (ctx) => {
-    const partners = await all<any>(ctx.env, `
+    const partners = (await all<any>(ctx.env, `
       SELECT sp.id AS reqId, sp.updated_at, u.id AS userId, u.username, u.verified,
         COALESCE(s.user_name, u.username) AS userName, COALESCE(g.points, 0) AS totalPoints
       FROM study_partners sp
@@ -98,8 +98,9 @@ export function registerPartnerRoutes() {
       LEFT JOIN user_settings s ON s.user_id = u.id
       LEFT JOIN gamification g ON g.user_id = u.id
       WHERE sp.status = 'accepted' AND (sp.from_id = ? OR sp.to_id = ?)
-      ORDER BY sp.updated_at DESC`, ctx.userId, ctx.userId, ctx.userId)
-    const incoming = await all<any>(ctx.env, `
+      ORDER BY sp.updated_at DESC`, ctx.userId, ctx.userId, ctx.userId))
+      .map((r: any) => ({ ...r, verified: !!r.verified }))
+    const incoming = (await all<any>(ctx.env, `
       SELECT sp.id AS reqId, sp.created_at, u.id AS userId, u.username, u.verified,
         COALESCE(s.user_name, u.username) AS userName, COALESCE(g.points, 0) AS totalPoints
       FROM study_partners sp
@@ -107,7 +108,8 @@ export function registerPartnerRoutes() {
       LEFT JOIN user_settings s ON s.user_id = u.id
       LEFT JOIN gamification g ON g.user_id = u.id
       WHERE sp.to_id = ? AND sp.status = 'pending'
-      ORDER BY sp.created_at DESC`, ctx.userId)
+      ORDER BY sp.created_at DESC`, ctx.userId))
+      .map((r: any) => ({ ...r, verified: !!r.verified }))
     return Response.json({ partners, incoming })
   })
 
@@ -144,11 +146,26 @@ export function registerPartnerRoutes() {
       return Response.json({ accepted: false }, { status: 201 })
     }
 
-    // 不存在 → INSERT（UNIQUE 约束防并发重复；并发时一方会因冲突 500，重试即命中「reverse pending → accepted」）
+    // 不存在 → INSERT OR IGNORE（并发互相发起时 changes=0，改为按「互相接受」处理，避免 500）
     const id = uid()
+    const inserted = await run(ctx.env,
+      'INSERT OR IGNORE INTO study_partners (id, pair_key, from_id, to_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      id, pairKey, ctx.userId, targetId, 'pending', nowSec(), nowSec())
+    if (!inserted.meta.changes) {
+      // 并发冲突：对方刚也发起了请求，重新查询并互相接受
+      const dup = await first<{ id: string; from_id: string; to_id: string; status: string }>(ctx.env,
+        'SELECT id, from_id, to_id, status FROM study_partners WHERE pair_key = ?', pairKey)
+      if (dup && dup.status === 'pending' && dup.to_id === ctx.userId) {
+        await batch(ctx.env, [
+          ctx.env.DB.prepare('UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?').bind('accepted', nowSec(), dup.id),
+          notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '🤝 有人已成为你的学习搭子' })
+        ])
+        return Response.json({ accepted: true })
+      }
+      return Response.json({ accepted: false }, { status: 201 })
+    }
+
     await batch(ctx.env, [
-      ctx.env.DB.prepare('INSERT INTO study_partners (id, pair_key, from_id, to_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .bind(id, pairKey, ctx.userId, targetId, 'pending', nowSec(), nowSec()),
       notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '有人想成为你的学习搭子，去看看' })
     ])
     return Response.json({ accepted: false }, { status: 201 })
