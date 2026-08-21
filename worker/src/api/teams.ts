@@ -38,6 +38,8 @@ interface ChallengeRow {
   end_date: string
   completed_count: number
   is_completed: number
+  is_cancelled: number
+  remaining_days: number | null
   created_at: number
 }
 
@@ -70,6 +72,8 @@ function mapChallenge(r: ChallengeRow & { my_progress?: number; my_completed?: n
     isCompleted: !!r.is_completed,
     myProgress: r.my_progress ?? 0,
     myCompleted: !!r.my_completed,
+    isCancelled: !!r.is_cancelled,
+    remainingDays: r.remaining_days ?? undefined,
     createdAt: r.created_at
   }
 }
@@ -407,6 +411,8 @@ on('POST', '/api/teams/challenges/:id/sync', true, async ctx => {
   // 检查是否为成员
   await assertTeamMember(ctx.env, ctx.userId, challenge.team_id)
   
+  if (challenge.is_cancelled) throw new HttpError(400, '挑战已取消')
+  
   // 检查挑战是否进行中
   if (!isChallengeActive(challenge)) {
     throw new HttpError(400, '挑战已结束')
@@ -509,4 +515,104 @@ on('POST', '/api/teams/challenges/:id/sync', true, async ctx => {
     isCompleted,
     allCompleted: allCompleted?.completed === allCompleted?.total
   })
+})
+
+/** PUT /api/teams/challenges/:id - 编辑挑战（仅队长；未开始/进行中可编辑；不含 type） */
+on('PUT', '/api/teams/challenges/:id', true, async ctx => {
+  await rateLimit(ctx.request, 'update_challenge', 10, 60_000)
+
+  const challengeId = ctx.params.id
+  const challenge = await first<ChallengeRow>(ctx.env,
+    'SELECT * FROM team_challenges WHERE id = ?', challengeId)
+  if (!challenge) throw new HttpError(404, '挑战不存在')
+  await assertTeamLeader(ctx.env, ctx.userId, challenge.team_id)
+
+  if (challenge.is_cancelled) throw new HttpError(400, '已取消的挑战不可编辑')
+  if (challenge.is_completed) throw new HttpError(400, '已完成的挑战不可编辑')
+  if (utc8Today() > challenge.end_date) throw new HttpError(400, '挑战已结束，不可编辑')
+
+  const { target, durationDays, startDate } = await body<{
+    target: number
+    durationDays: number
+    startDate: string
+  }>(ctx.request)
+
+  if (!Number.isFinite(target) || target < 1 || target > 10000) throw new HttpError(400, '目标值范围为 1-10000')
+  if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > 90) throw new HttpError(400, '挑战天数范围为 1-90 天')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new HttpError(400, '开始日期格式错误')
+
+  const endDate = calcEndDate(startDate, durationDays)
+  const now = nowSec()
+
+  await batch(ctx.env, [
+    ctx.env.DB.prepare(
+      'UPDATE team_challenges SET target = ?, duration_days = ?, start_date = ?, end_date = ? WHERE id = ?'
+    ).bind(target, durationDays, startDate, endDate, challengeId),
+    ctx.env.DB.prepare(
+      'UPDATE team_challenge_progress SET is_completed = CASE WHEN current_value >= ? THEN 1 ELSE 0 END, ' +
+      'completed_at = CASE WHEN current_value >= ? THEN ? ELSE NULL END WHERE challenge_id = ?'
+    ).bind(target, target, now, challengeId),
+    ctx.env.DB.prepare(
+      'UPDATE team_challenges SET completed_count = (SELECT COUNT(*) FROM team_challenge_progress WHERE challenge_id = ? AND is_completed = 1) WHERE id = ?'
+    ).bind(challengeId, challengeId)
+  ])
+
+  return Response.json({ success: true })
+})
+
+/** DELETE /api/teams/challenges/:id - 删除挑战（仅队长；任意状态；级联删进度） */
+on('DELETE', '/api/teams/challenges/:id', true, async ctx => {
+  const challengeId = ctx.params.id
+  const challenge = await first<ChallengeRow>(ctx.env,
+    'SELECT * FROM team_challenges WHERE id = ?', challengeId)
+  if (!challenge) throw new HttpError(404, '挑战不存在')
+  await assertTeamLeader(ctx.env, ctx.userId, challenge.team_id)
+
+  await batch(ctx.env, [
+    ctx.env.DB.prepare('DELETE FROM team_challenge_progress WHERE challenge_id = ?').bind(challengeId),
+    ctx.env.DB.prepare('DELETE FROM team_challenges WHERE id = ?').bind(challengeId)
+  ])
+
+  return Response.json({ success: true })
+})
+
+/** POST /api/teams/challenges/:id/cancel - 取消挑战（仅队长；仅进行中） */
+on('POST', '/api/teams/challenges/:id/cancel', true, async ctx => {
+  const challengeId = ctx.params.id
+  const challenge = await first<ChallengeRow>(ctx.env,
+    'SELECT * FROM team_challenges WHERE id = ?', challengeId)
+  if (!challenge) throw new HttpError(404, '挑战不存在')
+  await assertTeamLeader(ctx.env, ctx.userId, challenge.team_id)
+
+  if (challenge.is_cancelled) throw new HttpError(400, '挑战已取消')
+  if (!isChallengeActive(challenge)) throw new HttpError(400, '仅进行中的挑战可取消')
+
+  const today = new Date(utc8Today())
+  const end = new Date(challenge.end_date)
+  const remainingDays = Math.round((end.getTime() - today.getTime()) / 86_400_000) + 1
+
+  await run(ctx.env,
+    'UPDATE team_challenges SET is_cancelled = 1, remaining_days = ? WHERE id = ?', remainingDays, challengeId)
+
+  return Response.json({ success: true })
+})
+
+/** POST /api/teams/challenges/:id/resume - 恢复挑战（仅队长；仅已取消；顺延 endDate） */
+on('POST', '/api/teams/challenges/:id/resume', true, async ctx => {
+  const challengeId = ctx.params.id
+  const challenge = await first<ChallengeRow>(ctx.env,
+    'SELECT * FROM team_challenges WHERE id = ?', challengeId)
+  if (!challenge) throw new HttpError(404, '挑战不存在')
+  await assertTeamLeader(ctx.env, ctx.userId, challenge.team_id)
+
+  if (!challenge.is_cancelled) throw new HttpError(400, '挑战未被取消')
+
+  const remainingDays = challenge.remaining_days ?? 1
+  const newEndDate = calcEndDate(utc8Today(), remainingDays)
+
+  await run(ctx.env,
+    'UPDATE team_challenges SET is_cancelled = 0, end_date = ?, remaining_days = NULL WHERE id = ?',
+    newEndDate, challengeId)
+
+  return Response.json({ success: true })
 })
