@@ -236,20 +236,20 @@ on('POST', '/api/teams/:id/join', true, async ctx => {
     'SELECT user_id FROM team_members WHERE team_id = ? AND user_id = ?', teamId, ctx.userId)
   if (existing) throw new HttpError(400, '您已在该小组中')
   
-  // 检查人数上限
-  if (team.member_count >= team.max_members) {
-    throw new HttpError(400, '小组人数已满')
-  }
+  // 私密小组不可公开加入
+  if (!team.is_public) throw new HttpError(403, '私密小组不可加入')
+  
+  // 原子抢占名额：member_count 未满时才 +1，消除「查上限→插入」的 TOCTOU 窗口
+  const claim = await run(ctx.env,
+    'UPDATE study_teams SET member_count = member_count + 1 WHERE id = ? AND member_count < max_members', teamId)
+  if (!claim.meta.changes) throw new HttpError(400, '小组人数已满')
   
   const now = nowSec()
   
   await batch(ctx.env, [
     ctx.env.DB.prepare(
       "INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)"
-    ).bind(teamId, ctx.userId, now),
-    ctx.env.DB.prepare(
-      'UPDATE study_teams SET member_count = member_count + 1 WHERE id = ?'
-    ).bind(teamId)
+    ).bind(teamId, ctx.userId, now)
   ])
   
   // 为所有进行中的挑战初始化进度
