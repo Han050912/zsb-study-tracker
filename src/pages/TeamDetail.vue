@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getTeamDetail, joinTeam, leaveTeam, transferLeader, disbandTeam } from '../api/teams'
-import type { TeamDetail } from '../types'
+import { getTeamDetail, joinTeam, leaveTeam, transferLeader, disbandTeam, createChallenge, syncChallengeProgress } from '../api/teams'
+import type { ChallengeType, TeamChallenge, TeamDetail } from '../types'
+import Modal from '../components/Modal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,7 +19,10 @@ const disbandSubmitting = ref(false)
 
 const team = computed(() => detail.value?.team ?? null)
 
-onMounted(loadDetail)
+onMounted(async () => {
+  await loadDetail()
+  await autoSync()
+})
 
 async function loadDetail() {
   loading.value = true
@@ -82,6 +86,67 @@ async function handleDisband() {
 function formatDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
 }
+
+// ---- 挑战 ----
+const TYPE_LABEL: Record<ChallengeType, string> = { streak: '连续打卡', minutes: '学习时长', problems: '刷题数' }
+const TYPE_UNIT: Record<ChallengeType, string> = { streak: '天', minutes: '分钟', problems: '题' }
+const STATUS_LABEL = { upcoming: '未开始', active: '进行中', cancelled: '已取消', completed: '全员达标', ended: '已结束' } as const
+type ChallengeStatus = keyof typeof STATUS_LABEL
+
+function todayUtc8(): string {
+  return new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
+}
+
+function challengeStatus(c: TeamChallenge): ChallengeStatus {
+  if (c.isCancelled) return 'cancelled'
+  if (c.isCompleted) return 'completed'
+  const t = todayUtc8()
+  if (t < c.startDate) return 'upcoming'
+  if (t > c.endDate) return 'ended'
+  return 'active'
+}
+
+const syncSubmitting = ref<Record<string, boolean>>({})
+
+async function syncChallenge(c: TeamChallenge) {
+  if (syncSubmitting.value[c.id]) return
+  syncSubmitting.value[c.id] = true
+  try {
+    await syncChallengeProgress(c.id)
+    const before = c.isCompleted
+    await loadDetail()
+    const after = detail.value?.challenges.find(x => x.id === c.id)
+    if (!before && after?.isCompleted) toast('🎉 全员达标')
+  } catch (e: any) {
+    toast(e?.message || '同步失败')
+  } finally {
+    syncSubmitting.value[c.id] = false
+  }
+}
+
+/** 进入详情自动同步进行中的挑战（静默） */
+async function autoSync() {
+  const actives = detail.value?.challenges.filter(c => challengeStatus(c) === 'active') ?? []
+  await Promise.all(actives.map(c => syncChallengeProgress(c.id).catch(() => {})))
+  if (actives.length) await loadDetail()
+}
+
+const showCreate = ref(false)
+const createForm = ref({ type: 'streak' as ChallengeType, target: 7, durationDays: 7, startDate: todayUtc8() })
+const creating = ref(false)
+
+async function handleCreate() {
+  if (creating.value) return
+  creating.value = true
+  try {
+    await createChallenge(teamId, createForm.value)
+    toast('挑战已创建')
+    showCreate.value = false
+    createForm.value = { type: 'streak', target: 7, durationDays: 7, startDate: todayUtc8() }
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '创建失败') }
+  finally { creating.value = false }
+}
 </script>
 
 <template>
@@ -133,12 +198,76 @@ function formatDate(timestamp: number): string {
 
       <div class="card">
         <div class="flex items-center gap-2 mb-2">
-          <div class="label !mb-0">挑战</div>
+          <div class="label !mb-0">挑战（{{ detail?.challenges.length }}）</div>
+          <div class="flex-1"></div>
+          <button v-if="team.myRole === 'leader'" class="btn-ghost !text-xs" @click="showCreate = true">＋ 创建挑战</button>
         </div>
-        <div v-if="!detail?.challenges.length" class="text-center text-sm text-slate-400 py-6">
-          暂无挑战
+
+        <div v-if="!detail?.challenges.length" class="text-center text-sm text-slate-400 py-6">暂无挑战</div>
+
+        <div v-else class="space-y-3">
+          <div v-for="c in detail.challenges" :key="c.id" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-sm font-semibold">{{ TYPE_LABEL[c.type] }}</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded-full"
+                :class="challengeStatus(c) === 'active' ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                  : challengeStatus(c) === 'completed' ? 'bg-yellow-50 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400'
+                  : challengeStatus(c) === 'cancelled' ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                  : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'">
+                {{ STATUS_LABEL[challengeStatus(c)] }}
+              </span>
+            </div>
+            <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              目标 {{ c.target }} {{ TYPE_UNIT[c.type] }} · {{ c.startDate }} ~ {{ c.endDate }}
+            </div>
+            <div class="mt-2">
+              <div class="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+                <span>我的进度 {{ c.myProgress }}/{{ c.target }}</span>
+                <span v-if="c.myCompleted" class="text-emerald-500">已达标</span>
+              </div>
+              <div class="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div class="h-full bg-primary-500 rounded-full" :style="{ width: Math.min(100, Math.round(c.myProgress / c.target * 100)) + '%' }"></div>
+              </div>
+            </div>
+            <div class="flex items-center justify-between mt-2">
+              <span class="text-[10px] text-slate-400">团队达标 {{ c.completedCount }}/{{ detail.members.length }} 人</span>
+              <button v-if="challengeStatus(c) === 'active'" class="btn-ghost !text-xs" :disabled="syncSubmitting[c.id]" @click="syncChallenge(c)">
+                {{ syncSubmitting[c.id] ? '同步中…' : '同步进度' }}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </template>
   </div>
+
+  <Modal :show="showCreate" title="创建挑战" @close="showCreate = false">
+    <div class="space-y-3">
+      <div>
+        <div class="label">挑战类型</div>
+        <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit">
+          <button v-for="t in (['streak', 'minutes', 'problems'] as ChallengeType[])" :key="t"
+            class="px-3 py-1.5 rounded-md transition-colors"
+            :class="createForm.type === t ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+            @click="createForm.type = t">{{ TYPE_LABEL[t] }}</button>
+        </div>
+      </div>
+      <div>
+        <div class="label">目标值（1-10000）</div>
+        <input v-model.number="createForm.target" type="number" min="1" max="10000" class="input" />
+      </div>
+      <div>
+        <div class="label">挑战天数（1-90）</div>
+        <input v-model.number="createForm.durationDays" type="number" min="1" max="90" class="input" />
+      </div>
+      <div>
+        <div class="label">开始日期</div>
+        <input v-model="createForm.startDate" type="date" class="input" />
+      </div>
+    </div>
+    <template #footer>
+      <button class="btn-ghost" @click="showCreate = false">取消</button>
+      <button class="btn-primary" :disabled="creating" @click="handleCreate">{{ creating ? '创建中…' : '创建' }}</button>
+    </template>
+  </Modal>
 </template>
