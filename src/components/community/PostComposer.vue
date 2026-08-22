@@ -44,6 +44,7 @@ const IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
 interface PendingImage {
   /** 本地预览地址（blob:） */
   localUrl: string
+  file?: File
   /** 上传完成后的服务端路径 */
   url?: string
   /** 0-1 上传进度 */
@@ -174,7 +175,7 @@ function addFiles(files: Iterable<File>) {
     if (images.value.length >= IMAGE_MAX_PER_POST) { toast(`最多上传 ${IMAGE_MAX_PER_POST} 张图片`); break }
     if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) { toast('仅支持 PNG / JPEG / WebP / GIF 图片'); continue }
     if (file.size > IMAGE_MAX_BYTES) { toast(`图片「${file.name}」超过 5MB 上限`); continue }
-    const item: PendingImage = { localUrl: URL.createObjectURL(file), progress: 0 }
+    const item: PendingImage = { localUrl: URL.createObjectURL(file), file, progress: 0 }
     images.value.push(item)
     // 通过响应式代理引用更新：数组内保存的是 reactive(item)，直接改原始 item 不会触发重渲染
     const img = images.value[images.value.length - 1]
@@ -211,16 +212,21 @@ function removeImage(idx: number) {
 }
 
 function retryImage(idx: number) {
-  // 重试需要原始 File，简单起见提示用户重新添加
-  removeImage(idx)
-  toast('请重新添加该图片')
+  const img = images.value[idx]
+  if (!img?.file) return
+  img.error = undefined
+  img.progress = 0
+  uploadImage(img.file, r => { img.progress = r })
+    .then(res => { if (res?.url) img.url = res.url; else img.error = '上传返回异常，请重试' })
+    .catch((e: any) => { img.error = e?.message || '上传失败' })
 }
 
 // ---------- 提交 ----------
 
 async function submit() {
   const text = content.value.trim()
-  if (!text) { toast('请填写内容'); return }
+  // 图文至少一项（支持纯图片发帖）
+  if (!text && !images.value.length) { toast('请输入内容或添加图片'); return }
   if (isQuestion.value && !subject.value) { toast('提问帖请选择科目标签'); return }
   if (images.value.some(i => i.error)) { toast('存在上传失败的图片，请移除或重试'); return }
   if (uploading.value) { toast('图片上传中，请稍候'); return }
@@ -302,8 +308,10 @@ async function submit() {
             <div class="h-full rounded bg-primary-500 transition-all" :style="{ width: `${Math.round(img.progress * 100)}%` }"></div>
           </div>
           <!-- 失败态 -->
-          <button v-if="img.error" class="absolute inset-0 flex items-center justify-center text-xs text-red-500 bg-white/70 dark:bg-slate-900/70"
-            @click="retryImage(i)">上传失败，点击移除</button>
+          <div v-if="img.error" class="absolute inset-0 flex flex-col items-center justify-center gap-0.5 text-xs bg-white/70 dark:bg-slate-900/70">
+            <button class="text-red-500 font-medium" @click="retryImage(i)">重试</button>
+            <button class="text-slate-500" @click="removeImage(i)">移除</button>
+          </div>
           <!-- 删除 -->
           <button class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/50 text-white text-xs leading-none"
             @click="removeImage(i)">×</button>
