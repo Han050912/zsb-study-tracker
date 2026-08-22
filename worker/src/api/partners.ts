@@ -52,6 +52,8 @@ function hoursScore(my: number[], other: number[]): number {
 export function registerPartnerRoutes() {
   // 推荐：三维打分（考试日期 40 + 薄弱科目 30 + 活跃时段 30）
   on('GET', '/api/community/partners/suggestions', true, async (ctx) => {
+    // 该接口对每位候选做 2 次子查询，限制调用频率避免放大查询压力
+    rateLimit(ctx.request, 'community:partner:suggestions', 20, 60_000)
     const candidates = await all<any>(ctx.env, `
       SELECT u.id, u.username, u.verified, COALESCE(s.user_name, u.username) AS user_name,
         s.exam_date, COALESCE(g.points, 0) AS total_points
