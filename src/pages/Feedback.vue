@@ -111,6 +111,7 @@ async function submit() {
               @click="removeImage(i)">×</button>
           </div>
           <label v-if="images.length < IMAGE_MAX"
+            :class="uploading ? 'opacity-50 pointer-events-none' : ''"
             class="w-20 h-20 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 flex flex-col items-center justify-center text-slate-400 text-[10px] cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700">
             <span class="text-xl leading-none">{{ uploading ? '…' : '+' }}</span>
             <span>{{ uploading ? '上传中' : '添加截图' }}</span>
