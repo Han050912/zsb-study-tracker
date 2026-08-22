@@ -139,6 +139,7 @@ export function createDefaultState(): AppState {
       onboarded: false,
       joinProgressBoard: false,
       profileVisibility: 'login',
+      avatar: '',
     }
   }
 }
