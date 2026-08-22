@@ -43,6 +43,8 @@ export const IMAGE_MAX_BYTES = 5 * 1024 * 1024
 export const IMAGE_MAX_PER_POST = 9
 /** 单条评论最多 3 张 */
 export const IMAGE_MAX_PER_COMMENT = 3
+/** 单条私信最多 3 张 */
+export const IMAGE_MAX_PER_MESSAGE = 3
 
 /** 服务端返回的图片路径转绝对地址（图片为公开路由，<img> 直接引用） */
 export const imageUrl = (path: string) => `${API_BASE}${path}`
@@ -204,8 +206,8 @@ export const communityApi = {
       `/api/community/messages/with/${peerId}${qs ? `?${qs}` : ''}`)
   },
   /** 发送私信 */
-  sendMessage: (peerId: string, content: string) =>
-    request<CommunityMessage>(`/api/community/messages/${peerId}`, { method: 'POST', body: JSON.stringify({ content }) }),
+  sendMessage: (peerId: string, content: string, imageUrls?: string[]) =>
+    request<CommunityMessage>(`/api/community/messages/${peerId}`, { method: 'POST', body: JSON.stringify({ content, imageUrls }) }),
   /** 私信未读总数（并入顶栏角标） */
   messageUnreadCount: () => request<{ count: number }>('/api/community/messages/unread-count'),
   report: (targetType: 'post' | 'comment' | 'message', targetId: string, reason: string, detail?: string) =>

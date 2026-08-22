@@ -591,11 +591,14 @@ CREATE TABLE IF NOT EXISTS community_messages (
   from_id TEXT NOT NULL REFERENCES users(id),
   to_id TEXT NOT NULL REFERENCES users(id),
   content TEXT NOT NULL,
+  image_urls TEXT,               -- 私信配图（最多 3 张），JSON 数组；NULL/空 = 纯文字
   is_read INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_to ON community_messages(to_id, is_read);
 CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
+-- 已建库升级：私信配图（P3），执行一次：
+--   ALTER TABLE community_messages ADD COLUMN image_urls TEXT;
 
 -- 用户徽章：服务端事件驱动发放（发帖/提问/打卡里程碑/获赞/被采纳/上传），主键去重保证仅发放一次
 CREATE TABLE IF NOT EXISTS user_badges (

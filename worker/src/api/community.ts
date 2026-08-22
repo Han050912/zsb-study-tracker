@@ -381,7 +381,7 @@ export function registerCommunityRoutes() {
       LEFT JOIN community_likes l ON l.target_type = 'comment' AND l.target_id = c.id AND l.user_id = ?
       LEFT JOIN community_dislikes d ON d.target_type = 'comment' AND d.target_id = c.id AND d.user_id = ?
       WHERE ${commentWhere}
-      ORDER BY c.created_at ASC, c.id ASC`, ctx.userId, ctx.userId, ctx.params.id)
+      ORDER BY c.created_at ASC, c.id ASC`, ...commentParams)
     return Response.json({ post: mapPost(post), comments: comments.map(mapComment) })
   })
 
@@ -430,6 +430,8 @@ export function registerCommunityRoutes() {
         ctx.userId, ...ids)
       if (owned.length !== new Set(ids).size) throw new HttpError(400, '图片不存在或已失效，请重新上传')
     }
+    // 图文至少一项：支持纯图片 / 纯文字 / 图文混合发帖
+    if (!content && !imageUrls.length) throw new HttpError(400, '请输入帖子内容或添加图片')
 
     // 圈内发帖：必须是该圈活跃成员
     let circleId: string | null = null
@@ -547,6 +549,8 @@ export function registerCommunityRoutes() {
         ctx.userId, ...ids)
       if (owned.length !== new Set(ids).size) throw new HttpError(400, '图片不存在或已失效，请重新上传')
     }
+    // 图文至少一项：支持纯图片 / 纯文字 / 图文混合评论
+    if (!content && !imageUrls.length) throw new HttpError(400, '请输入评论内容或添加图片')
 
     let parent: { user_id: string; parent_id: string | null } | null = null
     if (typeof b?.parentId === 'string' && b.parentId) {
@@ -864,7 +868,7 @@ export function registerCommunityRoutes() {
             peerName: r.peer_name || '升本人',
             peerVerified: !!r.peer_verified,
             peerAvatar: r.peer_avatar ?? undefined,
-            lastContent: r.content.slice(0, 60),
+            lastContent: (r.content || (r.image_urls ? '[图片]' : '')).slice(0, 60),
             lastAt: r.created_at,
             lastFromMe: r.from_id === ctx.userId,
             unread: unreadMap.get(peerId) ?? 0
@@ -894,6 +898,7 @@ export function registerCommunityRoutes() {
     return Response.json({
       messages: items.map(r => ({
         id: r.id, fromId: r.from_id, toId: r.to_id, content: r.content,
+        imageUrls: r.image_urls ? parseStrArray(r.image_urls) : undefined,
         // 打开记录即已读：对方发来的消息在本次返回中即视为已读（与上方 UPDATE 同步）
         isRead: r.from_id === peerId ? true : !!r.is_read, createdAt: r.created_at, fromMe: r.from_id === ctx.userId
       })),
@@ -910,20 +915,39 @@ export function registerCommunityRoutes() {
     if (!peer) throw new HttpError(404, '用户不存在')
     const b = await body(ctx.request)
     const content = String(b?.content ?? '').trim()
-    if (!content || content.length > 500) throw new HttpError(400, '私信内容需为 1-500 字')
-    assertClean(content)
+    if (content.length > 500) throw new HttpError(400, '私信内容最多 500 字')
+    if (content) assertClean(content)
+
+    // 私信配图（最多 3 张）：与发帖/评论同一口径——仅认本系统上传路径且必须属于当前用户
+    const rawImageUrls: unknown[] = Array.isArray(b?.imageUrls) ? b.imageUrls : []
+    const imageUrls = [...new Set(rawImageUrls.filter((u): u is string => typeof u === 'string'))]
+      .slice(0, IMAGE_MAX_PER_MESSAGE)
+    if (imageUrls.length) {
+      if (imageUrls.some(u => !/^\/api\/community\/images\/[a-f0-9]{16}$/.test(u))) {
+        throw new HttpError(400, '图片地址无效')
+      }
+      const ids = imageUrls.map(u => u.split('/').pop()!)
+      const owned = await all<{ id: string }>(ctx.env,
+        `SELECT id FROM community_uploads WHERE user_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
+        ctx.userId, ...ids)
+      if (owned.length !== new Set(ids).size) throw new HttpError(400, '图片不存在或已失效，请重新上传')
+    }
+    // 图文至少一项：支持纯图片 / 纯文字 / 图文混合私信
+    if (!content && !imageUrls.length) throw new HttpError(400, '请输入私信内容或添加图片')
+
     const id = uid()
     const now = nowSec()
     const myName = await displayName(ctx.env, ctx.userId)
+    const preview = content || (imageUrls.length ? '[图片]' : '')
     await batch(ctx.env, [
-      ctx.env.DB.prepare('INSERT INTO community_messages (id, from_id, to_id, content, created_at) VALUES (?, ?, ?, ?, ?)')
-        .bind(id, ctx.userId, peerId, content, now),
+      ctx.env.DB.prepare('INSERT INTO community_messages (id, from_id, to_id, content, image_urls, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(id, ctx.userId, peerId, content, JSON.stringify(imageUrls), now),
       notifyStatement(ctx.env, {
         userId: peerId, type: 'message', actorId: ctx.userId,
-        content: `${myName} 给你发来私信：${content.slice(0, 40)}${content.length > 40 ? '…' : ''}`
+        content: `${myName} 给你发来私信：${preview.slice(0, 40)}${preview.length > 40 ? '…' : ''}`
       })
     ])
-    return Response.json({ id, fromId: ctx.userId, toId: peerId, content, isRead: false, createdAt: now, fromMe: true }, { status: 201 })
+    return Response.json({ id, fromId: ctx.userId, toId: peerId, content, imageUrls, isRead: false, createdAt: now, fromMe: true }, { status: 201 })
   })
 
   // 私信未读总数（并入顶栏通知角标）
@@ -1272,11 +1296,11 @@ export function registerCommunityRoutes() {
     }
     return Response.json({
       today: todayRows.map(r => ({
-        userName: r.user_name || '升本人', userAvatar: r.user_avatar ?? undefined, todayPoints: r.today_points,
+        userId: r.user_id, userName: r.user_name || '升本人', userAvatar: r.user_avatar ?? undefined, todayPoints: r.today_points,
         streak: r.streak, totalPoints: r.points, verified: !!r.verified, subjects: subjMap.get(r.user_id) ?? []
       })),
       streak: streakRows.map(r => ({
-        userName: r.user_name || '升本人', userAvatar: r.user_avatar ?? undefined, streak: r.streak, totalPoints: r.points, verified: !!r.verified
+        userId: r.user_id, userName: r.user_name || '升本人', userAvatar: r.user_avatar ?? undefined, streak: r.streak, totalPoints: r.points, verified: !!r.verified
       }))
     })
   })

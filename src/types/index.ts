@@ -487,6 +487,8 @@ export interface CommunityMessage {
   fromId: string
   toId: string
   content: string
+  /** 私信配图相对 URL 列表（最多 3 张；未设置 = 纯文字） */
+  imageUrls?: string[]
   isRead: boolean
   createdAt: number // Unix 秒
   /** 是否我发出的 */

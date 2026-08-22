@@ -17,6 +17,8 @@ export const IMAGE_MAX_BYTES = 5 * 1024 * 1024
 export const IMAGE_MAX_PER_POST = 9
 /** 单条评论最多 3 张 */
 export const IMAGE_MAX_PER_COMMENT = 3
+/** 单条私信最多 3 张 */
+export const IMAGE_MAX_PER_MESSAGE = 3
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
