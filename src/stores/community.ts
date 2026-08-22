@@ -142,6 +142,11 @@ export const useCommunityStore = defineStore('community', {
     /** 发帖成功返回新帖；仅当命中当前筛选时插入列表头部（精华/关注筛选下新帖必未加精、作者非关注对象，不插入；圈子帖不进广场） */
     async publishPost(data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; topicRef?: string; refType?: string; refId?: string }) {
       const post = await communityApi.createPost(data)
+      // 后端返回的头像可能因云端 user_settings 同步时序缺失，用前端当前头像兜底，确保刚发出的帖子立即显示当前头像（无需刷新）
+      if (!post.userAvatar) {
+        const avatar = useAppStore().settings.avatar
+        if (avatar) post.userAvatar = avatar
+      }
       if (this.sort === 'latest' && this.category === '' && !data.circleId && !data.topicRef
         && (!this.tag || post.tags.includes(this.tag))) {
         this.posts.unshift(post)
@@ -205,6 +210,11 @@ export const useCommunityStore = defineStore('community', {
     /** 发表评论，返回新评论；同步列表内帖子评论数 */
     async postComment(postId: string, content: string, parentId?: string, imageUrls?: string[]): Promise<CommunityComment> {
       const c = await communityApi.addComment(postId, { content, parentId, imageUrls })
+      // 后端返回的头像可能因云端 user_settings 同步时序缺失，用前端当前头像兜底，避免新评论短暂显示默认头像
+      if (!c.userAvatar) {
+        const avatar = useAppStore().settings.avatar
+        if (avatar) c.userAvatar = avatar
+      }
       const p = this.posts.find(x => x.id === postId)
       if (p) p.commentsCount++
       await this.syncGamification()
