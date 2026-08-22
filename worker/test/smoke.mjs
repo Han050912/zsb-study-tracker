@@ -106,8 +106,8 @@ async function main() {
   const regA = await api('/api/auth/register', { method: 'POST', body: userA })
   check('注册 A 返回 201 + token', regA.status === 201 && !!regA.data?.token, JSON.stringify(regA.data))
   const adminUserId = regA.data?.user?.id
-  check('注册即初始化 settings（GET /api/settings 有默认值）',
-    (await api('/api/settings', { token: regA.data.token })).data?.userName === '升本人')
+  check('注册即初始化 settings（昵称取登录用户名）',
+    (await api('/api/settings', { token: regA.data.token })).data?.userName === userA.username)
 
   const regDup = await api('/api/auth/register', { method: 'POST', body: userA })
   check('重复注册返回 409', regDup.status === 409, `实际 ${regDup.status}`)
@@ -217,7 +217,7 @@ async function main() {
   check('B 用户拉取不到 A 的笔记', (pullB.data?.notes ?? []).length === 0)
   check('B 用户游戏化为默认值', pullB.data?.gamification?.points === 0)
   const bSettings = await api('/api/settings', { token: tokenB })
-  check('B 用户设置为默认值（不受 A 影响）', bSettings.data?.userName === '升本人')
+  check('B 用户昵称取注册用户名（不受 A 影响）', bSettings.data?.userName === userB.username)
 
   // 多租户 id 复用：B 推送与 A 完全相同 id 的快照应成功（复合主键 user_id+id）
   const pushB = await api('/api/data/sync', { method: 'POST', token: tokenB, body: sampleState() })

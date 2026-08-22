@@ -129,6 +129,8 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   CREATE TABLE IF NOT EXISTS feedback ( id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), type TEXT NOT NULL, content TEXT NOT NULL, contact TEXT NOT NULL DEFAULT '', image_urls TEXT NOT NULL DEFAULT '[]', github_issue_url TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL );
 --   CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
 --   CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);
+-- 已建库升级：用户自定义头像（P0），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN avatar TEXT;
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -145,7 +147,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- ========== 用户设置（一行一用户） ==========
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id TEXT PRIMARY KEY REFERENCES users(id),
-  user_name TEXT DEFAULT '升本人',
+  user_name TEXT,               -- 显示昵称（注册时初始化为登录用户名；NULL = 未设置，展示端兜底 users.username）
   daily_goal_minutes INTEGER DEFAULT 240,
   word_goal INTEGER DEFAULT 50,
   problem_goal INTEGER DEFAULT 30,
@@ -157,7 +159,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   netease_uid TEXT,             -- 网易云 UID（用户手动填写）
   onboarded INTEGER DEFAULT 0,  -- 是否完成新手引导
   join_progress_board INTEGER NOT NULL DEFAULT 0,  -- 参与学习进步榜（本周时长/本月刷题榜；默认不参与）
-  profile_visibility TEXT NOT NULL DEFAULT 'login'  -- 主页可见性：'public'所有人 / 'login'登录(默认) / 'private'仅自己
+  profile_visibility TEXT NOT NULL DEFAULT 'login',  -- 主页可见性：'public'所有人 / 'login'登录(默认) / 'private'仅自己
+  avatar TEXT                                   -- 自定义头像相对 URL（/api/avatar/<file>；NULL = 首字母兜底）
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========

@@ -19,6 +19,7 @@ export interface SettingsFull {
   onboarded: boolean
   joinProgressBoard: boolean
   profileVisibility: 'public' | 'login' | 'private'
+  avatar?: string
 }
 
 /** 容错解析 quotes JSON：数据损坏时降级为 undefined（用默认值），不拖垮整个设置接口 */
@@ -33,10 +34,10 @@ function parseQuotes(raw: unknown): string[] | undefined {
 }
 
 export async function getSettings(env: Env, userId: string): Promise<SettingsFull> {
-  const row = await first(env, 'SELECT * FROM user_settings WHERE user_id = ?', userId)
+  const row = await first(env, 'SELECT s.*, u.username FROM user_settings s LEFT JOIN users u ON u.id = s.user_id WHERE s.user_id = ?', userId)
   const quotesRow = await first(env, 'SELECT quotes FROM default_quotes WHERE user_id = ?', userId)
   return {
-    userName: row?.user_name ?? '升本人',
+    userName: row?.user_name ?? row?.username ?? '',
     dailyGoalMinutes: row?.daily_goal_minutes ?? 240,
     wordGoal: row?.word_goal ?? 50,
     problemGoal: row?.problem_goal ?? 30,
@@ -48,7 +49,8 @@ export async function getSettings(env: Env, userId: string): Promise<SettingsFul
     maimemoToken: row?.maimemo_token ?? undefined,
     onboarded: !!row?.onboarded,
     joinProgressBoard: !!row?.join_progress_board,
-    profileVisibility: (row?.profile_visibility as 'public' | 'login' | 'private') ?? 'login'
+    profileVisibility: (row?.profile_visibility as 'public' | 'login' | 'private') ?? 'login',
+    avatar: row?.avatar ?? undefined
   }
 }
 
