@@ -16,19 +16,15 @@ interface CommunityState {
   feedCursor: string | null
   hasMore: boolean
   feedLoading: boolean
-  sort: 'latest' | 'hot' | 'recommend'
-  /** 推荐附加信息（圈子 + 用户；仅 recommend 排序下填充） */
+  sort: 'latest' | 'hot'
+  /** 推荐附加信息（圈子 + 用户；仅 recommend 分类下填充） */
   recommendExtras: { circles: CommunityCircle[]; users: RecommendUser[] } | null
   /** 加载错误信息（推荐等场景） */
   error: string | null
   /** 当前筛选标签（'' = 全部） */
   tag: string
-  /** 当前筛选帖子类型（'' = 全部；本期用于「提问」筛选） */
-  typeFilter: PostType | ''
-  /** 仅看精华帖（与 typeFilter 互斥） */
-  featured: boolean
-  /** 仅看我关注的作者的帖子（与 typeFilter/featured 互斥） */
-  followFilter: boolean
+  /** 分类筛选（'' = 全部；推荐/提问/精华/关注 单选互斥） */
+  category: '' | 'recommend' | 'question' | 'featured' | 'follow'
   notifications: CommunityNotification[]
   notifyCursor: string | null
   hasMoreNotify: boolean
@@ -45,9 +41,7 @@ export const useCommunityStore = defineStore('community', {
     recommendExtras: null,
     error: null,
     tag: '',
-    typeFilter: '',
-    featured: false,
-    followFilter: false,
+    category: '',
     notifications: [],
     notifyCursor: null,
     hasMoreNotify: true,
@@ -73,43 +67,30 @@ export const useCommunityStore = defineStore('community', {
       }
     },
 
-    async setSort(sort: 'latest' | 'hot' | 'recommend') {
-      if (this.sort === sort) return
+    async setSort(sort: 'latest' | 'hot') {
+      if (this.sort === sort && this.category !== 'recommend') return
       this.sort = sort
+      if (this.category === 'recommend') this.category = '' // 推荐态下点排序退出推荐
       await this.fetchFeed(true)
     },
 
     async setTag(tag: string) {
-      if (this.tag === tag) return
+      if (this.tag === tag && this.category !== 'recommend') return
       this.tag = tag
+      if (this.category === 'recommend') this.category = '' // 推荐接口不接受标签，退出推荐
       await this.fetchFeed(true)
     },
 
-    async setTypeFilter(t: PostType | '') {
-      if (this.typeFilter === t) return
-      this.typeFilter = t
-      if (t) { this.featured = false; this.followFilter = false } // 与精华/关注筛选互斥，避免组合出空结果困惑
-      await this.fetchFeed(true)
-    },
-
-    async setFeatured(v: boolean) {
-      if (this.featured === v) return
-      this.featured = v
-      if (v) { this.typeFilter = ''; this.followFilter = false }
-      await this.fetchFeed(true)
-    },
-
-    async setFollowFilter(v: boolean) {
-      if (this.followFilter === v) return
-      this.followFilter = v
-      if (v) { this.typeFilter = ''; this.featured = false }
+    async setCategory(category: '' | 'recommend' | 'question' | 'featured' | 'follow') {
+      if (this.category === category) return
+      this.category = category
       await this.fetchFeed(true)
     },
 
     /** 拉取动态流；reset 清空重来，否则按游标追加（按 id 去重防重复）。
      *  请求令牌防止竞态：旧请求返回时若令牌已失效则丢弃结果，避免快速切换筛选后旧数据覆盖新数据。 */
     async fetchFeed(reset = false) {
-      if (this.sort === 'recommend') {
+      if (this.category === 'recommend') {
         if (!reset && this.posts.length) return
         this.feedLoading = true
         try {
@@ -139,8 +120,12 @@ export const useCommunityStore = defineStore('community', {
       this.feedLoading = true
       try {
         const res = await communityApi.feed({
-          sort: this.sort, tag: this.tag || undefined, type: this.typeFilter || undefined,
-          featured: this.featured || undefined, follow: this.followFilter || undefined, cursor: this.feedCursor
+          sort: this.sort,
+          tag: this.tag || undefined,
+          type: this.category === 'question' ? 'question' : undefined,
+          featured: this.category === 'featured' ? true : undefined,
+          follow: this.category === 'follow' ? true : undefined,
+          cursor: this.feedCursor
         })
         if (ticket !== feedTicket) return // 已有更新的请求，丢弃本次过期结果
         const existing = new Set(this.posts.map(p => p.id))
@@ -157,7 +142,7 @@ export const useCommunityStore = defineStore('community', {
     /** 发帖成功返回新帖；仅当命中当前筛选时插入列表头部（精华/关注筛选下新帖必未加精、作者非关注对象，不插入；圈子帖不进广场） */
     async publishPost(data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; topicRef?: string; refType?: string; refId?: string }) {
       const post = await communityApi.createPost(data)
-      if (this.sort === 'latest' && !this.typeFilter && !this.featured && !this.followFilter && !data.circleId && !data.topicRef
+      if (this.sort === 'latest' && this.category === '' && !data.circleId && !data.topicRef
         && (!this.tag || post.tags.includes(this.tag))) {
         this.posts.unshift(post)
       }

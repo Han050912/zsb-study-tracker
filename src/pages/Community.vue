@@ -63,27 +63,16 @@ function openComposer() {
   showComposer.value = true
 }
 
-/** 排序切换：推荐依赖登录态接口（个性化），访客点击先引导登录 */
-function chooseSort(sort: 'latest' | 'hot' | 'recommend') {
-  if (sort === 'recommend' && requireLogin(router)) return
+/** 排序切换（最新/热门） */
+function chooseSort(sort: 'latest' | 'hot') {
   store.setSort(sort).catch(e => toast(e?.message || '加载失败'))
 }
 
-/** 「提问」类型筛选（再点一次取消） */
-function toggleQuestionFilter() {
-  store.setTypeFilter(store.typeFilter === 'question' ? '' : 'question')
+/** 分类切换（推荐/提问/精华/关注 单选，再点当前项取消）；推荐/关注依赖登录态 */
+function chooseCategory(category: 'recommend' | 'question' | 'featured' | 'follow') {
+  if ((category === 'recommend' || category === 'follow') && requireLogin(router)) return
+  store.setCategory(store.category === category ? '' : category)
     .catch(e => toast(e?.message || '加载失败'))
-}
-
-/** 「精华」筛选（再点一次取消；与类型筛选互斥） */
-function toggleFeaturedFilter() {
-  store.setFeatured(!store.featured).catch(e => toast(e?.message || '加载失败'))
-}
-
-/** 「关注」筛选（再点一次取消；与类型/精华筛选互斥） */
-function toggleFollowFilter() {
-  if (requireLogin(router)) return
-  store.setFollowFilter(!store.followFilter).catch(e => toast(e?.message || '加载失败'))
 }
 
 // ---- 标签横向滑动提示（超出可视区可滑动查看，右侧渐变 + 文字提示） ----
@@ -238,25 +227,26 @@ async function removePost(id: string) {
     <!-- 排序 + 标签筛选 -->
     <div class="flex flex-col gap-2">
       <!-- 排序/筛选按钮组：独占一行 -->
-      <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit">
+      <div class="flex items-center bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit">
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.sort === 'latest' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
           @click="chooseSort('latest')">最新</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.sort === 'hot' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
           @click="chooseSort('hot')">热门</button>
+        <span class="w-px h-4 bg-slate-300 dark:bg-slate-600 mx-1"></span>
         <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.sort === 'recommend' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseSort('recommend')">✨ 推荐</button>
+          :class="store.category === 'recommend' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="chooseCategory('recommend')">✨ 推荐</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.typeFilter === 'question' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="toggleQuestionFilter">❓ 提问</button>
+          :class="store.category === 'question' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="chooseCategory('question')">❓ 提问</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.featured ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="toggleFeaturedFilter">🌟 精华</button>
+          :class="store.category === 'featured' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="chooseCategory('featured')">🌟 精华</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.followFilter ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="toggleFollowFilter">👥 关注</button>
+          :class="store.category === 'follow' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
+          @click="chooseCategory('follow')">👥 关注</button>
       </div>
 
       <!-- 预设话题标签：横向单行排列，超出可视区可滑动查看 -->
@@ -280,8 +270,8 @@ async function removePost(id: string) {
       </div>
     </div>
 
-    <!-- 推荐附加：圈子 + 用户（仅 recommend 排序显示） -->
-    <div v-if="store.sort === 'recommend' && store.recommendExtras" class="space-y-3">
+    <!-- 推荐附加：圈子 + 用户（仅 recommend 分类显示） -->
+    <div v-if="store.category === 'recommend' && store.recommendExtras" class="space-y-3">
       <div v-if="store.recommendExtras.circles.length" class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">🫧 推荐圈子</div>
         <div v-for="c in store.recommendExtras.circles" :key="c.id" class="flex items-center gap-2 text-xs">
@@ -293,18 +283,20 @@ async function removePost(id: string) {
       <div v-if="store.recommendExtras.users.length" class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">👥 推荐关注</div>
         <div v-for="u in store.recommendExtras.users" :key="u.userId" class="flex items-center gap-2 text-xs">
-          <UserAvatar :name="u.userName" :avatar="u.userAvatar" size="sm" />
-          <span class="font-medium">{{ u.userName }}</span>
+          <div class="flex items-center gap-2 cursor-pointer group" @click="router.push(`/profile/${u.userId}`)">
+            <UserAvatar :name="u.userName" :avatar="u.userAvatar" size="sm" />
+            <span class="font-medium group-hover:text-primary-500">{{ u.userName }}</span>
+          </div>
           <span v-if="u.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
           <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ u.reason }}</span>
           <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 shrink-0">{{ u.totalPoints }} 分</span>
-          <button class="ml-auto btn-ghost !text-xs" @click="openProfile(u.userId)">看主页</button>
+          <button class="ml-auto btn-ghost !text-xs" @click="router.push(`/profile/${u.userId}`)">看主页</button>
         </div>
       </div>
     </div>
 
-    <!-- 推荐加载失败提示（仅 recommend 排序下显示） -->
-    <div v-if="store.sort === 'recommend' && store.error" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+    <!-- 推荐加载失败提示（仅 recommend 分类下显示） -->
+    <div v-if="store.category === 'recommend' && store.error" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
       <span>{{ store.error }}</span>
       <button class="ml-auto btn-ghost !text-xs shrink-0" @click="store.fetchFeed(true)">重试</button>
     </div>
