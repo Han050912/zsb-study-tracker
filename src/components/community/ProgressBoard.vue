@@ -4,6 +4,7 @@
  * 不展示末位排名；本人上榜高亮，未上榜显示排名与百分位；未参与显示开通引导。
  */
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { communityApi } from '../../api/community'
 import { formatMinutes } from '../../utils/date'
 import { levelOf } from '../../data/defaults'
@@ -18,8 +19,13 @@ onMounted(async () => {
 })
 
 const board = computed(() => data.value ? data.value[sub.value] : null)
+const router = useRouter()
 const MEDALS = ['🥇', '🥈', '🥉']
 const medal = (i: number) => MEDALS[i] ?? `${i + 1}.`
+/** 跳转用户成长主页 */
+function goProfile(userId: string) {
+  router.push(`/profile/${userId}`)
+}
 </script>
 
 <template>
@@ -40,8 +46,10 @@ const medal = (i: number) => MEDALS[i] ?? `${i + 1}.`
         class="flex items-center gap-2 text-xs rounded-lg px-1.5 py-1"
         :class="e.isMe ? 'bg-primary-50 dark:bg-primary-900/30' : ''">
         <span class="w-6 text-center shrink-0">{{ medal(i) }}</span>
-        <UserAvatar :name="e.userName" :avatar="e.userAvatar" size="sm" />
-        <span class="font-medium truncate max-w-[7rem]" :class="e.isMe ? 'text-primary-600 dark:text-primary-300' : ''">{{ e.userName }}</span>
+        <div class="flex items-center gap-2 cursor-pointer group" @click="goProfile(e.userId)">
+          <UserAvatar :name="e.userName" :avatar="e.userAvatar" size="sm" />
+          <span class="font-medium truncate max-w-[7rem] group-hover:text-primary-500" :class="e.isMe ? 'text-primary-600 dark:text-primary-300' : ''">{{ e.userName }}</span>
+        </div>
         <span v-if="e.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
         <span class="text-[10px] px-1 rounded-full shrink-0"
           :style="{ background: levelOf(e.totalPoints).color + '1a', color: levelOf(e.totalPoints).color }">

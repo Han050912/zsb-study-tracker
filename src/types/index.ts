@@ -319,6 +319,7 @@ export interface CommunityNotification {
 
 /** 今日打卡榜条目 */
 export interface LeaderboardTodayEntry {
+  userId: string
   userName: string
   /** 自定义头像相对 URL（未设置 = undefined） */
   userAvatar?: string
@@ -333,6 +334,7 @@ export interface LeaderboardTodayEntry {
 
 /** 连续打卡王条目 */
 export interface LeaderboardStreakEntry {
+  userId: string
   userName: string
   /** 自定义头像相对 URL（未设置 = undefined） */
   userAvatar?: string
