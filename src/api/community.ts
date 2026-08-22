@@ -1,4 +1,4 @@
-import { request, API_BASE, handleUnauthorized } from './client'
+import { request, authFetch, API_BASE, handleUnauthorized } from './client'
 import { compressImage } from '../utils/imageCompress'
 import type {
   AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, HotTopic, HotTopicOverride, MessageConversation, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserStudyStats, WeeklyReport
@@ -46,6 +46,16 @@ export const IMAGE_MAX_PER_COMMENT = 3
 
 /** 服务端返回的图片路径转绝对地址（图片为公开路由，<img> 直接引用） */
 export const imageUrl = (path: string) => `${API_BASE}${path}`
+
+/** 上传头像（裸二进制 256×256 裁剪图；服务端写入 user_settings.avatar 并返回新 URL） */
+export async function uploadAvatar(blob: Blob): Promise<{ url: string }> {
+  const res = await authFetch('/api/community/upload?variant=avatar', { method: 'POST', body: blob }, {})
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: '上传失败' }))
+    throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })
+  }
+  return res.json()
+}
 
 /** 上传结果 */
 export interface UploadResult {

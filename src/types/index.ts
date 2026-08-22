@@ -202,6 +202,8 @@ export interface Settings {
   joinProgressBoard: boolean
   /** 主页可见性：public 所有人 / login 登录(默认) / private 仅自己 */
   profileVisibility: 'public' | 'login' | 'private'
+  /** 自定义头像相对 URL（/api/avatar/<file>；空 = 首字母兜底） */
+  avatar: string
 }
 
 export interface AppState {
@@ -235,6 +237,8 @@ export interface CommunityPost {
   userPoints: number
   /** 作者是否为认证专家（蓝 V） */
   userVerified: boolean
+  /** 作者自定义头像相对 URL（未设置 = undefined，前端回退首字母） */
+  userAvatar?: string
   type: PostType
   content: string
   tags: string[]
@@ -274,6 +278,8 @@ export interface CommunityComment {
   postId: string
   userId: string
   userName: string
+  /** 评论作者自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   parentId?: string
   content: string
   /** 评论配图路径列表（最多 3 张），经 imageUrl() 转绝对地址 */
@@ -298,6 +304,8 @@ export interface CommunityNotification {
   type: 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system'
   actorId?: string
   actorName?: string
+  /** 触发者自定义头像相对 URL（未设置 = undefined） */
+  actorAvatar?: string
   postId?: string
   commentId?: string
   content: string
@@ -308,6 +316,8 @@ export interface CommunityNotification {
 /** 今日打卡榜条目 */
 export interface LeaderboardTodayEntry {
   userName: string
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   todayPoints: number
   streak: number
   totalPoints: number
@@ -320,6 +330,8 @@ export interface LeaderboardTodayEntry {
 /** 连续打卡王条目 */
 export interface LeaderboardStreakEntry {
   userName: string
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   streak: number
   totalPoints: number
   /** 认证专家（蓝 V） */
@@ -335,6 +347,8 @@ export interface CommunityLeaderboard {
 export interface ProgressBoardEntry {
   userId: string
   userName: string
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   verified: boolean
   totalPoints: number
   value: number
@@ -394,6 +408,8 @@ export interface UserBadge {
 export interface CommunityUserProfile {
   userId: string
   userName: string
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  avatar?: string
   points: number
   streak: number
   verified: boolean
@@ -447,6 +463,8 @@ export interface CircleMember {
   userName: string
   role: 'owner' | 'member'
   verified: boolean
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
 }
 
 /** 圈子详情响应 */
@@ -454,7 +472,7 @@ export interface CircleDetail {
   circle: CommunityCircle
   members: CircleMember[]
   /** 待审批申请（仅圈主可见） */
-  pending: { userId: string; userName: string; createdAt: number }[]
+  pending: { userId: string; userName: string; createdAt: number; userAvatar?: string }[]
 }
 
 /** 私信消息 */
@@ -474,6 +492,8 @@ export interface MessageConversation {
   peerId: string
   peerName: string
   peerVerified: boolean
+  /** 对方自定义头像相对 URL（未设置 = undefined） */
+  peerAvatar?: string
   /** 最后一条消息截断预览 */
   lastContent: string
   lastAt: number
@@ -518,6 +538,8 @@ export interface TeamMember {
   userName: string
   role: 'leader' | 'member'
   joinedAt: number
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
 }
 
 /** 挑战类型 */
@@ -553,6 +575,8 @@ export interface PartnerSuggestion {
   userId: string
   userName: string
   verified: boolean
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   totalPoints: number
   score: number
   reasons: string[]
@@ -564,6 +588,8 @@ export interface PartnerItem {
   userId: string
   userName: string
   verified: boolean
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   totalPoints: number
 }
 
@@ -572,6 +598,8 @@ export interface RecommendUser {
   userId: string
   userName: string
   verified: boolean
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   totalPoints: number
   reason: string
 }
