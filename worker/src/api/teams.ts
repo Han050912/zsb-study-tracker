@@ -114,8 +114,8 @@ function isChallengeActive(challenge: ChallengeRow): boolean {
 
 // ---------- API 路由 ----------
 
-/** GET /api/teams - 获取公开小组列表 */
-on('GET', '/api/teams', true, async ctx => {
+/** GET /api/teams - 获取公开小组列表（公开：访客可浏览公开小组，my=true 分支依赖登录态返回空） */
+on('GET', '/api/teams', false, async ctx => {
   await rateLimit(ctx.request, 'teams_list', 60, 300_000)
   
   const url = new URL(ctx.request.url)

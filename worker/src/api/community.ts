@@ -1087,7 +1087,17 @@ export function registerCommunityRoutes() {
       LEFT JOIN gamification g ON g.user_id = u.id
       WHERE u.id = ?`, ctx.params.id)
     if (!u) throw new HttpError(404, '用户不存在')
-    await assertProfileVisible(ctx, ctx.params.id, u.profile_visibility ?? 'login')
+    const visibility = u.profile_visibility ?? 'login'
+    // 私密主页（非本人）：不抛错，降级返回公开子集（昵称/头像/蓝V 在公开帖子流本就可见）
+    if (visibility === 'private' && ctx.userId !== ctx.params.id) {
+      return Response.json({
+        profilePrivate: true,
+        userId: u.id, userName: u.user_name || '升本人',
+        avatar: u.avatar ?? undefined, verified: !!u.verified, expertise: u.expertise || ''
+      })
+    }
+    // login 可见性 + 访客：需登录（登录用户可见完整资料）
+    if (visibility === 'login' && !ctx.userId) throw new HttpError(401, '请登录后查看')
     const [stats, badges, followers, followedByMe] = await Promise.all([
       first<{ posts: number; likes: number }>(ctx.env, `
         SELECT (SELECT COUNT(*) FROM community_posts WHERE user_id = ? AND is_hidden = 0)
