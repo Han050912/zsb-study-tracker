@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
+import { Camera } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import { sessionUser } from '../services/auth'
+import { imageUrl } from '../api/community'
+import AvatarEditor from '../components/AvatarEditor.vue'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 
 const user = computed(() => sessionUser.value)
+
+const showAvatarEditor = ref(false)
 
 function fmtTime(ts?: number) {
   if (!ts) return '—'
@@ -63,8 +68,15 @@ function exportBackup() {
 
     <!-- 账号卡片 -->
     <div class="card flex items-center gap-4">
-      <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center text-2xl font-bold shrink-0">
-        {{ user?.username?.slice(0, 1).toUpperCase() }}
+      <div class="relative w-14 h-14 shrink-0 cursor-pointer group" title="更换头像" @click="showAvatarEditor = true">
+        <img v-if="store.settings.avatar" :src="imageUrl(store.settings.avatar)"
+          class="w-14 h-14 rounded-2xl object-cover" alt="我的头像">
+        <div v-else class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center text-2xl font-bold">
+          {{ user?.username?.slice(0, 1).toUpperCase() }}
+        </div>
+        <span class="absolute inset-0 rounded-2xl bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+          <Camera :size="20" aria-hidden="true" />
+        </span>
       </div>
       <div class="flex-1 min-w-0">
         <div class="font-bold text-lg truncate">{{ user?.username }}</div>
@@ -109,5 +121,8 @@ function exportBackup() {
       </div>
       <button class="btn-primary !text-xs shrink-0" @click="exportBackup">导出备份</button>
     </div>
+
+    <AvatarEditor :show="showAvatarEditor" @update:show="showAvatarEditor = $event"
+      @uploaded="store.settings.avatar = $event" />
   </div>
 </template>

@@ -75,7 +75,7 @@ onMounted(async () => {
       <!-- 用户信息头部 -->
       <div class="card">
         <div class="flex items-start gap-4">
-          <UserAvatar :name="profile.userName" class="w-16 h-16 text-2xl" />
+          <UserAvatar :name="profile.userName" :avatar="profile.avatar" class="w-16 h-16 text-2xl" />
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
               <h1 class="text-xl font-bold">{{ profile.userName }}</h1>
