@@ -99,6 +99,13 @@ function calcEndDate(startDate: string, durationDays: number): string {
   return d.toISOString().split('T')[0]
 }
 
+/** 校验 YYYY-MM-DD 是否为真实存在的日期（如 2026-02-30 非法），避免非法日期在 calcEndDate 中抛异常导致 500 */
+function isValidDateStr(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false
+  const d = new Date(`${s}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
+}
+
 /** 检查挑战是否进行中 */
 function isChallengeActive(challenge: ChallengeRow): boolean {
   const today = utc8Today()
@@ -366,13 +373,10 @@ on('POST', '/api/teams/:id/challenges', true, async ctx => {
   if (!['streak', 'minutes', 'problems'].includes(type)) {
     throw new HttpError(400, '挑战类型必须为 streak/minutes/problems')
   }
-  if (target < 1 || target > 10000) throw new HttpError(400, '目标值范围为 1-10000')
-  if (durationDays < 1 || durationDays > 90) throw new HttpError(400, '挑战天数范围为 1-90 天')
-  
-  // 验证日期格式
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-    throw new HttpError(400, '开始日期格式错误')
-  }
+  if (!Number.isFinite(target) || target < 1 || target > 10000) throw new HttpError(400, '目标值范围为 1-10000')
+  if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > 90) throw new HttpError(400, '挑战天数范围为 1-90 天')
+
+  if (!isValidDateStr(startDate)) throw new HttpError(400, '开始日期格式错误')
   
   const endDate = calcEndDate(startDate, durationDays)
   const challengeId = uid()
@@ -547,7 +551,7 @@ on('PUT', '/api/teams/challenges/:id', true, async ctx => {
 
   if (!Number.isFinite(target) || target < 1 || target > 10000) throw new HttpError(400, '目标值范围为 1-10000')
   if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > 90) throw new HttpError(400, '挑战天数范围为 1-90 天')
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new HttpError(400, '开始日期格式错误')
+  if (!isValidDateStr(startDate)) throw new HttpError(400, '开始日期格式错误')
 
   const endDate = calcEndDate(startDate, durationDays)
   const now = nowSec()

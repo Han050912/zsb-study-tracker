@@ -183,14 +183,20 @@ const form = ref({
   isPublic: true
 })
 
+// 请求序号：快速切换 tab 时，旧请求的响应可能晚于新请求返回，
+// 若不丢弃过期响应，会把「公开小组」数据覆盖到「我的小组」列表上
+let loadSeq = 0
+
 async function loadTeams() {
+  const seq = ++loadSeq
   loading.value = true
   try {
-    teams.value = await getTeams(activeTab.value === 'my')
+    const result = await getTeams(activeTab.value === 'my')
+    if (seq === loadSeq) teams.value = result
   } catch (e: any) {
-    toast(e.message || '加载失败')
+    if (seq === loadSeq) toast(e.message || '加载失败')
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
