@@ -160,7 +160,7 @@ function fetchBackground() {
 function startBgRotation() {
   if (bgTimer) return
   fetchBackground()
-  bgTimer = setInterval(fetchBackground, 120_000)
+  bgTimer = setInterval(fetchBackground, 300_000)
 }
 
 function stopBgRotation() {
@@ -253,14 +253,14 @@ const totalFocusMin = computed(() => Object.values(store.pomodoro.daily).reduce(
       <h1 class="text-2xl font-bold text-center">🍅 番茄专注</h1>
       <div class="card space-y-3">
         <div class="flex gap-2">
-          <button class="flex-1 btn" :class="mode === 'countdown' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'" @click="mode = 'countdown'">⏳ 倒计时</button>
-          <button class="flex-1 btn" :class="mode === 'countup' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'" @click="mode = 'countup'">⏱ 正计时</button>
+          <button class="flex-1 btn" :class="mode === 'countdown' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'" @click="mode = 'countdown'">倒计时</button>
+          <button class="flex-1 btn" :class="mode === 'countup' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'" @click="mode = 'countup'">正计时</button>
         </div>
         <div v-if="mode === 'countdown'" class="grid grid-cols-2 gap-3">
           <div><label class="label">专注（分钟）</label><input v-model.number="focusMinutes" type="number" min="1" max="120" class="input" /></div>
           <div><label class="label">休息（分钟）</label><input v-model.number="breakMinutes" type="number" min="1" max="30" class="input" /></div>
         </div>
-        <button class="btn-primary w-full !py-3 text-base" @click="start">开始专注 🚀</button>
+        <button class="btn-primary w-full !py-3 text-base" @click="start">开始专注 </button>
       </div>
 
       <!-- 名言点缀 -->
