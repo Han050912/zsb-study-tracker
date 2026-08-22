@@ -60,8 +60,11 @@ export function settingsReplaceStatements(env: Env, userId: string, s: SettingsF
   const commonCols = 'user_name = excluded.user_name, daily_goal_minutes = excluded.daily_goal_minutes, word_goal = excluded.word_goal, ' +
     'problem_goal = excluded.problem_goal, exam_date = excluded.exam_date, theme = excluded.theme, reminder_enabled = excluded.reminder_enabled, ' +
     'reminder_time = excluded.reminder_time, onboarded = excluded.onboarded, join_progress_board = excluded.join_progress_board, profile_visibility = excluded.profile_visibility'
+  // 昵称缺失或为空（含纯空白）时写入 NULL：展示端统一回退登录用户名（COALESCE 口径），
+  // 避免前端误传空字符串导致社区/团队等处出现空白作者名
+  const userName = typeof s.userName === 'string' && s.userName.trim() ? s.userName.trim() : null
   const baseParams = [
-    userId, s.userName ?? '升本人', s.dailyGoalMinutes ?? 240, s.wordGoal ?? 50, s.problemGoal ?? 30,
+    userId, userName, s.dailyGoalMinutes ?? 240, s.wordGoal ?? 50, s.problemGoal ?? 30,
     s.examDate ?? '', s.theme ?? 'light', s.reminderEnabled ? 1 : 0, s.reminderTime ?? '08:00', s.onboarded ? 1 : 0,
     s.joinProgressBoard ? 1 : 0, s.profileVisibility ?? 'login'
   ]

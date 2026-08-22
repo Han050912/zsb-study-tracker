@@ -41,13 +41,23 @@ interface FeedbackRow {
   user_name?: string
 }
 
+/** 容错解析截图列表：数据损坏时降级为空数组，不拖垮管理后台列表 */
+function parseImageUrls(raw: string | undefined): string[] {
+  try {
+    const v = JSON.parse(raw || '[]')
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 function toFeedback(r: FeedbackRow) {
   return {
     id: r.id,
     type: r.type,
     content: r.content,
     contact: r.contact,
-    imageUrls: JSON.parse(r.image_urls || '[]') as string[],
+    imageUrls: parseImageUrls(r.image_urls),
     githubIssueUrl: r.github_issue_url ?? null,
     status: r.status,
     createdAt: r.created_at,
@@ -87,7 +97,11 @@ async function createGitHubIssue(
         'Authorization': `Bearer ${token}`,
         'User-Agent': 'zsb-study-api-worker'
       },
-      body: JSON.stringify({ title: `[${TYPE_LABEL[type]}] ${content.slice(0, 30)}`, body: lines.join('\n') }),
+      body: JSON.stringify({
+        // 标题折叠换行为空格：GitHub issue 标题不允许含换行（含换行会 422 静默失败）
+        title: `[${TYPE_LABEL[type]}] ${content.slice(0, 30).replace(/\s+/g, ' ').trim()}`,
+        body: lines.join('\n')
+      }),
       signal: ctrl.signal
     })
     if (!res.ok) {
