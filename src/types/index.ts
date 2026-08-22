@@ -267,6 +267,8 @@ export interface CommunityPost {
   commentsCount: number
   isPinned: boolean
   isHidden: boolean
+  /** 软违规待审标记（命中软敏感词；仅作者/管理员可见时返回 true） */
+  isFlagged: boolean
   likedByMe: boolean
   dislikedByMe: boolean
   createdAt: number // Unix 秒
@@ -291,6 +293,8 @@ export interface CommunityComment {
   /** 是否被楼主采纳为最佳答案 */
   isAccepted: boolean
   isHidden: boolean
+  /** 软违规待审标记（命中软敏感词；仅作者/管理员可见时返回 true） */
+  isFlagged: boolean
   likedByMe: boolean
   dislikedByMe: boolean
   createdAt: number // Unix 秒

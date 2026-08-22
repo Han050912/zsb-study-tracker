@@ -2,8 +2,8 @@ import type { Env } from '../index'
 import { on, body } from '../router'
 import { all, first, run, batch, uid, utc8Today, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
-import { deleteUploads, uploadIdsOf, IMAGE_MAX_PER_POST, IMAGE_MAX_PER_COMMENT } from './uploads'
-import { assertClean } from './sensitive'
+import { deleteUploads, uploadIdsOf, IMAGE_MAX_PER_POST, IMAGE_MAX_PER_COMMENT, IMAGE_MAX_PER_MESSAGE } from './uploads'
+import { assertClean, moderate } from './sensitive'
 import { awardBadge, hasBadge } from './badges'
 
 /**
@@ -60,6 +60,7 @@ function mapPost(r: any) {
     commentsCount: r.comments_count,
     isPinned: !!r.is_pinned,
     isHidden: !!r.is_hidden,
+    isFlagged: !!r.is_flagged,
     likedByMe: !!r.liked_by_me,
     dislikedByMe: !!r.disliked_by_me,
     createdAt: r.created_at
@@ -81,6 +82,7 @@ function mapComment(r: any) {
     dislikesCount: r.dislikes_count,
     isAccepted: !!r.is_accepted,
     isHidden: !!r.is_hidden,
+    isFlagged: !!r.is_flagged,
     likedByMe: !!r.liked_by_me,
     dislikedByMe: !!r.disliked_by_me,
     createdAt: r.created_at
@@ -303,8 +305,11 @@ export function registerCommunityRoutes() {
 
     const admin = await isAdmin(ctx.env, ctx.userId)
     const where: string[] = []
-    if (!admin) where.push('p.is_hidden = 0')
     const params: unknown[] = [ctx.userId, ctx.userId]
+    if (!admin) {
+      where.push('p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)')
+      params.push(ctx.userId)
+    }
     if (type && POST_TYPES.includes(type)) { where.push('p.type = ?'); params.push(type) }
     if (tag) { where.push(`p.tags LIKE ? ESCAPE '\\'`); params.push(`%"${escapeLike(tag)}"%`) }
     if (featured) where.push('p.is_featured = 1')
@@ -353,12 +358,18 @@ export function registerCommunityRoutes() {
   // 帖子详情（含评论列表，前端组装二级树；管理员可见隐藏内容）
   on('GET', '/api/community/posts/:id', false, async (ctx) => {
     const admin = await isAdmin(ctx.env, ctx.userId)
-    const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0'
-    const post = await first(ctx.env, `${POST_SELECT} WHERE ${postWhere}`, ctx.userId, ctx.userId, ctx.params.id)
+    const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)'
+    const postParams: unknown[] = [ctx.userId, ctx.userId, ctx.params.id]
+    if (!admin) postParams.push(ctx.userId)
+    const post = await first(ctx.env, `${POST_SELECT} WHERE ${postWhere}`, ...postParams)
     if (!post) throw new HttpError(404, '帖子不存在')
     // 圈子帖：与列表接口同一口径校验可读性（审核圈仅活跃成员/管理员可见）
     if (post.circle_id) await assertCircleReadable(ctx, post.circle_id)
-    const commentWhere = admin ? 'c.post_id = ?' : 'c.post_id = ? AND c.is_hidden = 0'
+    const commentWhere = admin
+      ? 'c.post_id = ?'
+      : 'c.post_id = ? AND c.is_hidden = 0 AND (c.is_flagged = 0 OR c.user_id = ?)'
+    const commentParams: unknown[] = [ctx.userId, ctx.userId, ctx.params.id]
+    if (!admin) commentParams.push(ctx.userId)
     const comments = await all(ctx.env, `
       SELECT c.*, COALESCE(s.user_name, u.username) AS user_name,
         u.verified AS user_verified, s.avatar AS user_avatar,
@@ -392,8 +403,10 @@ export function registerCommunityRoutes() {
       }
     }
     const content = String(b?.content ?? '').trim()
-    if (!content || content.length > 5000) throw new HttpError(400, '帖子内容需为 1-5000 字')
-    assertClean(content)
+    if (content.length > 5000) throw new HttpError(400, '帖子内容最多 5000 字')
+    if (content) assertClean(content)
+    // 软违规：先发布但标记待审（仅作者/管理员可见），由管理员复核
+    const flagged = content ? (moderate(content).soft ? 1 : 0) : 0
     const type = POST_TYPES.includes(b?.type) ? b.type : 'share'
     const tags = (Array.isArray(b?.tags) ? b.tags : [])
       .filter((t: unknown) => typeof t === 'string').slice(0, 5)
@@ -444,11 +457,11 @@ export function registerCommunityRoutes() {
     const now = nowSec()
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare(
-        'INSERT INTO community_posts (id, user_id, type, content, tags, image_urls, circle_id, topic_ref, ref_type, ref_id, created_at, updated_at) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO community_posts (id, user_id, type, content, tags, image_urls, circle_id, topic_ref, ref_type, ref_id, is_flagged, created_at, updated_at) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).bind(id, ctx.userId, type, content, JSON.stringify(tags), JSON.stringify(imageUrls), circleId, topicRef,
         typeof b?.refType === 'string' ? b.refType.slice(0, 20) : null,
-        typeof b?.refId === 'string' ? b.refId.slice(0, 64) : null, now, now)
+        typeof b?.refId === 'string' ? b.refId.slice(0, 64) : null, flagged, now, now)
     ]
     const awarded = await first(ctx.env,
       'SELECT id FROM points_log WHERE user_id = ? AND date = ? AND reason = ?', ctx.userId, utc8Today(), '社区打卡')
@@ -515,8 +528,10 @@ export function registerCommunityRoutes() {
 
     const b = await body(ctx.request)
     const content = String(b?.content ?? '').trim()
-    if (!content || content.length > 1000) throw new HttpError(400, '评论内容需为 1-1000 字')
-    assertClean(content)
+    if (content.length > 1000) throw new HttpError(400, '评论内容最多 1000 字')
+    if (content) assertClean(content)
+    // 软违规：先发布但标记待审（仅作者/管理员可见），由管理员复核
+    const flagged = content ? (moderate(content).soft ? 1 : 0) : 0
 
     // 评论配图（最多 3 张）：与发帖同一口径——仅认本系统上传路径且必须属于当前用户
     const rawImageUrls: unknown[] = Array.isArray(b?.imageUrls) ? b.imageUrls : []
@@ -548,8 +563,8 @@ export function registerCommunityRoutes() {
     const me = await first<{ verified: number }>(ctx.env, 'SELECT verified FROM users WHERE id = ?', ctx.userId)
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare(
-        'INSERT INTO community_comments (id, post_id, user_id, parent_id, content, image_urls, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(id, postId, ctx.userId, parent ? b.parentId : null, content, JSON.stringify(imageUrls), now, now),
+        'INSERT INTO community_comments (id, post_id, user_id, parent_id, content, image_urls, is_flagged, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, postId, ctx.userId, parent ? b.parentId : null, content, JSON.stringify(imageUrls), flagged, now, now),
       ctx.env.DB.prepare('UPDATE community_posts SET comments_count = comments_count + 1 WHERE id = ?').bind(postId),
       ...awardStatements(ctx.env, ctx.userId, 1, '评论帖子', id)
     ]
@@ -571,7 +586,7 @@ export function registerCommunityRoutes() {
       id, postId, userId: ctx.userId, userName: myName,
       parentId: parent ? b.parentId : undefined,
       content, imageUrls, userVerified: !!me?.verified,
-      likesCount: 0, isAccepted: false, isHidden: false, likedByMe: false, createdAt: now
+      likesCount: 0, isAccepted: false, isHidden: false, isFlagged: !!flagged, likedByMe: false, createdAt: now
     }, { status: 201 })
   })
 
@@ -1388,8 +1403,9 @@ export function registerCommunityRoutes() {
 
     // 2. 帖子推荐：关注作者 OR 常用 tag；无信号或结果为空则回退热门
     let postRows: any[]
-    const postsParams: unknown[] = []
-    let postWhere = 'p.is_hidden = 0 AND p.circle_id IS NULL'
+    // 软违规待审帖仅作者/管理员可见（与列表/详情接口同一口径）
+    const postsParams: unknown[] = [ctx.userId]
+    let postWhere = 'p.is_hidden = 0 AND p.circle_id IS NULL AND (p.is_flagged = 0 OR p.user_id = ?)'
     if (followIds.length || tags.length) {
       const ors: string[] = []
       if (followIds.length) { ors.push(`p.user_id IN (${followIds.map(() => '?').join(',')})`); postsParams.push(...followIds) }
@@ -1401,8 +1417,8 @@ export function registerCommunityRoutes() {
       ctx.userId, ctx.userId, ...postsParams)
     if (!postRows.length) {
       postRows = await all<any>(ctx.env,
-        `${POST_SELECT} WHERE p.is_hidden = 0 AND p.circle_id IS NULL ORDER BY (p.likes_count * 2 + p.comments_count * 3) DESC, p.created_at DESC LIMIT 10`,
-        ctx.userId, ctx.userId)
+        `${POST_SELECT} WHERE p.is_hidden = 0 AND p.circle_id IS NULL AND (p.is_flagged = 0 OR p.user_id = ?) ORDER BY (p.likes_count * 2 + p.comments_count * 3) DESC, p.created_at DESC LIMIT 10`,
+        ctx.userId, ctx.userId, ctx.userId)
     }
 
     // 3. 圈子推荐：人气降序，排除已加入
@@ -1504,6 +1520,28 @@ export function registerCommunityRoutes() {
     await run(ctx.env,
       "INSERT INTO community_reports (id, reporter_id, target_type, target_id, reason, detail, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
       uid(), ctx.userId, targetType, targetId, reason, detail, nowSec())
+    // 举报达阈值自动隐藏（≥5 个不同举报人）：减轻管理员负担；「一人一内容仅一次 pending 举报」已去重防刷
+    if (targetType !== 'message') {
+      const cnt = await first<{ n: number }>(ctx.env,
+        "SELECT COUNT(*) AS n FROM community_reports WHERE target_type = ? AND target_id = ? AND status = 'pending'",
+        targetType, targetId)
+      if ((cnt?.n ?? 0) >= 5) {
+        const table = targetType === 'post' ? 'community_posts' : 'community_comments'
+        await batch(ctx.env, [
+          ctx.env.DB.prepare(`UPDATE ${table} SET is_hidden = 1 WHERE id = ? AND is_hidden = 0`).bind(targetId),
+          ctx.env.DB.prepare(
+            "UPDATE community_reports SET status = 'resolved' WHERE target_type = ? AND target_id = ? AND status = 'pending'"
+          ).bind(targetType, targetId),
+          ctx.env.DB.prepare(
+            'INSERT INTO community_moderation_log (id, admin_id, action, target_type, target_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          ).bind(uid(), 'system', 'auto-hide', targetType, targetId, '举报达阈值自动隐藏', nowSec()),
+          notifyStatement(ctx.env, {
+            userId: targetUserId, type: 'system',
+            content: `你的${targetType === 'post' ? '帖子' : '评论'}因多次被举报已被系统自动隐藏，如有异议可联系管理员`
+          })
+        ])
+      }
+    }
     return Response.json({ ok: true }, { status: 201 })
   })
 

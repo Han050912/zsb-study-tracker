@@ -462,6 +462,7 @@ CREATE TABLE IF NOT EXISTS community_posts (
   comments_count INTEGER NOT NULL DEFAULT 0,
   is_pinned INTEGER NOT NULL DEFAULT 0,
   is_hidden INTEGER NOT NULL DEFAULT 0,
+  is_flagged INTEGER NOT NULL DEFAULT 0, -- 软违规待审标记（1=命中软敏感词，仅作者/管理员可见）
   created_at INTEGER NOT NULL,         -- Unix 时间戳（秒）
   updated_at INTEGER NOT NULL
 );
@@ -483,6 +484,7 @@ CREATE TABLE IF NOT EXISTS community_comments (
   dislikes_count INTEGER NOT NULL DEFAULT 0,
   is_accepted INTEGER NOT NULL DEFAULT 0, -- 是否被采纳为最佳答案（与 posts.accepted_answer_id 冗余保持一致）
   is_hidden INTEGER NOT NULL DEFAULT 0,
+  is_flagged INTEGER NOT NULL DEFAULT 0, -- 软违规待审标记（1=命中软敏感词，仅作者/管理员可见）
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

@@ -72,6 +72,7 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
       <span v-if="post.isFeatured" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">🌟 精华</span>
       <span v-if="post.isDaily" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400">📅 每日一题</span>
       <span v-if="post.isHidden" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400">已隐藏</span>
+      <span v-if="post.isFlagged" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">待审核</span>
       <span v-if="post.type === 'question'"
         class="text-[10px] px-2 py-0.5 rounded-full shrink-0"
         :class="post.isResolved
