@@ -204,6 +204,27 @@ export function registerUploadRoutes() {
       return Response.json({ id: thumbFor, url: `/api/community/images/${thumbFor}` }, { status: 201 })
     }
 
+    // 头像：独立 R2 前缀 + user_settings.avatar 字段；不写 community_uploads，
+    // 否则 cleanupOrphanUploads 会因头像不被帖子/评论/反馈引用而在 30 天后误删
+    if (variant === 'avatar') {
+      if (kind.ext === 'gif') throw new HttpError(400, '头像仅支持 PNG / JPEG / WebP')
+      const old = await first<{ avatar: string | null }>(ctx.env,
+        'SELECT avatar FROM user_settings WHERE user_id = ?', ctx.userId)
+      const avId = uid()
+      const avKey = `avatars/${avId}.${kind.ext}`
+      await ctx.env.IMAGES.put(avKey, data, { httpMetadata: { contentType: kind.mime } })
+      const url = `/api/avatar/${avId}.${kind.ext}`
+      await run(ctx.env,
+        'INSERT INTO user_settings (user_id, avatar) VALUES (?, ?) ' +
+        'ON CONFLICT(user_id) DO UPDATE SET avatar = excluded.avatar',
+        ctx.userId, url)
+      // 删除旧头像对象（失败仅记日志；下次换头像时会随新流程再尝试删除）
+      const oldFile = old?.avatar?.match(/^\/api\/avatar\/([a-f0-9]{16}\.(?:png|jpg|webp))$/)?.[1]
+      if (oldFile) await ctx.env.IMAGES.delete(`avatars/${oldFile}`)
+        .catch(e => console.error('[avatar] 旧头像删除失败', oldFile, e))
+      return Response.json({ url }, { status: 201 })
+    }
+
     const id = uid()
     const key = `posts/${id}.${kind.ext}`
     await ctx.env.IMAGES.put(key, data, { httpMetadata: { contentType: kind.mime } })
@@ -237,6 +258,23 @@ export function registerUploadRoutes() {
     return new Response(obj.body, {
       headers: {
         'Content-Type': (thumb && row.thumb_r2_key) ? 'image/webp' : row.content_type,
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'X-Content-Type-Options': 'nosniff'
+      }
+    })
+  })
+
+  // 读取头像（公开路由，供 <img> 直引；文件名含扩展名，按扩展名给 Content-Type，immutable 长缓存）
+  on('GET', '/api/avatar/:file', false, async (ctx) => {
+    const { file } = ctx.params
+    const m = file.match(/^([a-f0-9]{16})\.(png|jpg|webp)$/)
+    if (!m) throw new HttpError(400, '非法头像文件名')
+    const obj = await ctx.env.IMAGES.get(`avatars/${file}`)
+    if (!obj) throw new HttpError(404, '头像不存在')
+    const mime = m[2] === 'png' ? 'image/png' : m[2] === 'jpg' ? 'image/jpeg' : 'image/webp'
+    return new Response(obj.body, {
+      headers: {
+        'Content-Type': mime,
         'Cache-Control': 'public, max-age=31536000, immutable',
         'X-Content-Type-Options': 'nosniff'
       }

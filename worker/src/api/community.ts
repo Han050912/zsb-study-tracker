@@ -40,6 +40,7 @@ function mapPost(r: any) {
     userName: r.user_name || '升本人',
     userPoints: r.user_points ?? 0,
     userVerified: !!r.user_verified,
+    userAvatar: r.user_avatar ?? undefined,
     type: r.type,
     content: r.content,
     tags: parseStrArray(r.tags),
@@ -71,6 +72,7 @@ function mapComment(r: any) {
     postId: r.post_id,
     userId: r.user_id,
     userName: r.user_name || '升本人',
+    userAvatar: r.user_avatar ?? undefined,
     parentId: r.parent_id ?? undefined,
     content: r.content,
     imageUrls: parseStrArray(r.image_urls),
@@ -91,6 +93,7 @@ function mapNotification(r: any) {
     type: r.type,
     actorId: r.actor_id ?? undefined,
     actorName: r.actor_name ?? undefined,
+    actorAvatar: r.actor_avatar ?? undefined,
     postId: r.post_id ?? undefined,
     commentId: r.comment_id ?? undefined,
     content: r.content,
@@ -104,7 +107,7 @@ function mapNotification(r: any) {
 /** 帖子查询：JOIN 作者展示名/积分 + 当前用户点赞/踩态。参数顺序固定为 [viewerId, viewerId, ...] */
 const POST_SELECT = `
   SELECT p.*, COALESCE(s.user_name, u.username) AS user_name, COALESCE(g.points, 0) AS user_points,
-    u.verified AS user_verified, ci.name AS circle_name,
+    u.verified AS user_verified, s.avatar AS user_avatar, ci.name AS circle_name,
     (l.user_id IS NOT NULL) AS liked_by_me,
     (d.user_id IS NOT NULL) AS disliked_by_me
   FROM community_posts p
@@ -358,7 +361,7 @@ export function registerCommunityRoutes() {
     const commentWhere = admin ? 'c.post_id = ?' : 'c.post_id = ? AND c.is_hidden = 0'
     const comments = await all(ctx.env, `
       SELECT c.*, COALESCE(s.user_name, u.username) AS user_name,
-        u.verified AS user_verified,
+        u.verified AS user_verified, s.avatar AS user_avatar,
         (l.user_id IS NOT NULL) AS liked_by_me,
         (d.user_id IS NOT NULL) AS disliked_by_me
       FROM community_comments c
@@ -819,7 +822,8 @@ export function registerCommunityRoutes() {
   on('GET', '/api/community/messages/conversations', true, async (ctx) => {
     // 用相关方的最大 created_at 分组聚合；未读数仅统计「发给我且未读」
     const rows = await all<any>(ctx.env, `
-      SELECT m.*, COALESCE(s.user_name, u.username) AS peer_name, u.verified AS peer_verified
+      SELECT m.*, COALESCE(s.user_name, u.username) AS peer_name, u.verified AS peer_verified,
+        s.avatar AS peer_avatar
       FROM community_messages m
       JOIN (
         SELECT CASE WHEN from_id = ? THEN to_id ELSE from_id END AS peer, MAX(created_at) AS latest
@@ -844,6 +848,7 @@ export function registerCommunityRoutes() {
             peerId,
             peerName: r.peer_name || '升本人',
             peerVerified: !!r.peer_verified,
+            peerAvatar: r.peer_avatar ?? undefined,
             lastContent: r.content.slice(0, 60),
             lastAt: r.created_at,
             lastFromMe: r.from_id === ctx.userId,
@@ -957,7 +962,7 @@ export function registerCommunityRoutes() {
     const circle = await first<any>(ctx.env, 'SELECT * FROM community_circles WHERE id = ?', ctx.params.id)
     if (!circle) throw new HttpError(404, '圈子不存在')
     const members = await all<any>(ctx.env, `
-      SELECT m.user_id, m.role, COALESCE(s.user_name, u.username) AS user_name, u.verified
+      SELECT m.user_id, m.role, COALESCE(s.user_name, u.username) AS user_name, u.verified, s.avatar AS user_avatar
       FROM circle_members m
       JOIN users u ON u.id = m.user_id
       LEFT JOIN user_settings s ON s.user_id = m.user_id
@@ -971,7 +976,7 @@ export function registerCommunityRoutes() {
     let pending: any[] = []
     if (mine?.role === 'owner') {
       pending = await all<any>(ctx.env, `
-        SELECT m.user_id, COALESCE(s.user_name, u.username) AS user_name, m.created_at
+        SELECT m.user_id, COALESCE(s.user_name, u.username) AS user_name, m.created_at, s.avatar AS user_avatar
         FROM circle_members m
         JOIN users u ON u.id = m.user_id
         LEFT JOIN user_settings s ON s.user_id = m.user_id
@@ -980,8 +985,8 @@ export function registerCommunityRoutes() {
     }
     return Response.json({
       circle: mapCircle(circle, myStatus),
-      members: members.map(m => ({ userId: m.user_id, userName: m.user_name || '升本人', role: m.role, verified: !!m.verified })),
-      pending: pending.map(p => ({ userId: p.user_id, userName: p.user_name || '升本人', createdAt: p.created_at }))
+      members: members.map(m => ({ userId: m.user_id, userName: m.user_name || '升本人', role: m.role, verified: !!m.verified, userAvatar: m.user_avatar ?? undefined })),
+      pending: pending.map(p => ({ userId: p.user_id, userName: p.user_name || '升本人', createdAt: p.created_at, userAvatar: p.user_avatar ?? undefined }))
     })
   })
 
@@ -1076,7 +1081,7 @@ export function registerCommunityRoutes() {
   on('GET', '/api/community/users/:id/profile', false, async (ctx) => {
     const u = await first<any>(ctx.env, `
       SELECT u.id, COALESCE(s.user_name, u.username) AS user_name, u.verified, u.expertise,
-        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak, s.profile_visibility
+        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak, s.profile_visibility, s.avatar
       FROM users u
       LEFT JOIN user_settings s ON s.user_id = u.id
       LEFT JOIN gamification g ON g.user_id = u.id
@@ -1098,6 +1103,7 @@ export function registerCommunityRoutes() {
     ])
     return Response.json({
       userId: u.id, userName: u.user_name || '升本人',
+      avatar: u.avatar ?? undefined,
       points: u.points, streak: u.streak,
       verified: !!u.verified, expertise: u.expertise || '',
       postCount: stats?.posts ?? 0, likesReceived: stats?.likes ?? 0,
@@ -1208,9 +1214,9 @@ export function registerCommunityRoutes() {
   on('GET', '/api/community/leaderboard', true, async (ctx) => {
     const today = utc8Today()
     const [todayRows, streakRows, subjectRows] = await Promise.all([
-      all<{ user_id: string; user_name: string; points: number; streak: number; today_points: number; verified: number }>(ctx.env, `
+      all<{ user_id: string; user_name: string; points: number; streak: number; today_points: number; verified: number; user_avatar?: string }>(ctx.env, `
         SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak, u.verified,
-          SUM(pl.points) AS today_points
+          s.avatar AS user_avatar, SUM(pl.points) AS today_points
         FROM points_log pl
         JOIN gamification g ON g.user_id = pl.user_id AND g.last_checkin = ?
         JOIN users u ON u.id = pl.user_id
@@ -1219,8 +1225,9 @@ export function registerCommunityRoutes() {
         GROUP BY pl.user_id
         ORDER BY today_points DESC, g.points DESC
         LIMIT 10`, today, today),
-      all<{ user_id: string; user_name: string; points: number; streak: number; verified: number }>(ctx.env, `
-        SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak, u.verified
+      all<{ user_id: string; user_name: string; points: number; streak: number; verified: number; user_avatar?: string }>(ctx.env, `
+        SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak, u.verified,
+          s.avatar AS user_avatar
         FROM gamification g
         JOIN users u ON u.id = g.user_id
         LEFT JOIN user_settings s ON s.user_id = g.user_id
@@ -1240,11 +1247,11 @@ export function registerCommunityRoutes() {
     }
     return Response.json({
       today: todayRows.map(r => ({
-        userName: r.user_name || '升本人', todayPoints: r.today_points,
+        userName: r.user_name || '升本人', userAvatar: r.user_avatar ?? undefined, todayPoints: r.today_points,
         streak: r.streak, totalPoints: r.points, verified: !!r.verified, subjects: subjMap.get(r.user_id) ?? []
       })),
       streak: streakRows.map(r => ({
-        userName: r.user_name || '升本人', streak: r.streak, totalPoints: r.points, verified: !!r.verified
+        userName: r.user_name || '升本人', userAvatar: r.user_avatar ?? undefined, streak: r.streak, totalPoints: r.points, verified: !!r.verified
       }))
     })
   })
@@ -1301,7 +1308,7 @@ export function registerCommunityRoutes() {
     /** 参与者聚合行：user_id、展示名、蓝V、总积分、区间内 SUM 值 */
     const participantsSql = (table: string, valueCol: string) => `
       SELECT r.user_id, COALESCE(s.user_name, u.username) AS user_name, u.verified,
-        COALESCE(g.points, 0) AS total_points, SUM(r.${valueCol}) AS value
+        s.avatar AS user_avatar, COALESCE(g.points, 0) AS total_points, SUM(r.${valueCol}) AS value
       FROM ${table} r
       JOIN user_settings us ON us.user_id = r.user_id AND us.join_progress_board = 1
       JOIN users u ON u.id = r.user_id
@@ -1328,6 +1335,7 @@ export function registerCommunityRoutes() {
       const sorted = rows.sort((a, b) => b.value - a.value || b.total_points - a.total_points)
       const list = sorted.slice(0, 50).map((r, i) => ({
         userId: r.user_id, userName: r.user_name || '升本人', verified: !!r.verified,
+        userAvatar: r.user_avatar ?? undefined,
         totalPoints: r.total_points, value: r.value, isMe: r.user_id === ctx.userId
       }))
       const greater = sorted.filter(r => r.value > myValue).length
@@ -1409,7 +1417,7 @@ export function registerCommunityRoutes() {
     const myWeak = weakMine.map(r => r.subject_id)
     const activeUsers = await all<any>(ctx.env, `
       SELECT r.user_id, COALESCE(s.user_name, u.username) AS user_name, u.verified,
-        COALESCE(g.points, 0) AS total_points, SUM(r.minutes) AS minutes
+        s.avatar AS user_avatar, COALESCE(g.points, 0) AS total_points, SUM(r.minutes) AS minutes
       FROM study_records r
       JOIN users u ON u.id = r.user_id
       LEFT JOIN user_settings s ON s.user_id = r.user_id
@@ -1425,6 +1433,7 @@ export function registerCommunityRoutes() {
       const overlap = uWeak.filter((s: string) => myWeak.includes(s)).length
       users.push({
         userId: u.user_id, userName: u.user_name || '升本人', verified: !!u.verified,
+        userAvatar: u.user_avatar ?? undefined,
         totalPoints: u.total_points, reason: overlap ? '与你有相同的薄弱科目' : '近一周学习活跃'
       })
     }
@@ -1495,7 +1504,7 @@ export function registerCommunityRoutes() {
     const cursor = url.searchParams.get('cursor') || ''
 
     let sql = `
-      SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name
+      SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name, s.avatar AS actor_avatar
       FROM community_notifications n
       LEFT JOIN users u ON u.id = n.actor_id
       LEFT JOIN user_settings s ON s.user_id = n.actor_id

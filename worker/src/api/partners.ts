@@ -56,7 +56,7 @@ export function registerPartnerRoutes() {
     rateLimit(ctx.request, 'community:partner:suggestions', 20, 60_000)
     const candidates = await all<any>(ctx.env, `
       SELECT u.id, u.username, u.verified, COALESCE(s.user_name, u.username) AS user_name,
-        s.exam_date, COALESCE(g.points, 0) AS total_points
+        s.avatar, s.exam_date, COALESCE(g.points, 0) AS total_points
       FROM users u
       LEFT JOIN user_settings s ON s.user_id = u.id
       LEFT JOIN gamification g ON g.user_id = u.id
@@ -83,6 +83,7 @@ export function registerPartnerRoutes() {
       if (hours > 0) reasons.push('学习时段相近')
       suggestions.push({
         userId: c.id, userName: c.user_name || '升本人', verified: !!c.verified,
+        userAvatar: c.avatar ?? undefined,
         totalPoints: c.total_points, score: exam + weak + hours, reasons
       })
     }
@@ -94,7 +95,7 @@ export function registerPartnerRoutes() {
   on('GET', '/api/community/partners', true, async (ctx) => {
     const partners = (await all<any>(ctx.env, `
       SELECT sp.id AS reqId, sp.updated_at, u.id AS userId, u.username, u.verified,
-        COALESCE(s.user_name, u.username) AS userName, COALESCE(g.points, 0) AS totalPoints
+        COALESCE(s.user_name, u.username) AS userName, s.avatar AS userAvatar, COALESCE(g.points, 0) AS totalPoints
       FROM study_partners sp
       JOIN users u ON u.id = CASE WHEN sp.from_id = ? THEN sp.to_id ELSE sp.from_id END
       LEFT JOIN user_settings s ON s.user_id = u.id
@@ -104,7 +105,7 @@ export function registerPartnerRoutes() {
       .map((r: any) => ({ ...r, verified: !!r.verified }))
     const incoming = (await all<any>(ctx.env, `
       SELECT sp.id AS reqId, sp.created_at, u.id AS userId, u.username, u.verified,
-        COALESCE(s.user_name, u.username) AS userName, COALESCE(g.points, 0) AS totalPoints
+        COALESCE(s.user_name, u.username) AS userName, s.avatar AS userAvatar, COALESCE(g.points, 0) AS totalPoints
       FROM study_partners sp
       JOIN users u ON u.id = sp.from_id
       LEFT JOIN user_settings s ON s.user_id = u.id

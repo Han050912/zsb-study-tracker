@@ -203,8 +203,9 @@ on('GET', '/api/teams/:id', true, async ctx => {
     user_name: string
     role: string
     joined_at: number
+    user_avatar?: string
   }>(ctx.env, `
-    SELECT m.user_id, COALESCE(s.user_name, u.username) AS user_name, m.role, m.joined_at
+    SELECT m.user_id, COALESCE(s.user_name, u.username) AS user_name, m.role, m.joined_at, s.avatar AS user_avatar
     FROM team_members m
     JOIN users u ON u.id = m.user_id
     LEFT JOIN user_settings s ON s.user_id = m.user_id
@@ -227,7 +228,8 @@ on('GET', '/api/teams/:id', true, async ctx => {
       userId: m.user_id,
       userName: m.user_name,
       role: m.role,
-      joinedAt: m.joined_at
+      joinedAt: m.joined_at,
+      userAvatar: m.user_avatar ?? undefined
     })),
     challenges: challenges.map(mapChallenge)
   })
