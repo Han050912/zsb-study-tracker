@@ -5,7 +5,7 @@ import Modal from '../Modal.vue'
 import UserAvatar from './UserAvatar.vue'
 import { communityApi } from '../../api/community'
 import { COMMUNITY_BADGES, levelOf } from '../../data/defaults'
-import { isAdmin, sessionUser } from '../../services/auth'
+import { isAdmin, sessionUser, goLogin } from '../../services/auth'
 import { fromNow } from '../../utils/date'
 import type { CommunityUserProfile } from '../../types'
 
@@ -22,6 +22,10 @@ const toast = inject<(m: string) => void>('toast', () => {})
 const profile = ref<CommunityUserProfile | null>(null)
 const loading = ref(false)
 const loadError = ref(false)
+/** 访客遇 login 可见性用户：后端 401，弹窗内引导登录而非报错 */
+const needLogin = ref(false)
+/** 目标用户确不存在：后端 404 */
+const notFound = ref(false)
 
 /** 徽章墙：目录全量展示，已获得的高亮 + 获得时间，未获得的置灰 */
 const earnedMap = computed(() => new Map((profile.value?.badges ?? []).map(b => [b.key, b.awardedAt])))
@@ -34,12 +38,17 @@ watch(() => props.show, async v => {
   if (!v) return
   profile.value = null
   loadError.value = false
+  needLogin.value = false
+  notFound.value = false
   loading.value = true
   try {
     profile.value = await communityApi.profile(props.userId)
     expertiseInput.value = profile.value.expertise
-  } catch {
-    loadError.value = true
+  } catch (e: any) {
+    // 401 = 访客遇 login 可见性用户 → 登录引导；404 = 用户不存在；其余 = 加载失败
+    needLogin.value = e?.status === 401
+    notFound.value = e?.status === 404
+    loadError.value = !needLogin.value && !notFound.value
   } finally {
     loading.value = false
   }
@@ -96,7 +105,12 @@ async function revokeVerify() {
 <template>
   <Modal :show="show" title="用户资料" @close="emit('update:show', false)">
     <div v-if="loading" class="text-center text-xs text-slate-400 py-8">加载中…</div>
-    <div v-else-if="loadError" class="text-center text-xs text-slate-400 py-8">用户不存在或加载失败</div>
+    <div v-else-if="needLogin" class="text-center py-8 space-y-3">
+      <div class="text-xs text-slate-400">该用户仅对登录用户公开主页</div>
+      <button class="btn-primary !py-1.5 !text-xs" @click="emit('update:show', false); goLogin(router)">🔑 登录查看</button>
+    </div>
+    <div v-else-if="notFound" class="text-center text-xs text-slate-400 py-8">用户不存在</div>
+    <div v-else-if="loadError" class="text-center text-xs text-slate-400 py-8">加载失败</div>
 
     <template v-else-if="profile">
       <!-- 头部：头像 / 昵称 / 等级 / 蓝 V / 关注 -->
@@ -111,11 +125,11 @@ async function revokeVerify() {
               <span class="w-3 h-3 rounded-full bg-sky-500 text-white text-[8px] flex items-center justify-center">✓</span>
               {{ profile.expertise }}专家
             </span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+            <span v-if="!profile.profilePrivate" class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
               :style="{ background: level.color + '1a', color: level.color }">{{ level.name }}学者</span>
           </div>
         </div>
-        <div v-if="!isSelf" class="shrink-0 flex items-center gap-1.5">
+        <div v-if="!isSelf && !profile.profilePrivate" class="shrink-0 flex items-center gap-1.5">
           <button class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
             @click="emit('update:show', false); router.push(`/profile/${userId}`)">📊 主页</button>
           <button class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
@@ -130,8 +144,13 @@ async function revokeVerify() {
         </div>
       </div>
 
+      <!-- 隐私保护提示（私密主页降级视图） -->
+      <div v-if="profile.profilePrivate" class="mt-4 text-center text-xs text-slate-400 py-3 rounded-lg bg-slate-50 dark:bg-slate-700/40">
+        🔒 该用户已开启隐私保护，仅展示部分公开信息
+      </div>
+
       <!-- 荣誉统计 -->
-      <div class="grid grid-cols-5 gap-2 mt-4 text-center">
+      <div v-if="!profile.profilePrivate" class="grid grid-cols-5 gap-2 mt-4 text-center">
         <div class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
           <div class="text-sm font-bold text-primary-500">{{ profile.points }}</div>
           <div class="text-[10px] text-slate-400">积分</div>
@@ -155,8 +174,8 @@ async function revokeVerify() {
       </div>
 
       <!-- 徽章墙 -->
-      <div class="label mt-4">徽章墙（{{ profile.badges.length }}/{{ COMMUNITY_BADGES.length }}）</div>
-      <div class="grid grid-cols-4 gap-2">
+      <div v-if="!profile.profilePrivate" class="label mt-4">徽章墙（{{ profile.badges.length }}/{{ COMMUNITY_BADGES.length }}）</div>
+      <div v-if="!profile.profilePrivate" class="grid grid-cols-4 gap-2">
         <div v-for="b in COMMUNITY_BADGES" :key="b.key"
           class="rounded-lg py-2 px-1 text-center transition-opacity"
           :class="earnedMap.has(b.key) ? 'bg-amber-50 dark:bg-amber-900/20' : 'bg-slate-50 dark:bg-slate-700/40 opacity-40 grayscale'"
@@ -167,7 +186,7 @@ async function revokeVerify() {
       </div>
 
       <!-- 管理员：专家认证操作 -->
-      <div v-if="canVerify" class="mt-4 rounded-lg border border-sky-100 dark:border-sky-900/50 p-3 space-y-2">
+      <div v-if="canVerify && !profile.profilePrivate" class="mt-4 rounded-lg border border-sky-100 dark:border-sky-900/50 p-3 space-y-2">
         <div class="text-xs font-semibold text-sky-600 dark:text-sky-400">🛡️ 管理员 · 专家认证</div>
         <input v-model="expertiseInput" maxlength="50" class="input !py-1.5 text-xs"
           placeholder="专长领域，如：高等数学 / 英语" />

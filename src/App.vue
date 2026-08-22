@@ -3,7 +3,7 @@ import { computed, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import { useCommunityStore } from './stores/community'
-import { sessionUser, logout, isLoggedIn, isAdmin } from './services/auth'
+import { sessionUser, logout, isLoggedIn, isAdmin, goLogin } from './services/auth'
 import { restartReminder } from './services/reminder'
 import { startTodoReminder, checkTodoReminders } from './services/todoReminder'
 import Toast from './components/Toast.vue'
@@ -23,6 +23,13 @@ watch(isLoggedIn, v => { if (v) community.fetchUnreadCount().catch(() => {}) }, 
 // 导航动态生成：科目项随科目列表实时增减（删除科目自动隐藏，新增科目自动出现）
 // 侧边栏展示科目全名；移动端由 CSS truncate 截断
 const NAV = computed(() => {
+  // 访客态：社区 + 组队（公开小组列表可浏览；其余为个人学习功能，需登录）
+  if (!isLoggedIn.value) {
+    return [
+      { path: '/community', icon: '💬', label: '社区', subject: false },
+      { path: '/teams', icon: '👥', label: '组队', subject: false }
+    ]
+  }
   const subjectItems = store.subjects.map(s => ({
     path: s.id === 'math' ? '/math' : s.id === 'english' ? '/english' : `/subject/${s.id}`,
     icon: s.icon,
@@ -49,6 +56,14 @@ const NAV = computed(() => {
 })
 // 移动端底部导航：首页 + 第一个科目 + 社区/专注/总结/设置（最多 6 项，超出时减少科目位，避免挤压截断）
 const mobileNav = computed(() => {
+  // 访客态：社区 + 组队 + 登录（登录是移动端主要转化入口，携带回跳地址）
+  if (!isLoggedIn.value) {
+    return [
+      { path: '/community', icon: '💬', label: '社区', subject: false },
+      { path: '/teams', icon: '👥', label: '组队', subject: false },
+      { path: `/login?redirect=${encodeURIComponent(route.path || '/community')}`, icon: '🔑', label: '登录', subject: false }
+    ]
+  }
   const subjectPaths = NAV.value.filter(n => n.subject).slice(0, 1).map(n => n.path)
   const picks = ['/', ...subjectPaths, '/community', '/pomodoro', '/daily-summary', '/settings']
   return picks
@@ -143,7 +158,8 @@ async function accountLogout(switchAccount: boolean) {
   logout()
   store.resetState()
   community.resetState()
-  router.replace('/login')
+  // 退出后即访客：落地社区广场（与新守卫的访客默认落地一致）
+  router.replace('/community')
 }
 
 /** 导航激活判断：精确匹配或子路径匹配（避免 '/materials' 误激活 '/math' 这类前缀碰撞） */
@@ -152,7 +168,7 @@ function isNavActive(path: string) {
   return route.path === path || route.path.startsWith(path + '/')
 }
 const hideNav = computed(() => isPomodoro.value || isAuthPage.value)
-const showOnboarding = computed(() => !isAuthPage.value && !store.settings.onboarded)
+const showOnboarding = computed(() => isLoggedIn.value && !isAuthPage.value && !store.settings.onboarded)
 
 // Electron IPC: 托盘菜单触发页面导航
 if (window.nav) {
@@ -169,15 +185,20 @@ if (window.nav) {
         <div class="flex items-center gap-2 text-lg font-bold text-primary-600 dark:text-primary-400" :class="navCollapsed ? 'justify-center' : ''">
           <img :src="'./logo.png'" alt="Logo" class="w-8 h-8 shrink-0" /><span v-if="!navCollapsed">专升本助手</span>
         </div>
-        <div v-if="!navCollapsed" class="text-xs text-slate-400 mt-1">{{ store.settings.userName }} · {{ store.level.name }}学者</div>
+        <div v-if="!navCollapsed" class="text-xs text-slate-400 mt-1">{{ isLoggedIn ? `${store.settings.userName} · ${store.level.name}学者` : '访客浏览中' }}</div>
       </div>
-      <div v-if="store.examCountdown !== null && !navCollapsed" class="mx-4 mb-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white px-3 py-2 text-center">
+      <div v-if="isLoggedIn && store.examCountdown !== null && !navCollapsed" class="mx-4 mb-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white px-3 py-2 text-center">
         <template v-if="store.examCountdown > 0">
           <div class="text-[10px] opacity-80">距考试还有</div>
           <div class="text-xl font-bold leading-tight">{{ store.examCountdown }} 天</div>
         </template>
         <div v-else class="text-sm font-bold leading-tight py-1">考试就是今天，加油！💪</div>
       </div>
+      <button v-else-if="!isLoggedIn && !navCollapsed" class="mx-4 mb-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white px-3 py-2.5 text-center hover:opacity-90 transition-opacity"
+        @click="goLogin(router)">
+        <div class="text-sm font-bold">登录</div>
+        <div class="text-[10px] opacity-80 mt-0.5">解锁全部学习功能</div>
+      </button>
       <nav class="flex-1 overflow-y-auto px-3 space-y-1 pb-4" :class="navCollapsed ? '!px-2' : ''">
         <RouterLink v-for="item in NAV" :key="item.path" :to="item.path"
           class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors"
@@ -194,7 +215,7 @@ if (window.nav) {
         :title="navCollapsed ? '展开导航' : '收起导航'" @click="toggleNav">
         <span>{{ navCollapsed ? '»' : '«' }}</span><span v-if="!navCollapsed">收起导航</span>
       </button>
-      <div v-if="!navCollapsed" class="px-5 py-3 text-[10px] text-slate-400">积分 {{ store.gamification.points }} · 🔥{{ store.gamification.streak }}天</div>
+      <div v-if="isLoggedIn && !navCollapsed" class="px-5 py-3 text-[10px] text-slate-400">积分 {{ store.gamification.points }} · 🔥{{ store.gamification.streak }}天</div>
     </aside>
 
     <!-- 右上角：登录态显示通知铃铛 + 账号头像入口；访客态显示登录按钮 -->
@@ -222,7 +243,7 @@ if (window.nav) {
         </div>
       </template>
       <button v-else class="px-4 py-2 rounded-full bg-primary-500 text-white text-sm font-semibold shadow-md hover:bg-primary-600 hover:shadow-lg transition-colors"
-        @click="router.push('/login')">登录</button>
+        @click="goLogin(router)">登录</button>
     </div>
 
     <!-- 主内容（非全屏页顶部预留头像入口空间，避免遮挡页面标题栏右侧操作区；笔记编辑态不预留，工具栏置顶） -->

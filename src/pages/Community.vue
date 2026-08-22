@@ -63,6 +63,12 @@ function openComposer() {
   showComposer.value = true
 }
 
+/** 排序切换：推荐依赖登录态接口（个性化），访客点击先引导登录 */
+function chooseSort(sort: 'latest' | 'hot' | 'recommend') {
+  if (sort === 'recommend' && requireLogin(router)) return
+  store.setSort(sort).catch(e => toast(e?.message || '加载失败'))
+}
+
 /** 「提问」类型筛选（再点一次取消） */
 function toggleQuestionFilter() {
   store.setTypeFilter(store.typeFilter === 'question' ? '' : 'question')
@@ -132,7 +138,7 @@ function openReport(postId: string) {
 const showProfile = ref(false)
 const profileUserId = ref('')
 function openProfile(userId: string) {
-  if (requireLogin(router)) return
+  // 资料卡后端公开（auth:false）；访客可见性由弹窗内 401 引导处理
   profileUserId.value = userId
   showProfile.value = true
 }
@@ -184,12 +190,12 @@ async function removePost(id: string) {
         <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/messages')">✉️ 私信</button>
         <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/partners')">🧑‍🤝‍🧑 搭子</button>
         <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/circles')">🫧 圈子</button>
-        <button class="btn-primary" @click="openComposer">✏️ 发帖</button>
+        <button class="btn-primary" @click="openComposer">{{ isLoggedIn ? '✏️ 发帖' : '登录后发帖' }}</button>
       </div>
     </div>
 
-    <!-- 上周学习周报（无数据时自动隐藏） -->
-    <WeeklyReportCard />
+    <!-- 上周学习周报（登录态；访客隐藏，避免注定 401 的请求） -->
+    <WeeklyReportCard v-if="isLoggedIn" />
 
     <!-- 热门话题运营位：点击按 tag 筛选帖子流 -->
     <div v-if="hotTopics.length" class="card !py-2.5">
@@ -200,8 +206,8 @@ async function removePost(id: string) {
       </div>
     </div>
 
-    <!-- 榜单：打卡榜 / 进步榜 -->
-    <div class="card !py-3">
+    <!-- 榜单：打卡榜 / 进步榜（登录态；访客显示登录引导，避免空白与注定 401 的请求） -->
+    <div v-if="isLoggedIn" class="card !py-3">
       <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit mb-3">
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="boardTab === 'checkin' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
@@ -213,6 +219,10 @@ async function removePost(id: string) {
       <LeaderboardBoard v-show="boardTab === 'checkin'" />
       <ProgressBoard v-show="boardTab === 'progress'" />
     </div>
+    <button v-else class="card !py-3 text-sm text-slate-500 dark:text-slate-400 text-center w-full hover:border-primary-300 transition-colors"
+      @click="router.push('/login')">
+      🔥 登录后可查看打卡榜、进步榜与你的学习周报 →
+    </button>
 
     <!-- 每日一题：管理员设置的最新一题，点击进入详情参与解答 -->
     <button v-if="dailyPost" class="card !p-4 text-left w-full flex items-center gap-3 border-l-4 !border-l-primary-400"
@@ -231,13 +241,13 @@ async function removePost(id: string) {
       <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit">
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.sort === 'latest' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="store.setSort('latest')">最新</button>
+          @click="chooseSort('latest')">最新</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.sort === 'hot' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="store.setSort('hot')">热门</button>
+          @click="chooseSort('hot')">热门</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.sort === 'recommend' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="store.setSort('recommend')">✨ 推荐</button>
+          @click="chooseSort('recommend')">✨ 推荐</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.typeFilter === 'question' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
           @click="toggleQuestionFilter">❓ 提问</button>

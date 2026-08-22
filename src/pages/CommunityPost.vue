@@ -246,7 +246,7 @@ function openCommentLightbox(c: CommunityComment, i: number) {
 const showProfile = ref(false)
 const profileUserId = ref('')
 function openProfile(userId: string) {
-  if (requireLogin(router)) return
+  // 资料卡后端公开（auth:false）；访客可见性由弹窗内 401 引导处理
   profileUserId.value = userId
   showProfile.value = true
 }

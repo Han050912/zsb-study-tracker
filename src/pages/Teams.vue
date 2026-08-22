@@ -9,7 +9,7 @@
             <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">和小伙伴一起坚持学习，达标获徽章</p>
           </div>
           <button
-            @click="showCreateDialog = true"
+            @click="openCreate"
             class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
           >
             创建小组
@@ -164,6 +164,7 @@
 import { ref, onMounted, inject } from 'vue'
 import { useRouter } from 'vue-router'
 import { getTeams, createTeam } from '../api/teams'
+import { isLoggedIn, requireLogin } from '../services/auth'
 import type { StudyTeam } from '../types'
 import Modal from '../components/Modal.vue'
 
@@ -202,8 +203,15 @@ async function loadTeams() {
 
 function switchTab(tab: 'my' | 'public') {
   if (activeTab.value === tab) return
+  // 「我的小组」需登录：访客点击引导登录
+  if (tab === 'my' && requireLogin(router)) return
   activeTab.value = tab
   loadTeams()
+}
+
+function openCreate() {
+  if (requireLogin(router)) return
+  showCreateDialog.value = true
 }
 
 async function handleCreate() {
@@ -241,8 +249,14 @@ function formatDate(timestamp: number): string {
 }
 
 function openTeam(id: string) {
+  // 小组详情接口需登录（含成员名单），访客点击引导登录
+  if (requireLogin(router)) return
   router.push('/teams/' + id)
 }
 
-onMounted(loadTeams)
+onMounted(() => {
+  // 访客默认浏览公开小组；登录用户默认「我的小组」
+  activeTab.value = isLoggedIn.value ? 'my' : 'public'
+  loadTeams()
+})
 </script>
