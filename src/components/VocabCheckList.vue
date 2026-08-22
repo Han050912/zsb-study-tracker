@@ -236,7 +236,7 @@ function inputClass(w: AnswerState): string {
     <div class="sticky top-0 z-10 backdrop-blur-xl bg-white/70 dark:bg-slate-800/70 border-b border-white/30 dark:border-slate-700/50 px-4 py-3">
       <div class="flex items-center justify-between gap-2">
         <div class="flex items-center gap-3 min-w-0">
-          <h3 class="text-sm font-bold text-slate-700 dark:text-slate-200 shrink-0">📋 今日词汇打卡</h3>
+          <h3 class="text-sm font-bold text-slate-700 dark:text-slate-200 shrink-0">今日词汇打卡</h3>
           <!-- 模式切换：英译汉 / 汉译英 -->
           <div class="flex shrink-0 rounded-lg bg-slate-100 dark:bg-slate-700 p-0.5 text-[11px] font-medium">
             <button

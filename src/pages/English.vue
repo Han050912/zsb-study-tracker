@@ -286,7 +286,7 @@ const { el: vocabEl } = useChart(() => {
       <!-- 墨墨背单词同步 -->
       <div class="card space-y-2">
         <div class="flex items-center gap-2">
-          <div class="section-title !mb-0">🔗 墨墨背单词同步</div>
+          <div class="section-title !mb-0">墨墨背单词同步</div>
           <span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">云端同步</span>
         </div>
         <div class="flex gap-2">
@@ -294,7 +294,7 @@ const { el: vocabEl } = useChart(() => {
           <button class="btn-ghost shrink-0" @click="saveMaimemoToken">保存</button>
         </div>
         <button class="btn-primary w-full" :disabled="syncing" @click="syncMaimemo">
-          {{ syncing ? '同步中…' : '☁️ 同步墨墨今日背诵数据' }}
+          {{ syncing ? '同步中…' : '同步墨墨今日背诵数据' }}
         </button>
         <p class="text-[10px] text-slate-400">公测接口：需在墨墨 App 内开启「自动同步」，且当日打开过 App 后数据才准确</p>
       </div>
@@ -324,7 +324,7 @@ const { el: vocabEl } = useChart(() => {
     <!-- 阅读 -->
     <div v-show="tab === 'reading'" class="space-y-3">
       <div class="card space-y-3">
-        <div class="section-title">📰 阅读理解计时训练</div>
+        <div class="section-title">阅读理解计时训练</div>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="label">阅读速度（词/分钟）</label><input v-model.number="readWpm" type="number" min="0" class="input" /></div>
           <div><label class="label">正确率（%）</label><input v-model.number="readAcc" type="number" min="0" max="100" class="input" /></div>
@@ -346,7 +346,7 @@ const { el: vocabEl } = useChart(() => {
     <!-- 听力 -->
     <div v-show="tab === 'listening'" class="space-y-3">
       <div class="card space-y-3">
-        <div class="section-title">🎧 听力练习</div>
+        <div class="section-title">听力练习</div>
         <div class="grid grid-cols-2 gap-3">
           <div><label class="label">时长（分钟）</label><input v-model.number="lisMinutes" type="number" min="1" class="input" /></div>
           <div>
@@ -374,14 +374,14 @@ const { el: vocabEl } = useChart(() => {
     <div v-show="tab === 'templates'" class="space-y-3">
       <div class="card">
         <div class="flex justify-between items-center mb-3 flex-wrap gap-2">
-          <div class="section-title !mb-0">✍️ 作文模板库</div>
+          <div class="section-title !mb-0">作文模板库</div>
           <div class="flex gap-2">
-            <button class="btn-ghost !py-1.5" title="一键生成 议论文×5 / 图表文×2 / 信件文×3 高分模板" @click="generateBuiltin">✨ 生成内置模板库</button>
+            <button class="btn-ghost !py-1.5" title="一键生成 议论文×5 / 图表文×2 / 信件文×3 高分模板" @click="generateBuiltin">生成内置模板库</button>
             <button class="btn-primary !py-1.5" @click="openTpl()">+ 自定义模板</button>
           </div>
         </div>
         <div v-if="!eng.templates.length" class="text-xs text-slate-400 text-center py-6">
-          暂无模板。点击「✨ 生成内置模板库」一键获取 10 套高分模板（议论文 5 套 · 图表文 2 套 · 信件文 3 套）
+          暂无模板。点击「生成内置模板库」一键获取 10 套高分模板（议论文 5 套 · 图表文 2 套 · 信件文 3 套）
         </div>
         <!-- 分分类多列布局 -->
         <div v-for="g in tplGroups" :key="g.cat" class="mb-4">

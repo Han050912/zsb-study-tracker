@@ -146,7 +146,7 @@ const typeStats = computed(() => {
 })
 const { el: typeEl } = useChart(() => ({
   series: [{ type: 'pie', radius: '60%', label: { color: chartTextColor(), fontSize: 11 }, data: typeStats.value,
-    itemStyle: { color: (p: any) => ['#3b82f6', '#10b981', '#f59e0b', '#a855f7'][p.dataIndex] } }],
+    itemStyle: { color: (p: any) => ['#3b82f6', '#10b981', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4', '#f97316', '#ec4899', '#6366f1', '#84cc16', '#14b8a6'][p.dataIndex] } }],
   tooltip: { trigger: 'item' }
 }), [typeStats])
 
@@ -214,7 +214,7 @@ const report = computed(() => {
 
     <!-- 周报卡片 -->
     <div class="card bg-gradient-to-r from-primary-500 to-indigo-600 !text-white border-0">
-      <div class="text-sm font-semibold mb-2">📈 本周学习报告</div>
+      <div class="text-sm font-semibold mb-2">本周学习报告</div>
       <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
         <div><div class="text-lg font-black">{{ formatMinutes(report.min) }}</div><div class="text-[10px] opacity-80">总时长</div></div>
         <div><div class="text-lg font-black">{{ report.studyDays }}/7</div><div class="text-[10px] opacity-80">学习天数</div></div>
@@ -223,7 +223,7 @@ const report = computed(() => {
         <div><div class="text-lg font-black">{{ report.pomo }}</div><div class="text-[10px] opacity-80">番茄钟</div></div>
         <div><div class="text-lg font-black">+{{ report.points }}</div><div class="text-[10px] opacity-80">积分</div></div>
       </div>
-      <p class="text-xs opacity-80 mt-2">截图即可保存本周报告 📸</p>
+      <p class="text-xs opacity-80 mt-2">截图即可保存本周报告</p>
     </div>
 
     <div class="card">
@@ -234,29 +234,29 @@ const report = computed(() => {
 
     <div class="grid md:grid-cols-2 gap-4">
       <div class="card">
-        <div class="section-title">🍩 科目时长占比</div>
+        <div class="section-title">科目时长占比</div>
         <div v-if="subjectMinutes.length" ref="pieEl" class="h-56"></div>
         <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
       </div>
       <div class="card">
-        <div class="section-title">✏️ 题型分布（累计 {{ store.totalProblems }} 题）</div>
+        <div class="section-title">题型分布（累计 {{ store.totalProblems }} 题）</div>
         <div v-if="typeStats.length" ref="typeEl" class="h-56"></div>
         <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
       </div>
     </div>
 
     <div class="card">
-      <div class="section-title">📈 各科目正确率趋势</div>
+      <div class="section-title">各科目正确率趋势</div>
       <div ref="accEl" class="h-56"></div>
     </div>
 
     <div class="card">
-      <div class="section-title">🍅 专注力分析</div>
+      <div class="section-title">专注力分析</div>
       <div ref="pomoEl" class="h-56"></div>
     </div>
 
     <div class="card">
-      <div class="section-title">😊 情绪曲线</div>
+      <div class="section-title">情绪曲线</div>
       <div ref="moodEl" class="h-48"></div>
     </div>
 

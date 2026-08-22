@@ -104,7 +104,7 @@ function removeError(id: string) {
       </label>
     </div>
 
-    <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">暂无错题，继续保持！🎉</div>
+    <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">暂无错题，继续保持！</div>
 
     <div class="space-y-3">
       <div v-for="q in list" :key="q.id" class="card" :class="q.mastered ? 'opacity-60' : ''">

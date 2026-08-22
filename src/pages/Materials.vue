@@ -143,7 +143,7 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
       </select>
     </div>
 
-    <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">资料库空空如也，添加你的第一本教材吧 📖</div>
+    <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">资料库空空如也，添加你的第一本教材吧</div>
 
     <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
       <div v-for="m in list" :key="m.id" class="card cursor-pointer hover:shadow-md transition-shadow" @click="open(m)">

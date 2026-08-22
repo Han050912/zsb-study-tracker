@@ -42,7 +42,7 @@ async function readAll() {
 <template>
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="page-title">🔔 通知中心</h1>
+      <h1 class="page-title"> 通知中心</h1>
       <button v-if="store.unreadCount" class="btn-ghost !text-xs" @click="readAll">全部已读</button>
     </div>
 

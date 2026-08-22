@@ -157,7 +157,7 @@ function downloadShareImage() {
 }
 
 function copyShareText() {
-  const text = `我正在用「专升本学习助手」备考，今日学习 ${formatMinutes(dayData.value.minutes)}，完成 ${dayData.value.pTotal} 道题，连续学习 🔥${store.gamification.streak} 天！\n👉 https://github.com/Han050912/zsb-study-tracker`
+  const text = `我正在用「专升本学习助手」备考，今日学习 ${formatMinutes(dayData.value.minutes)}，完成 ${dayData.value.pTotal} 道题，连续学习 ${store.gamification.streak} 天！\n👉 https://github.com/Han050912/zsb-study-tracker`
   navigator.clipboard.writeText(text).then(() => toast('分享文案已复制'))
 }
 
@@ -176,9 +176,9 @@ function openCommunityShare() {
   ].filter(Boolean).join(' · ')
   composerContent.value = [
     `${form.value.mood} 今日学习总结`,
-    `🌱 收获：${form.value.harvest}`,
-    `🪞 反思：${form.value.improve}`,
-    stats ? `📊 ${stats}` : ''
+    `收获：${form.value.harvest}`,
+    `反思：${form.value.improve}`,
+    stats ? `${stats}` : ''
   ].filter(Boolean).join('\n')
   showComposer.value = true
 }
@@ -189,8 +189,8 @@ function openCommunityShare() {
     <div class="flex items-center justify-between">
       <h1 class="page-title">📝 每日总结</h1>
       <div class="flex gap-2">
-        <button class="btn-ghost" @click="openCommunityShare">📣 分享到广场</button>
-        <button class="btn-primary" @click="openShare">🎨 生成分享卡片</button>
+        <button class="btn-ghost" @click="openCommunityShare">分享到广场</button>
+        <button class="btn-primary" @click="openShare">生成分享卡片</button>
       </div>
     </div>
 
@@ -230,7 +230,7 @@ function openCommunityShare() {
 
         <div class="card space-y-4">
           <div>
-            <label class="label">😊 今日心情</label>
+            <label class="label">今日心情</label>
             <div class="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
               <button v-for="m in MOODS" :key="m" class="btn !text-xs !px-1"
                 :class="form.mood === m ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
@@ -238,15 +238,15 @@ function openCommunityShare() {
             </div>
           </div>
           <div>
-            <label class="label">🌱 今日收获</label>
+            <label class="label">今日收获</label>
             <textarea v-model="form.harvest" rows="3" class="input" placeholder="今天学到了什么？有什么进步？"></textarea>
           </div>
           <div>
-            <label class="label">🪞 不足反思</label>
+            <label class="label">不足反思</label>
             <textarea v-model="form.improve" rows="3" class="input" placeholder="哪里做得不够好？如何改进？"></textarea>
           </div>
           <div>
-            <label class="label">🎯 明日计划</label>
+            <label class="label">明日计划</label>
             <textarea v-model="form.plan" rows="3" class="input" placeholder="明天要完成什么？"></textarea>
           </div>
           <button class="btn-primary w-full" @click="save">保存总结</button>
@@ -325,23 +325,23 @@ function openCommunityShare() {
               </div>
               <!-- ② 当日心情（必填） -->
               <div>
-                <div class="text-xs font-semibold text-slate-400 mb-1">😊 当日心情</div>
+                <div class="text-xs font-semibold text-slate-400 mb-1">当日心情</div>
                 <p class="text-sm">{{ cardSummary?.mood || '未填写' }}</p>
               </div>
               <!-- ③ 当日收获（必填） -->
               <div>
-                <div class="text-xs font-semibold text-slate-400 mb-1">🌱 当日收获</div>
+                <div class="text-xs font-semibold text-slate-400 mb-1">当日收获</div>
                 <p class="text-sm whitespace-pre-wrap leading-relaxed">{{ cardSummary?.harvest || '未填写' }}</p>
               </div>
               <!-- ④ 当日反思（必填） -->
               <div>
-                <div class="text-xs font-semibold text-slate-400 mb-1">🪞 当日反思</div>
+                <div class="text-xs font-semibold text-slate-400 mb-1">当日反思</div>
                 <p class="text-sm whitespace-pre-wrap leading-relaxed">{{ cardSummary?.improve || '未填写' }}</p>
               </div>
               <!-- 明日计划（可选配置：开关控制展示/隐藏） -->
               <div class="border-t border-slate-100 dark:border-slate-700 pt-3">
                 <div class="flex items-center justify-between">
-                  <span class="text-xs font-semibold text-slate-400">🎯 明日计划</span>
+                  <span class="text-xs font-semibold text-slate-400">明日计划</span>
                   <button class="text-xs px-2.5 py-1 rounded-full transition-colors"
                     :class="showPlan ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'"
                     :aria-pressed="showPlan"
@@ -374,32 +374,32 @@ function openCommunityShare() {
             <div class="text-2xl font-black mt-1">{{ store.settings.userName }} 的学习日报</div>
             <div class="grid grid-cols-2 gap-3 mt-5">
               <div class="bg-white/15 backdrop-blur rounded-2xl p-3 text-center">
-                <div class="text-2xl font-black">{{ formatMinutes(dayData.minutes) }}</div>
-                <div class="text-[10px] opacity-80">学习时长</div>
+                <div class="text-xl font-black leading-none">{{ formatMinutes(dayData.minutes) }}</div>
+                <div class="text-xs opacity-80 mt-3">学习时长</div>
               </div>
               <div class="bg-white/15 backdrop-blur rounded-2xl p-3 text-center">
-                <div class="text-2xl font-black">{{ dayData.pTotal }}</div>
-                <div class="text-[10px] opacity-80">刷题数</div>
+                <div class="text-xl font-black leading-none">{{ dayData.pTotal }}</div>
+                <div class="text-xs opacity-80 mt-3">刷题数</div>
               </div>
               <div class="bg-white/15 backdrop-blur rounded-2xl p-3 text-center">
-                <div class="text-2xl font-black">{{ dayData.pomo.count }}</div>
-                <div class="text-[10px] opacity-80">番茄钟</div>
+                <div class="text-xl font-black leading-none">{{ dayData.pomo.count }}</div>
+                <div class="text-xs opacity-80 mt-3">番茄钟</div>
               </div>
               <div class="bg-white/15 backdrop-blur rounded-2xl p-3 text-center">
-                <div class="text-2xl font-black">🔥{{ store.gamification.streak }}天</div>
-                <div class="text-[10px] opacity-80">连续学习</div>
+                <div class="text-xl font-black leading-none">{{ store.gamification.streak }}天</div>
+                <div class="text-xs opacity-80 mt-3">连续学习</div>
               </div>
             </div>
             <div v-if="form.mood" class="mt-3 text-sm">今日心情：{{ form.mood }}</div>
-            <div v-if="form.harvest" class="mt-2 text-xs bg-white/10 rounded-xl p-3 leading-relaxed">🌱 {{ form.harvest.slice(0, 100) }}</div>
+            <div v-if="form.harvest" class="mt-2 text-xs bg-white/10 rounded-xl p-3 leading-relaxed">{{ form.harvest.slice(0, 100) }}</div>
             <div class="mt-4 text-[10px] opacity-70 text-center">github.com/Han050912/zsb-study-tracker</div>
           </div>
           <p class="text-center text-white/70 text-xs mt-3">
-            {{ shareImgLoading ? '正在生成图片…' : shareImg ? '点击保存图片，分享到备考群，和朋友一起上岸！📸' : '图片生成失败，可截图保存' }}
+            {{ shareImgLoading ? '正在生成图片…' : shareImg ? '点击保存图片，分享到备考群，和朋友一起上岸！' : '图片生成失败，可截图保存' }}
           </p>
           <div class="flex gap-2 mt-2">
-            <button class="btn-ghost flex-1" @click="copyShareText">📋 复制文案</button>
-            <button v-if="shareImg" class="btn-ghost flex-1" @click="downloadShareImage">💾 保存图片</button>
+            <button class="btn-ghost flex-1" @click="copyShareText">复制文案</button>
+            <button v-if="shareImg" class="btn-ghost flex-1" @click="downloadShareImage">保存图片</button>
             <button class="btn-ghost flex-1" @click="showShare = false">关闭</button>
           </div>
         </div>

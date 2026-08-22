@@ -220,7 +220,7 @@ onUnmounted(() => {
           <button class="btn-ghost shrink-0" :title="`导入 .md / .txt / .pdf 文件（PDF 单文件 ≤${PDF_MAX_MB}MB）`" :disabled="uploadingCount > 0" @click="fileInput?.click()">{{ uploadingCount ? '上传中…' : '📁' }}</button>
           <input ref="fileInput" type="file" multiple accept=".md,.markdown,.txt,.pdf" class="hidden" @change="onFileChange" />
         </div>
-        <input v-model="search" class="input" placeholder="🔍 搜索标题 / 内容 / 标签" />
+        <input v-model="search" class="input" placeholder="搜索标题 / 内容 / 标签" />
       </div>
       <div class="flex-1 overflow-y-auto p-2 space-y-1">
         <div v-if="!filteredNotes.length" class="text-xs text-slate-400 text-center py-8">

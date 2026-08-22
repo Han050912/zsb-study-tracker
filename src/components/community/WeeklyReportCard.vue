@@ -33,12 +33,12 @@ const composerContent = ref('')
 function openShare() {
   if (!data.value) return
   composerContent.value = [
-    '📅 我的学习周报',
-    `⏱️ 学习 ${formatMinutes(data.value.minutes)} · ${data.value.studyDays} 天`,
-    data.value.problems ? `✏️ 刷题 ${data.value.problems} 题，正确率 ${accuracy.value}%` : '',
-    `⭐ 积分 +${data.value.points} · 社区互动 ${data.value.interactions} 次`,
-    daysLeft.value != null && daysLeft.value > 0 ? `🎯 距离考试还有 ${daysLeft.value} 天` : '',
-    '新的一周继续加油！💪'
+    '我的学习周报',
+    `学习 ${formatMinutes(data.value.minutes)} · ${data.value.studyDays} 天`,
+    data.value.problems ? `刷题 ${data.value.problems} 题，正确率 ${accuracy.value}%` : '',
+    `积分 +${data.value.points} · 社区互动 ${data.value.interactions} 次`,
+    daysLeft.value != null && daysLeft.value > 0 ? `距离考试还有 ${daysLeft.value} 天` : '',
+    '新的一周继续加油！'
   ].filter(Boolean).join('\n')
   showComposer.value = true
 }
@@ -47,8 +47,8 @@ function openShare() {
 <template>
   <div v-if="hasData && data" class="card">
     <div class="flex items-center justify-between mb-3">
-      <div class="section-title !mb-0">📊 上周学习周报</div>
-      <button class="btn-ghost !text-xs !px-2 !py-1" @click="openShare">📣 分享</button>
+      <div class="section-title !mb-0">上周学习周报</div>
+      <button class="btn-ghost !text-xs !px-2 !py-1" @click="openShare">分享</button>
     </div>
     <div class="grid grid-cols-4 gap-2 text-center">
       <div>

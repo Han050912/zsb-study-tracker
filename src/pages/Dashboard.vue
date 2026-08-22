@@ -134,9 +134,9 @@ function openCheckinShare() {
     .map(([sid, min]) => `${store.subjectMap[sid]?.name || '未知科目'} ${formatMinutes(min)}`)
     .join('、')
   composerContent.value = [
-    '💪 今日学习打卡',
-    subjectParts ? `📚 ${subjectParts}` : '',
-    `⏱️ 共 ${formatMinutes(store.todayMinutes)} · 🍅 ${store.todayPomodoro.count} 个番茄钟 · 🔥 连续 ${store.gamification.streak} 天`
+    '今日学习打卡',
+    subjectParts ? `${subjectParts}` : '',
+    `共 ${formatMinutes(store.todayMinutes)} · ${store.todayPomodoro.count} 个番茄钟 · 连续 ${store.gamification.streak} 天`
   ].filter(Boolean).join('\n')
   showComposer.value = true
 }
@@ -238,13 +238,13 @@ onUnmounted(() => {
     <!-- 头部 -->
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="page-title">你好，{{ store.settings.userName }} 👋</h1>
-        <p class="text-xs text-slate-400 mt-0.5">{{ today() }} · 连续学习 🔥{{ store.gamification.streak }} 天</p>
+        <h1 class="page-title">你好，{{ store.settings.userName }} </h1>
+        <p class="text-xs text-slate-400 mt-0.5">{{ today() }} · 连续学习 {{ store.gamification.streak }} 天</p>
       </div>
       <div class="text-right">
         <div class="text-xs text-slate-400">{{ store.level.name }}学者</div>
         <div class="text-sm font-bold text-primary-500">{{ store.gamification.points }} 积分</div>
-        <button class="btn-ghost !text-xs !px-2 !py-1 mt-1" @click="openCheckinShare">📣 分享打卡</button>
+        <button class="btn-ghost !text-xs !px-2 !py-1 mt-1" @click="openCheckinShare">分享打卡</button>
       </div>
     </div>
 

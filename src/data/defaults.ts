@@ -28,7 +28,7 @@ export function defaultSubjects(): Subject[] {
   ]
 }
 
-export const MOODS = ['😄 开心', '😊 满足', '🙂 平静', '😤 拼搏', '😴 疲惫', '😟 焦虑', '😢 沮丧', '🤯 崩溃']
+export const MOODS = ['开心', '满足', '平静', '拼搏', '疲惫', '焦虑', '沮丧', '崩溃']
 
 export const DEFAULT_QUOTES = [
   '宝剑锋从磨砺出，梅花香自苦寒来。',

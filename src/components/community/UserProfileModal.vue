@@ -146,7 +146,7 @@ async function revokeVerify() {
 
       <!-- 隐私保护提示（私密主页降级视图） -->
       <div v-if="profile.profilePrivate" class="mt-4 text-center text-xs text-slate-400 py-3 rounded-lg bg-slate-50 dark:bg-slate-700/40">
-        🔒 该用户已开启隐私保护，仅展示部分公开信息
+        该用户已开启隐私保护，无法查看用户信息
       </div>
 
       <!-- 荣誉统计 -->
