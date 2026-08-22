@@ -162,7 +162,7 @@ function openReport(postId: string) {
       <div v-if="circle.myStatus === 'owner' && detail?.pending.length" class="card space-y-2">
         <div class="label !mb-1">待审批申请（{{ detail.pending.length }}）</div>
         <div v-for="p in detail.pending" :key="p.userId" class="flex items-center gap-2">
-          <UserAvatar :name="p.userName" size="sm" />
+          <UserAvatar :name="p.userName" :avatar="p.userAvatar" size="sm" />
           <span class="text-sm flex-1 truncate">{{ p.userName }}</span>
           <button class="btn-ghost !text-xs !text-emerald-500" @click="approve(p.userId)">通过</button>
           <button class="btn-ghost !text-xs !text-red-500" @click="removeMember(p.userId, p.userName)">拒绝</button>
@@ -175,7 +175,7 @@ function openReport(postId: string) {
         <div class="flex flex-wrap gap-3">
           <div v-for="m in detail.members" :key="m.userId" class="flex items-center gap-1.5 cursor-pointer group"
             @click="openProfile(m.userId)">
-            <UserAvatar :name="m.userName" size="sm" />
+            <UserAvatar :name="m.userName" :avatar="m.userAvatar" size="sm" />
             <span class="text-xs group-hover:text-primary-500">{{ m.userName }}</span>
             <span v-if="m.role === 'owner'" class="text-[10px] text-amber-500">圈主</span>
             <button v-if="circle.myStatus === 'owner' && m.role !== 'owner'"

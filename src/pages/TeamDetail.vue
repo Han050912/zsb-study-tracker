@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { getTeamDetail, joinTeam, leaveTeam, transferLeader, disbandTeam, createChallenge, syncChallengeProgress, updateChallenge, deleteChallenge, cancelChallenge, resumeChallenge } from '../api/teams'
 import type { ChallengeType, TeamChallenge, TeamDetail } from '../types'
 import Modal from '../components/Modal.vue'
+import UserAvatar from '../components/community/UserAvatar.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -245,6 +246,7 @@ async function handleResume(c: TeamChallenge) {
         <div class="label !mb-2">成员（{{ detail.members.length }}）</div>
         <div class="flex flex-wrap gap-3">
           <div v-for="m in detail.members" :key="m.userId" class="flex items-center gap-1.5">
+            <UserAvatar :name="m.userName" :avatar="m.userAvatar" size="sm" />
             <span class="text-xs">{{ m.userName }}</span>
             <span v-if="m.role === 'leader'" class="text-[10px] text-yellow-500">队长</span>
             <button v-if="team.myRole === 'leader' && m.role === 'member'"
