@@ -10,6 +10,7 @@ import Toast from './components/Toast.vue'
 import AchievementModal from './components/AchievementModal.vue'
 import Onboarding from './components/Onboarding.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
+import { imageUrl } from './api/community'
 
 const store = useAppStore()
 const community = useCommunityStore()
@@ -207,9 +208,10 @@ if (window.nav) {
             {{ community.unreadCount > 99 ? '99+' : community.unreadCount }}
           </span>
         </button>
-        <button class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
+        <button class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow overflow-hidden"
           title="账号菜单" @click.stop="avatarOpen = !avatarOpen">
-          {{ avatarLetter }}
+          <img v-if="store.settings.avatar" :src="imageUrl(store.settings.avatar)" class="w-full h-full object-cover" alt="我的头像">
+          <template v-else>{{ avatarLetter }}</template>
         </button>
         <div v-if="avatarOpen" class="fixed inset-0 z-40" @click="avatarOpen = false"></div>
         <div v-if="avatarOpen" class="absolute right-0 top-11 z-50 w-40 rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-lg py-1.5">
