@@ -12,13 +12,19 @@ function getToken(): string | null {
   return localStorage.getItem('jwt_token')
 }
 
-/** 401 全局处理：清除 token、通知清空内存数据、跳转登录页（导出供 XHR 上传等非 fetch 通道复用） */
+/** 401 全局处理：清除 token、通知清空内存数据、跳转登录页（导出供 XHR 上传等非 fetch 通道复用）。
+ *  「会话过期」仅适用于曾登录的用户（持有 token）；访客（无 token）的 401 是「未登录」的预期响应，
+ *  不做全局登出/跳转，仅抛错交由调用方组件自行引导登录。 */
 export function handleUnauthorized(): never {
-  localStorage.removeItem('jwt_token')
-  // 通知应用清空内存中的用户数据（防止 401 后串号到下一个账号）
-  window.dispatchEvent(new CustomEvent('auth:expired'))
-  window.location.hash = '#/login'
-  throw Object.assign(new Error('登录已过期，请重新登录'), { status: 401 })
+  const hadToken = getToken()
+  if (hadToken) {
+    localStorage.removeItem('jwt_token')
+    // 通知应用清空内存中的用户数据（防止 401 后串号到下一个账号）
+    window.dispatchEvent(new CustomEvent('auth:expired'))
+    window.location.hash = '#/login'
+  }
+  // 曾持有 token（会话过期）与访客（未登录）的 401 语义不同，提示语区分，避免误导
+  throw Object.assign(new Error(hadToken ? '登录已过期，请重新登录' : '请先登录'), { status: 401 })
 }
 
 export async function request<T>(

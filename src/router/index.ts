@@ -40,10 +40,10 @@ export const router = createRouter({
   routes
 })
 
-// 登录守卫：未登录访问任意页面跳转登录页；已登录访问登录页跳转首页（按路由名判断，避免路径硬编码）
+// 登录守卫：未登录访问任意页面统一落地社区广场（访客浏览模式）；已登录访问登录页跳转首页（按路由名判断，避免路径硬编码）
 router.beforeEach((to) => {
-  const guestAllowed = to.name === 'community' || to.name === 'community-post'
-  if (!isLoggedIn.value && !guestAllowed && to.name !== 'login') return { name: 'login' }
+  const guestAllowed = to.name === 'community' || to.name === 'community-post' || to.name === 'teams'
+  if (!isLoggedIn.value && !guestAllowed && to.name !== 'login') return { name: 'community' }
   if (isLoggedIn.value && to.name === 'login') return { name: 'dashboard' }
   // 管理员守卫：审核中心仅管理员可见
   if (to.name === 'admin' && !isAdmin.value) return { name: 'community' }

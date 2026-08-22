@@ -69,9 +69,15 @@ export function logout(): void {
   setSession(null)
 }
 
+/** 跳转登录页并携带回跳地址（当前 hash 路由，登录成功后返回原页面） */
+export function goLogin(router: { push: (p: string) => void }) {
+  const current = window.location.hash.replace(/^#/, '') || '/'
+  router.push(`/login?redirect=${encodeURIComponent(current)}`)
+}
+
 /** 访客触发需登录操作时跳转登录页；返回 true 表示「已因未登录而拦截」 */
 export function requireLogin(router: { push: (p: string) => void }): boolean {
   if (isLoggedIn.value) return false
-  router.push('/login')
+  goLogin(router)
   return true
 }

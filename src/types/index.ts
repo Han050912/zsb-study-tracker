@@ -410,6 +410,8 @@ export interface CommunityUserProfile {
   userName: string
   /** 自定义头像相对 URL（未设置 = undefined） */
   avatar?: string
+  /** 私密主页降级视图：仅含公开子集（昵称/头像/蓝V），积分/徽章/关注等字段缺省 */
+  profilePrivate?: boolean
   points: number
   streak: number
   verified: boolean
