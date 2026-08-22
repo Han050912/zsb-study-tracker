@@ -131,6 +131,8 @@ function toggleNav() {
   navCollapsed.value = !navCollapsed.value
   localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed.value ? '1' : '0')
 }
+// 侧边栏宽度状态注入给子页面（如帖子详情底部回复框），使其与主内容区同一列对齐
+provide('navCollapsed', navCollapsed)
 
 // ---- 右上角账号头像下拉菜单 ----
 const avatarOpen = ref(false)

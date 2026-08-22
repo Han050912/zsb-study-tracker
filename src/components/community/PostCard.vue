@@ -59,6 +59,7 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
             <span v-if="post.userVerified"
               class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
               title="认证专家">✓</span>
+            <span v-if="isMine" class="text-[10px] leading-none px-1 py-0.5 rounded border shrink-0 border-slate-300 text-slate-500 dark:border-slate-500 dark:text-slate-400 font-medium">我</span>
             <span class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0" :style="{ background: level.color + '1a', color: level.color }">
               {{ level.name }}学者
             </span>

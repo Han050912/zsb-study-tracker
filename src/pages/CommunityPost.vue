@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
@@ -16,6 +16,8 @@ const route = useRoute()
 const router = useRouter()
 const store = useCommunityStore()
 const toast = inject<(m: string) => void>('toast', () => {})
+/** 侧边栏是否折叠（App.vue 注入），用于底部回复框与主内容区同列对齐 */
+const navCollapsed = inject<Ref<boolean>>('navCollapsed', ref(false))
 
 const postId = route.params.id as string
 const post = ref<CommunityPost | null>(null)
@@ -38,7 +40,17 @@ onMounted(async () => {
 const isMine = computed(() => post.value?.userId === sessionUser.value?.id)
 const canDeletePost = computed(() => isMine.value || isAdmin.value)
 
-/** 一级评论 + 二级回复树（回复的 parentId 始终指向一级评论）；被采纳的最佳答案置顶展示 */
+/** 评论排序：热度（默认，抖音习惯）或最新 */
+const commentSort = ref<'hot' | 'latest'>('hot')
+/** 已展开回复的一级评论 id 集合（二级回复默认折叠，抖音式） */
+const expandedReplies = ref(new Set<string>())
+function toggleReplies(id: string) {
+  const s = new Set(expandedReplies.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  expandedReplies.value = s
+}
+
+/** 一级评论 + 二级回复树（回复的 parentId 始终指向一级评论）；最佳答案置顶，其余按热度/时间排序 */
 const commentTree = computed(() => {
   const roots = comments.value.filter(c => !c.parentId)
   const byParent = new Map<string, CommunityComment[]>()
@@ -48,8 +60,12 @@ const commentTree = computed(() => {
     list.push(c)
     byParent.set(c.parentId, list)
   }
-  roots.sort((a, b) => Number(b.isAccepted) - Number(a.isAccepted))
-  return roots.map(r => ({ ...r, replies: byParent.get(r.id) || [] }))
+  const accepted = roots.filter(c => c.isAccepted)
+  const others = roots.filter(c => !c.isAccepted)
+  others.sort((a, b) => commentSort.value === 'hot'
+    ? (b.likesCount - a.likesCount) || (b.createdAt - a.createdAt)
+    : b.createdAt - a.createdAt)
+  return [...accepted, ...others].map(r => ({ ...r, replies: byParent.get(r.id) || [] }))
 })
 
 function findComment(id: string): CommunityComment | undefined {
@@ -108,15 +124,25 @@ async function dislikeComment(c: CommunityComment) {
 }
 
 // ---- 评论 / 回复 ----
+/** 发送时的 parentId（回复二级评论时仍指向其一级评论，最多二级） */
 const replyTarget = ref<CommunityComment | null>(null)
-const presetText = ref('')
+/** 用户实际点击的评论（用于高亮锚定与「正在回复 @xxx」提示） */
+const replySource = ref<CommunityComment | null>(null)
+const commentInputRef = ref<{ focus: () => void } | null>(null)
 
 function reply(c: CommunityComment) {
   if (requireLogin(router)) return
-  // 回复二级评论时，parentId 仍指向其一级评论（最多二级）
+  // 重复点击同一条评论：保持现有回复状态，不重置输入
+  if (replySource.value?.id === c.id) return
+  replySource.value = c
   replyTarget.value = c.parentId ? (findComment(c.parentId) || c) : c
-  presetText.value = ''
-  requestAnimationFrame(() => { presetText.value = `@${c.userName} ` })
+  // 聚焦输入框，用户直接输入回复内容（不再自动填入 @用户名）
+  commentInputRef.value?.focus()
+}
+
+function cancelReply() {
+  replyTarget.value = null
+  replySource.value = null
 }
 
 async function send(text: string, imageUrls: string[]) {
@@ -127,6 +153,7 @@ async function send(text: string, imageUrls: string[]) {
     // store.postComment 已同步广场列表内的计数，此处仅当本帖不在列表时手动 +1，避免重复计数
     if (post.value && !store.posts.some(p => p.id === postId)) post.value.commentsCount++
     replyTarget.value = null
+    replySource.value = null
   } catch (e: any) {
     toast(e?.message || '评论失败')
   }
@@ -290,7 +317,7 @@ async function toggleHideComment(c: CommunityComment) {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
+  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4 pb-36 md:pb-32">
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2.5" @click="router.back()">←</button>
       <h1 class="page-title">帖子详情</h1>
@@ -315,26 +342,34 @@ async function toggleHideComment(c: CommunityComment) {
 
       <!-- 评论区 -->
       <div class="card space-y-4">
-        <div class="section-title !mb-0">💬 评论 {{ post.commentsCount || '' }}</div>
-        <CommentInput :preset-text="presetText"
-          :placeholder="replyTarget ? `回复 @${replyTarget.userName}…` : '写下你的评论…（支持 emoji）'"
-          @send="send" />
-        <div v-if="replyTarget" class="text-xs text-slate-400">
-          正在回复 @{{ replyTarget.userName }}
-          <button class="text-primary-500 ml-1" @click="replyTarget = null">取消回复</button>
+        <div class="flex items-center justify-between">
+          <div class="section-title !mb-0">💬 评论 {{ post.commentsCount || '' }}</div>
+          <div class="flex items-center gap-1 text-xs">
+            <button class="px-2 py-1 rounded-md transition-colors"
+              :class="commentSort === 'hot' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium' : 'text-slate-400 hover:text-slate-600'"
+              @click="commentSort = 'hot'">热度</button>
+            <button class="px-2 py-1 rounded-md transition-colors"
+              :class="commentSort === 'latest' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium' : 'text-slate-400 hover:text-slate-600'"
+              @click="commentSort = 'latest'">最新</button>
+          </div>
         </div>
 
         <div v-if="!commentTree.length" class="text-center text-xs text-slate-400 py-4">暂无评论，来抢沙发～</div>
         <div v-for="c in commentTree" :key="c.id" class="space-y-3">
-          <CommentItem :comment="c" :show-accept="acceptVisible(c)" @like="likeComment(c)" @dislike="dislikeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
+          <CommentItem :comment="c" :show-accept="acceptVisible(c)" :post-author-id="post?.userId" :replying="replySource?.id === c.id" @like="likeComment(c)" @dislike="dislikeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
             @hide="toggleHideComment(c)" @report="openReport('comment', c.id)" @accept="accept(c)" @image="openCommentLightbox(c, $event)"
             @profile="openProfile(c.userId)" />
-          <!-- 二级回复 -->
-          <div v-if="c.replies?.length" class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
-            <CommentItem v-for="r in c.replies" :key="r.id" :comment="r"
-              @like="likeComment(r)" @dislike="dislikeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
-              @report="openReport('comment', r.id)" @image="openCommentLightbox(r, $event)" @profile="openProfile(r.userId)" />
-          </div>
+          <!-- 二级回复：默认折叠，点击展开（抖音式） -->
+          <template v-if="c.replies?.length">
+            <button v-if="!expandedReplies.has(c.id)" class="text-xs text-slate-400 hover:text-primary-500 ml-11"
+              @click="toggleReplies(c.id)">展开 {{ c.replies.length }} 条回复 ↓</button>
+            <div v-else class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
+              <CommentItem v-for="r in c.replies" :key="r.id" :comment="r" :post-author-id="post?.userId" :replying="replySource?.id === r.id"
+                @like="likeComment(r)" @dislike="dislikeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
+                @report="openReport('comment', r.id)" @image="openCommentLightbox(r, $event)" @profile="openProfile(r.userId)" />
+              <button class="text-xs text-slate-400 hover:text-primary-500" @click="toggleReplies(c.id)">收起回复 ↑</button>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -342,6 +377,23 @@ async function toggleHideComment(c: CommunityComment) {
       <Lightbox v-model:show="showCommentLightbox" v-model:index="commentLightboxIndex" :urls="commentLightboxUrls" />
       <ReportDialog v-model:show="showReport" :target-type="reportTarget.type" :target-id="reportTarget.id" />
       <UserProfileModal v-model:show="showProfile" :user-id="profileUserId" />
+
+      <!-- 抖音式：评论输入框固定在视口底部（移动端避开底导航）；
+           白色背景条在 max-w-2xl 内再缩进 页面padding+cardpadding，与评论区 card 同栏宽对齐
+           （移动端 px-8=32，桌面 px-6=24），并加圆角与上阴影与 card 视觉协调 -->
+      <div class="fixed bottom-16 md:bottom-0 inset-x-0 z-20" :class="navCollapsed ? 'md:left-16' : 'md:left-56'">
+        <div class="max-w-2xl mx-auto px-8 md:px-6">
+          <div class="px-4 py-2 bg-white dark:bg-slate-800 border-t border-x border-slate-100 dark:border-slate-700 rounded-t-2xl shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
+            <div v-if="replySource" class="flex items-center text-xs text-slate-400 mb-1.5">
+              <span class="truncate">正在回复 @{{ replySource.userName }}</span>
+              <button class="text-primary-500 ml-2 shrink-0" @click="cancelReply">取消</button>
+            </div>
+            <CommentInput ref="commentInputRef"
+              :placeholder="replySource ? '写下你的回复…' : '写下你的评论…'"
+              @send="send" />
+          </div>
+        </div>
+      </div>
     </template>
   </div>
 </template>
