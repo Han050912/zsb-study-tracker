@@ -16,7 +16,7 @@ import { assertClean } from './sensitive'
 const nowSec = () => Math.floor(Date.now() / 1000)
 
 /** 校验当前用户为管理员，否则 403 */
-async function requireAdmin(ctx: { env: Env; userId: string }) {
+export async function requireAdmin(ctx: { env: Env; userId: string }) {
   const u = await first<{ role: string }>(ctx.env, 'SELECT role FROM users WHERE id = ?', ctx.userId)
   if (!u || u.role !== 'admin') throw new HttpError(403, '需要管理员权限')
 }

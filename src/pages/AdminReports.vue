@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { communityApi, imageUrl } from '../api/community'
+import { feedbackApi } from '../api/feedback'
 import { fromNow } from '../utils/date'
-import type { AdminReport, HotTopicOverride } from '../types'
+import type { AdminReport, Feedback, FeedbackStatus, HotTopicOverride } from '../types'
 
 /**
  * 管理员后台（首个模块：举报处理队列）。
@@ -19,7 +20,40 @@ const confirming = ref<{ id: string; action: 'hide' | 'delete' | 'reject' } | nu
 const note = ref('')
 const submitting = ref(false)
 
-onMounted(() => { load(); loadHotTopics() })
+// ---- Tab 切换（举报 / 反馈 / 热门话题） ----
+const activeTab = ref<'reports' | 'feedback' | 'topics'>('reports')
+
+// ---- 意见反馈管理 ----
+const FB_TYPE_LABEL: Record<Feedback['type'], string> = {
+  feature: '功能建议', bug: 'Bug报告', experience: '体验评价', other: '其他'
+}
+const feedbacks = ref<Feedback[]>([])
+const feedbackLoading = ref(false)
+const feedbackFilter = ref<'all' | FeedbackStatus>('all')
+
+async function loadFeedback() {
+  feedbackLoading.value = true
+  try {
+    const res = await feedbackApi.adminList(feedbackFilter.value === 'all' ? undefined : feedbackFilter.value)
+    feedbacks.value = res.feedbacks
+  } catch (e: any) {
+    toast(e?.message || '加载反馈失败')
+  } finally {
+    feedbackLoading.value = false
+  }
+}
+
+async function setFeedbackStatus(id: string, status: FeedbackStatus) {
+  try {
+    await feedbackApi.adminUpdateStatus(id, status)
+    toast(status === 'resolved' ? '已标记处理' : '已恢复待处理')
+    await loadFeedback()
+  } catch (e: any) {
+    toast(e?.message || '操作失败')
+  }
+}
+
+onMounted(() => { load(); loadHotTopics(); loadFeedback() })
 
 async function load() {
   loading.value = true
@@ -115,6 +149,18 @@ async function removeHotTopic(id: string) {
       </span>
     </div>
 
+    <div class="flex gap-1 border-b border-slate-100 dark:border-slate-700">
+      <button v-for="t in (['reports','feedback','topics'] as const)" :key="t"
+        class="px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors"
+        :class="activeTab === t
+          ? 'border-primary-500 text-primary-600 dark:text-primary-400 font-semibold'
+          : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'"
+        @click="activeTab = t">
+        {{ t === 'reports' ? '举报' : t === 'feedback' ? '反馈' : '热门话题' }}
+      </button>
+    </div>
+
+    <div v-show="activeTab === 'reports'">
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
     <div v-else-if="!reports.length" class="card text-center py-10 text-slate-400 text-sm">
       <div class="text-3xl mb-2">✨</div>
@@ -169,9 +215,10 @@ async function removeHotTopic(id: string) {
         </div>
       </div>
     </div>
+    </div>
 
     <!-- 热门话题运营位管理 -->
-    <div class="card space-y-3">
+    <div v-show="activeTab === 'topics'" class="card space-y-3">
       <div class="section-title !mb-0">🔥 热门话题管理</div>
       <div v-if="hotLoading" class="text-xs text-slate-400 text-center py-3">加载中…</div>
       <template v-else>
@@ -214,6 +261,49 @@ async function removeHotTopic(id: string) {
               <span class="text-slate-400">{{ o.tag }}</span>
               <button class="ml-auto text-[10px] text-red-400 hover:underline" @click="removeHotTopic(o.id)">删除</button>
             </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 意见反馈管理 -->
+    <div v-show="activeTab === 'feedback'" class="space-y-3">
+      <div class="flex items-center gap-2">
+        <button v-for="f in (['all','pending','resolved'] as const)" :key="f"
+          class="px-2.5 py-1 rounded-full text-xs border"
+          :class="feedbackFilter === f
+            ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border-primary-200 dark:border-primary-800'
+            : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400'"
+          @click="feedbackFilter = f; loadFeedback()">
+          {{ f === 'all' ? '全部' : f === 'pending' ? '待处理' : '已处理' }}
+        </button>
+      </div>
+
+      <div v-if="feedbackLoading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+      <div v-else-if="!feedbacks.length" class="card text-center py-10 text-slate-400 text-sm">
+        <div class="text-3xl mb-2">💡</div><p>暂无反馈</p>
+      </div>
+      <template v-else>
+        <div v-for="fb in feedbacks" :key="fb.id" class="card space-y-2">
+          <div class="flex items-center gap-2 text-xs text-slate-400">
+            <span class="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-500 font-medium">{{ FB_TYPE_LABEL[fb.type] }}</span>
+            <span>{{ fb.userName }}</span>
+            <span>{{ fromNow(fb.createdAt) }}</span>
+            <span class="ml-auto px-1.5 py-0.5 rounded"
+              :class="fb.status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600' : 'bg-green-50 dark:bg-green-900/30 text-green-500'">
+              {{ fb.status === 'pending' ? '待处理' : '已处理' }}
+            </span>
+          </div>
+          <p class="text-sm whitespace-pre-wrap break-words">{{ fb.content }}</p>
+          <div v-if="fb.imageUrls.length" class="flex gap-2">
+            <img v-for="u in fb.imageUrls" :key="u" :src="imageUrl(u)" class="w-16 h-16 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
+          </div>
+          <div v-if="fb.contact" class="text-xs text-slate-500 dark:text-slate-400">联系方式：{{ fb.contact }}</div>
+          <div class="flex gap-2 pt-1">
+            <button class="btn-ghost !text-xs" @click="setFeedbackStatus(fb.id, fb.status === 'pending' ? 'resolved' : 'pending')">
+              {{ fb.status === 'pending' ? '✅ 标记已处理' : '↩️ 恢复待处理' }}
+            </button>
+            <a v-if="fb.githubIssueUrl" :href="fb.githubIssueUrl" target="_blank" rel="noopener" class="btn-ghost !text-xs ml-auto">查看 GitHub Issue →</a>
           </div>
         </div>
       </template>

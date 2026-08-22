@@ -25,6 +25,7 @@ import { registerAdminRoutes } from './api/admin'
 import { registerLearningPathRoutes } from './api/learningPath'
 import { registerPdfRoutes } from './api/pdfs'
 import { registerUploadRoutes } from './api/uploads'
+import { registerFeedbackRoutes } from './api/feedback'
 import './api/teams'
 import { HttpError } from './db'
 import { canCache, getCached, putCache } from './middleware/cache'
@@ -130,3 +131,4 @@ registerAdminRoutes()
 registerLearningPathRoutes()
 registerPdfRoutes()
 registerUploadRoutes()
+registerFeedbackRoutes()

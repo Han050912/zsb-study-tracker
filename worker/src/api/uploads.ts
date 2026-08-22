@@ -150,7 +150,10 @@ export async function cleanupOrphanUploads(env: Env): Promise<void> {
       `SELECT 1 AS x FROM community_posts WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
     const refComment = refPost ? null : await first(env,
       `SELECT 1 AS x FROM community_comments WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
-    if (!refPost && !refComment) {
+    // 反馈截图也引用 community_uploads，需纳入引用检查，避免 30 天后被误清
+    const refFeedback = (refPost || refComment) ? null : await first(env,
+      `SELECT 1 AS x FROM feedback WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
+    if (!refPost && !refComment && !refFeedback) {
       await env.IMAGES.delete(r.r2_key).catch(() => {})
       if (r.thumb_r2_key) await env.IMAGES.delete(r.thumb_r2_key).catch(() => {})
       await run(env, 'DELETE FROM community_uploads WHERE id = ?', r.id)
@@ -215,7 +218,8 @@ export function registerUploadRoutes() {
         'SELECT COUNT(*) AS n FROM community_uploads WHERE user_id = ?', ctx.userId)
       if ((cnt?.n ?? 0) >= 50) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'image_50'))
     }
-    await cleanupOrphanUploads(ctx.env)
+    // 惰性清理孤图失败不应阻断上传（如 feedback 表尚未迁移时）
+    await cleanupOrphanUploads(ctx.env).catch(e => console.error('[upload] 孤图清理失败', e))
     return Response.json({ id, url, size: data.byteLength, contentType: kind.mime }, { status: 201 })
   })
 

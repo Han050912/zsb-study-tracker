@@ -125,6 +125,10 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   CREATE TABLE IF NOT EXISTS study_partners ( id TEXT PRIMARY KEY, pair_key TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(pair_key) );
 --   CREATE INDEX IF NOT EXISTS idx_partners_to ON study_partners(to_id, status);
 --   CREATE INDEX IF NOT EXISTS idx_partners_from ON study_partners(from_id, status);
+-- 已建库升级：意见反馈（P2-8），执行一次：
+--   CREATE TABLE IF NOT EXISTS feedback ( id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), type TEXT NOT NULL, content TEXT NOT NULL, contact TEXT NOT NULL DEFAULT '', image_urls TEXT NOT NULL DEFAULT '[]', github_issue_url TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
+--   CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -623,3 +627,19 @@ CREATE TABLE IF NOT EXISTS study_partners (
 );
 CREATE INDEX IF NOT EXISTS idx_partners_to ON study_partners(to_id, status);
 CREATE INDEX IF NOT EXISTS idx_partners_from ON study_partners(from_id, status);
+
+-- ========== 意见反馈 ==========
+-- 反馈提交后先落 D1（站内管理员后台查看）；github_issue_url 为异步回写的 GitHub issue 链接（尽力而为，可为空）
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  type TEXT NOT NULL,                    -- 'feature' | 'bug' | 'experience' | 'other'
+  content TEXT NOT NULL,                 -- 文字描述（1-2000 字）
+  contact TEXT NOT NULL DEFAULT '',      -- 联系方式（可选，0-100 字）
+  image_urls TEXT NOT NULL DEFAULT '[]', -- 截图路径数组（JSON，最多 3 张）
+  github_issue_url TEXT,                 -- GitHub issue 链接（创建成功后回写，可空）
+  status TEXT NOT NULL DEFAULT 'pending',-- 'pending' | 'resolved'
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);
