@@ -5,6 +5,7 @@ import { communityApi } from '../api/community'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import { fromNow } from '../utils/date'
+import { useAppStore } from '../stores/app'
 import type { CommunityMessage } from '../types'
 
 /**
@@ -13,12 +14,14 @@ import type { CommunityMessage } from '../types'
  */
 const route = useRoute()
 const router = useRouter()
+const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 const peerId = route.params.peerId as string
 
 const messages = ref<CommunityMessage[]>([]) // 服务端返回倒序，渲染时正序
 const nextCursor = ref<string | null>(null)
 const peerName = ref('')
+const peerAvatar = ref('')
 const loading = ref(true)
 const sending = ref(false)
 const text = ref('')
@@ -46,10 +49,11 @@ async function load(reset = false) {
       messages.value = [...messages.value, ...res.messages.filter(m => !known.has(m.id))]
       nextCursor.value = res.nextCursor
     }
-    // 会话列表接口拿不到对方名，从资料卡补
+    // 会话列表接口拿不到对方名/头像，从资料卡补
     if (!peerName.value) {
       const p = await communityApi.profile(peerId)
       peerName.value = p.userName
+      peerAvatar.value = p.avatar || ''
     }
   } catch (e: any) {
     if (loading.value) toast(e?.message || '加载失败')
@@ -105,7 +109,7 @@ function openReport(msgId: string) {
     <!-- 头部 -->
     <div class="flex items-center gap-2 pb-2 border-b border-slate-100 dark:border-slate-700">
       <button class="btn-ghost !px-2" @click="router.push('/community/messages')">← 私信</button>
-      <UserAvatar :name="peerName || '?'" size="sm" />
+      <UserAvatar :name="peerName || '?'" :avatar="peerAvatar" size="sm" />
       <span class="font-semibold text-sm truncate flex-1">{{ peerName || '加载中…' }}</span>
     </div>
 
@@ -118,7 +122,7 @@ function openReport(msgId: string) {
         </div>
         <div v-if="!ordered.length" class="text-center text-xs text-slate-400 py-8">打个招呼吧～</div>
         <div v-for="m in ordered" :key="m.id" class="flex gap-2" :class="m.fromMe ? 'flex-row-reverse' : ''">
-          <UserAvatar :name="m.fromMe ? '我' : peerName" size="sm" class="shrink-0 mt-0.5" />
+          <UserAvatar :name="m.fromMe ? '我' : peerName" :avatar="m.fromMe ? store.settings.avatar : peerAvatar" size="sm" class="shrink-0 mt-0.5" />
           <div class="max-w-[75%] group">
             <div class="rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words"
               :class="m.fromMe
