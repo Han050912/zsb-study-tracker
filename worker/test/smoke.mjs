@@ -783,9 +783,65 @@ async function main() {
   check('非队长删除挑战被拒绝', (await api(`/api/teams/challenges/${chId}`, { method: 'DELETE', token: tokenB })).status === 403)
   check('队长删除挑战', (await api(`/api/teams/challenges/${chId}`, { method: 'DELETE', token: tokenA })).status === 200)
 
+  // —— 编辑小组信息 ——
+  check('非队长编辑 403', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenB, body: { name: 'x', description: '', maxMembers: 5 } })).status === 403)
+  check('队长编辑名称/描述/人数(上调) 200', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 8 } })).status === 200)
+  const edited = await api(`/api/teams/${teamId}`, { token: tokenA })
+  check('编辑后详情生效', edited.data?.team?.name === '编辑后的高数打卡队' && edited.data?.team?.maxMembers === 8, JSON.stringify(edited.data))
+  check('人数下调但不低于成员数 200', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 2 } })).status === 200)
+  check('人数低于成员数 400', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 1 } })).status === 400)
+  check('人数越界 0 400', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 0 } })).status === 400)
+  check('人数越界 100 400', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 100 } })).status === 400)
+  check('名称含敏感词 400', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '加微信领资料', description: '已编辑', maxMembers: 5 } })).status === 400)
+
   const memberUserId = teamDetail.data.members.find(m => m.role === 'member')?.userId
+  const leaderUserId = teamDetail.data.members.find(m => m.role === 'leader')?.userId
+
+  // —— 私密组邀请码 + 审批 ——
+  const invTeam = await api('/api/teams', { method: 'POST', token: tokenA, body: { name: '私密邀请组', maxMembers: 2, isPublic: false } })
+  const invTeamId = invTeam.data?.id
+  check('创建私密组(200)', invTeam.status === 200)
+
+  const invTeamDetail = await api(`/api/teams/${invTeamId}`, { token: tokenA })
+  const invCode = invTeamDetail.data?.inviteCode
+  check('队长可见邀请码', typeof invCode === 'string' && invCode.length === 8, JSON.stringify(invTeamDetail.data))
+  check('非队长不可见邀请码', (await api(`/api/teams/${invTeamId}`, { token: tokenB })).data?.inviteCode == null)
+  check('公开列表不含私密组', !(await api('/api/teams', { token: tokenA })).data.some(t => t.id === invTeamId))
+
+  check('by-invite 命中', (await api(`/api/teams/by-invite?code=${invCode}`, { token: tokenB })).status === 200)
+  check('by-invite 错码 404', (await api(`/api/teams/by-invite?code=ZZZZZZZZ`, { token: tokenB })).status === 404)
+
+  check('错码申请 400', (await api(`/api/teams/${invTeamId}/apply`, { method: 'POST', token: tokenB, body: { inviteCode: 'WRONG' } })).status === 400)
+  check('正确码申请 200', (await api(`/api/teams/${invTeamId}/apply`, { method: 'POST', token: tokenB, body: { inviteCode: invCode } })).status === 200)
+  check('重复申请 400', (await api(`/api/teams/${invTeamId}/apply`, { method: 'POST', token: tokenB, body: { inviteCode: invCode } })).status === 400)
+
+  const reqs = await api(`/api/teams/${invTeamId}/requests`, { token: tokenA })
+  check('队长见待审申请', (reqs.data ?? []).some(r => r.userId === memberUserId), JSON.stringify(reqs.data))
+  check('非队长看待审 403', (await api(`/api/teams/${invTeamId}/requests`, { token: tokenB })).status === 403)
+
+  const notifLeader = await api('/api/community/notifications', { token: tokenA })
+  check('队长收到新申请通知', (notifLeader.data?.items ?? []).some(n => n.type === 'system' && (n.content || '').includes('申请加入')), JSON.stringify(notifLeader.data))
+
+  check('撤回 200', (await api(`/api/teams/${invTeamId}/requests/withdraw`, { method: 'POST', token: tokenB })).status === 200)
+  check('重新申请 200', (await api(`/api/teams/${invTeamId}/apply`, { method: 'POST', token: tokenB, body: { inviteCode: invCode } })).status === 200)
+
+  check('队长同意 200', (await api(`/api/teams/${invTeamId}/requests/${memberUserId}/approve`, { method: 'POST', token: tokenA })).status === 200)
+  const afterApprove = await api(`/api/teams/${invTeamId}`, { token: tokenA })
+  check('同意后成员数 2', afterApprove.data?.members?.length === 2, JSON.stringify(afterApprove.data))
+  const notifBPriv = await api('/api/community/notifications', { token: tokenB })
+  check('申请人收到入组通知', (notifBPriv.data?.items ?? []).some(n => n.type === 'system' && (n.content || '').includes('已加入小组')), JSON.stringify(notifBPriv.data))
+
+  check('重置邀请码 200', (await api(`/api/teams/${invTeamId}/invite-code`, { method: 'POST', token: tokenA })).status === 200)
+  check('重置后旧码失效', (await api(`/api/teams/by-invite?code=${invCode}`, { token: tokenA })).status === 404)
+
   check('转让队长给 B', (await api(`/api/teams/${teamId}/transfer-leader`, { method: 'POST', token: tokenA, body: { newLeaderId: memberUserId } })).status === 200)
-  check('转让后 A 为成员可退出', (await api(`/api/teams/${teamId}/leave`, { method: 'POST', token: tokenA })).status === 200)
+  check('非队长(A)踢人被拒', (await api(`/api/teams/${teamId}/remove-member`, { method: 'POST', token: tokenA, body: { userId: memberUserId } })).status === 403)
+  check('队长(B)踢自己被拒', (await api(`/api/teams/${teamId}/remove-member`, { method: 'POST', token: tokenB, body: { userId: memberUserId } })).status === 400)
+  check('队长(B)踢出成员 A', (await api(`/api/teams/${teamId}/remove-member`, { method: 'POST', token: tokenB, body: { userId: leaderUserId } })).status === 200)
+  const afterKick = await api(`/api/teams/${teamId}`, { token: tokenB })
+  check('踢出后成员数减一且不含 A', afterKick.data?.members?.length === 1 && !afterKick.data.members.some(m => m.userId === leaderUserId), JSON.stringify(afterKick.data))
+  const notifyA = await api('/api/community/notifications', { token: tokenA })
+  check('被踢者 A 收到 system 通知', (notifyA.data?.items ?? []).some(n => n.type === 'system' && (n.content || '').includes('移出小组')), JSON.stringify(notifyA.data))
   check('解散小组', (await api(`/api/teams/${teamId}/disband`, { method: 'POST', token: tokenB })).status === 200)
   check('解散后详情 404', (await api(`/api/teams/${teamId}`, { token: tokenB })).status === 404)
 

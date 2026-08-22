@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS study_teams (
   member_count INTEGER NOT NULL DEFAULT 0,
   max_members INTEGER NOT NULL DEFAULT 10, -- 最大成员数（默认 10 人）
   is_public INTEGER NOT NULL DEFAULT 1,    -- 1 公开可见可加入；0 仅邀请
+  invite_code TEXT,                        -- 邀请码（私密组有值，公开组 NULL）
+  invite_code_expires_at INTEGER,          -- 邀请码过期时间（Unix 秒）
   created_at INTEGER NOT NULL
 );
 
@@ -37,6 +39,14 @@ CREATE TABLE IF NOT EXISTS team_members (
   PRIMARY KEY (team_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tmembers_user ON team_members(user_id);
+
+-- 入组申请（只存待审核）：主键保证一人对一组仅一条待审申请
+CREATE TABLE IF NOT EXISTS team_join_requests (
+  team_id TEXT NOT NULL REFERENCES study_teams(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, user_id)
+);
 
 -- 组队挑战：目标类型支持打卡天数/学习时长/刷题数
 CREATE TABLE IF NOT EXISTS team_challenges (
@@ -131,6 +141,13 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);
 -- 已建库升级：用户自定义头像（P0），执行一次：
 --   ALTER TABLE user_settings ADD COLUMN avatar TEXT;
+-- 已建库升级：内容软违规标记（P3），执行一次：
+--   ALTER TABLE community_posts ADD COLUMN is_flagged INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE community_comments ADD COLUMN is_flagged INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：私密组邀请码 + 入组申请（#8），执行一次：
+--   ALTER TABLE study_teams ADD COLUMN invite_code TEXT;
+--   ALTER TABLE study_teams ADD COLUMN invite_code_expires_at INTEGER;
+--   CREATE TABLE IF NOT EXISTS team_join_requests ( team_id TEXT NOT NULL REFERENCES study_teams(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL, PRIMARY KEY (team_id, user_id) );
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========

@@ -544,6 +544,14 @@ export interface TeamMember {
   userAvatar?: string
 }
 
+/** 入组申请（待审核） */
+export interface TeamJoinRequest {
+  userId: string
+  userName: string
+  userAvatar?: string
+  createdAt: number
+}
+
 /** 挑战类型 */
 export type ChallengeType = 'streak' | 'minutes' | 'problems'
 
@@ -570,6 +578,9 @@ export interface TeamDetail {
   team: StudyTeam
   members: TeamMember[]
   challenges: TeamChallenge[]
+  inviteCode?: string | null
+  inviteCodeExpiresAt?: number | null
+  myJoinRequest?: boolean
 }
 
 /** 学习搭子推荐条目 */

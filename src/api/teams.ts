@@ -1,5 +1,5 @@
 import { request } from './client'
-import type { StudyTeam, TeamDetail, ChallengeType } from '../types'
+import type { StudyTeam, TeamDetail, ChallengeType, TeamJoinRequest } from '../types'
 
 /** 获取公开小组列表或我加入的小组 */
 export async function getTeams(myTeams = false): Promise<StudyTeam[]> {
@@ -27,6 +27,55 @@ export async function getTeamDetail(teamId: string): Promise<TeamDetail> {
 /** 加入小组 */
 export async function joinTeam(teamId: string): Promise<void> {
   await request(`/api/teams/${teamId}/join`, { method: 'POST' })
+}
+
+/** 按邀请码查询私密小组 */
+export async function getTeamByInvite(code: string): Promise<{ id: string; name: string; description: string; memberCount: number; maxMembers: number }> {
+  return request(`/api/teams/by-invite?code=${encodeURIComponent(code)}`)
+}
+
+/** 通过邀请码申请加入私密小组 */
+export async function applyTeam(teamId: string, inviteCode: string): Promise<void> {
+  await request(`/api/teams/${teamId}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ inviteCode })
+  })
+}
+
+/** 获取待审核申请列表（仅队长） */
+export async function getTeamRequests(teamId: string): Promise<TeamJoinRequest[]> {
+  return request<TeamJoinRequest[]>(`/api/teams/${teamId}/requests`)
+}
+
+/** 同意申请（仅队长） */
+export async function approveRequest(teamId: string, userId: string): Promise<void> {
+  await request(`/api/teams/${teamId}/requests/${userId}/approve`, { method: 'POST' })
+}
+
+/** 拒绝申请（仅队长） */
+export async function rejectRequest(teamId: string, userId: string, reason?: string): Promise<void> {
+  await request(`/api/teams/${teamId}/requests/${userId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+  })
+}
+
+/** 撤回申请 */
+export async function withdrawRequest(teamId: string): Promise<void> {
+  await request(`/api/teams/${teamId}/requests/withdraw`, { method: 'POST' })
+}
+
+/** 重新生成邀请码（仅队长） */
+export async function resetInviteCode(teamId: string): Promise<{ inviteCode: string; inviteCodeExpiresAt: number }> {
+  return request<{ inviteCode: string; inviteCodeExpiresAt: number }>(`/api/teams/${teamId}/invite-code`, { method: 'POST' })
+}
+
+/** 编辑小组信息（名称/描述/人数上限，仅队长） */
+export async function updateTeam(teamId: string, data: { name: string; description?: string; maxMembers: number }): Promise<void> {
+  await request(`/api/teams/${teamId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  })
 }
 
 /** 退出小组 */
@@ -65,6 +114,14 @@ export async function transferLeader(teamId: string, newLeaderId: string): Promi
   await request(`/api/teams/${teamId}/transfer-leader`, {
     method: 'POST',
     body: JSON.stringify({ newLeaderId })
+  })
+}
+
+/** 踢出成员（仅队长） */
+export async function removeTeamMember(teamId: string, userId: string): Promise<void> {
+  await request(`/api/teams/${teamId}/remove-member`, {
+    method: 'POST',
+    body: JSON.stringify({ userId })
   })
 }
 

@@ -8,6 +8,23 @@
             <h1 class="text-2xl font-bold text-gray-900 dark:text-white">组队挑战</h1>
             <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">和小伙伴一起坚持学习，达标获徽章</p>
           </div>
+          <div class="flex items-center gap-2">
+            <input
+              v-model="inviteCode"
+              type="text"
+              maxlength="8"
+              placeholder="邀请码"
+              class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-white w-32"
+              @keyup.enter="handleJoinByInvite"
+            />
+            <button
+              @click="handleJoinByInvite"
+              :disabled="inviteSubmitting"
+              class="px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors text-sm"
+            >
+              {{ inviteSubmitting ? '查询中…' : '邀请码加入' }}
+            </button>
+          </div>
           <button
             @click="openCreate"
             class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
@@ -163,7 +180,7 @@
 <script setup lang="ts">
 import { ref, onMounted, inject } from 'vue'
 import { useRouter } from 'vue-router'
-import { getTeams, createTeam } from '../api/teams'
+import { getTeams, createTeam, getTeamByInvite } from '../api/teams'
 import { isLoggedIn, requireLogin } from '../services/auth'
 import type { StudyTeam } from '../types'
 import Modal from '../components/Modal.vue'
@@ -176,6 +193,21 @@ const loading = ref(false)
 const teams = ref<StudyTeam[]>([])
 const showCreateDialog = ref(false)
 const creating = ref(false)
+const inviteCode = ref('')
+const inviteSubmitting = ref(false)
+
+async function handleJoinByInvite() {
+  if (requireLogin(router)) return
+  const code = inviteCode.value.trim()
+  if (!code) { toast('请输入邀请码'); return }
+  if (inviteSubmitting.value) return
+  inviteSubmitting.value = true
+  try {
+    const team = await getTeamByInvite(code)
+    router.push(`/teams/${team.id}?invite=${encodeURIComponent(code)}`)
+  } catch (e: any) { toast(e?.message || '邀请码无效') }
+  finally { inviteSubmitting.value = false }
+}
 
 const form = ref({
   name: '',

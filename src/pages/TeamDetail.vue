@@ -1,22 +1,165 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getTeamDetail, joinTeam, leaveTeam, transferLeader, disbandTeam, createChallenge, syncChallengeProgress, updateChallenge, deleteChallenge, cancelChallenge, resumeChallenge } from '../api/teams'
-import type { ChallengeType, TeamChallenge, TeamDetail } from '../types'
+import { getTeamDetail, joinTeam, leaveTeam, transferLeader, disbandTeam, removeTeamMember, applyTeam, getTeamRequests, approveRequest, rejectRequest, withdrawRequest, resetInviteCode, updateTeam, createChallenge, syncChallengeProgress, updateChallenge, deleteChallenge, cancelChallenge, resumeChallenge } from '../api/teams'
+import type { ChallengeType, TeamChallenge, TeamDetail, TeamMember, TeamJoinRequest } from '../types'
+import { Crown, UserMinus } from '@lucide/vue'
 import Modal from '../components/Modal.vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
+import UserProfileModal from '../components/community/UserProfileModal.vue'
 
 const route = useRoute()
 const router = useRouter()
 const toast = inject<(m: string) => void>('toast', () => {})
 const teamId = route.params.id as string
 
+const inviteInput = ref(typeof route.query.invite === 'string' ? route.query.invite : '')
+const applySubmitting = ref(false)
+const withdrawing = ref(false)
+const resettingCode = ref(false)
+const requests = ref<TeamJoinRequest[]>([])
+const reviewing = ref<Record<string, boolean>>({})
+const rejectTarget = ref<TeamJoinRequest | null>(null)
+const rejectReason = ref('')
+const rejectSubmitting = ref(false)
+
+const showEdit = ref(false)
+const teamEditForm = ref({ name: '', description: '', maxMembers: 10 })
+const teamEditSubmitting = ref(false)
+
+const editMinMembers = computed(() => Math.max(2, detail.value?.members.length ?? 2))
+const editInvalid = computed(() => teamEditForm.value.maxMembers < (detail.value?.members.length ?? 0))
+
 const detail = ref<TeamDetail | null>(null)
 const loading = ref(true)
 const joinSubmitting = ref(false)
 const leaveSubmitting = ref(false)
 const transferSubmitting = ref(false)
-const disbandSubmitting = ref(false)
+
+const showProfile = ref(false)
+const profileUserId = ref('')
+const kickTarget = ref<TeamMember | null>(null)
+const kickSubmitting = ref(false)
+const showLeaveModal = ref(false)
+const leaveMode = ref<'disband' | 'transfer'>('disband')
+const transferTargetId = ref('')
+const leaderLeaveSubmitting = ref(false)
+
+function openProfile(userId: string) {
+  profileUserId.value = userId
+  showProfile.value = true
+}
+
+function openKick(m: TeamMember) {
+  kickTarget.value = m
+}
+
+async function handleKick() {
+  if (!kickTarget.value || kickSubmitting.value) return
+  kickSubmitting.value = true
+  try {
+    await removeTeamMember(teamId, kickTarget.value.userId)
+    toast('已踢出')
+    kickTarget.value = null
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '踢出失败') }
+  finally { kickSubmitting.value = false }
+}
+
+async function handleApply() {
+  if (!inviteInput.value.trim() || applySubmitting.value) return
+  applySubmitting.value = true
+  try {
+    await applyTeam(teamId, inviteInput.value.trim())
+    toast('申请已提交，等待队长审核')
+    inviteInput.value = ''
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '申请失败') }
+  finally { applySubmitting.value = false }
+}
+
+async function handleWithdraw() {
+  if (withdrawing.value) return
+  withdrawing.value = true
+  try {
+    await withdrawRequest(teamId)
+    toast('已撤回申请')
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '撤回失败') }
+  finally { withdrawing.value = false }
+}
+
+async function loadRequests() {
+  if (team.value?.myRole !== 'leader') return
+  try { requests.value = await getTeamRequests(teamId) } catch {}
+}
+
+async function handleApprove(r: TeamJoinRequest) {
+  if (reviewing.value[r.userId]) return
+  reviewing.value[r.userId] = true
+  try {
+    await approveRequest(teamId, r.userId)
+    toast('已同意')
+    await Promise.all([loadDetail(), loadRequests()])
+  } catch (e: any) { toast(e?.message || '操作失败') }
+  finally { reviewing.value[r.userId] = false }
+}
+
+function openReject(r: TeamJoinRequest) {
+  rejectTarget.value = r
+  rejectReason.value = ''
+}
+
+async function handleReject() {
+  if (!rejectTarget.value || rejectSubmitting.value) return
+  rejectSubmitting.value = true
+  try {
+    await rejectRequest(teamId, rejectTarget.value.userId, rejectReason.value.trim() || undefined)
+    toast('已拒绝')
+    rejectTarget.value = null
+    await Promise.all([loadDetail(), loadRequests()])
+  } catch (e: any) { toast(e?.message || '操作失败') }
+  finally { rejectSubmitting.value = false }
+}
+
+async function handleResetCode() {
+  if (resettingCode.value) return
+  if (!window.confirm('确认重新生成邀请码？旧邀请码将立即失效。')) return
+  resettingCode.value = true
+  try {
+    await resetInviteCode(teamId)
+    toast('邀请码已重置')
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '重置失败') }
+  finally { resettingCode.value = false }
+}
+
+async function copyInvite() {
+  if (!detail.value?.inviteCode) return
+  try {
+    await navigator.clipboard.writeText(detail.value.inviteCode)
+    toast('邀请码已复制')
+  } catch { toast('复制失败，请手动复制') }
+}
+
+function openTeamEdit() {
+  if (!team.value) return
+  teamEditForm.value = { name: team.value.name, description: team.value.description, maxMembers: team.value.maxMembers }
+  showEdit.value = true
+}
+
+async function handleTeamEdit() {
+  if (teamEditSubmitting.value || editInvalid.value) return
+  if (!teamEditForm.value.name.trim()) { toast('请输入小组名称'); return }
+  teamEditSubmitting.value = true
+  try {
+    await updateTeam(teamId, teamEditForm.value)
+    toast('已保存')
+    showEdit.value = false
+    await loadDetail()
+  } catch (e: any) { toast(e?.message || '保存失败') }
+  finally { teamEditSubmitting.value = false }
+}
 
 const team = computed(() => detail.value?.team ?? null)
 
@@ -29,6 +172,7 @@ async function loadDetail() {
   loading.value = true
   try {
     detail.value = await getTeamDetail(teamId)
+    await loadRequests()
   } catch (e: any) {
     toast(e?.message || '小组不存在')
     router.replace('/teams')
@@ -72,16 +216,22 @@ async function handleTransfer(userId: string, name: string) {
   finally { transferSubmitting.value = false }
 }
 
-async function handleDisband() {
-  if (disbandSubmitting.value) return
-  if (!window.confirm('确认解散该小组？此操作不可撤销，组内挑战与进度将被删除。')) return
-  disbandSubmitting.value = true
+async function handleLeaderLeave() {
+  if (leaderLeaveSubmitting.value) return
+  if (leaveMode.value === 'transfer' && !transferTargetId.value) { toast('请选择接任队长'); return }
+  leaderLeaveSubmitting.value = true
   try {
-    await disbandTeam(teamId)
-    toast('小组已解散')
+    if (leaveMode.value === 'disband') {
+      await disbandTeam(teamId)
+      toast('小组已解散')
+    } else {
+      await transferLeader(teamId, transferTargetId.value)
+      await leaveTeam(teamId)
+      toast('已退出小组')
+    }
     router.replace('/teams')
-  } catch (e: any) { toast(e?.message || '解散失败') }
-  finally { disbandSubmitting.value = false }
+  } catch (e: any) { toast(e?.message || '操作失败') }
+  finally { leaderLeaveSubmitting.value = false }
 }
 
 function formatDate(timestamp: number): string {
@@ -230,28 +380,76 @@ async function handleResume(c: TeamChallenge) {
           <span>👥 {{ team.memberCount }}/{{ team.maxMembers }} 人</span>
           <span>创建于 {{ formatDate(team.createdAt) }}</span>
           <div class="flex-1"></div>
-          <button v-if="!team.myRole" class="btn-primary !text-xs" :disabled="joinSubmitting" @click="handleJoin">
-            {{ joinSubmitting ? '加入中…' : '加入小组' }}
-          </button>
+          <template v-if="!team.myRole">
+            <template v-if="!team.isPublic">
+              <template v-if="detail?.myJoinRequest">
+                <span class="text-xs text-amber-500">申请待审核</span>
+                <button class="btn-ghost !text-xs" :disabled="withdrawing" @click="handleWithdraw">{{ withdrawing ? '撤回中…' : '撤回申请' }}</button>
+              </template>
+              <template v-else>
+                <input v-model="inviteInput" type="text" placeholder="邀请码" maxlength="8" class="input !w-28 !text-xs !py-1" />
+                <button class="btn-primary !text-xs" :disabled="applySubmitting" @click="handleApply">{{ applySubmitting ? '申请中…' : '申请加入' }}</button>
+              </template>
+            </template>
+            <button v-else class="btn-primary !text-xs" :disabled="joinSubmitting" @click="handleJoin">
+              {{ joinSubmitting ? '加入中…' : '加入小组' }}
+            </button>
+          </template>
           <button v-else-if="team.myRole === 'member'" class="btn-ghost !text-xs !text-red-500" :disabled="leaveSubmitting" @click="handleLeave">
             {{ leaveSubmitting ? '退出中…' : '退出小组' }}
           </button>
-          <button v-else-if="team.myRole === 'leader'" class="btn-danger !text-xs" :disabled="disbandSubmitting" @click="handleDisband">
-            {{ disbandSubmitting ? '解散中…' : '解散小组' }}
-          </button>
+          <template v-else-if="team.myRole === 'leader'">
+            <button class="btn-ghost !text-xs" @click="openTeamEdit">编辑</button>
+            <button class="btn-ghost !text-xs !text-red-500" @click="showLeaveModal = true">退出小组</button>
+          </template>
+        </div>
+        <div v-if="team.myRole === 'leader' && !team.isPublic && detail?.inviteCode" class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+          <div class="label !mb-1">邀请码</div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <code class="text-sm font-mono tracking-widest">{{ detail.inviteCode }}</code>
+            <button class="btn-ghost !text-xs" @click="copyInvite">复制</button>
+            <button class="btn-ghost !text-xs" :disabled="resettingCode" @click="handleResetCode">{{ resettingCode ? '重置中…' : '重置' }}</button>
+            <span v-if="detail.inviteCodeExpiresAt" class="text-[10px] text-slate-400">有效期至 {{ formatDate(detail.inviteCodeExpiresAt) }}</span>
+          </div>
         </div>
       </div>
 
       <div v-if="detail?.members.length" class="card">
         <div class="label !mb-2">成员（{{ detail.members.length }}）</div>
-        <div class="flex flex-wrap gap-3">
-          <div v-for="m in detail.members" :key="m.userId" class="flex items-center gap-1.5">
-            <UserAvatar :name="m.userName" :avatar="m.userAvatar" size="sm" />
-            <span class="text-xs">{{ m.userName }}</span>
-            <span v-if="m.role === 'leader'" class="text-[10px] text-yellow-500">队长</span>
-            <button v-if="team.myRole === 'leader' && m.role === 'member'"
-              class="text-[10px] text-slate-300 hover:text-blue-500" :disabled="transferSubmitting"
-              @click="handleTransfer(m.userId, m.userName)">设为队长</button>
+        <div class="divide-y divide-slate-100 dark:divide-slate-700">
+          <div v-for="m in detail.members" :key="m.userId" class="flex items-center gap-3 py-2">
+            <button class="shrink-0" @click="openProfile(m.userId)">
+              <UserAvatar :name="m.userName" :avatar="m.userAvatar" size="sm" />
+            </button>
+            <button class="text-sm flex-1 min-w-0 truncate text-left hover:text-primary-500" @click="openProfile(m.userId)">
+              {{ m.userName }}
+            </button>
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+              :class="m.role === 'leader' ? 'bg-yellow-50 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400' : 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'">
+              {{ m.role === 'leader' ? '队长' : '成员' }}
+            </span>
+            <div v-if="team.myRole === 'leader' && m.role === 'member'" class="flex items-center gap-1.5 shrink-0">
+              <button class="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-600 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 transition-colors hover:text-primary-500 hover:border-primary-300"
+                :disabled="transferSubmitting" @click="handleTransfer(m.userId, m.userName)">
+                <Crown class="w-3.5 h-3.5" />设为队长
+              </button>
+              <button class="inline-flex items-center gap-1 rounded-full border border-red-200 dark:border-red-900/50 px-2.5 py-1 text-xs text-red-500 dark:text-red-400 transition-colors hover:bg-red-50 dark:hover:bg-red-900/20"
+                @click="openKick(m)">
+                <UserMinus class="w-3.5 h-3.5" />踢出
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="team.myRole === 'leader' && requests.length" class="card">
+        <div class="label !mb-2">待审核申请（{{ requests.length }}）</div>
+        <div class="divide-y divide-slate-100 dark:divide-slate-700">
+          <div v-for="r in requests" :key="r.userId" class="flex items-center gap-3 py-2">
+            <UserAvatar :name="r.userName" :avatar="r.userAvatar" size="sm" />
+            <button class="text-sm flex-1 min-w-0 truncate text-left hover:text-primary-500" @click="openProfile(r.userId)">{{ r.userName }}</button>
+            <button class="btn-primary !text-xs" :disabled="reviewing[r.userId]" @click="handleApprove(r)">同意</button>
+            <button class="btn-ghost !text-xs !text-red-500" :disabled="reviewing[r.userId]" @click="openReject(r)">拒绝</button>
           </div>
         </div>
       </div>
@@ -359,4 +557,87 @@ async function handleResume(c: TeamChallenge) {
       <button class="btn-primary" :disabled="editSubmitting" @click="handleEdit">{{ editSubmitting ? '保存中…' : '保存' }}</button>
     </template>
   </Modal>
+
+  <Modal :show="!!kickTarget" title="踢出成员" @close="kickTarget = null">
+    <p class="text-sm text-slate-500 dark:text-slate-400">
+      确认将「{{ kickTarget?.userName }}」踢出小组？其将被移出并收到通知。
+    </p>
+    <template #footer>
+      <button class="btn-ghost" @click="kickTarget = null">取消</button>
+      <button class="btn-danger" :disabled="kickSubmitting" @click="handleKick">{{ kickSubmitting ? '踢出中…' : '踢出' }}</button>
+    </template>
+  </Modal>
+
+  <Modal :show="!!rejectTarget" title="拒绝申请" @close="rejectTarget = null">
+    <div class="space-y-3">
+      <p class="text-sm text-slate-500 dark:text-slate-400">拒绝「{{ rejectTarget?.userName }}」的加入申请？</p>
+      <input v-model="rejectReason" type="text" maxlength="200" placeholder="拒绝原因（可选）" class="input" />
+    </div>
+    <template #footer>
+      <button class="btn-ghost" @click="rejectTarget = null">取消</button>
+      <button class="btn-danger" :disabled="rejectSubmitting" @click="handleReject">{{ rejectSubmitting ? '拒绝中…' : '拒绝' }}</button>
+    </template>
+  </Modal>
+
+  <Modal :show="showEdit" title="编辑小组信息" @close="showEdit = false">
+    <div class="space-y-3">
+      <div>
+        <div class="label">小组名称（1-30 字）</div>
+        <input v-model="teamEditForm.name" type="text" maxlength="30" class="input" />
+      </div>
+      <div>
+        <div class="label">小组描述（0-200 字）</div>
+        <textarea v-model="teamEditForm.description" maxlength="200" rows="3" class="input"></textarea>
+      </div>
+      <div>
+        <div class="label">人数上限</div>
+        <input v-model.number="teamEditForm.maxMembers" type="number" :min="editMinMembers" max="50" class="input" />
+        <p v-if="editInvalid" class="text-xs text-red-500 mt-1">不能低于当前成员数（{{ detail?.members.length }} 人）</p>
+      </div>
+    </div>
+    <template #footer>
+      <button class="btn-ghost" @click="showEdit = false">取消</button>
+      <button class="btn-primary" :disabled="teamEditSubmitting || editInvalid" @click="handleTeamEdit">{{ teamEditSubmitting ? '保存中…' : '保存' }}</button>
+    </template>
+  </Modal>
+
+  <Modal :show="showLeaveModal" title="退出小组" @close="showLeaveModal = false">
+    <div class="space-y-3">
+      <button class="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 p-3 transition-colors"
+        :class="leaveMode === 'disband' ? 'border-red-300 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10' : 'hover:border-slate-300'"
+        @click="leaveMode = 'disband'">
+        <div class="text-sm font-semibold text-red-500">解散小队</div>
+        <div class="text-xs text-slate-400 mt-0.5">解散后小组与全部挑战将被删除，不可撤销</div>
+      </button>
+
+      <button class="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 p-3 transition-colors"
+        :class="leaveMode === 'transfer' ? 'border-primary-300 dark:border-primary-700 bg-primary-50/50 dark:bg-primary-900/10' : 'hover:border-slate-300'"
+        @click="leaveMode = 'transfer'">
+        <div class="text-sm font-semibold">转让队长并退出</div>
+        <div class="text-xs text-slate-400 mt-0.5">选一名成员接任队长，你将退出小组</div>
+      </button>
+
+      <div v-if="leaveMode === 'transfer'" class="space-y-1 pt-1">
+        <div class="label !mb-1">选择接任队长</div>
+        <div v-for="m in detail?.members.filter(x => x.role === 'member')" :key="m.userId"
+          class="flex items-center gap-2 py-1.5 cursor-pointer" @click="transferTargetId = m.userId">
+          <span class="w-4 h-4 rounded-full border flex items-center justify-center shrink-0"
+            :class="transferTargetId === m.userId ? 'border-primary-500' : 'border-slate-300 dark:border-slate-600'">
+            <span v-if="transferTargetId === m.userId" class="w-2 h-2 rounded-full bg-primary-500"></span>
+          </span>
+          <UserAvatar :name="m.userName" :avatar="m.userAvatar" size="sm" />
+          <span class="text-sm truncate">{{ m.userName }}</span>
+        </div>
+      </div>
+    </div>
+    <template #footer>
+      <button class="btn-ghost" @click="showLeaveModal = false">取消</button>
+      <button class="btn-primary" :disabled="leaderLeaveSubmitting || (leaveMode === 'transfer' && !transferTargetId)"
+        @click="handleLeaderLeave">
+        {{ leaderLeaveSubmitting ? '处理中…' : '确认' }}
+      </button>
+    </template>
+  </Modal>
+
+  <UserProfileModal v-model:show="showProfile" :user-id="profileUserId" />
 </template>
