@@ -46,7 +46,7 @@ export function checkTodoReminders() {
   const now = Date.now()
   const todos = hooks.getTodos()
 
-  const started = todos.filter(t => t.startAt && t.startAt <= now && !t.startNotifiedAt)
+  const started = todos.filter(t => t.startAt && t.startAt <= now && !t.done && !t.startNotifiedAt)
   if (started.length) {
     deliver(
       '待办已到开始时间',
