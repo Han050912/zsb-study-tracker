@@ -6,6 +6,7 @@ import { today, formatMinutes } from '../utils/date'
 import { MOODS } from '../data/defaults'
 import PostComposer from '../components/community/PostComposer.vue'
 import dayjs from 'dayjs'
+import { useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
@@ -70,6 +71,7 @@ function save(): boolean {
 
 // ---- 往日总结悬浮卡片 ----
 const cardDate = ref('')
+const { onOverlayMousedown: onCardMousedown, onOverlayClick: onCardClick } = useOverlayDismiss(() => { cardDate.value = '' })
 /** 明日计划板块开关：用户可选择展示/隐藏，默认不强制显示 */
 const showPlan = ref(false)
 const cardData = computed(() => (cardDate.value ? aggregateDay(cardDate.value) : null))
@@ -117,6 +119,7 @@ function hasRecord(d: string | null) {
 
 // ---- 分享卡片 ----
 const showShare = ref(false)
+const { onOverlayMousedown: onShareMousedown, onOverlayClick: onShareClick } = useOverlayDismiss(() => { showShare.value = false })
 /** 分享卡片 DOM 引用，用于渲染成图片 */
 const shareCardRef = ref<HTMLElement | null>(null)
 /** 卡片渲染后的图片 dataURL；非空时用 <img> 替换 DOM 卡片，支持移动端长按保存 */
@@ -284,7 +287,7 @@ function openCommunityShare() {
     <!-- 往日总结悬浮卡片 -->
     <Teleport to="body">
       <Transition name="fade">
-        <div v-if="cardDate && cardData" class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" @click.self="cardDate = ''">
+        <div v-if="cardDate && cardData" class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" @mousedown="onCardMousedown" @click="onCardClick">
           <div class="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto shadow-2xl animate-pop"
             role="dialog" aria-modal="true" :aria-label="`${cardDate} 总结`">
             <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
@@ -356,7 +359,7 @@ function openCommunityShare() {
 
     <!-- 分享卡片 -->
     <Teleport to="body">
-      <div v-if="showShare" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" @click.self="showShare = false">
+      <div v-if="showShare" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" @mousedown="onShareMousedown" @click="onShareClick">
         <div class="max-w-sm w-full">
           <!-- 图片生成成功后用 <img> 展示，移动端可长按保存；生成期间/失败时展示原 DOM 卡片 -->
           <img v-if="shareImg" :src="shareImg" alt="学习日报分享卡片" class="w-full rounded-3xl shadow-2xl select-none" />
