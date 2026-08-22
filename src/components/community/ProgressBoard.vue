@@ -40,7 +40,7 @@ const medal = (i: number) => MEDALS[i] ?? `${i + 1}.`
         class="flex items-center gap-2 text-xs rounded-lg px-1.5 py-1"
         :class="e.isMe ? 'bg-primary-50 dark:bg-primary-900/30' : ''">
         <span class="w-6 text-center shrink-0">{{ medal(i) }}</span>
-        <UserAvatar :name="e.userName" size="sm" />
+        <UserAvatar :name="e.userName" :avatar="e.userAvatar" size="sm" />
         <span class="font-medium truncate max-w-[7rem]" :class="e.isMe ? 'text-primary-600 dark:text-primary-300' : ''">{{ e.userName }}</span>
         <span v-if="e.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
         <span class="text-[10px] px-1 rounded-full shrink-0"

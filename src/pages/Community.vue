@@ -283,7 +283,7 @@ async function removePost(id: string) {
       <div v-if="store.recommendExtras.users.length" class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">👥 推荐关注</div>
         <div v-for="u in store.recommendExtras.users" :key="u.userId" class="flex items-center gap-2 text-xs">
-          <UserAvatar :name="u.userName" size="sm" />
+          <UserAvatar :name="u.userName" :avatar="u.userAvatar" size="sm" />
           <span class="font-medium">{{ u.userName }}</span>
           <span v-if="u.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
           <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ u.reason }}</span>

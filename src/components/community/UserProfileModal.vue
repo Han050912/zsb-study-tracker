@@ -101,7 +101,7 @@ async function revokeVerify() {
     <template v-else-if="profile">
       <!-- 头部：头像 / 昵称 / 等级 / 蓝 V / 关注 -->
       <div class="flex items-center gap-3">
-        <UserAvatar :name="profile.userName" />
+        <UserAvatar :name="profile.userName" :avatar="profile.avatar" />
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5 flex-wrap">
             <span class="font-semibold truncate">{{ profile.userName }}</span>

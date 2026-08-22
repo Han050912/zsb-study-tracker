@@ -52,7 +52,7 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
     <!-- 作者行 -->
     <div class="flex items-center gap-2.5">
       <div class="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer" @click.stop="emit('profile')">
-        <UserAvatar :name="post.userName" />
+        <UserAvatar :name="post.userName" :avatar="post.userAvatar" />
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5">
             <span class="text-sm font-semibold truncate hover:text-primary-500">{{ post.userName }}</span>

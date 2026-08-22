@@ -26,7 +26,7 @@ const medal = (i: number) => MEDALS[i] ?? `${i + 1}.`
       <div class="space-y-1.5">
         <div v-for="(e, i) in data.today" :key="i" class="flex items-center gap-2 text-xs">
           <span class="w-6 text-center shrink-0">{{ medal(i) }}</span>
-          <UserAvatar :name="e.userName" size="sm" />
+          <UserAvatar :name="e.userName" :avatar="e.userAvatar" size="sm" />
           <span class="font-medium truncate max-w-[7rem]">{{ e.userName }}</span>
           <span v-if="e.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
           <span class="text-[10px] px-1 rounded-full shrink-0"
@@ -44,7 +44,7 @@ const medal = (i: number) => MEDALS[i] ?? `${i + 1}.`
       <div class="flex flex-wrap gap-2">
         <div v-for="(e, i) in data.streak" :key="i"
           class="flex items-center gap-1.5 px-2 py-1 rounded-full bg-slate-50 dark:bg-slate-700/50 text-xs">
-          <UserAvatar :name="e.userName" size="sm" />
+          <UserAvatar :name="e.userName" :avatar="e.userAvatar" size="sm" />
           <span class="font-medium max-w-[5rem] truncate">{{ e.userName }}</span>
           <span v-if="e.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
           <span class="text-orange-500 font-semibold shrink-0">🔥{{ e.streak }}天</span>

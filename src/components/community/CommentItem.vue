@@ -23,7 +23,7 @@ const canHide = computed(() => isAdmin.value)
 <template>
   <div class="flex gap-2.5 rounded-lg"
     :class="[comment.isHidden ? 'opacity-50' : '', comment.isAccepted ? 'bg-emerald-50/60 dark:bg-emerald-900/10 -mx-2 px-2 py-2 ring-1 ring-emerald-200 dark:ring-emerald-800' : '']">
-    <UserAvatar :name="comment.userName" class="cursor-pointer" @click="emit('profile')" />
+    <UserAvatar :name="comment.userName" :avatar="comment.userAvatar" class="cursor-pointer" @click="emit('profile')" />
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2">
         <span class="text-xs font-semibold cursor-pointer hover:text-primary-500" @click="emit('profile')">{{ comment.userName }}</span>
