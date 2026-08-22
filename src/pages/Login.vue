@@ -114,12 +114,12 @@ async function submit() {
         <form class="space-y-3" @submit.prevent="submit">
           <div>
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">用户名</label>
-            <input v-model="username" class="input" placeholder="2~20 个字符" maxlength="20" autocomplete="username" />
+            <input v-model="username" name="username" class="input" placeholder="2~20 个字符" maxlength="20" autocomplete="username" />
           </div>
           <div>
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">密码</label>
             <div class="relative">
-              <input v-model="password" :type="showPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
+              <input v-model="password" name="password" :type="showPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
                 :placeholder="mode === 'register' ? '至少 6 位' : '请输入密码'"
                 :autocomplete="mode === 'register' ? 'new-password' : 'current-password'" />
               <button type="button"
@@ -135,7 +135,7 @@ async function submit() {
           <div v-if="mode === 'register'">
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">确认密码</label>
             <div class="relative">
-              <input v-model="confirmPassword" :type="showConfirmPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
+              <input v-model="confirmPassword" name="confirm-password" :type="showConfirmPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
                 placeholder="再次输入密码" autocomplete="new-password" />
               <button type="button"
                 class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
