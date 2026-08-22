@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useChart, chartTextColor } from '../composables/useChart'
+import StarRating from './StarRating.vue'
+import type { TopicImportance } from '../types'
 
 interface RadarDataItem {
   name: string
   value: number
   max?: number
+  importance?: TopicImportance
 }
 
 interface ChapterGroup {
@@ -21,6 +24,29 @@ const props = defineProps<{
 }>()
 
 const currentPage = ref(0)
+
+/** 选中的薄弱词条（跨章节可能重名，用 pageIndex + name 定位）；null 表示未选中 */
+interface SelectedTopic { name: string; pageIndex: number }
+const selectedTopic = ref<SelectedTopic | null>(null)
+
+// 导航条滚动容器（章节标签）
+const navRef = ref<HTMLElement | null>(null)
+
+/** 将导航条滚动定位到当前选中章节标签 */
+function scrollNavToActive() {
+  const target = navRef.value?.children[currentPage.value] as HTMLElement | undefined
+  target?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+}
+
+// 章节选中变化时联动导航条定位
+watch(currentPage, () => nextTick(scrollNavToActive))
+
+/** 滚轮滑动导航条（垂直滚轮映射为横向滚动） */
+function onNavWheel(e: WheelEvent) {
+  const nav = navRef.value
+  if (!nav) return
+  nav.scrollLeft += e.deltaY
+}
 
 // 总知识点数量
 const totalTopics = computed(() => {
@@ -62,20 +88,18 @@ watch(() => props.chapters.length, () => {
 function goToPage(page: number) {
   if (page >= 0 && page < totalPages.value) {
     currentPage.value = page
+    selectedTopic.value = null // 切换章节时词条选中失效
   }
 }
 
-function nextPage() {
-  if (currentPage.value < totalPages.value - 1) {
-    currentPage.value++
-  }
+/** 选中薄弱词条：定位到所在章节并保留词条选中（不经 goToPage 的清空逻辑） */
+function selectTopic(topic: SelectedTopic) {
+  selectedTopic.value = topic
+  currentPage.value = topic.pageIndex
 }
 
-function prevPage() {
-  if (currentPage.value > 0) {
-    currentPage.value--
-  }
-}
+function nextPage() { goToPage(currentPage.value + 1) }
+function prevPage() { goToPage(currentPage.value - 1) }
 
 // 雷达图配置
 const { el: radarEl } = useChart(() => {
@@ -145,6 +169,31 @@ const allWeakTopics = computed(() => {
   })
   return result
 })
+
+const IMPORTANCE_META: Record<TopicImportance, { label: string; cls: string }> = {
+  normal: { label: '普通', cls: 'text-slate-400 bg-slate-100 dark:bg-slate-700' },
+  important: { label: '重要', cls: 'text-amber-500 bg-amber-50 dark:bg-amber-900/30' },
+  must: { label: '必考', cls: 'text-red-500 bg-red-50 dark:bg-red-900/30' }
+}
+
+/** 选中词条的详情数据（名称/掌握度/重要程度/章节） */
+const selectedTopicDetail = computed(() => {
+  const t = selectedTopic.value
+  if (!t) return null
+  const group = groups.value[t.pageIndex]
+  const topic = group?.topics.find(x => x.name === t.name)
+  if (!group || !topic) return null
+  return {
+    name: topic.name,
+    value: topic.value,
+    importance: topic.importance || 'normal',
+    chapterName: group.chapterName
+  }
+})
+
+function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
+  return selectedTopic.value?.name === item.topic.name && selectedTopic.value?.pageIndex === item.pageIndex
+}
 </script>
 
 <template>
@@ -163,7 +212,7 @@ const allWeakTopics = computed(() => {
     <!-- 当前章节名称 -->
     <div v-if="hasMultiplePages" class="mb-2 text-center">
       <span class="inline-block px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-lg text-sm font-medium">
-        📖 {{ currentGroup.chapterName }}
+        {{ currentGroup.chapterName }}
       </span>
     </div>
 
@@ -185,7 +234,8 @@ const allWeakTopics = computed(() => {
           </svg>
         </button>
 
-        <div class="flex gap-1.5 overflow-x-auto max-w-xs sm:max-w-md">
+        <div ref="navRef" class="relative flex gap-1.5 overflow-x-auto max-w-xs sm:max-w-md"
+          @wheel.prevent="onNavWheel">
           <button
             v-for="(group, idx) in groups"
             :key="idx"
@@ -226,17 +276,32 @@ const allWeakTopics = computed(() => {
 
       <!-- 薄弱知识点快速跳转 -->
       <div v-if="allWeakTopics.length > 0" class="pt-2 border-t border-slate-200 dark:border-slate-700">
-        <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">🎯 薄弱知识点 (掌握度 &lt; 3):</div>
+        <!-- 选中词条详情 -->
+        <div v-if="selectedTopicDetail" class="mb-2 p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+          <div class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ selectedTopicDetail.name }}</div>
+          <div class="flex items-center gap-2 mt-1">
+            <StarRating :model-value="selectedTopicDetail.value" readonly />
+            <span class="text-xs text-slate-500 dark:text-slate-400">{{ selectedTopicDetail.value }}/5</span>
+          </div>
+          <div class="flex items-center gap-1.5 mt-1.5">
+            <span class="text-[10px] px-1.5 py-0.5 rounded font-medium" :class="IMPORTANCE_META[selectedTopicDetail.importance].cls">{{ IMPORTANCE_META[selectedTopicDetail.importance].label }}</span>
+            <span class="text-xs text-slate-500 dark:text-slate-400">{{ selectedTopicDetail.chapterName }}</span>
+          </div>
+        </div>
+
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">薄弱知识点 (掌握度 &lt; 3):</div>
         <div class="flex flex-wrap gap-1.5">
           <button
             v-for="(item, idx) in allWeakTopics"
             :key="idx"
-            @click="goToPage(item.pageIndex)"
+            @click="selectTopic({ name: item.topic.name, pageIndex: item.pageIndex })"
             :class="[
               'px-2 py-1 text-xs rounded transition-colors',
-              currentPage === item.pageIndex
-                ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300'
-                : 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30'
+              isTopicSelected(item)
+                ? 'ring-2 ring-orange-500 bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300'
+                : currentPage === item.pageIndex
+                  ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300'
+                  : 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30'
             ]"
             :title="`${item.chapterName} - ${item.topic.name}`">
             {{ item.topic.name }}
