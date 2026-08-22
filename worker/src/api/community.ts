@@ -874,7 +874,8 @@ export function registerCommunityRoutes() {
     return Response.json({
       messages: items.map(r => ({
         id: r.id, fromId: r.from_id, toId: r.to_id, content: r.content,
-        isRead: !!r.is_read, createdAt: r.created_at, fromMe: r.from_id === ctx.userId
+        // 打开记录即已读：对方发来的消息在本次返回中即视为已读（与上方 UPDATE 同步）
+        isRead: r.from_id === peerId ? true : !!r.is_read, createdAt: r.created_at, fromMe: r.from_id === ctx.userId
       })),
       nextCursor: rows.length > limit ? String(items[items.length - 1].created_at) : null
     })

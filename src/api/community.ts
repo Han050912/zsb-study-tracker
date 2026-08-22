@@ -83,7 +83,18 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
         let data: any = null
         try { data = JSON.parse(xhr.responseText) } catch { /* 非 JSON */ }
         if (xhr.status >= 200 && xhr.status < 300) { onDone(data); return }
-        if (xhr.status === 401) { try { handleUnauthorized() } catch (e) { reject(e) }; return }
+        if (xhr.status === 401) {
+          let settled = false
+          try {
+            handleUnauthorized()
+          } catch (e) {
+            settled = true
+            reject(e)
+          }
+          // handleUnauthorized 为 never（总会 throw），此行为兜底，确保 Promise 必然 settle
+          if (!settled) reject(Object.assign(new Error('登录已过期，请重新登录'), { status: 401 }))
+          return
+        }
         reject(Object.assign(new Error(data?.message || `上传失败（HTTP ${xhr.status}）`), { status: xhr.status }))
       }
       xhr.onerror = () => reject(new Error('网络错误，上传失败'))

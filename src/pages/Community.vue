@@ -285,10 +285,18 @@ async function removePost(id: string) {
         <div v-for="u in store.recommendExtras.users" :key="u.userId" class="flex items-center gap-2 text-xs">
           <UserAvatar :name="u.userName" size="sm" />
           <span class="font-medium">{{ u.userName }}</span>
+          <span v-if="u.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
           <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ u.reason }}</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 shrink-0">{{ u.totalPoints }} 分</span>
           <button class="ml-auto btn-ghost !text-xs" @click="openProfile(u.userId)">看主页</button>
         </div>
       </div>
+    </div>
+
+    <!-- 推荐加载失败提示（仅 recommend 排序下显示） -->
+    <div v-if="store.sort === 'recommend' && store.error" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+      <span>{{ store.error }}</span>
+      <button class="ml-auto btn-ghost !text-xs shrink-0" @click="store.fetchFeed(true)">重试</button>
     </div>
 
     <!-- 帖子列表 -->
