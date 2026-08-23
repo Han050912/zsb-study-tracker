@@ -29,7 +29,7 @@ onMounted(async () => {
   <div class="space-y-3 max-w-2xl mx-auto">
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2" @click="router.push('/community')">← 广场</button>
-      <h2 class="text-lg font-bold flex-1">✉️ 私信</h2>
+      <h2 class="text-lg font-bold flex-1">私信</h2>
     </div>
 
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>

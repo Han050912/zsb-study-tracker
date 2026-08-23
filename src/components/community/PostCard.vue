@@ -79,10 +79,10 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
         :class="post.isResolved
           ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
           : 'bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400'">
-        {{ post.isResolved ? '✅ 已解答' : '❓ 待解答' }}
+        {{ post.isResolved ? '✅ 已解答' : '待解答' }}
       </span>
       <span class="text-[10px] px-2 py-0.5 rounded-full shrink-0" :class="meta.cls">{{ meta.label }}</span>
-      <span v-if="post.circleName" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400">🫧 {{ post.circleName }}</span>
+      <span v-if="post.circleName" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400">{{ post.circleName }}</span>
     </div>
 
     <!-- 正文：列表页纯文本截断预览；详情页 Markdown 富文本渲染（renderMarkdown 防 XSS） -->

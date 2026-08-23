@@ -377,7 +377,7 @@ async function handleResume(c: TeamChallenge) {
         </div>
         <p v-if="team.description" class="text-sm text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{{ team.description }}</p>
         <div class="flex items-center gap-3 text-xs text-slate-400">
-          <span>👥 {{ team.memberCount }}/{{ team.maxMembers }} 人</span>
+          <span>{{ team.memberCount }} / {{ team.maxMembers }} 人</span>
           <span>创建于 {{ formatDate(team.createdAt) }}</span>
           <div class="flex-1"></div>
           <template v-if="!team.myRole">

@@ -97,8 +97,8 @@
               </div>
               <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ team.description || '暂无描述' }}</p>
               <div class="flex items-center space-x-4 mt-3 text-xs text-gray-500 dark:text-gray-400">
-                <span>👥 {{ team.memberCount }}/{{ team.maxMembers }} 人</span>
-                <span>{{ team.isPublic ? '🌐 公开' : '🔒 私密' }}</span>
+                <span> {{ team.memberCount }} / {{ team.maxMembers }} 人</span>
+                <span>{{ team.isPublic ? '公开' : '私密' }}</span>
                 <span>{{ formatDate(team.createdAt) }}</span>
               </div>
             </div>

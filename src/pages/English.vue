@@ -257,8 +257,8 @@ const { el: vocabEl } = useChart(() => {
 
     <div class="flex gap-1 overflow-x-auto bg-slate-100 dark:bg-slate-800 rounded-xl p-1 mb-4">
       <button v-for="t in [
-        { k: 'panel', l: '📚 综合' }, { k: 'vocab', l: '🔤 词汇' }, { k: 'reading', l: '📰 阅读' },
-        { k: 'listening', l: '🎧 听力' }, { k: 'templates', l: '✍️ 作文模板' }
+        { k: 'panel', l: '综合' }, { k: 'vocab', l: '词汇' }, { k: 'reading', l: '阅读' },
+        { k: 'listening', l: '听力' }, { k: 'templates', l: '作文模板' }
       ]" :key="t.k" class="flex-1 whitespace-nowrap text-xs px-3 py-2 rounded-lg font-medium"
         :class="tab === t.k ? 'bg-white dark:bg-slate-700 shadow-sm' : 'text-slate-500'"
         @click="tab = t.k as any">{{ t.l }}</button>

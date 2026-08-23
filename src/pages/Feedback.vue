@@ -76,7 +76,7 @@ async function submit() {
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2.5" @click="router.back()">←</button>
-      <h1 class="page-title">💡 意见反馈</h1>
+      <h1 class="page-title">意见反馈</h1>
     </div>
 
     <div class="card space-y-4">

@@ -340,10 +340,10 @@ async function submit() {
       <div class="flex flex-wrap gap-1.5">
         <button class="px-2.5 py-1 rounded-full text-xs transition-colors"
           :class="!selectedCircle ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'"
-          @click="selectedCircle = ''">🌐 广场</button>
+          @click="selectedCircle = ''">广场</button>
         <button v-for="c in myCircles" :key="c.id" class="px-2.5 py-1 rounded-full text-xs transition-colors"
           :class="selectedCircle === c.id ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'"
-          @click="selectedCircle = c.id">🫧 {{ c.name }}</button>
+          @click="selectedCircle = c.id">{{ c.name }}</button>
       </div>
     </template>
 

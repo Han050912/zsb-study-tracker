@@ -256,7 +256,7 @@ onUnmounted(() => {
           <template v-if="store.examCountdown > 0">
             <span class="text-4xl font-black">{{ store.examCountdown }}</span><span class="ml-1">天</span>
           </template>
-          <div v-else class="text-2xl font-black">就是今天，加油！💪</div>
+          <div v-else class="text-2xl font-black">就是今天，加油！</div>
         </div>
         <RouterLink v-else to="/settings" class="text-sm underline opacity-90 mt-2 inline-block">去设置考试日期 →</RouterLink>
         <div class="text-xs opacity-80 mt-2">{{ store.examCountdown === 0 ? '沉着应考，你付出的每一分努力都算数！' : '坚持到底，就是胜利！' }}</div>
@@ -374,7 +374,7 @@ onUnmounted(() => {
 
     <!-- 热力图 -->
     <div class="card">
-      <div class="section-title">🔥 学习热力图（近 {{ 20 }} 周）</div>
+      <div class="section-title">学习热力图（近 {{ 20 }} 周）</div>
       <Heatmap :data="store.minutesByDate" @select="d => heatDate = d" />
       <p class="text-[10px] text-slate-400 mt-2">点击日期格子可查看当日学习总时长明细</p>
     </div>

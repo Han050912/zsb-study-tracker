@@ -48,7 +48,7 @@ async function respond(reqId: string, action: 'accept' | 'reject') {
 <template>
   <div class="max-w-3xl mx-auto px-4 py-6 space-y-5">
     <button class="btn-ghost !text-xs" @click="router.push('/community')">← 返回广场</button>
-    <div class="section-title !mb-0">🧑‍🤝‍🧑 学习搭子</div>
+    <div class="section-title !mb-0">学习搭子</div>
 
     <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
 

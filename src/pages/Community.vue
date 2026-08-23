@@ -176,10 +176,10 @@ async function removePost(id: string) {
     <div class="flex items-center justify-between">
       <h1 class="page-title">💬 社区广场</h1>
       <div class="flex items-center gap-2">
-        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/messages')">✉️ 私信</button>
-        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/partners')">🧑‍🤝‍🧑 搭子</button>
-        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/circles')">🫧 圈子</button>
-        <button class="btn-primary" @click="openComposer">{{ isLoggedIn ? '✏️ 发帖' : '登录后发帖' }}</button>
+        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/messages')">私信</button>
+        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/partners')">搭子</button>
+        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/circles')">圈子</button>
+        <button class="btn-primary" @click="openComposer">{{ isLoggedIn ? '发帖' : '登录后发帖' }}</button>
       </div>
     </div>
 
@@ -189,7 +189,7 @@ async function removePost(id: string) {
     <!-- 热门话题运营位：点击按 tag 筛选帖子流 -->
     <div v-if="hotTopics.length" class="card !py-2.5">
       <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-        <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 shrink-0 pl-1">🔥 本周热门</span>
+        <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 shrink-0 pl-1">本周热门</span>
         <TagBadge v-for="t in hotTopics" :key="t.tag" :tag="t.text"
           :active="store.tag === t.tag" @click="filterTag(store.tag === t.tag ? '' : t.tag)" />
       </div>
@@ -210,7 +210,7 @@ async function removePost(id: string) {
     </div>
     <button v-else class="card !py-3 text-sm text-slate-500 dark:text-slate-400 text-center w-full hover:border-primary-300 transition-colors"
       @click="router.push('/login')">
-      🔥 登录后可查看打卡榜、进步榜与你的学习周报 →
+      登录后可查看打卡榜、进步榜与你的学习周报 →
     </button>
 
     <!-- 每日一题：管理员设置的最新一题，点击进入详情参与解答 -->
@@ -237,16 +237,16 @@ async function removePost(id: string) {
         <span class="w-px h-4 bg-slate-300 dark:bg-slate-600 mx-1"></span>
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.category === 'recommend' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('recommend')">✨ 推荐</button>
+          @click="chooseCategory('recommend')">推荐</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.category === 'question' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('question')">❓ 提问</button>
+          @click="chooseCategory('question')">提问</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.category === 'featured' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('featured')">🌟 精华</button>
+          @click="chooseCategory('featured')">精华</button>
         <button class="px-3 py-1.5 rounded-md transition-colors"
           :class="store.category === 'follow' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('follow')">👥 关注</button>
+          @click="chooseCategory('follow')">关注</button>
       </div>
 
       <!-- 预设话题标签：横向单行排列，超出可视区可滑动查看 -->
@@ -273,7 +273,7 @@ async function removePost(id: string) {
     <!-- 推荐附加：圈子 + 用户（仅 recommend 分类显示） -->
     <div v-if="store.category === 'recommend' && store.recommendExtras" class="space-y-3">
       <div v-if="store.recommendExtras.circles.length" class="card space-y-2">
-        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">🫧 推荐圈子</div>
+        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">推荐圈子</div>
         <div v-for="c in store.recommendExtras.circles" :key="c.id" class="flex items-center gap-2 text-xs">
           <span class="font-medium">{{ c.name }}</span>
           <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ c.memberCount }} 人</span>
@@ -281,7 +281,7 @@ async function removePost(id: string) {
         </div>
       </div>
       <div v-if="store.recommendExtras.users.length" class="card space-y-2">
-        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">👥 推荐关注</div>
+        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">推荐关注</div>
         <div v-for="u in store.recommendExtras.users" :key="u.userId" class="flex items-center gap-2 text-xs">
           <div class="flex items-center gap-2 cursor-pointer group" @click="router.push(`/profile/${u.userId}`)">
             <UserAvatar :name="u.userName" :avatar="u.userAvatar" size="sm" />
