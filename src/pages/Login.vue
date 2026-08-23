@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { ref, defineAsyncComponent } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import { Eye, EyeOff } from '@lucide/vue'
 import { login, register } from '../services/auth'
 import { useAppStore } from '../stores/app'
 
 const router = useRouter()
+const route = useRoute()
 const store = useAppStore()
 
 const mode = ref<'login' | 'register'>('login')
 const username = ref('')
 const password = ref('')
 const confirmPassword = ref('')
+const showPassword = ref(false)
+const showConfirmPassword = ref(false)
 const errorMsg = ref('')
 const loading = ref(false)
 
@@ -37,6 +41,8 @@ function switchMode(m: 'login' | 'register') {
   errorMsg.value = ''
   password.value = ''
   confirmPassword.value = ''
+  showPassword.value = false
+  showConfirmPassword.value = false
   turnstileWidget.value?.reset()
 }
 
@@ -72,7 +78,9 @@ async function submit() {
     }
     // 登录/注册成功后从云端载入该用户的历史数据
     await withTimeout(store.hydrate(), 20000, '数据同步')
-    router.replace('/')
+    // 回跳：登录前从某页面触发（携带 redirect）则返回原页面；否则回首页。仅允许站内路径，防 open redirect
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+    router.replace(redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/')
   } catch (e: any) {
     errorMsg.value = e?.message || '操作失败，请重试'
     turnstileWidget.value?.reset()
@@ -106,17 +114,38 @@ async function submit() {
         <form class="space-y-3" @submit.prevent="submit">
           <div>
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">用户名</label>
-            <input v-model="username" class="input" placeholder="2~20 个字符" maxlength="20" autocomplete="username" />
+            <input v-model="username" name="username" class="input" placeholder="2~20 个字符" maxlength="20" autocomplete="username" />
           </div>
           <div>
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">密码</label>
-            <input v-model="password" type="password" class="input" maxlength="128"
-              :placeholder="mode === 'register' ? '至少 6 位' : '请输入密码'"
-              :autocomplete="mode === 'register' ? 'new-password' : 'current-password'" />
+            <div class="relative">
+              <input v-model="password" name="password" :type="showPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
+                :placeholder="mode === 'register' ? '至少 6 位' : '请输入密码'"
+                :autocomplete="mode === 'register' ? 'new-password' : 'current-password'" />
+              <button type="button"
+                class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                :class="showPassword ? 'text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'"
+                :aria-label="showPassword ? '隐藏密码' : '显示密码'" :aria-pressed="showPassword"
+                @click="showPassword = !showPassword">
+                <Eye v-if="!showPassword" :size="16" aria-hidden="true" />
+                <EyeOff v-else :size="16" aria-hidden="true" />
+              </button>
+            </div>
           </div>
           <div v-if="mode === 'register'">
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">确认密码</label>
-            <input v-model="confirmPassword" type="password" class="input" maxlength="128" placeholder="再次输入密码" autocomplete="new-password" />
+            <div class="relative">
+              <input v-model="confirmPassword" name="confirm-password" :type="showConfirmPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
+                placeholder="再次输入密码" autocomplete="new-password" />
+              <button type="button"
+                class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                :class="showConfirmPassword ? 'text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300' : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'"
+                :aria-label="showConfirmPassword ? '隐藏密码' : '显示密码'" :aria-pressed="showConfirmPassword"
+                @click="showConfirmPassword = !showConfirmPassword">
+                <Eye v-if="!showConfirmPassword" :size="16" aria-hidden="true" />
+                <EyeOff v-else :size="16" aria-hidden="true" />
+              </button>
+            </div>
           </div>
 
           <!-- Turnstile 人机验证（仅 Web 端渲染，桌面端产物不含此组件） -->
@@ -142,6 +171,12 @@ async function submit() {
             {{ loading ? '请稍候…' : mode === 'login' ? '登 录' : '注册并登录' }}
           </button>
         </form>
+
+        <!-- 访客入口：社区广场内容公开，可先浏览再决定注册 -->
+        <div class="text-center mt-4">
+          <button type="button" class="text-xs text-slate-400 hover:text-primary-500 transition-colors"
+            @click="router.replace('/community')">先随便看看 →</button>
+        </div>
       </div>
 
       <p class="text-center text-[11px] text-slate-400 mt-4 leading-relaxed">

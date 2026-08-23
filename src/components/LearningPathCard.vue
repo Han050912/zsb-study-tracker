@@ -43,11 +43,11 @@ function openShare() {
     .filter(s => s.dailyMinutes > 0)
     .map(s => `${s.icon} ${s.name} ${formatMinutes(s.dailyMinutes)}/天`)
   composerContent.value = [
-    '📅 我的周学习计划',
-    data.value.daysLeft != null && data.value.daysLeft > 0 ? `🎯 距离考试还有 ${data.value.daysLeft} 天` : '',
-    `⏱️ 每日目标 ${formatMinutes(data.value.dailyGoalMinutes)}`,
-    lines.length ? `📚 ${lines.join('、')}` : '',
-    '求监督，一起上岸！💪'
+    '我的周学习计划',
+    data.value.daysLeft != null && data.value.daysLeft > 0 ? `距离考试还有 ${data.value.daysLeft} 天` : '',
+    `每日目标 ${formatMinutes(data.value.dailyGoalMinutes)}`,
+    lines.length ? `${lines.join('、')}` : '',
+    '求监督，一起上岸！'
   ].filter(Boolean).join('\n')
   showComposer.value = true
 }
@@ -57,7 +57,7 @@ function openShare() {
   <div v-if="!loading && data" class="card">
     <div class="flex items-center justify-between mb-3">
       <div class="section-title !mb-0">🗓️ 周学习计划</div>
-      <button class="btn-ghost !text-xs !px-2 !py-1" @click="openShare">📣 分享求监督</button>
+      <button class="btn-ghost !text-xs !px-2 !py-1" @click="openShare">分享求监督</button>
     </div>
 
     <!-- 倒计时 -->

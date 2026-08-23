@@ -28,7 +28,9 @@ const props = withDefaults(defineProps<{
   refId?: string
   /** 允许在「分享 / 提问」之间切换（仅广场主发帖入口开启） */
   allowTypeSwitch?: boolean
-}>(), { presetContent: '', presetTags: () => [], circleId: undefined, topicRef: undefined, refType: undefined, refId: undefined, allowTypeSwitch: false })
+  /** 允许填入「经验帖」结构化模板（仅广场主发帖入口开启） */
+  allowTemplate?: boolean
+}>(), { presetContent: '', presetTags: () => [], circleId: undefined, topicRef: undefined, refType: undefined, refId: undefined, allowTypeSwitch: false, allowTemplate: false })
 
 const emit = defineEmits<{ 'update:show': [boolean]; posted: [] }>()
 
@@ -42,6 +44,7 @@ const IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
 interface PendingImage {
   /** 本地预览地址（blob:） */
   localUrl: string
+  file?: File
   /** 上传完成后的服务端路径 */
   url?: string
   /** 0-1 上传进度 */
@@ -127,6 +130,20 @@ const mdActions = [
   { icon: 'ΣΣ', title: '块级公式', run: () => insertMd('\n$$\n', '\n$$\n', 'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}') }
 ]
 
+/** 经验帖结构化模板文案（科目/方法/心得/建议四段） */
+const EXPERIENCE_TEMPLATE = [
+  '📚 科目：',
+  '💡 学习方法：',
+  '🎯 心得体会：',
+  '📮 给后来人的建议：'
+].join('\n')
+
+function applyExperienceTemplate() {
+  if (content.value.trim() && !window.confirm('替换当前内容为经验帖模板？')) return
+  content.value = EXPERIENCE_TEMPLATE
+  if (!tags.value.includes('#升本经验') && tags.value.length < 5) tags.value.push('#升本经验')
+}
+
 function switchType(t: PostType) {
   postType.value = t
   // 切到提问模式时，把通用标签里的科目标签收编到单选框
@@ -158,11 +175,13 @@ function addFiles(files: Iterable<File>) {
     if (images.value.length >= IMAGE_MAX_PER_POST) { toast(`最多上传 ${IMAGE_MAX_PER_POST} 张图片`); break }
     if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) { toast('仅支持 PNG / JPEG / WebP / GIF 图片'); continue }
     if (file.size > IMAGE_MAX_BYTES) { toast(`图片「${file.name}」超过 5MB 上限`); continue }
-    const item: PendingImage = { localUrl: URL.createObjectURL(file), progress: 0 }
+    const item: PendingImage = { localUrl: URL.createObjectURL(file), file, progress: 0 }
     images.value.push(item)
-    uploadImage(file, r => { item.progress = r })
-      .then(res => { item.url = res.url })
-      .catch((e: any) => { item.error = e?.message || '上传失败' })
+    // 通过响应式代理引用更新：数组内保存的是 reactive(item)，直接改原始 item 不会触发重渲染
+    const img = images.value[images.value.length - 1]
+    uploadImage(file, r => { img.progress = r })
+      .then(res => { if (res?.url) img.url = res.url; else img.error = '上传返回异常，请重试' })
+      .catch((e: any) => { img.error = e?.message || '上传失败' })
   }
 }
 
@@ -193,16 +212,21 @@ function removeImage(idx: number) {
 }
 
 function retryImage(idx: number) {
-  // 重试需要原始 File，简单起见提示用户重新添加
-  removeImage(idx)
-  toast('请重新添加该图片')
+  const img = images.value[idx]
+  if (!img?.file) return
+  img.error = undefined
+  img.progress = 0
+  uploadImage(img.file, r => { img.progress = r })
+    .then(res => { if (res?.url) img.url = res.url; else img.error = '上传返回异常，请重试' })
+    .catch((e: any) => { img.error = e?.message || '上传失败' })
 }
 
 // ---------- 提交 ----------
 
 async function submit() {
   const text = content.value.trim()
-  if (!text) { toast('请填写内容'); return }
+  // 图文至少一项（支持纯图片发帖）
+  if (!text && !images.value.length) { toast('请输入内容或添加图片'); return }
   if (isQuestion.value && !subject.value) { toast('提问帖请选择科目标签'); return }
   if (images.value.some(i => i.error)) { toast('存在上传失败的图片，请移除或重试'); return }
   if (uploading.value) { toast('图片上传中，请稍候'); return }
@@ -244,6 +268,9 @@ async function submit() {
       <button v-for="a in mdActions" :key="a.title" type="button"
         class="px-1.5 py-1 rounded text-[11px] font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-primary-500 transition-colors"
         :title="a.title" :disabled="preview" @click="a.run">{{ a.icon }}</button>
+      <button v-if="allowTemplate && !isQuestion" type="button"
+        class="px-1.5 py-1 rounded text-[11px] font-medium text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 hover:text-emerald-600 transition-colors"
+        title="填入经验帖结构化模板" @click="applyExperienceTemplate">📝 经验帖</button>
       <div class="flex-1"></div>
       <div class="flex bg-slate-100 dark:bg-slate-700 rounded-md p-0.5 text-[10px]">
         <button class="px-2 py-1 rounded transition-colors"
@@ -281,8 +308,10 @@ async function submit() {
             <div class="h-full rounded bg-primary-500 transition-all" :style="{ width: `${Math.round(img.progress * 100)}%` }"></div>
           </div>
           <!-- 失败态 -->
-          <button v-if="img.error" class="absolute inset-0 flex items-center justify-center text-xs text-red-500 bg-white/70 dark:bg-slate-900/70"
-            @click="retryImage(i)">上传失败，点击移除</button>
+          <div v-if="img.error" class="absolute inset-0 flex flex-col items-center justify-center gap-0.5 text-xs bg-white/70 dark:bg-slate-900/70">
+            <button class="text-red-500 font-medium" @click="retryImage(i)">重试</button>
+            <button class="text-slate-500" @click="removeImage(i)">移除</button>
+          </div>
           <!-- 删除 -->
           <button class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/50 text-white text-xs leading-none"
             @click="removeImage(i)">×</button>
@@ -311,10 +340,10 @@ async function submit() {
       <div class="flex flex-wrap gap-1.5">
         <button class="px-2.5 py-1 rounded-full text-xs transition-colors"
           :class="!selectedCircle ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'"
-          @click="selectedCircle = ''">🌐 广场</button>
+          @click="selectedCircle = ''">广场</button>
         <button v-for="c in myCircles" :key="c.id" class="px-2.5 py-1 rounded-full text-xs transition-colors"
           :class="selectedCircle === c.id ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'"
-          @click="selectedCircle = c.id">🫧 {{ c.name }}</button>
+          @click="selectedCircle = c.id">{{ c.name }}</button>
       </div>
     </template>
 

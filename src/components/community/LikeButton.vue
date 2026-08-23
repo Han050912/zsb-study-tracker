@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
-const props = defineProps<{ liked: boolean; count: number }>()
+const props = withDefaults(defineProps<{ liked: boolean; count: number; vertical?: boolean }>(), { vertical: false })
 const emit = defineEmits<{ toggle: [] }>()
 
 /** 点赞缩放动效触发器：每次点击重新触发动画 */
@@ -15,12 +15,15 @@ function onClick() {
 
 <template>
   <button type="button"
-    class="inline-flex items-center gap-1 text-xs transition-colors select-none"
-    :class="props.liked ? 'text-rose-500' : 'text-slate-400 hover:text-rose-400'"
+    class="transition-colors select-none"
+    :class="[
+      props.vertical ? 'flex flex-col items-center gap-0.5' : 'inline-flex items-center gap-1 text-xs',
+      props.liked ? 'text-rose-500' : 'text-slate-400 hover:text-rose-400'
+    ]"
     :aria-pressed="props.liked"
     @click.stop="onClick">
-    <span :class="{ 'animate-like': beating }">{{ props.liked ? '❤️' : '🤍' }}</span>
-    <span>{{ props.count || '' }}</span>
+    <span :class="[{ 'animate-like': beating }, props.vertical ? 'text-xl leading-none' : '']">{{ props.liked ? '❤️' : '🤍' }}</span>
+    <span :class="props.vertical ? 'text-xs' : ''">{{ props.count || '' }}</span>
   </button>
 </template>
 

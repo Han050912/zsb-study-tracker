@@ -29,7 +29,7 @@ onMounted(async () => {
   <div class="space-y-3 max-w-2xl mx-auto">
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2" @click="router.push('/community')">← 广场</button>
-      <h2 class="text-lg font-bold flex-1">✉️ 私信</h2>
+      <h2 class="text-lg font-bold flex-1">私信</h2>
     </div>
 
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
@@ -41,7 +41,7 @@ onMounted(async () => {
       <button v-for="c in conversations" :key="c.peerId"
         class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors"
         @click="router.push(`/community/messages/${c.peerId}`)">
-        <UserAvatar :name="c.peerName" />
+        <UserAvatar :name="c.peerName" :avatar="c.peerAvatar" />
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5">
             <span class="text-sm font-semibold truncate">{{ c.peerName }}</span>

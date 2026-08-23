@@ -25,7 +25,7 @@ export function stopReminder() {
  * @param onFire    提醒触发回调（返回 false 表示系统通知未弹出，调用方可 toast 兜底）
  */
 export function restartReminder(
-  getConfig: () => { enabled: boolean; time: string },
+  getConfig: () => { enabled: boolean; time: string; suppressed?: boolean },
   onFire?: (shown: boolean) => void
 ) {
   clearTimer()
@@ -40,8 +40,10 @@ export function restartReminder(
   if (target.getTime() <= Date.now()) target.setDate(target.getDate() + 1)
 
   timer = setTimeout(() => {
-    const shown = sendNotification('专升本学习提醒', '该开始学习啦！坚持就是胜利 💪')
-    onFire?.(shown)
+    if (!getConfig().suppressed) {
+      const shown = sendNotification('专升本学习提醒', '该开始学习啦！坚持就是胜利 💪')
+      onFire?.(shown)
+    }
     // 递归调度下一天（重新读取配置，设置改动即时生效）
     restartReminder(getConfig, onFire)
   }, target.getTime() - Date.now())

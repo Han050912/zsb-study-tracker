@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onUnmounted, watch } from 'vue'
 import { imageUrl } from '../../api/community'
+import { useOverlayDismiss } from '../../composables/useOverlayDismiss'
 
 /** 图片灯箱预览：左右切换 + Esc/点击遮罩关闭 */
 const props = withDefaults(defineProps<{
@@ -14,6 +15,8 @@ const emit = defineEmits<{ 'update:show': [boolean]; 'update:index': [number] }>
 function close() { emit('update:show', false) }
 function prev() { if (props.index > 0) emit('update:index', props.index - 1) }
 function next() { if (props.index < props.urls.length - 1) emit('update:index', props.index + 1) }
+
+const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close)
 
 function onKey(e: KeyboardEvent) {
   if (!props.show) return
@@ -32,7 +35,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 <template>
   <Teleport to="body">
     <Transition name="fade">
-      <div v-if="show" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4" @click.self="close">
+      <div v-if="show" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4" @mousedown="onOverlayMousedown" @click="onOverlayClick">
         <img :src="imageUrl(urls[index])" class="max-w-full max-h-full object-contain rounded-lg" alt="图片预览" />
         <button class="absolute top-4 right-4 w-9 h-9 rounded-full bg-white/15 text-white text-xl leading-none hover:bg-white/25"
           @click="close" aria-label="关闭">×</button>

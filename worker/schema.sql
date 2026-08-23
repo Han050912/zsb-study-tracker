@@ -14,6 +14,67 @@
 --   CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at);
 --   CREATE TABLE IF NOT EXISTS community_moderation_log ( id TEXT PRIMARY KEY, admin_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, report_id TEXT, reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL );
 --   CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at);
+
+-- ========== 组队挑战（P2-2）==========
+-- 学习小组：多人组队完成打卡/刷题目标，达标全员获团队徽章
+CREATE TABLE IF NOT EXISTS study_teams (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,                    -- 1-30 字
+  description TEXT NOT NULL DEFAULT '',  -- 0-200 字
+  creator_id TEXT NOT NULL REFERENCES users(id),
+  member_count INTEGER NOT NULL DEFAULT 0,
+  max_members INTEGER NOT NULL DEFAULT 10, -- 最大成员数（默认 10 人）
+  is_public INTEGER NOT NULL DEFAULT 1,    -- 1 公开可见可加入；0 仅邀请
+  invite_code TEXT,                        -- 邀请码（私密组有值，公开组 NULL）
+  invite_code_expires_at INTEGER,          -- 邀请码过期时间（Unix 秒）
+  created_at INTEGER NOT NULL
+);
+
+-- 小组成员：role 区分队长；active_challenges 冗余当前活跃挑战数（用于列表展示）
+CREATE TABLE IF NOT EXISTS team_members (
+  team_id TEXT NOT NULL REFERENCES study_teams(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  role TEXT NOT NULL DEFAULT 'member',   -- 'leader' | 'member'
+  joined_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tmembers_user ON team_members(user_id);
+
+-- 入组申请（只存待审核）：主键保证一人对一组仅一条待审申请
+CREATE TABLE IF NOT EXISTS team_join_requests (
+  team_id TEXT NOT NULL REFERENCES study_teams(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, user_id)
+);
+
+-- 组队挑战：目标类型支持打卡天数/学习时长/刷题数
+CREATE TABLE IF NOT EXISTS team_challenges (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES study_teams(id),
+  type TEXT NOT NULL,                    -- 'streak' | 'minutes' | 'problems'
+  target INTEGER NOT NULL,               -- 目标值（天数/分钟数/题数）
+  duration_days INTEGER NOT NULL,        -- 挑战持续天数
+  start_date TEXT NOT NULL,              -- 'YYYY-MM-DD'
+  end_date TEXT NOT NULL,                -- 'YYYY-MM-DD'（含当天）
+  completed_count INTEGER NOT NULL DEFAULT 0, -- 已达标成员数
+  is_completed INTEGER NOT NULL DEFAULT 0,    -- 全员达标标记
+  is_cancelled INTEGER NOT NULL DEFAULT 0,    -- 取消标记（1=已取消，暂停同步）
+  remaining_days INTEGER,                     -- 取消时记录的剩余天数（恢复时顺延用）
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tchallenges_team ON team_challenges(team_id, created_at);
+
+-- 挑战成员进度：记录每个成员的完成情况
+CREATE TABLE IF NOT EXISTS team_challenge_progress (
+  challenge_id TEXT NOT NULL REFERENCES team_challenges(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  current_value INTEGER NOT NULL DEFAULT 0, -- 当前进度值
+  is_completed INTEGER NOT NULL DEFAULT 0,  -- 是否已达标
+  completed_at INTEGER,                     -- 达标时间
+  PRIMARY KEY (challenge_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id);
 -- 已建库升级：社区增强 P1（最佳答案/精华帖/评论图片），执行一次：
 --   ALTER TABLE community_posts ADD COLUMN accepted_answer_id TEXT;
 --   ALTER TABLE community_posts ADD COLUMN is_featured INTEGER NOT NULL DEFAULT 0;
@@ -40,6 +101,63 @@
 --   CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
 -- 已建库升级：社区增强 P2（知识点讨论区），执行一次：
 --   ALTER TABLE community_posts ADD COLUMN topic_ref TEXT;
+--   ALTER TABLE community_posts ADD COLUMN ref_type TEXT;
+--   ALTER TABLE community_posts ADD COLUMN ref_id TEXT;
+-- 已建库升级：组队挑战（P2-2），执行一次：
+--   CREATE TABLE IF NOT EXISTS study_teams ( id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', creator_id TEXT NOT NULL REFERENCES users(id), member_count INTEGER NOT NULL DEFAULT 0, max_members INTEGER NOT NULL DEFAULT 10, is_public INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL );
+--   CREATE TABLE IF NOT EXISTS team_members ( team_id TEXT NOT NULL REFERENCES study_teams(id), user_id TEXT NOT NULL REFERENCES users(id), role TEXT NOT NULL DEFAULT 'member', joined_at INTEGER NOT NULL, PRIMARY KEY (team_id, user_id) );
+--   CREATE INDEX IF NOT EXISTS idx_tmembers_user ON team_members(user_id);
+--   CREATE TABLE IF NOT EXISTS team_challenges ( id TEXT PRIMARY KEY, team_id TEXT NOT NULL REFERENCES study_teams(id), type TEXT NOT NULL, target INTEGER NOT NULL, duration_days INTEGER NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL, completed_count INTEGER NOT NULL DEFAULT 0, is_completed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_tchallenges_team ON team_challenges(team_id, created_at);
+--   CREATE TABLE IF NOT EXISTS team_challenge_progress ( challenge_id TEXT NOT NULL REFERENCES team_challenges(id), user_id TEXT NOT NULL REFERENCES users(id), current_value INTEGER NOT NULL DEFAULT 0, is_completed INTEGER NOT NULL DEFAULT 0, completed_at INTEGER, PRIMARY KEY (challenge_id, user_id) );
+--   CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id);
+-- 已建库升级：组队挑战管理（P2-2 补充：取消/恢复/编辑/删除），执行一次：
+--   ALTER TABLE team_challenges ADD COLUMN is_cancelled INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE team_challenges ADD COLUMN remaining_days INTEGER;
+-- 已建库升级：待办新增开始 / 最晚截止时间与提醒去重标记，执行一次：
+--   ALTER TABLE todos ADD COLUMN start_at INTEGER;
+--   ALTER TABLE todos ADD COLUMN due_at INTEGER;
+--   ALTER TABLE todos ADD COLUMN start_notified_at INTEGER;
+--   ALTER TABLE todos ADD COLUMN due_notified_at INTEGER;
+-- 已建库升级：社区 P1 进步榜（学习进度对比），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN join_progress_board INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：热门话题运营位（P1），执行一次：
+--   CREATE TABLE IF NOT EXISTS community_hot_topics ( id TEXT PRIMARY KEY, text TEXT NOT NULL, tag TEXT NOT NULL, action TEXT NOT NULL, created_at INTEGER NOT NULL );
+-- 已建库升级：社区踩投票（P1），执行一次：
+--   ALTER TABLE community_posts ADD COLUMN dislikes_count INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE community_comments ADD COLUMN dislikes_count INTEGER NOT NULL DEFAULT 0;
+--   CREATE TABLE IF NOT EXISTS community_dislikes ( user_id TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, target_type, target_id) );
+-- 已建库升级：主页可见性设置（P1），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN profile_visibility TEXT NOT NULL DEFAULT 'login';
+-- 已建库升级：社区图片缩略图（P1），执行一次：
+--   ALTER TABLE community_uploads ADD COLUMN thumb_r2_key TEXT;
+-- 已建库升级：学习搭子（P2-7），执行一次：
+--   CREATE TABLE IF NOT EXISTS study_partners ( id TEXT PRIMARY KEY, pair_key TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(pair_key) );
+--   CREATE INDEX IF NOT EXISTS idx_partners_to ON study_partners(to_id, status);
+--   CREATE INDEX IF NOT EXISTS idx_partners_from ON study_partners(from_id, status);
+-- 已建库升级：意见反馈（P2-8），执行一次：
+--   CREATE TABLE IF NOT EXISTS feedback ( id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), type TEXT NOT NULL, content TEXT NOT NULL, contact TEXT NOT NULL DEFAULT '', image_urls TEXT NOT NULL DEFAULT '[]', github_issue_url TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
+--   CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);
+-- 已建库升级：用户自定义头像（P0），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN avatar TEXT;
+-- 已建库升级：内容软违规标记（P3），执行一次：
+--   ALTER TABLE community_posts ADD COLUMN is_flagged INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE community_comments ADD COLUMN is_flagged INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：私密组邀请码 + 入组申请（#8），执行一次：
+--   ALTER TABLE study_teams ADD COLUMN invite_code TEXT;
+--   ALTER TABLE study_teams ADD COLUMN invite_code_expires_at INTEGER;
+--   CREATE TABLE IF NOT EXISTS team_join_requests ( team_id TEXT NOT NULL REFERENCES study_teams(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL, PRIMARY KEY (team_id, user_id) );
+-- 已建库升级：个人简介 bio（#14），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN bio TEXT NOT NULL DEFAULT '';
+-- 已建库升级：勿扰模式（#17），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN do_not_disturb INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE user_settings ADD COLUMN dnd_start_time TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE user_settings ADD COLUMN dnd_end_time TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE user_settings ADD COLUMN dnd_muted_types TEXT NOT NULL DEFAULT '';
+-- 已建库升级：通知精准跳转目标（#11），执行一次：
+--   ALTER TABLE community_notifications ADD COLUMN target_type TEXT;
+--   ALTER TABLE community_notifications ADD COLUMN target_id TEXT;
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -56,7 +174,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- ========== 用户设置（一行一用户） ==========
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id TEXT PRIMARY KEY REFERENCES users(id),
-  user_name TEXT DEFAULT '升本人',
+  user_name TEXT,               -- 显示昵称（注册时初始化为登录用户名；NULL = 未设置，展示端兜底 users.username）
   daily_goal_minutes INTEGER DEFAULT 240,
   word_goal INTEGER DEFAULT 50,
   problem_goal INTEGER DEFAULT 30,
@@ -66,7 +184,15 @@ CREATE TABLE IF NOT EXISTS user_settings (
   reminder_time TEXT DEFAULT '08:00',
   maimemo_token TEXT,           -- 墨墨 Token（用户自行获取填入）
   netease_uid TEXT,             -- 网易云 UID（用户手动填写）
-  onboarded INTEGER DEFAULT 0   -- 是否完成新手引导
+  onboarded INTEGER DEFAULT 0,  -- 是否完成新手引导
+  join_progress_board INTEGER NOT NULL DEFAULT 0,  -- 参与学习进步榜（本周时长/本月刷题榜；默认不参与）
+  profile_visibility TEXT NOT NULL DEFAULT 'login',  -- 主页可见性：'public'所有人 / 'login'登录(默认) / 'private'仅自己
+  avatar TEXT,                                  -- 自定义头像相对 URL（/api/avatar/<file>；NULL = 首字母兜底）
+  bio TEXT NOT NULL DEFAULT '',                 -- 个人简介（≤100 字，我的页/访客主页展示）
+  do_not_disturb INTEGER NOT NULL DEFAULT 0,  -- 勿扰模式总开关
+  dnd_start_time TEXT NOT NULL DEFAULT '',    -- 勿扰开始 'HH:mm'（空=全天）
+  dnd_end_time TEXT NOT NULL DEFAULT '',      -- 勿扰结束 'HH:mm'（空=全天）
+  dnd_muted_types TEXT NOT NULL DEFAULT ''    -- 勿扰屏蔽通知类型（JSON 数组）
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========
@@ -316,6 +442,10 @@ CREATE TABLE IF NOT EXISTS todos (
   done INTEGER DEFAULT 0,
   "order" INTEGER DEFAULT 0,
   completed_at INTEGER,
+  start_at INTEGER,                -- 计划开始时间（时间戳），到点提醒任务开始
+  due_at INTEGER,                  -- 最晚截止时间（时间戳），到点未完成则提醒
+  start_notified_at INTEGER,       -- 开始提醒已发出时间（去重）
+  due_notified_at INTEGER,         -- 截止提醒已发出时间（去重）
   PRIMARY KEY (user_id, id)
 );
 
@@ -343,9 +473,11 @@ CREATE TABLE IF NOT EXISTS community_posts (
   ref_type TEXT,                       -- 关联源类型：'summary' | 'record' | 'achievement' | 'habit' | 'vocab'
   ref_id TEXT,                         -- 关联源 ID
   likes_count INTEGER NOT NULL DEFAULT 0,
+  dislikes_count INTEGER NOT NULL DEFAULT 0,
   comments_count INTEGER NOT NULL DEFAULT 0,
   is_pinned INTEGER NOT NULL DEFAULT 0,
   is_hidden INTEGER NOT NULL DEFAULT 0,
+  is_flagged INTEGER NOT NULL DEFAULT 0, -- 软违规待审标记（1=命中软敏感词，仅作者/管理员可见）
   created_at INTEGER NOT NULL,         -- Unix 时间戳（秒）
   updated_at INTEGER NOT NULL
 );
@@ -364,8 +496,10 @@ CREATE TABLE IF NOT EXISTS community_comments (
   content TEXT NOT NULL,
   image_urls TEXT NOT NULL DEFAULT '[]', -- JSON 数组：评论配图路径（最多 3 张）
   likes_count INTEGER NOT NULL DEFAULT 0,
+  dislikes_count INTEGER NOT NULL DEFAULT 0,
   is_accepted INTEGER NOT NULL DEFAULT 0, -- 是否被采纳为最佳答案（与 posts.accepted_answer_id 冗余保持一致）
   is_hidden INTEGER NOT NULL DEFAULT 0,
+  is_flagged INTEGER NOT NULL DEFAULT 0, -- 软违规待审标记（1=命中软敏感词，仅作者/管理员可见）
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -390,6 +524,8 @@ CREATE TABLE IF NOT EXISTS community_notifications (
   actor_id TEXT,                        -- 触发者
   post_id TEXT,
   comment_id TEXT,
+  target_type TEXT,                     -- 点击跳转目标类型：'post' | 'user' | 'message' | 'team' | 'circle' | 'partner'
+  target_id TEXT,                       -- 点击跳转目标 id
   content TEXT NOT NULL DEFAULT '',
   is_read INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
@@ -417,6 +553,7 @@ CREATE TABLE IF NOT EXISTS community_uploads (
   url TEXT NOT NULL,                -- 读取路径 /api/community/images/<id>
   size INTEGER NOT NULL,
   content_type TEXT NOT NULL,
+  thumb_r2_key TEXT,               -- 缩略图 R2 key（前端 canvas 压缩后上传）
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id);
@@ -471,11 +608,14 @@ CREATE TABLE IF NOT EXISTS community_messages (
   from_id TEXT NOT NULL REFERENCES users(id),
   to_id TEXT NOT NULL REFERENCES users(id),
   content TEXT NOT NULL,
+  image_urls TEXT,               -- 私信配图（最多 3 张），JSON 数组；NULL/空 = 纯文字
   is_read INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_to ON community_messages(to_id, is_read);
 CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
+-- 已建库升级：私信配图（P3），执行一次：
+--   ALTER TABLE community_messages ADD COLUMN image_urls TEXT;
 
 -- 用户徽章：服务端事件驱动发放（发帖/提问/打卡里程碑/获赞/被采纳/上传），主键去重保证仅发放一次
 CREATE TABLE IF NOT EXISTS user_badges (
@@ -497,3 +637,51 @@ CREATE TABLE IF NOT EXISTS community_moderation_log (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at);
+
+-- 热门话题运营位（P1）：只存管理员干预名单（置顶/屏蔽），自动统计部分不落表
+CREATE TABLE IF NOT EXISTS community_hot_topics (
+  id TEXT PRIMARY KEY,
+  text TEXT NOT NULL,                     -- 展示文案（置顶条目可自定义，≤20 字）
+  tag TEXT NOT NULL,                      -- 关联话题 tag（含 # 前缀，与帖子 tags 同格式）
+  action TEXT NOT NULL,                   -- 'pin'（强制前置展示） | 'block'（从自动统计剔除）
+  created_at INTEGER NOT NULL
+);
+
+-- 踩投票记录：主键 (user_id, target_type, target_id) 去重，保证一人一内容至多一踩
+CREATE TABLE IF NOT EXISTS community_dislikes (
+  user_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,   -- 'post' | 'comment'
+  target_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, target_type, target_id)
+);
+
+-- 学习搭子关系（P2-7）：pair_key = 两用户 id 排序后拼接，UNIQUE 保证一对用户恒一行
+CREATE TABLE IF NOT EXISTS study_partners (
+  id TEXT PRIMARY KEY,
+  pair_key TEXT NOT NULL,
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(pair_key)
+);
+CREATE INDEX IF NOT EXISTS idx_partners_to ON study_partners(to_id, status);
+CREATE INDEX IF NOT EXISTS idx_partners_from ON study_partners(from_id, status);
+
+-- ========== 意见反馈 ==========
+-- 反馈提交后先落 D1（站内管理员后台查看）；github_issue_url 为异步回写的 GitHub issue 链接（尽力而为，可为空）
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  type TEXT NOT NULL,                    -- 'feature' | 'bug' | 'experience' | 'other'
+  content TEXT NOT NULL,                 -- 文字描述（1-2000 字）
+  contact TEXT NOT NULL DEFAULT '',      -- 联系方式（可选，0-100 字）
+  image_urls TEXT NOT NULL DEFAULT '[]', -- 截图路径数组（JSON，最多 3 张）
+  github_issue_url TEXT,                 -- GitHub issue 链接（创建成功后回写，可空）
+  status TEXT NOT NULL DEFAULT 'pending',-- 'pending' | 'resolved'
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);

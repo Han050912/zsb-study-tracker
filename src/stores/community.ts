@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { communityApi } from '../api/community'
 import { gamificationApi } from '../api/gamification'
 import { useAppStore } from './app'
-import type { CommunityComment, CommunityNotification, CommunityPost, PostType } from '../types'
+import type { CommunityCircle, CommunityComment, CommunityNotification, CommunityPost, NotificationType, PostType, RecommendUser } from '../types'
 
 /**
  * 社区广场状态。动态流为公共数据，通知为当前用户私有；
@@ -17,18 +17,22 @@ interface CommunityState {
   hasMore: boolean
   feedLoading: boolean
   sort: 'latest' | 'hot'
+  /** 推荐附加信息（圈子 + 用户；仅 recommend 分类下填充） */
+  recommendExtras: { circles: CommunityCircle[]; users: RecommendUser[] } | null
+  /** 加载错误信息（推荐等场景） */
+  error: string | null
   /** 当前筛选标签（'' = 全部） */
   tag: string
-  /** 当前筛选帖子类型（'' = 全部；本期用于「提问」筛选） */
-  typeFilter: PostType | ''
-  /** 仅看精华帖（与 typeFilter 互斥） */
-  featured: boolean
-  /** 仅看我关注的作者的帖子（与 typeFilter/featured 互斥） */
-  followFilter: boolean
+  /** 分类筛选（'' = 全部；推荐/提问/精华/关注 单选互斥） */
+  category: '' | 'recommend' | 'question' | 'featured' | 'follow'
   notifications: CommunityNotification[]
   notifyCursor: string | null
   hasMoreNotify: boolean
   unreadCount: number
+  /** 排除勿扰屏蔽类型后的未读数（勿扰红点判定用） */
+  unreadExcludingMuted: number
+  /** 通知中心类型筛选（'' = 全部） */
+  notifyFilter: '' | NotificationType
 }
 
 export const useCommunityStore = defineStore('community', {
@@ -38,14 +42,16 @@ export const useCommunityStore = defineStore('community', {
     hasMore: true,
     feedLoading: false,
     sort: 'latest',
+    recommendExtras: null,
+    error: null,
     tag: '',
-    typeFilter: '',
-    featured: false,
-    followFilter: false,
+    category: '',
     notifications: [],
     notifyCursor: null,
     hasMoreNotify: true,
-    unreadCount: 0
+    unreadCount: 0,
+    unreadExcludingMuted: 0,
+    notifyFilter: ''
   }),
 
   actions: {
@@ -68,41 +74,44 @@ export const useCommunityStore = defineStore('community', {
     },
 
     async setSort(sort: 'latest' | 'hot') {
-      if (this.sort === sort) return
+      if (this.sort === sort && this.category !== 'recommend') return
       this.sort = sort
+      if (this.category === 'recommend') this.category = '' // 推荐态下点排序退出推荐
       await this.fetchFeed(true)
     },
 
     async setTag(tag: string) {
-      if (this.tag === tag) return
+      if (this.tag === tag && this.category !== 'recommend') return
       this.tag = tag
+      if (this.category === 'recommend') this.category = '' // 推荐接口不接受标签，退出推荐
       await this.fetchFeed(true)
     },
 
-    async setTypeFilter(t: PostType | '') {
-      if (this.typeFilter === t) return
-      this.typeFilter = t
-      if (t) { this.featured = false; this.followFilter = false } // 与精华/关注筛选互斥，避免组合出空结果困惑
-      await this.fetchFeed(true)
-    },
-
-    async setFeatured(v: boolean) {
-      if (this.featured === v) return
-      this.featured = v
-      if (v) { this.typeFilter = ''; this.followFilter = false }
-      await this.fetchFeed(true)
-    },
-
-    async setFollowFilter(v: boolean) {
-      if (this.followFilter === v) return
-      this.followFilter = v
-      if (v) { this.typeFilter = ''; this.featured = false }
+    async setCategory(category: '' | 'recommend' | 'question' | 'featured' | 'follow') {
+      if (this.category === category) return
+      this.category = category
       await this.fetchFeed(true)
     },
 
     /** 拉取动态流；reset 清空重来，否则按游标追加（按 id 去重防重复）。
      *  请求令牌防止竞态：旧请求返回时若令牌已失效则丢弃结果，避免快速切换筛选后旧数据覆盖新数据。 */
     async fetchFeed(reset = false) {
+      if (this.category === 'recommend') {
+        if (!reset && this.posts.length) return
+        this.feedLoading = true
+        try {
+          const res = await communityApi.recommend()
+          this.posts = res.posts
+          this.recommendExtras = { circles: res.circles, users: res.users }
+          this.error = null
+          this.hasMore = false
+        } catch (e: any) {
+          this.error = e?.message || '推荐加载失败'
+        } finally {
+          this.feedLoading = false
+        }
+        return
+      }
       // 追加加载期间忽略重复触发（哨兵可见期间可能多次进入）；reset 走令牌竞态丢弃
       if (this.feedLoading && !reset) return
       const ticket = ++feedTicket
@@ -110,19 +119,27 @@ export const useCommunityStore = defineStore('community', {
         this.posts = []
         this.feedCursor = null
         this.hasMore = true
+        this.recommendExtras = null
+        this.error = null
       }
       if (!this.hasMore) return
       this.feedLoading = true
       try {
         const res = await communityApi.feed({
-          sort: this.sort, tag: this.tag || undefined, type: this.typeFilter || undefined,
-          featured: this.featured || undefined, follow: this.followFilter || undefined, cursor: this.feedCursor
+          sort: this.sort,
+          tag: this.tag || undefined,
+          type: this.category === 'question' ? 'question' : undefined,
+          featured: this.category === 'featured' ? true : undefined,
+          follow: this.category === 'follow' ? true : undefined,
+          cursor: this.feedCursor
         })
         if (ticket !== feedTicket) return // 已有更新的请求，丢弃本次过期结果
         const existing = new Set(this.posts.map(p => p.id))
         this.posts.push(...res.posts.filter(p => !existing.has(p.id)))
         this.feedCursor = res.nextCursor
         this.hasMore = !!res.nextCursor
+      } catch (e: any) {
+        this.error = e?.message || '动态加载失败'
       } finally {
         if (ticket === feedTicket) this.feedLoading = false
       }
@@ -131,7 +148,12 @@ export const useCommunityStore = defineStore('community', {
     /** 发帖成功返回新帖；仅当命中当前筛选时插入列表头部（精华/关注筛选下新帖必未加精、作者非关注对象，不插入；圈子帖不进广场） */
     async publishPost(data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; topicRef?: string; refType?: string; refId?: string }) {
       const post = await communityApi.createPost(data)
-      if (this.sort === 'latest' && !this.typeFilter && !this.featured && !this.followFilter && !data.circleId && !data.topicRef
+      // 后端返回的头像可能因云端 user_settings 同步时序缺失，用前端当前头像兜底，确保刚发出的帖子立即显示当前头像（无需刷新）
+      if (!post.userAvatar) {
+        const avatar = useAppStore().settings.avatar
+        if (avatar) post.userAvatar = avatar
+      }
+      if (this.sort === 'latest' && this.category === '' && !data.circleId && !data.topicRef
         && (!this.tag || post.tags.includes(this.tag))) {
         this.posts.unshift(post)
       }
@@ -151,6 +173,11 @@ export const useCommunityStore = defineStore('community', {
       if (p) {
         p.likedByMe = liked
         p.likesCount = Math.max(0, p.likesCount + (liked ? 1 : -1))
+        // 后端点赞会反向取消踩（赞踩互斥），本地同步清除踩状态
+        if (liked && p.dislikedByMe) {
+          p.dislikedByMe = false
+          p.dislikesCount = Math.max(0, p.dislikesCount - 1)
+        }
       }
       await this.syncGamification()
       return liked
@@ -163,9 +190,37 @@ export const useCommunityStore = defineStore('community', {
       return liked
     },
 
+    /** 帖子踩 toggle（与赞互斥），同步列表内计数；返回 { disliked, likeRevoked } */
+    async dislikePost(id: string): Promise<{ disliked: boolean; likeRevoked?: boolean }> {
+      const res = await communityApi.dislike('post', id)
+      const p = this.posts.find(x => x.id === id)
+      if (p) {
+        p.dislikedByMe = res.disliked
+        p.dislikesCount = Math.max(0, p.dislikesCount + (res.disliked ? 1 : -1))
+        if (res.likeRevoked) {
+          p.likedByMe = false
+          p.likesCount = Math.max(0, p.likesCount - 1)
+        }
+      }
+      await this.syncGamification()
+      return res
+    },
+
+    /** 评论踩 toggle（与赞互斥）；返回 { disliked, likeRevoked }，详情页自行更新评论树计数 */
+    async dislikeComment(id: string): Promise<{ disliked: boolean; likeRevoked?: boolean }> {
+      const res = await communityApi.dislike('comment', id)
+      await this.syncGamification()
+      return res
+    },
+
     /** 发表评论，返回新评论；同步列表内帖子评论数 */
     async postComment(postId: string, content: string, parentId?: string, imageUrls?: string[]): Promise<CommunityComment> {
       const c = await communityApi.addComment(postId, { content, parentId, imageUrls })
+      // 后端返回的头像可能因云端 user_settings 同步时序缺失，用前端当前头像兜底，避免新评论短暂显示默认头像
+      if (!c.userAvatar) {
+        const avatar = useAppStore().settings.avatar
+        if (avatar) c.userAvatar = avatar
+      }
       const p = this.posts.find(x => x.id === postId)
       if (p) p.commentsCount++
       await this.syncGamification()
@@ -194,6 +249,7 @@ export const useCommunityStore = defineStore('community', {
     async fetchUnreadCount() {
       const res = await communityApi.notifications(null, 1)
       this.unreadCount = res.unreadCount
+      this.unreadExcludingMuted = res.unreadExcludingMuted
     },
 
     async fetchNotifications(reset = false) {
@@ -203,18 +259,28 @@ export const useCommunityStore = defineStore('community', {
         this.hasMoreNotify = true
       }
       if (!this.hasMoreNotify) return
-      const res = await communityApi.notifications(this.notifyCursor)
+      const res = await communityApi.notifications(this.notifyCursor, undefined, this.notifyFilter || undefined)
       const existing = new Set(this.notifications.map(n => n.id))
       this.notifications.push(...res.items.filter(n => !existing.has(n.id)))
       this.unreadCount = res.unreadCount
+      this.unreadExcludingMuted = res.unreadExcludingMuted
       this.notifyCursor = res.nextCursor
       this.hasMoreNotify = !!res.nextCursor
+    },
+
+    /** 切换通知类型筛选（切换即重置并重新拉取） */
+    async setNotifyFilter(type: '' | NotificationType) {
+      if (this.notifyFilter === type) return
+      this.notifyFilter = type
+      await this.fetchNotifications(true)
     },
 
     async markRead(n: CommunityNotification) {
       if (n.isRead) return
       n.isRead = true
       this.unreadCount = Math.max(0, this.unreadCount - 1)
+      const muted = useAppStore().settings.dndMutedTypes ?? []
+      if (!muted.includes(n.type)) this.unreadExcludingMuted = Math.max(0, this.unreadExcludingMuted - 1)
       await communityApi.markRead(n.id)
     },
 
@@ -222,6 +288,7 @@ export const useCommunityStore = defineStore('community', {
       await communityApi.markAllRead()
       for (const n of this.notifications) n.isRead = true
       this.unreadCount = 0
+      this.unreadExcludingMuted = 0
     },
 
     // ---- 管理员操作 ----

@@ -174,7 +174,21 @@ export interface Todo {
   order: number
   /** 标记完成的具体时间（时间戳），随待办永久保存；未完成/取消完成时该字段不存在 */
   completedAt?: number
+  /** 计划开始时间（时间戳）：到点提醒任务已开始；未设置则不提醒 */
+  startAt?: number
+  /** 最晚截止时间（时间戳）：到点仍未完成则提醒；未设置则不提醒 */
+  dueAt?: number
+  /** 开始提醒已发出的时间（去重用，避免重复提醒）；重设开始时间时清除 */
+  startNotifiedAt?: number
+  /** 截止提醒已发出的时间（去重用）；重设截止时间时清除 */
+  dueNotifiedAt?: number
 }
+
+/** 社区通知类型 */
+export type NotificationType = 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system'
+
+/** 通知点击跳转目标类型 */
+export type NotificationTargetType = 'post' | 'user' | 'message' | 'team' | 'circle' | 'partner'
 
 /** 设置 */
 export interface Settings {
@@ -190,6 +204,22 @@ export interface Settings {
   /** 墨墨背单词开放 API Token（可选，App 内 我的→更多设置→实验功能→开放 API 获取） */
   maimemoToken?: string
   onboarded: boolean
+  /** 参与学习进步榜（社区展示昵称与学习时长/刷题数排名；默认关闭） */
+  joinProgressBoard: boolean
+  /** 主页可见性：public 所有人 / login 登录(默认) / private 仅自己 */
+  profileVisibility: 'public' | 'login' | 'private'
+  /** 自定义头像相对 URL（/api/avatar/<file>；空 = 首字母兜底） */
+  avatar: string
+  /** 个人简介（≤100 字，我的页/访客主页展示） */
+  bio: string
+  /** 勿扰模式总开关 */
+  doNotDisturb: boolean
+  /** 勿扰开始时间 'HH:mm'（空 = 全天勿扰） */
+  dndStartTime: string
+  /** 勿扰结束时间 'HH:mm'（空 = 全天勿扰） */
+  dndEndTime: string
+  /** 勿扰期间屏蔽的通知类型 */
+  dndMutedTypes: NotificationType[]
 }
 
 export interface AppState {
@@ -223,11 +253,15 @@ export interface CommunityPost {
   userPoints: number
   /** 作者是否为认证专家（蓝 V） */
   userVerified: boolean
+  /** 作者自定义头像相对 URL（未设置 = undefined，前端回退首字母） */
+  userAvatar?: string
   type: PostType
   content: string
   tags: string[]
   /** 配图路径列表（/api/community/images/<id>，最多 9 张），经 imageUrl() 转绝对地址 */
   imageUrls: string[]
+  /** 列表缩略图路径（对应 imageUrls 加 ?thumb=1，未生成缩略图时回退原图） */
+  imageThumbs: string[]
   /** 提问帖是否已被楼主标记解决（采纳最佳答案时自动置位） */
   isResolved: boolean
   /** 被采纳最佳答案的评论 ID（仅提问帖；取消采纳后为 undefined） */
@@ -245,10 +279,14 @@ export interface CommunityPost {
   refType?: string
   refId?: string
   likesCount: number
+  dislikesCount: number
   commentsCount: number
   isPinned: boolean
   isHidden: boolean
+  /** 软违规待审标记（命中软敏感词；仅作者/管理员可见时返回 true） */
+  isFlagged: boolean
   likedByMe: boolean
+  dislikedByMe: boolean
   createdAt: number // Unix 秒
 }
 
@@ -258,6 +296,8 @@ export interface CommunityComment {
   postId: string
   userId: string
   userName: string
+  /** 评论作者自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   parentId?: string
   content: string
   /** 评论配图路径列表（最多 3 张），经 imageUrl() 转绝对地址 */
@@ -265,10 +305,14 @@ export interface CommunityComment {
   /** 作者是否为认证专家（蓝 V） */
   userVerified: boolean
   likesCount: number
+  dislikesCount: number
   /** 是否被楼主采纳为最佳答案 */
   isAccepted: boolean
   isHidden: boolean
+  /** 软违规待审标记（命中软敏感词；仅作者/管理员可见时返回 true） */
+  isFlagged: boolean
   likedByMe: boolean
+  dislikedByMe: boolean
   createdAt: number // Unix 秒
   /** 前端组装的二级回复 */
   replies?: CommunityComment[]
@@ -277,11 +321,17 @@ export interface CommunityComment {
 /** 社区通知 */
 export interface CommunityNotification {
   id: string
-  type: 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system'
+  type: NotificationType
   actorId?: string
   actorName?: string
+  /** 触发者自定义头像相对 URL（未设置 = undefined） */
+  actorAvatar?: string
   postId?: string
   commentId?: string
+  /** 点击跳转目标类型（后端通知接口返回） */
+  targetType?: NotificationTargetType
+  /** 点击跳转目标 id */
+  targetId?: string
   content: string
   isRead: boolean
   createdAt: number // Unix 秒
@@ -289,7 +339,10 @@ export interface CommunityNotification {
 
 /** 今日打卡榜条目 */
 export interface LeaderboardTodayEntry {
+  userId: string
   userName: string
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   todayPoints: number
   streak: number
   totalPoints: number
@@ -301,7 +354,10 @@ export interface LeaderboardTodayEntry {
 
 /** 连续打卡王条目 */
 export interface LeaderboardStreakEntry {
+  userId: string
   userName: string
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
   streak: number
   totalPoints: number
   /** 认证专家（蓝 V） */
@@ -313,16 +369,95 @@ export interface CommunityLeaderboard {
   streak: LeaderboardStreakEntry[]
 }
 
+/** 进步榜条目（本周时长 / 本月刷题 TOP 50，仅参与用户） */
+export interface ProgressBoardEntry {
+  userId: string
+  userName: string
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
+  verified: boolean
+  totalPoints: number
+  value: number
+  isMe: boolean
+}
+
+/** 本人排名信息（未参与时 rank/percentile 为 null） */
+export interface ProgressBoardMe {
+  value: number
+  rank: number | null
+  percentile: number | null
+}
+
+/** 学习进度对比（进步榜）响应 */
+export interface ProgressBoardData {
+  joined: boolean
+  weekMinutes: { list: ProgressBoardEntry[]; me: ProgressBoardMe }
+  monthProblems: { list: ProgressBoardEntry[]; me: ProgressBoardMe }
+}
+
+/** 热门话题运营位条目（pinned = 管理员置顶） */
+export interface HotTopic {
+  text: string
+  tag: string
+  count: number
+  pinned: boolean
+}
+
+/** 热门话题干预名单条目（管理员配置） */
+export interface HotTopicOverride {
+  id: string
+  text: string
+  tag: string
+  action: 'pin' | 'block'
+  createdAt: number
+}
+
+/** 上周学习周报（惰性计算，无快照） */
+export interface WeeklyReport {
+  weekStart: string
+  weekEnd: string
+  minutes: number
+  studyDays: number
+  problems: number
+  correct: number
+  points: number
+  interactions: number
+}
+
 /** 用户徽章记录（key 目录见 defaults.ts COMMUNITY_BADGES） */
 export interface UserBadge {
   key: string
   awardedAt: number // Unix 秒
 }
 
+/** 社交关系状态：互关 / 我已关注 / 对方关注我（待回关） / 无关系 */
+export type RelationStatus = 'mutual' | 'following' | 'follower' | 'none'
+
+/** 粉丝/关注/互关列表项 */
+export interface FollowListItem {
+  userId: string
+  userName: string
+  avatar?: string
+  verified: boolean
+  bio: string
+  followedByMe: boolean
+  followsMe: boolean
+  relation: RelationStatus
+}
+
+export interface FollowListResult {
+  items: FollowListItem[]
+  nextCursor: string | null
+}
+
 /** 社区用户资料卡（公开荣誉信息，不含私有学习数据） */
 export interface CommunityUserProfile {
   userId: string
   userName: string
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  avatar?: string
+  /** 私密主页降级视图：仅含公开子集（昵称/头像/蓝V），积分/徽章/关注等字段缺省 */
+  profilePrivate?: boolean
   points: number
   streak: number
   verified: boolean
@@ -336,6 +471,18 @@ export interface CommunityUserProfile {
   followers: number
   /** 当前登录用户是否已关注该用户 */
   followedByMe: boolean
+  /** 个人简介 */
+  bio: string
+  /** 该用户是否关注了我 */
+  followsMe: boolean
+  /** 纯帖子数（公开广场帖口径，区别于 postCount 帖子+评论合计） */
+  threadsCount: number
+  followingCount: number
+  mutualCount: number
+  /** 我点赞过的帖子数（仅本人请求时返回） */
+  likedCount?: number
+  /** 我与该用户的关系 */
+  relation: RelationStatus
 }
 
 /** 个人主页学习统计（热力图 + 总览 + 科目分布） */
@@ -376,6 +523,8 @@ export interface CircleMember {
   userName: string
   role: 'owner' | 'member'
   verified: boolean
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
 }
 
 /** 圈子详情响应 */
@@ -383,7 +532,7 @@ export interface CircleDetail {
   circle: CommunityCircle
   members: CircleMember[]
   /** 待审批申请（仅圈主可见） */
-  pending: { userId: string; userName: string; createdAt: number }[]
+  pending: { userId: string; userName: string; createdAt: number; userAvatar?: string }[]
 }
 
 /** 私信消息 */
@@ -392,6 +541,8 @@ export interface CommunityMessage {
   fromId: string
   toId: string
   content: string
+  /** 私信配图相对 URL 列表（最多 3 张；未设置 = 纯文字） */
+  imageUrls?: string[]
   isRead: boolean
   createdAt: number // Unix 秒
   /** 是否我发出的 */
@@ -403,6 +554,8 @@ export interface MessageConversation {
   peerId: string
   peerName: string
   peerVerified: boolean
+  /** 对方自定义头像相对 URL（未设置 = undefined） */
+  peerAvatar?: string
   /** 最后一条消息截断预览 */
   lastContent: string
   lastAt: number
@@ -426,4 +579,122 @@ export interface AdminReport {
     isHidden: boolean
     postId?: string
   } | null
+}
+
+/** 学习小组 */
+export interface StudyTeam {
+  id: string
+  name: string
+  description: string
+  creatorId: string
+  memberCount: number
+  maxMembers: number
+  isPublic: boolean
+  myRole?: 'leader' | 'member'
+  createdAt: number
+}
+
+/** 小组成员 */
+export interface TeamMember {
+  userId: string
+  userName: string
+  role: 'leader' | 'member'
+  joinedAt: number
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
+}
+
+/** 入组申请（待审核） */
+export interface TeamJoinRequest {
+  userId: string
+  userName: string
+  userAvatar?: string
+  createdAt: number
+}
+
+/** 挑战类型 */
+export type ChallengeType = 'streak' | 'minutes' | 'problems'
+
+/** 组队挑战 */
+export interface TeamChallenge {
+  id: string
+  teamId: string
+  type: ChallengeType
+  target: number
+  durationDays: number
+  startDate: string
+  endDate: string
+  completedCount: number
+  isCompleted: boolean
+  myProgress: number
+  myCompleted: boolean
+  isCancelled: boolean
+  remainingDays?: number
+  createdAt: number
+}
+
+/** 小组详情 */
+export interface TeamDetail {
+  team: StudyTeam
+  members: TeamMember[]
+  challenges: TeamChallenge[]
+  inviteCode?: string | null
+  inviteCodeExpiresAt?: number | null
+  myJoinRequest?: boolean
+}
+
+/** 学习搭子推荐条目 */
+export interface PartnerSuggestion {
+  userId: string
+  userName: string
+  verified: boolean
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
+  totalPoints: number
+  score: number
+  reasons: string[]
+}
+
+/** 学习搭子 / 收到的请求条目 */
+export interface PartnerItem {
+  reqId: string
+  userId: string
+  userName: string
+  verified: boolean
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
+  totalPoints: number
+}
+
+/** 推荐关注用户条目 */
+export interface RecommendUser {
+  userId: string
+  userName: string
+  verified: boolean
+  /** 自定义头像相对 URL（未设置 = undefined） */
+  userAvatar?: string
+  totalPoints: number
+  reason: string
+}
+
+/** 个性化推荐响应 */
+export interface RecommendFeedData {
+  posts: CommunityPost[]
+  circles: CommunityCircle[]
+  users: RecommendUser[]
+}
+
+/** 反馈问题类型 */
+export type FeedbackType = 'feature' | 'bug' | 'experience' | 'other'
+export type FeedbackStatus = 'pending' | 'resolved'
+export interface Feedback {
+  id: string
+  type: FeedbackType
+  content: string
+  contact: string
+  imageUrls: string[]
+  githubIssueUrl: string | null
+  status: FeedbackStatus
+  createdAt: number
+  userName?: string
 }

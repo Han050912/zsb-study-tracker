@@ -129,6 +129,9 @@ export const useAppStore = defineStore('app', {
         !Object.keys(data.pomodoro?.daily ?? {}).length && !data.pomodoro?.interruptions?.length &&
         !data.gamification?.pointsLog?.length
       if (isNewUser) {
+        // 注册时后端已将 user_name 初始化为登录用户名；用云端真实昵称覆盖默认占位"升本人"，
+        // 否则全量推送时 settingsReplaceStatements 会把昵称改回默认占位符
+        if (data.settings?.userName) this.settings.userName = data.settings.userName
         // 保留启动时的默认数据（内置科目/习惯/引言），推送到云端作为初始数据
         hasHydrated = true // 先置位，允许 saveAsync 推送初始数据
         await this.saveAsync()
@@ -517,10 +520,46 @@ export const useAppStore = defineStore('app', {
       this.save()
     },
 
-    addTodo(text: string) {
+    /** 新增待办；可同时指定开始时间与最晚截止时间（时间戳），到点由提醒调度器弹通知 */
+    addTodo(text: string, schedule?: { startAt?: number; dueAt?: number }) {
       const maxOrder = Math.max(0, ...this.todayTodos.map(t => t.order))
-      this.todos.push({ id: uid(), date: today(), text, done: false, order: maxOrder + 1 })
+      const todo: Todo = { id: uid(), date: today(), text, done: false, order: maxOrder + 1 }
+      if (schedule?.startAt) todo.startAt = schedule.startAt
+      if (schedule?.dueAt) todo.dueAt = schedule.dueAt
+      this.todos.push(todo)
       this.save()
+    },
+    /**
+     * 设置待办的开始 / 最晚截止时间（传 null 清除）。
+     * 时间被改动即清除对应的提醒去重标记，使新时间到点时重新提醒。
+     */
+    setTodoSchedule(id: string, schedule: { startAt?: number | null; dueAt?: number | null }) {
+      const t = this.todos.find(x => x.id === id)
+      if (!t) return
+      if ('startAt' in schedule) {
+        if (schedule.startAt) t.startAt = schedule.startAt
+        else delete t.startAt
+        delete t.startNotifiedAt
+      }
+      if ('dueAt' in schedule) {
+        if (schedule.dueAt) t.dueAt = schedule.dueAt
+        else delete t.dueAt
+        delete t.dueNotifiedAt
+      }
+      this.save()
+    },
+    /** 记录提醒已发出（供提醒调度器回调），避免下次轮询重复提醒 */
+    markTodosNotified(ids: string[], kind: 'start' | 'due') {
+      const now = Date.now()
+      let changed = false
+      for (const id of ids) {
+        const t = this.todos.find(x => x.id === id)
+        if (!t) continue
+        if (kind === 'start') t.startNotifiedAt = now
+        else t.dueNotifiedAt = now
+        changed = true
+      }
+      if (changed) this.save()
     },
     /** 切换待办完成状态；完成时记录完成时间并奖励积分，取消完成回收积分并清除完成时间 */
     toggleTodo(id: string) {

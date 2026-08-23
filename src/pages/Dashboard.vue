@@ -6,8 +6,11 @@ import { DEFAULT_QUOTES } from '../data/defaults'
 import Heatmap from '../components/Heatmap.vue'
 import ProgressRing from '../components/ProgressRing.vue'
 import Modal from '../components/Modal.vue'
+import TodoTimeFields from '../components/TodoTimeFields.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import LearningPathCard from '../components/LearningPathCard.vue'
+import { notifyPermission, requestNotifyPermission } from '../services/notify'
+import type { Todo } from '../types'
 import dayjs from 'dayjs'
 
 const store = useAppStore()
@@ -37,15 +40,83 @@ function subjectPercent(subjectId: string) {
 // ---- 快捷入口折叠 ----
 const showQuickLinks = ref(false)
 
+// ---- 待办新增：点击「添加」后弹出时间选择器（仅时:分，日期固定为当日）----
 const newTodo = ref('')
-function addTodo() {
-  if (!newTodo.value.trim()) return
-  store.addTodo(newTodo.value.trim())
+const showAddSchedule = ref(false)
+const addStart = ref('')
+const addDue = ref('')
+
+function openAddSchedule() {
+  if (!newTodo.value.trim()) return toast('请先输入待办内容')
+  addStart.value = ''
+  addDue.value = ''
+  showAddSchedule.value = true
+}
+function confirmAddTodo() {
+  const startAt = timeToTodayTs(addStart.value)
+  const dueAt = timeToTodayTs(addDue.value)
+  if (startAt && dueAt && dueAt < startAt) return toast('最晚截止时间不能早于开始时间')
+  ensureNotifyPermission(!!startAt || !!dueAt)
+  store.addTodo(newTodo.value.trim(), { startAt, dueAt })
   newTodo.value = ''
-  toast('已添加待办')
+  showAddSchedule.value = false
+  // 两个时间都没填：提示可能无法收到提醒，但仍正常添加（均为可选项）
+  toast(startAt || dueAt ? '已添加待办' : '未设定时间，可能会无法收到待办通知')
 }
 
-const goalPercent = computed(() => Math.min(100, (store.todayMinutes / store.settings.dailyGoalMinutes) * 100))
+// ---- 修改既有待办的开始 / 最晚截止时间（同样仅限当日，不允许跨日）----
+const scheduleEditId = ref('')
+const editStart = ref('')
+const editDue = ref('')
+
+function openSchedule(t: Todo) {
+  scheduleEditId.value = t.id
+  editStart.value = t.startAt ? dayjs(t.startAt).format('HH:mm') : ''
+  editDue.value = t.dueAt ? dayjs(t.dueAt).format('HH:mm') : ''
+}
+function saveSchedule() {
+  const startAt = timeToTodayTs(editStart.value)
+  const dueAt = timeToTodayTs(editDue.value)
+  if (startAt && dueAt && dueAt < startAt) return toast('最晚截止时间不能早于开始时间')
+  ensureNotifyPermission(!!startAt || !!dueAt)
+  store.setTodoSchedule(scheduleEditId.value, { startAt: startAt ?? null, dueAt: dueAt ?? null })
+  scheduleEditId.value = ''
+  toast('已更新待办时间')
+}
+
+/** "HH:mm" 字符串 → 当日时间戳（秒/毫秒归零）；空值/非法值返回 undefined。日期强制为今日，不可跨日 */
+function timeToTodayTs(v: string): number | undefined {
+  if (!v) return undefined
+  const [h, m] = v.split(':').map(Number)
+  if (Number.isNaN(h) || Number.isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return undefined
+  return dayjs().hour(h).minute(m).second(0).millisecond(0).valueOf()
+}
+
+/** 首次为待办设定时间时申请通知权限，确保到点能弹出系统通知 */
+async function ensureNotifyPermission(scheduled: boolean) {
+  if (!scheduled || notifyPermission() !== 'default') return
+  if (await requestNotifyPermission() === 'denied') toast('浏览器已拒绝通知权限，到点将改用页面内提示')
+}
+
+// 每 30s 推进一次「当前时间」，让截止徽标能自动切换为逾期样式
+const now = ref(Date.now())
+const nowTimer = setInterval(() => { now.value = Date.now() }, 30_000)
+onUnmounted(() => clearInterval(nowTimer))
+
+/** 待办时间展示：当天只显示 HH:mm，跨天带上日期 */
+function fmtTodoTime(ts: number) {
+  const d = dayjs(ts)
+  return d.isSame(dayjs(), 'day') ? d.format('HH:mm') : d.format('MM-DD HH:mm')
+}
+/** 已过最晚截止时间且未完成 */
+function isOverdue(t: Todo) {
+  return !!t.dueAt && !t.done && t.dueAt <= now.value
+}
+
+const goalPercent = computed(() => {
+  const goal = store.settings.dailyGoalMinutes
+  return goal > 0 ? Math.min(100, (store.todayMinutes / goal) * 100) : 0
+})
 
 // ---- 分享打卡到社区广场 ----
 const showComposer = ref(false)
@@ -63,9 +134,9 @@ function openCheckinShare() {
     .map(([sid, min]) => `${store.subjectMap[sid]?.name || '未知科目'} ${formatMinutes(min)}`)
     .join('、')
   composerContent.value = [
-    '💪 今日学习打卡',
-    subjectParts ? `📚 ${subjectParts}` : '',
-    `⏱️ 共 ${formatMinutes(store.todayMinutes)} · 🍅 ${store.todayPomodoro.count} 个番茄钟 · 🔥 连续 ${store.gamification.streak} 天`
+    '今日学习打卡',
+    subjectParts ? `${subjectParts}` : '',
+    `共 ${formatMinutes(store.todayMinutes)} · ${store.todayPomodoro.count} 个番茄钟 · 连续 ${store.gamification.streak} 天`
   ].filter(Boolean).join('\n')
   showComposer.value = true
 }
@@ -167,13 +238,13 @@ onUnmounted(() => {
     <!-- 头部 -->
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="page-title">你好，{{ store.settings.userName }} 👋</h1>
-        <p class="text-xs text-slate-400 mt-0.5">{{ today() }} · 连续学习 🔥{{ store.gamification.streak }} 天</p>
+        <h1 class="page-title">你好，{{ store.settings.userName }} </h1>
+        <p class="text-xs text-slate-400 mt-0.5">{{ today() }} · 连续学习 {{ store.gamification.streak }} 天</p>
       </div>
       <div class="text-right">
         <div class="text-xs text-slate-400">{{ store.level.name }}学者</div>
         <div class="text-sm font-bold text-primary-500">{{ store.gamification.points }} 积分</div>
-        <button class="btn-ghost !text-xs !px-2 !py-1 mt-1" @click="openCheckinShare">📣 分享打卡</button>
+        <button class="btn-ghost !text-xs !px-2 !py-1 mt-1" @click="openCheckinShare">分享打卡</button>
       </div>
     </div>
 
@@ -185,7 +256,7 @@ onUnmounted(() => {
           <template v-if="store.examCountdown > 0">
             <span class="text-4xl font-black">{{ store.examCountdown }}</span><span class="ml-1">天</span>
           </template>
-          <div v-else class="text-2xl font-black">就是今天，加油！💪</div>
+          <div v-else class="text-2xl font-black">就是今天，加油！</div>
         </div>
         <RouterLink v-else to="/settings" class="text-sm underline opacity-90 mt-2 inline-block">去设置考试日期 →</RouterLink>
         <div class="text-xs opacity-80 mt-2">{{ store.examCountdown === 0 ? '沉着应考，你付出的每一分努力都算数！' : '坚持到底，就是胜利！' }}</div>
@@ -228,8 +299,8 @@ onUnmounted(() => {
       <div class="card">
         <div class="section-title">📋 今日待办</div>
         <div class="flex gap-2 mb-3">
-          <input v-model="newTodo" class="input" placeholder="添加今日学习任务，回车确认" @keyup.enter="addTodo" />
-          <button class="btn-primary shrink-0" @click="addTodo">添加</button>
+          <input v-model="newTodo" class="input" placeholder="添加今日学习任务，回车确认" @keyup.enter="openAddSchedule" />
+          <button class="btn-primary shrink-0" @click="openAddSchedule">添加</button>
         </div>
         <div v-if="!store.todayTodos.length" class="text-xs text-slate-400 py-4 text-center">暂无待办，添加一个吧～</div>
         <div ref="listRef" class="space-y-1.5">
@@ -250,10 +321,39 @@ onUnmounted(() => {
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
             </span>
             <input type="checkbox" :checked="t.done" class="w-4 h-4 accent-primary-500" @change="store.toggleTodo(t.id)" />
-            <span class="flex-1 text-sm" :class="t.done ? 'line-through text-slate-400' : ''">
-              {{ t.text }}
-              <span v-if="t.done && t.completedAt" class="ml-1 inline-block text-[10px] text-emerald-500">完成于 {{ fmtCompletedAt(t.completedAt) }}</span>
-            </span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-sm leading-5 transition-colors duration-200"
+                  :class="t.done ? 'line-through text-slate-400 dark:text-slate-500 decoration-slate-300 dark:decoration-slate-600' : 'text-slate-700 dark:text-slate-200'">
+                  {{ t.text }}
+                </span>
+                <span v-if="t.done && t.completedAt"
+                  class="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-px rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300 tabular-nums">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                  完成于 {{ fmtCompletedAt(t.completedAt) }}
+                </span>
+              </div>
+              <div v-if="t.startAt || t.dueAt" class="flex flex-wrap items-center gap-1.5 mt-1">
+                <button v-if="t.startAt" type="button"
+                  class="inline-flex items-center gap-1 text-[10px] font-medium pl-1.5 pr-2 py-0.5 rounded-full bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-300 tabular-nums transition-all duration-150 hover:bg-sky-100 hover:shadow-sm hover:shadow-sky-100 dark:hover:bg-sky-900/50 active:scale-95"
+                  title="点击修改时间" @click="openSchedule(t)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                  {{ fmtTodoTime(t.startAt) }} 开始
+                </button>
+                <button v-if="t.dueAt" type="button"
+                  class="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-2 py-0.5 rounded-full tabular-nums transition-all duration-150 active:scale-95"
+                  :class="isOverdue(t)
+                    ? 'font-semibold bg-rose-50 text-rose-600 ring-1 ring-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:ring-rose-800 hover:bg-rose-100 hover:shadow-sm hover:shadow-rose-100 dark:hover:bg-rose-900/50'
+                    : 'font-medium bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300 hover:bg-amber-100 hover:shadow-sm hover:shadow-amber-100 dark:hover:bg-amber-900/50'"
+                  title="点击修改时间" @click="openSchedule(t)">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>
+                  最晚 {{ fmtTodoTime(t.dueAt) }}
+                  <span v-if="isOverdue(t)" class="inline-flex items-center gap-1">
+                    <span class="w-1 h-1 rounded-full bg-rose-500 animate-pulse"></span>已逾期未完成
+                  </span>
+                </button>
+              </div>
+            </div>
             <button class="opacity-0 group-hover:opacity-100 text-xs text-red-400 shrink-0" title="删除" @click="store.deleteTodo(t.id)">×</button>
           </div>
         </div>
@@ -274,7 +374,7 @@ onUnmounted(() => {
 
     <!-- 热力图 -->
     <div class="card">
-      <div class="section-title">🔥 学习热力图（近 {{ 20 }} 周）</div>
+      <div class="section-title">学习热力图（近 {{ 20 }} 周）</div>
       <Heatmap :data="store.minutesByDate" @select="d => heatDate = d" />
       <p class="text-[10px] text-slate-400 mt-2">点击日期格子可查看当日学习总时长明细</p>
     </div>
@@ -306,6 +406,25 @@ onUnmounted(() => {
     </div>
 
     <!-- 热力图当日学习明细弹窗 -->
+    <!-- 新增待办：开始 / 最晚截止时间选择器（仅时:分，日期固定为当日）-->
+    <Modal title="设定待办时间" :show="showAddSchedule" @close="showAddSchedule = false">
+      <TodoTimeFields v-model:start="addStart" v-model:due="addDue"
+        hint="时间均为「当日」的时刻，待办须在今日完成；两项均为选填。" />
+      <template #footer>
+        <button class="btn-ghost" @click="showAddSchedule = false">取消</button>
+        <button class="btn-primary" @click="confirmAddTodo">添加</button>
+      </template>
+    </Modal>
+
+    <!-- 修改既有待办的开始 / 最晚截止时间（同样仅限当日，不允许跨日）-->
+    <Modal title="待办时间设置" :show="!!scheduleEditId" @close="scheduleEditId = ''">
+      <TodoTimeFields v-model:start="editStart" v-model:due="editDue" />
+      <template #footer>
+        <button class="btn-ghost" @click="scheduleEditId = ''">取消</button>
+        <button class="btn-primary" @click="saveSchedule">保存</button>
+      </template>
+    </Modal>
+
     <Modal :title="`${heatDate} 学习明细`" :show="!!heatDate" @close="heatDate = ''">
       <div class="space-y-3">
         <div class="flex items-center justify-between bg-primary-50 dark:bg-primary-900/30 rounded-xl px-4 py-3">

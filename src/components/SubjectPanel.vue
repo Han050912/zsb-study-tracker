@@ -8,6 +8,7 @@ import { problemTypesFor } from '../data/problemTypes'
 import StarRating from './StarRating.vue'
 import Modal from './Modal.vue'
 import PostComposer from './community/PostComposer.vue'
+import EnhancedRadarChart from './EnhancedRadarChart.vue'
 import type { Note, TopicImportance } from '../types'
 
 const props = defineProps<{ subjectId: string }>()
@@ -61,13 +62,62 @@ function addRecord() {
 
 // ---- 刷题（题型模板按科目适配：数学/英语/通用，见 data/problemTypes.ts） ----
 const typeDefs = computed(() => problemTypesFor(props.subjectId))
-const pTotal = ref(20)
-const pCorrect = ref(15)
 const pTypes = ref<Record<string, number>>({})
-function addProblems() {
-  if (pTotal.value <= 0) return
-  store.addProblemSession({ subjectId: props.subjectId, date: today(), total: pTotal.value, correct: Math.min(pCorrect.value, pTotal.value), types: { ...pTypes.value } })
+/** 单题型净化后的非负整数 */
+function numType(key: string) {
+  return Math.max(0, Math.floor(Number(pTypes.value[key]) || 0))
+}
+/** 各题型净化后的总和 */
+const pTypesSum = computed(() => typeDefs.value.reduce((s, t) => s + numType(t.key), 0))
+/** 题型有值时锁定「做题数量」为只读 */
+const pTotalLocked = computed(() => pTypesSum.value > 0)
+/** 题型分布明细（仅 > 0 的题型） */
+const typeBreakdown = computed(() => typeDefs.value
+  .map(t => ({ label: t.label, count: numType(t.key) }))
+  .filter(x => x.count > 0))
+
+// ---- 刷题确认弹窗 ----
+const showConfirm = ref(false)
+const confirmTotal = ref(20)
+const confirmCorrect = ref(15)
+const correctInvalid = ref(false)
+
+function openConfirm() {
+  const total = pTotalLocked.value ? pTypesSum.value : confirmTotal.value
+  if (total <= 0) { toast('请填写做题数量或各题型'); return }
+  confirmCorrect.value = Math.min(confirmCorrect.value, total)
+  showConfirm.value = true
+}
+/** 弹窗做题数量手动输入（仅题型全空时可用） */
+function onTotalInput(e: Event) {
+  const v = Math.max(0, Math.floor(Number((e.target as HTMLInputElement).value) || 0))
+  confirmTotal.value = v
+  if (confirmCorrect.value > v) confirmCorrect.value = v
+}
+/** 弹窗答对数量输入：超界截断 + 变红摇晃 */
+function onCorrectInput(e: Event) {
+  const total = pTotalLocked.value ? pTypesSum.value : confirmTotal.value
+  const v = Math.max(0, Math.floor(Number((e.target as HTMLInputElement).value) || 0))
+  if (v > total) {
+    confirmCorrect.value = total
+    correctInvalid.value = true
+    window.setTimeout(() => { correctInvalid.value = false }, 500)
+  } else {
+    confirmCorrect.value = v
+  }
+}
+function confirmSave() {
+  const total = pTotalLocked.value ? pTypesSum.value : Math.max(0, Math.floor(Number(confirmTotal.value) || 0))
+  if (total <= 0) { toast('请填写做题数量或各题型'); return }
+  const correct = Math.min(Math.max(0, Math.floor(Number(confirmCorrect.value) || 0)), total)
+  const types: Record<string, number> = {}
+  for (const t of typeDefs.value) {
+    const v = numType(t.key)
+    if (v > 0) types[t.key] = v
+  }
+  store.addProblemSession({ subjectId: props.subjectId, date: today(), total, correct, types })
   pTypes.value = {}
+  showConfirm.value = false
   toast('刷题记录已保存')
 }
 const accuracy = computed(() => {
@@ -99,31 +149,23 @@ function openProblemShare() {
   showShareComposer.value = true
 }
 
-// ---- 掌握度雷达 ----
-const radarTopics = computed(() => {
+// ---- 掌握度雷达（支持超过8个知识点，按章节分组） ----
+const radarChapters = computed(() => {
   const s = subject.value
   if (!s) return []
-  return s.chapters.flatMap(c => c.topics).slice(0, 8)
+  
+  // 按章节组织数据
+  return s.chapters.map(ch => ({
+    chapterId: ch.id,
+    chapterName: ch.name,
+    topics: ch.topics.map(topic => ({
+      name: topic,
+      value: s.mastery[topic] || 0,
+      max: 5,
+      importance: s.topicImportance[topic] || 'normal'
+    }))
+  }))
 })
-/** 掌握度数值快照：computed 读取每个 topic 的掌握度，属性变更时重算并产出新数组（配合 useChart 浅监听触发重绘） */
-const radarValues = computed(() => radarTopics.value.map(t => subject.value?.mastery[t] || 0))
-const { el: radarEl } = useChart(() => ({
-  radar: {
-    indicator: radarTopics.value.map(t => ({ name: t, max: 5 })),
-    radius: '65%',
-    axisName: { color: chartTextColor(), fontSize: 10 }
-  },
-  series: [{
-    type: 'radar',
-    data: [{
-      value: radarValues.value,
-      name: '掌握度',
-      areaStyle: { color: (subject.value?.color || '#3b82f6') + '44' },
-      lineStyle: { color: subject.value?.color || '#3b82f6' },
-      itemStyle: { color: subject.value?.color || '#3b82f6' }
-    }]
-  }]
-}), [radarTopics, radarValues])
 
 // ---- 真题 ----
 const showExamModal = ref(false)
@@ -139,7 +181,7 @@ const { el: examTrendEl } = useChart(() => ({
   grid: { left: 40, right: 16, top: 20, bottom: 24 },
   xAxis: { type: 'category', data: subjectExams.value.slice().reverse().map(e => e.date), axisLabel: { color: chartTextColor(), fontSize: 10 } },
   yAxis: { type: 'value', axisLabel: { color: chartTextColor() } },
-  series: [{ type: 'line', smooth: true, data: subjectExams.value.slice().reverse().map(e => Math.round(e.score / e.totalScore * 100)), name: '得分率%', lineStyle: { color: subject.value?.color }, itemStyle: { color: subject.value?.color }, areaStyle: { opacity: 0.15 } }],
+  series: [{ type: 'line', smooth: true, data: subjectExams.value.slice().reverse().map(e => e.totalScore > 0 ? Math.round(e.score / e.totalScore * 100) : 0), name: '得分率%', lineStyle: { color: subject.value?.color }, itemStyle: { color: subject.value?.color }, areaStyle: { opacity: 0.15 } }],
   tooltip: { trigger: 'axis' }
 }), [subjectExams])
 
@@ -238,6 +280,7 @@ onUnmounted(() => {
   window.removeEventListener('dragend', resetDragState)
   window.removeEventListener('drop', resetDragState)
   window.removeEventListener('dragleave', onWindowDragLeave)
+  if (timerHandle) clearInterval(timerHandle)
 })
 
 // ---- 章节管理 ----
@@ -348,8 +391,8 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
     <!-- Tab -->
     <div class="flex gap-1 overflow-x-auto bg-slate-100 dark:bg-slate-800 rounded-xl p-1">
       <button v-for="t in [
-        { k: 'chapters', l: '📚 章节掌握' }, { k: 'records', l: '⏱ 学习记录' },
-        { k: 'problems', l: '✏️ 刷题' }, { k: 'exams', l: '📄 真题' }, { k: 'notes', l: '📝 笔记' }
+        { k: 'chapters', l: ' 章节掌握' }, { k: 'records', l: ' 学习记录' },
+        { k: 'problems', l: ' 刷题' }, { k: 'exams', l: ' 真题' }, { k: 'notes', l: ' 笔记' }
       ]" :key="t.k" class="flex-1 whitespace-nowrap text-xs px-3 py-2 rounded-lg font-medium transition-colors"
         :class="tab === t.k ? 'bg-white dark:bg-slate-700 shadow-sm' : 'text-slate-500'"
         @click="tab = t.k as any">{{ t.l }}</button>
@@ -357,9 +400,11 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
 
     <!-- 章节树 + 掌握度 -->
     <div v-show="tab === 'chapters'" class="space-y-3">
-      <div v-if="radarTopics.length" class="card">
-        <div class="section-title">🎯 掌握度雷达（薄弱环节一目了然）</div>
-        <div ref="radarEl" class="h-64"></div>
+      <div v-if="radarChapters.length" class="card">
+        <EnhancedRadarChart 
+          :chapters="radarChapters" 
+          :color="subject?.color"
+          title="掌握度雷达（薄弱环节一目了然）" />
       </div>
       <div class="card">
         <div class="section-title">章节知识点（点击星星评估掌握度，双击知识点可编辑内容与重要程度）</div>
@@ -385,7 +430,7 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
               </span>
               <span class="flex items-center gap-2 shrink-0">
                 <span class="text-primary-500 text-xs hover:underline cursor-pointer" title="去社区讨论本章节知识点"
-                  @click.stop="openTopicDiscussion(ch.name)">💬 讨论</span>
+                  @click.stop="openTopicDiscussion(ch.name)">讨论</span>
                 <span class="text-red-400 text-xs hover:underline" @click.stop="removeChapter(ch.id)">删除</span>
                 <span class="text-slate-400 text-xs">{{ expanded[ch.id] ? '▲' : '▼' }}</span>
               </span>
@@ -421,7 +466,7 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
     <!-- 学习记录 -->
     <div v-show="tab === 'records'" class="space-y-3">
       <div class="card space-y-3">
-        <div class="section-title">⏱ 记录本次学习</div>
+        <div class="section-title">记录本次学习</div>
         <!-- 计时器 -->
         <div class="flex items-center justify-center gap-3 py-2">
           <span class="text-3xl font-mono font-bold tabular-nums" :class="timerRunning ? 'text-emerald-500' : ''">{{ fmtTimer(timerSeconds) }}</span>
@@ -465,30 +510,27 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
     <!-- 刷题 -->
     <div v-show="tab === 'problems'" class="space-y-3">
       <div class="card space-y-3">
-        <div class="section-title">✏️ 记录本次刷题</div>
-        <div class="grid grid-cols-2 gap-3">
-          <div><label class="label">做题数量</label><input v-model.number="pTotal" type="number" min="0" class="input" /></div>
-          <div><label class="label">答对数量</label><input v-model.number="pCorrect" type="number" min="0" class="input" /></div>
-        </div>
+        <div class="section-title">记录本次刷题</div>
+        <p class="text-[10px] text-slate-400">填写本次各题型做的题数（没做的题型可留空），点击「保存」后在弹窗中确认做题总数与答对数量</p>
         <div class="grid gap-2" :class="typeDefs.length > 4 ? 'grid-cols-5' : 'grid-cols-4'">
           <div v-for="t in typeDefs" :key="t.key">
             <label class="label">{{ t.label }}</label>
             <input v-model.number="pTypes[t.key]" type="number" min="0" class="input" />
           </div>
         </div>
-        <button class="btn-primary w-full" @click="addProblems">保存刷题记录</button>
+        <button class="btn-primary w-full" @click="openConfirm">保存刷题记录</button>
       </div>
       <div class="card">
         <div class="flex items-center justify-between mb-2">
           <div class="section-title !mb-0">刷题历史</div>
-          <button class="btn-ghost !py-1 !text-xs" @click="openProblemShare">📣 分享到广场</button>
+          <button class="btn-ghost !py-1 !text-xs" @click="openProblemShare">分享到广场</button>
         </div>
         <div class="space-y-1.5 max-h-72 overflow-y-auto">
           <div v-for="p in subjectProblems" :key="p.id" class="flex items-center gap-2 text-sm group">
             <span class="text-xs text-slate-400 w-20">{{ p.date }}</span>
             <span class="flex-1">{{ p.correct }}/{{ p.total }} 题</span>
-            <span class="text-xs font-semibold" :class="p.correct / p.total >= 0.8 ? 'text-emerald-500' : p.correct / p.total >= 0.6 ? 'text-amber-500' : 'text-red-400'">
-              {{ Math.round(p.correct / p.total * 100) }}%
+            <span class="text-xs font-semibold" :class="p.total > 0 && p.correct / p.total >= 0.8 ? 'text-emerald-500' : p.total > 0 && p.correct / p.total >= 0.6 ? 'text-amber-500' : 'text-red-400'">
+              {{ p.total > 0 ? Math.round(p.correct / p.total * 100) : 0 }}%
             </span>
             <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" @click="store.deleteProblemSession(p.id)">删除</button>
           </div>
@@ -500,7 +542,7 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
     <div v-show="tab === 'exams'" class="space-y-3">
       <div class="card">
         <div class="flex items-center justify-between mb-2">
-          <div class="section-title !mb-0">📄 真题成绩趋势（得分率%）</div>
+          <div class="section-title !mb-0">真题成绩趋势（得分率%）</div>
           <button class="btn-primary !py-1.5" @click="showExamModal = true">+ 记录真题</button>
         </div>
         <div v-if="subjectExams.length" ref="examTrendEl" class="h-52"></div>
@@ -525,7 +567,7 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
       @drop.prevent="onNoteDrop">
       <div class="card transition-shadow" :class="noteDragging ? 'ring-2 ring-primary-400 border-dashed' : ''">
         <div class="flex gap-2 mb-3">
-          <input v-model="noteSearch" class="input" placeholder="🔍 全文检索笔记（标题/内容/标签）" />
+          <input v-model="noteSearch" class="input" placeholder="全文检索笔记（标题/内容/标签）" />
           <button class="btn-ghost shrink-0" title="从本地选择文件上传为笔记" @click="noteFileInput?.click()">📁 上传文件</button>
           <button class="btn-primary shrink-0" @click="openNote()">+ 新建</button>
           <input ref="noteFileInput" type="file" multiple accept=".md,.markdown,.txt,text/markdown,text/plain" class="hidden" @change="onNoteFileChange" />
@@ -583,9 +625,52 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
       </template>
     </Modal>
 
+    <!-- 刷题确认弹窗 -->
+    <Modal title="确认刷题记录" :show="showConfirm" @close="showConfirm = false">
+      <div class="space-y-3">
+        <div>
+          <label class="label">做题数量</label>
+          <input :value="pTotalLocked ? pTypesSum : confirmTotal" :disabled="pTotalLocked" type="number" min="0"
+            class="input disabled:opacity-60 disabled:cursor-not-allowed" @input="onTotalInput" />
+          <p v-if="pTotalLocked" class="text-[10px] text-slate-400 mt-1">已按各题型总和自动计算</p>
+        </div>
+        <div>
+          <label class="label">答对数量</label>
+          <input :value="confirmCorrect" type="number" min="0"
+            :class="['input', correctInvalid ? '!border-red-500 shake' : '']" @input="onCorrectInput" />
+          <p class="text-[10px] mt-1" :class="correctInvalid ? 'text-red-500' : 'text-slate-400'">答对数量不能超过做题数量</p>
+        </div>
+        <div>
+          <label class="label">题型分布</label>
+          <div v-if="typeBreakdown.length" class="flex flex-wrap gap-1.5">
+            <span v-for="t in typeBreakdown" :key="t.label"
+              class="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+              {{ t.label }} {{ t.count }}
+            </span>
+          </div>
+          <p v-else class="text-[10px] text-slate-400">未按题型拆分，直接填写上方做题数量即可</p>
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn-ghost" @click="showConfirm = false">取消</button>
+        <button class="btn-primary" @click="confirmSave">确认保存</button>
+      </template>
+    </Modal>
+
     <!-- 刷题成果分享 -->
     <PostComposer v-model:show="showShareComposer" type="checkin" ref-type="record"
       :preset-content="shareContent" :preset-tags="shareTags" />
 
   </div>
 </template>
+
+<style scoped>
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+.shake { animation: shake 0.35s ease; }
+</style>

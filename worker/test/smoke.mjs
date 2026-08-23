@@ -40,6 +40,9 @@ const uniq = Date.now().toString(36)
 const userA = { username: `smoke_a_${uniq}`, password: 'password123' }
 const userB = { username: `smoke_b_${uniq}`, password: 'password123' }
 
+// 测试用户积分基线：黄金档（≥1500）无发帖冷却，避免快速连发帖触发「分级发帖冷却」429
+const POINTS_BASE = 1500
+
 // 构建一份覆盖全部实体的 AppState 快照
 function sampleState() {
   return {
@@ -69,7 +72,7 @@ function sampleState() {
     }],
     materials: [{ id: 'mt1', title: '高数讲义', type: 'doc', subjectId: 'math', priority: '高', author: '张', totalPages: 300, readPages: 50, notes: 'n', createdAt: 1 }],
     gamification: {
-      points: 100, streak: 5, lastCheckin: '2026-08-04', achievements: ['first_checkin'],
+      points: POINTS_BASE, streak: 5, lastCheckin: '2026-08-04', achievements: ['first_checkin'],
       pointsLog: [{ date: '2026-08-04', points: 10, reason: '每日打卡', refId: 'r1' }]
     },
     pomodoro: {
@@ -103,8 +106,8 @@ async function main() {
   const regA = await api('/api/auth/register', { method: 'POST', body: userA })
   check('注册 A 返回 201 + token', regA.status === 201 && !!regA.data?.token, JSON.stringify(regA.data))
   const adminUserId = regA.data?.user?.id
-  check('注册即初始化 settings（GET /api/settings 有默认值）',
-    (await api('/api/settings', { token: regA.data.token })).data?.userName === '升本人')
+  check('注册即初始化 settings（昵称取登录用户名）',
+    (await api('/api/settings', { token: regA.data.token })).data?.userName === userA.username)
 
   const regDup = await api('/api/auth/register', { method: 'POST', body: userA })
   check('重复注册返回 409', regDup.status === 409, `实际 ${regDup.status}`)
@@ -195,7 +198,7 @@ async function main() {
   check('habits.checkins + bad 还原', d.habits?.find(h => h.id === 'h5')?.checkins?.['2026-08-04'] === 1 &&
     d.habits.find(h => h.id === 'h5').bad === true)
   check('materials 可选字段还原', d.materials?.[0]?.fileName === undefined && d.materials[0].totalPages === 300)
-  check('gamification + pointsLog 还原', d.gamification?.points === 100 && d.gamification?.pointsLog?.[0]?.refId === 'r1' &&
+  check('gamification + pointsLog 还原', d.gamification?.points === POINTS_BASE && d.gamification?.pointsLog?.[0]?.refId === 'r1' &&
     d.gamification?.achievements?.[0] === 'first_checkin')
   check('pomodoro 还原', d.pomodoro?.daily?.['2026-08-04']?.count === 3 && d.pomodoro?.interruptions?.[0]?.reason === '手机')
   check('todos 还原（done/order/completedAt）', d.todos?.[0]?.done === true && d.todos[0].order === 1 && d.todos[0].completedAt === 1754300000000)
@@ -214,7 +217,7 @@ async function main() {
   check('B 用户拉取不到 A 的笔记', (pullB.data?.notes ?? []).length === 0)
   check('B 用户游戏化为默认值', pullB.data?.gamification?.points === 0)
   const bSettings = await api('/api/settings', { token: tokenB })
-  check('B 用户设置为默认值（不受 A 影响）', bSettings.data?.userName === '升本人')
+  check('B 用户昵称取注册用户名（不受 A 影响）', bSettings.data?.userName === userB.username)
 
   // 多租户 id 复用：B 推送与 A 完全相同 id 的快照应成功（复合主键 user_id+id）
   const pushB = await api('/api/data/sync', { method: 'POST', token: tokenB, body: sampleState() })
@@ -253,9 +256,9 @@ async function main() {
   check('未配置墨墨 Token 返回 400 提示', mm.status === 400 && (mm.data?.message || '').includes('墨墨'), JSON.stringify(mm.data))
 
   // ---- 社区广场 ----
-  // 前置：A/B 均已推送 sampleState（gamification.points 各为 100）
+  // 前置：A/B 均已推送 sampleState（gamification.points 各为 POINTS_BASE 黄金档，绕过发帖冷却）
   console.log('[社区广场]')
-  check('未认证访问社区接口返回 401', (await api('/api/community/posts')).status === 401)
+  check('未认证可访问公开帖子流（200）', (await api('/api/community/posts')).status === 200)
 
   const post1 = await api('/api/community/posts', {
     method: 'POST', token: tokenA,
@@ -265,9 +268,9 @@ async function main() {
   const postId = post1.data?.id
   // 积分经 /api/data/sync 拉取验证（/api/gamification 有 60s 边缘缓存，写入后短时间会读到旧值）
   const pointsOf = async (token) => (await api('/api/data/sync', { token })).data?.gamification?.points
-  check('每日首帖 +5 积分', (await pointsOf(tokenA)) === 105)
+  check('每日首帖 +5 积分', (await pointsOf(tokenA)) === POINTS_BASE + 5)
   await api('/api/community/posts', { method: 'POST', token: tokenA, body: { type: 'share', content: '当日第二帖', tags: [] } })
-  check('当日第二帖不重复加分', (await pointsOf(tokenA)) === 105)
+  check('当日第二帖不重复加分', (await pointsOf(tokenA)) === POINTS_BASE + 5)
   const emptyPost = await api('/api/community/posts', { method: 'POST', token: tokenA, body: { type: 'share', content: '  ', tags: [] } })
   check('空内容发帖返回 400', emptyPost.status === 400, `实际 ${emptyPost.status}`)
 
@@ -282,16 +285,16 @@ async function main() {
 
   const like = await api('/api/community/likes', { method: 'POST', token: tokenB, body: { targetType: 'post', targetId: postId } })
   check('B 点赞 A 的帖子', like.data?.liked === true)
-  check('被赞 +1 积分', (await pointsOf(tokenA)) === 106)
+  check('被赞 +1 积分', (await pointsOf(tokenA)) === POINTS_BASE + 6)
   const unlike = await api('/api/community/likes', { method: 'POST', token: tokenB, body: { targetType: 'post', targetId: postId } })
   check('再次点赞为取消（toggle）', unlike.data?.liked === false)
-  check('取消点赞回收被赞积分', (await pointsOf(tokenA)) === 105)
+  check('取消点赞回收被赞积分', (await pointsOf(tokenA)) === POINTS_BASE + 5)
   await api('/api/community/likes', { method: 'POST', token: tokenB, body: { targetType: 'post', targetId: postId } })
 
   const c1 = await api(`/api/community/posts/${postId}/comments`, { method: 'POST', token: tokenB, body: { content: '一起加油！' } })
   check('B 评论成功返回 201', c1.status === 201 && !!c1.data?.id, JSON.stringify(c1.data))
   check('评论者 +1 / 作者 +2 积分',
-    (await pointsOf(tokenB)) === 101 && (await pointsOf(tokenA)) === 108)
+    (await pointsOf(tokenB)) === POINTS_BASE + 1 && (await pointsOf(tokenA)) === POINTS_BASE + 8)
   const c2 = await api(`/api/community/posts/${postId}/comments`, { method: 'POST', token: tokenA, body: { content: '@测试员B 谢谢！', parentId: c1.data.id } })
   check('二级回复成功', c2.status === 201 && c2.data?.parentId === c1.data.id)
   const c3 = await api(`/api/community/posts/${postId}/comments`, { method: 'POST', token: tokenB, body: { content: '三级', parentId: c2.data.id } })
@@ -314,10 +317,10 @@ async function main() {
   const delComment = await api(`/api/community/comments/${c1.data.id}`, { method: 'DELETE', token: tokenB })
   check('B 删除自己的评论成功', delComment.status === 200)
   check('删除评论后帖子评论数回退', (await api(`/api/community/posts/${postId}`, { token: tokenA })).data?.post?.commentsCount === 0)
-  // A 轨迹：发帖105 → 再被赞106 → 收到评论+2=108 → 自己回复+1=109 → 回收c1(+2)+c2(+1)=106
+  // A 轨迹：基线+首帖5 → 被赞+1 → 收到评论+2 → 自己回复+1 → 删 c1(收到评论2)+c2(回复1) 回收后 = POINTS_BASE+6
   const [ptsB, ptsA] = [await pointsOf(tokenB), await pointsOf(tokenA)]
   check('删除评论回收双方积分（B -1 评论 / A -2 收到评论 -1 回复）',
-    ptsB === 100 && ptsA === 106, `实际 B=${ptsB} A=${ptsA}`)
+    ptsB === POINTS_BASE && ptsA === POINTS_BASE + 6, `实际 B=${ptsB} A=${ptsA}`)
   const delPost = await api(`/api/community/posts/${postId}`, { method: 'DELETE', token: tokenA })
   check('A 删除自己的帖子成功', delPost.status === 200)
   check('删帖后动态流不再包含', !(await api('/api/community/posts', { token: tokenB })).data?.posts?.some(p => p.id === postId))
@@ -380,8 +383,8 @@ async function main() {
   check('非楼主采纳返回 403', (await api(`/api/community/posts/${qId}/accept`, { method: 'PUT', token: tokenA, body: { commentId: ansCId } })).status === 403)
   const accept1 = await api(`/api/community/posts/${qId}/accept`, { method: 'PUT', token: tokenB, body: { commentId: ansCId } })
   check('楼主采纳最佳答案（自动已解答）', accept1.data?.acceptedAnswerId === ansCId && accept1.data?.isResolved === true, JSON.stringify(accept1.data))
-  // 积分轨迹：A 105 → 评论+1=106 → 被采纳+10=116；B qPost首帖+5=105 → 收到评论+2=107 → 提问被解答+3=110
-  check('采纳积分：回答者 +10 / 提问者 +3', (await pointsOf(tokenA)) === 116 && (await pointsOf(tokenB)) === 110,
+  // 积分轨迹：A 基线+5 → 评论+1 → 被采纳+10 = POINTS_BASE+16；B qPost首帖+5 → 收到评论+2 → 提问被解答+3 = POINTS_BASE+10
+  check('采纳积分：回答者 +10 / 提问者 +3', (await pointsOf(tokenA)) === POINTS_BASE + 16 && (await pointsOf(tokenB)) === POINTS_BASE + 10,
     `实际 A=${await pointsOf(tokenA)} B=${await pointsOf(tokenB)}`)
   check('被采纳者收到 achievement 通知', (await api('/api/community/notifications', { token: tokenA })).data?.items?.some(n => n.type === 'achievement' && (n.content || '').includes('采纳')))
   check('已采纳时手动标记解决被拒绝（400）', (await api(`/api/community/posts/${qId}/resolve`, { method: 'PUT', token: tokenB })).status === 400)
@@ -390,11 +393,11 @@ async function main() {
     detailAccepted.data?.post?.acceptedAnswerId === ansCId && detailAccepted.data?.comments?.find(c => c.id === ansCId)?.isAccepted === true)
   const accept2 = await api(`/api/community/posts/${qId}/accept`, { method: 'PUT', token: tokenB, body: { commentId: ansCId } })
   check('重复采纳同一评论为取消采纳（回退待解答）', accept2.data?.acceptedAnswerId === null && accept2.data?.isResolved === false)
-  check('取消采纳回收双方积分', (await pointsOf(tokenA)) === 106 && (await pointsOf(tokenB)) === 107)
+  check('取消采纳回收双方积分', (await pointsOf(tokenA)) === POINTS_BASE + 6 && (await pointsOf(tokenB)) === POINTS_BASE + 7)
   check('取消采纳撤回 achievement 通知',
     !(await api('/api/community/notifications', { token: tokenA })).data?.items?.some(n => n.type === 'achievement' && n.commentId === ansCId))
   await api(`/api/community/posts/${qId}/accept`, { method: 'PUT', token: tokenB, body: { commentId: ansCId } })
-  check('重新采纳积分恢复', (await pointsOf(tokenA)) === 116 && (await pointsOf(tokenB)) === 110)
+  check('重新采纳积分恢复', (await pointsOf(tokenA)) === POINTS_BASE + 16 && (await pointsOf(tokenB)) === POINTS_BASE + 10)
   const selfC = await api(`/api/community/posts/${qId}/comments`, { method: 'POST', token: tokenB, body: { content: '补充题目条件' } })
   check('采纳自己的评论被拒绝（400）', (await api(`/api/community/posts/${qId}/accept`, { method: 'PUT', token: tokenB, body: { commentId: selfC.data?.id } })).status === 400)
 
@@ -480,7 +483,7 @@ async function main() {
   stateToday.gamification.pointsLog = [{ date: todayUtc8, points: 10, reason: '每日打卡', refId: 'rt' }]
   const syncAward = await api('/api/data/sync', { method: 'POST', token: tokenA, body: stateToday })
   check('学习时长达标发放 +3 并回传 gamification',
-    syncAward.data?.awarded?.some(a => a.points === 3) && syncAward.data?.gamification?.points === 103,
+    syncAward.data?.awarded?.some(a => a.points === 3) && syncAward.data?.gamification?.points === POINTS_BASE + 3,
     JSON.stringify(syncAward.data?.awarded))
   // 真实前端会用响应中的 gamification 回写本地（见 app store saveAsync），smoke 模拟该行为
   stateToday.gamification = syncAward.data.gamification
@@ -489,7 +492,7 @@ async function main() {
   const pullAward = await api('/api/data/sync', { token: tokenA })
   check('服务端流水（srv:）在全量同步后保留',
     pullAward.data?.gamification?.pointsLog?.some(l => l.refId?.startsWith('srv:study-minutes:')) &&
-    pullAward.data.gamification.points === 103)
+    pullAward.data.gamification.points === POINTS_BASE + 3)
   const stateStreak = sampleState()
   stateStreak.records = []
   stateStreak.gamification.streak = 7
@@ -587,10 +590,11 @@ async function main() {
   const profileA4 = await api(`/api/community/users/${userIdA}/profile`, { token: tokenB })
   check('资料卡粉丝数=1 且 followedByMe=true', profileA4.data?.followers === 1 && profileA4.data?.followedByMe === true,
     JSON.stringify({ followers: profileA4.data?.followers, followedByMe: profileA4.data?.followedByMe }))
-  // 关注流：B 视角仅含 A 的未隐藏帖子（newPostA + ansC 回答所在帖；A 的 postImg 已删、firstPost 已隐藏）
+  // 关注流：B 视角仅含 A 的帖子（newPostA + 第二帖 + 徽章系统自动发的「🎖️ 达成成就」帖，数量不固定，故只断言归属）
   const followFeed = await api('/api/community/posts?follow=1', { token: tokenB })
   check('关注流仅含关注作者的帖子',
-    followFeed.data?.posts?.length === 2 && followFeed.data.posts.every(p => p.userId === userIdA),
+    followFeed.data?.posts?.length >= 2 && followFeed.data.posts.every(p => p.userId === userIdA) &&
+    followFeed.data.posts.some(p => p.id === newPostA.data?.id),
     JSON.stringify(followFeed.data?.posts?.map(p => p.id)))
   check('A 视角关注流为空（A 未关注任何人）', (await api('/api/community/posts?follow=1', { token: tokenA })).data?.posts?.length === 0)
   const follow2 = await api(`/api/community/users/${userIdA}/follow`, { method: 'PUT', token: tokenB })
@@ -689,6 +693,7 @@ async function main() {
   check('A 发私信给 B', msg1.status === 201 && msg1.data?.fromMe === true, JSON.stringify(msg1.data))
   check('B 收到 message 通知', (await api('/api/community/notifications', { token: tokenB })).data?.items?.some(n => n.type === 'message' && n.actorId === adminUserId))
   check('B 私信未读=1', (await api('/api/community/messages/unread-count', { token: tokenB })).data?.count === 1)
+  await new Promise(r => setTimeout(r, 1100)) // 确保 created_at 秒级递增，避免同秒消息排序不稳定
   const msg2 = await api(`/api/community/messages/${userIdB}`, { method: 'POST', token: tokenA, body: { content: '我也想请教一下英语' } })
   check('A 再发一条', msg2.status === 201)
   check('B 私信未读=2', (await api('/api/community/messages/unread-count', { token: tokenB })).data?.count === 2)
@@ -700,6 +705,7 @@ async function main() {
     JSON.stringify(chatB.data?.messages?.map(m => m.content)))
   check('打开记录后对方消息已读', chatB.data?.messages?.every(m => m.isRead === true))
   check('B 私信未读清零', (await api('/api/community/messages/unread-count', { token: tokenB })).data?.count === 0)
+  await new Promise(r => setTimeout(r, 1100)) // 确保 B 的回复 created_at 大于 A 的上一条，成为会话最后一条
   const replyB = await api(`/api/community/messages/${adminUserId}`, { method: 'POST', token: tokenB, body: { content: '搞定了！用的是洛必达' } })
   check('B 回复 A', replyB.status === 201)
   const convA = await api('/api/community/messages/conversations', { token: tokenA })
@@ -725,7 +731,7 @@ async function main() {
   check('倒计时为正（未来考试）', typeof lp.data?.daysLeft === 'number' && lp.data.daysLeft > 0)
   check('科目按权重分配每日时长', Array.isArray(lp.data?.subjects) && lp.data.subjects.some(s => s.id === 'math' && s.dailyMinutes > 0))
   check('周总时长 = 每日目标 × 7', lp.data?.weeklyTotalMinutes === lp.data?.dailyGoalMinutes * 7)
-  check('无科目用户返回空计划', (await api('/api/learning-path', { token: tokenB })).data?.subjects?.length === 0)
+  check('无科目用户返回空计划', (await api('/api/learning-path', { token: tokenC })).data?.subjects?.length === 0)
 
   // ---- 知识点讨论区（P2-6）----
   console.log('[知识点讨论区]')
@@ -741,6 +747,270 @@ async function main() {
   const otherTopic = await api(`/api/community/posts?topicSubject=math&topicChapter=${encodeURIComponent('第二章 导数与微分')}`, { token: tokenA })
   check('其他章节不包含该讨论帖', !otherTopic.data?.posts?.some(p => p.id === topicPost.data?.id))
   check('同时发圈子和讨论区被拒（400）', (await api('/api/community/posts', { method: 'POST', token: tokenA, body: { type: 'share', content: '冲突', tags: [], circleId: pubId, topicRef: 'math|第一章 函数与极限' } })).status === 400)
+
+  // ---- 组队挑战 ----
+  console.log('[组队挑战]')
+  const teamPub = await api('/api/teams', { method: 'POST', token: tokenA, body: { name: '高数打卡队', description: '一起刷高数', maxMembers: 2, isPublic: true } })
+  check('创建公开小组', teamPub.status === 200 && !!teamPub.data?.id, JSON.stringify(teamPub.data))
+  const teamId = teamPub.data.id
+  const teamPriv = await api('/api/teams', { method: 'POST', token: tokenA, body: { name: '英语私密组', isPublic: false } })
+  const privTeamId = teamPriv.data?.id
+
+  check('B 加入公开组成功', (await api(`/api/teams/${teamId}/join`, { method: 'POST', token: tokenB })).status === 200)
+  check('公开组满员后拒绝加入', (await api(`/api/teams/${teamId}/join`, { method: 'POST', token: tokenC })).status === 400)
+  check('重复加入被拒绝', (await api(`/api/teams/${teamId}/join`, { method: 'POST', token: tokenB })).status === 400)
+  check('私密组非成员加入被拒绝', (await api(`/api/teams/${privTeamId}/join`, { method: 'POST', token: tokenB })).status === 403)
+
+  const teamDetail = await api(`/api/teams/${teamId}`, { token: tokenA })
+  check('详情含成员与队长角色', teamDetail.data?.members?.length === 2 && teamDetail.data.team.myRole === 'leader', JSON.stringify(teamDetail.data))
+
+  check('普通成员创建挑战被拒绝', (await api(`/api/teams/${teamId}/challenges`, { method: 'POST', token: tokenB, body: { type: 'streak', target: 7, durationDays: 7, startDate: todayUtc8 } })).status === 403)
+  const ch = await api(`/api/teams/${teamId}/challenges`, { method: 'POST', token: tokenA, body: { type: 'streak', target: 7, durationDays: 7, startDate: todayUtc8 } })
+  check('队长创建挑战成功', ch.status === 200 && !!ch.data?.id, JSON.stringify(ch.data))
+  const chId = ch.data.id
+
+  const sync1 = await api(`/api/teams/challenges/${chId}/sync`, { method: 'POST', token: tokenA })
+  check('同步挑战进度', sync1.status === 200 && typeof sync1.data?.currentValue === 'number', JSON.stringify(sync1.data))
+
+  check('非队长编辑挑战被拒绝', (await api(`/api/teams/challenges/${chId}`, { method: 'PUT', token: tokenB, body: { target: 10, durationDays: 7, startDate: todayUtc8 } })).status === 403)
+  check('队长编辑挑战', (await api(`/api/teams/challenges/${chId}`, { method: 'PUT', token: tokenA, body: { target: 10, durationDays: 7, startDate: todayUtc8 } })).status === 200)
+
+  check('取消进行中的挑战', (await api(`/api/teams/challenges/${chId}/cancel`, { method: 'POST', token: tokenA })).status === 200)
+  check('取消后同步被拒绝', (await api(`/api/teams/challenges/${chId}/sync`, { method: 'POST', token: tokenA })).status === 400)
+  check('恢复挑战', (await api(`/api/teams/challenges/${chId}/resume`, { method: 'POST', token: tokenA })).status === 200)
+  check('恢复后可同步', (await api(`/api/teams/challenges/${chId}/sync`, { method: 'POST', token: tokenA })).status === 200)
+
+  check('非队长删除挑战被拒绝', (await api(`/api/teams/challenges/${chId}`, { method: 'DELETE', token: tokenB })).status === 403)
+  check('队长删除挑战', (await api(`/api/teams/challenges/${chId}`, { method: 'DELETE', token: tokenA })).status === 200)
+
+  // —— 编辑小组信息 ——
+  check('非队长编辑 403', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenB, body: { name: 'x', description: '', maxMembers: 5 } })).status === 403)
+  check('队长编辑名称/描述/人数(上调) 200', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 8 } })).status === 200)
+  const edited = await api(`/api/teams/${teamId}`, { token: tokenA })
+  check('编辑后详情生效', edited.data?.team?.name === '编辑后的高数打卡队' && edited.data?.team?.maxMembers === 8, JSON.stringify(edited.data))
+  check('人数下调但不低于成员数 200', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 2 } })).status === 200)
+  check('人数低于成员数 400', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 1 } })).status === 400)
+  check('人数越界 0 400', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 0 } })).status === 400)
+  check('人数越界 100 400', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '编辑后的高数打卡队', description: '已编辑', maxMembers: 100 } })).status === 400)
+  check('名称含敏感词 400', (await api(`/api/teams/${teamId}`, { method: 'PUT', token: tokenA, body: { name: '加微信领资料', description: '已编辑', maxMembers: 5 } })).status === 400)
+
+  const memberUserId = teamDetail.data.members.find(m => m.role === 'member')?.userId
+  const leaderUserId = teamDetail.data.members.find(m => m.role === 'leader')?.userId
+
+  // —— 私密组邀请码 + 审批 ——
+  const invTeam = await api('/api/teams', { method: 'POST', token: tokenA, body: { name: '私密邀请组', maxMembers: 2, isPublic: false } })
+  const invTeamId = invTeam.data?.id
+  check('创建私密组(200)', invTeam.status === 200)
+
+  const invTeamDetail = await api(`/api/teams/${invTeamId}`, { token: tokenA })
+  const invCode = invTeamDetail.data?.inviteCode
+  check('队长可见邀请码', typeof invCode === 'string' && invCode.length === 8, JSON.stringify(invTeamDetail.data))
+  check('非队长不可见邀请码', (await api(`/api/teams/${invTeamId}`, { token: tokenB })).data?.inviteCode == null)
+  check('公开列表不含私密组', !(await api('/api/teams', { token: tokenA })).data.some(t => t.id === invTeamId))
+
+  check('by-invite 命中', (await api(`/api/teams/by-invite?code=${invCode}`, { token: tokenB })).status === 200)
+  check('by-invite 错码 404', (await api(`/api/teams/by-invite?code=ZZZZZZZZ`, { token: tokenB })).status === 404)
+
+  check('错码申请 400', (await api(`/api/teams/${invTeamId}/apply`, { method: 'POST', token: tokenB, body: { inviteCode: 'WRONG' } })).status === 400)
+  check('正确码申请 200', (await api(`/api/teams/${invTeamId}/apply`, { method: 'POST', token: tokenB, body: { inviteCode: invCode } })).status === 200)
+  check('重复申请 400', (await api(`/api/teams/${invTeamId}/apply`, { method: 'POST', token: tokenB, body: { inviteCode: invCode } })).status === 400)
+
+  const reqs = await api(`/api/teams/${invTeamId}/requests`, { token: tokenA })
+  check('队长见待审申请', (reqs.data ?? []).some(r => r.userId === memberUserId), JSON.stringify(reqs.data))
+  check('非队长看待审 403', (await api(`/api/teams/${invTeamId}/requests`, { token: tokenB })).status === 403)
+
+  const notifLeader = await api('/api/community/notifications', { token: tokenA })
+  check('队长收到新申请通知', (notifLeader.data?.items ?? []).some(n => n.type === 'system' && (n.content || '').includes('申请加入')), JSON.stringify(notifLeader.data))
+
+  check('撤回 200', (await api(`/api/teams/${invTeamId}/requests/withdraw`, { method: 'POST', token: tokenB })).status === 200)
+  check('重新申请 200', (await api(`/api/teams/${invTeamId}/apply`, { method: 'POST', token: tokenB, body: { inviteCode: invCode } })).status === 200)
+
+  check('队长同意 200', (await api(`/api/teams/${invTeamId}/requests/${memberUserId}/approve`, { method: 'POST', token: tokenA })).status === 200)
+  const afterApprove = await api(`/api/teams/${invTeamId}`, { token: tokenA })
+  check('同意后成员数 2', afterApprove.data?.members?.length === 2, JSON.stringify(afterApprove.data))
+  const notifBPriv = await api('/api/community/notifications', { token: tokenB })
+  check('申请人收到入组通知', (notifBPriv.data?.items ?? []).some(n => n.type === 'system' && (n.content || '').includes('已加入小组')), JSON.stringify(notifBPriv.data))
+
+  check('重置邀请码 200', (await api(`/api/teams/${invTeamId}/invite-code`, { method: 'POST', token: tokenA })).status === 200)
+  check('重置后旧码失效', (await api(`/api/teams/by-invite?code=${invCode}`, { token: tokenA })).status === 404)
+
+  check('转让队长给 B', (await api(`/api/teams/${teamId}/transfer-leader`, { method: 'POST', token: tokenA, body: { newLeaderId: memberUserId } })).status === 200)
+  check('非队长(A)踢人被拒', (await api(`/api/teams/${teamId}/remove-member`, { method: 'POST', token: tokenA, body: { userId: memberUserId } })).status === 403)
+  check('队长(B)踢自己被拒', (await api(`/api/teams/${teamId}/remove-member`, { method: 'POST', token: tokenB, body: { userId: memberUserId } })).status === 400)
+  check('队长(B)踢出成员 A', (await api(`/api/teams/${teamId}/remove-member`, { method: 'POST', token: tokenB, body: { userId: leaderUserId } })).status === 200)
+  const afterKick = await api(`/api/teams/${teamId}`, { token: tokenB })
+  check('踢出后成员数减一且不含 A', afterKick.data?.members?.length === 1 && !afterKick.data.members.some(m => m.userId === leaderUserId), JSON.stringify(afterKick.data))
+  const notifyA = await api('/api/community/notifications', { token: tokenA })
+  check('被踢者 A 收到 system 通知', (notifyA.data?.items ?? []).some(n => n.type === 'system' && (n.content || '').includes('移出小组')), JSON.stringify(notifyA.data))
+  check('解散小组', (await api(`/api/teams/${teamId}/disband`, { method: 'POST', token: tokenB })).status === 200)
+  check('解散后详情 404', (await api(`/api/teams/${teamId}`, { token: tokenB })).status === 404)
+
+  // ---- 意见反馈 ----
+  console.log('[意见反馈]')
+  check('未认证提交反馈返回 401', (await api('/api/feedback', { method: 'POST', body: { type: 'bug', content: '测试' } })).status === 401)
+  check('非法类型返回 400', (await api('/api/feedback', { method: 'POST', token: tokenA, body: { type: 'xxx', content: '测试' } })).status === 400)
+  check('空内容返回 400', (await api('/api/feedback', { method: 'POST', token: tokenA, body: { type: 'bug', content: '  ' } })).status === 400)
+  check('敏感词返回 400', (await api('/api/feedback', { method: 'POST', token: tokenA, body: { type: 'bug', content: '加微信领资料' } })).status === 400)
+  check('截图超 3 张返回 400', (await api('/api/feedback', { method: 'POST', token: tokenA, body: { type: 'bug', content: 'x', imageUrls: ['/api/community/images/aaaaaaaaaaaaaaaa', '/api/community/images/bbbbbbbbbbbbbbbb', '/api/community/images/cccccccccccccccc', '/api/community/images/dddddddddddddddd'] } })).status === 400)
+  check('引用不存在截图返回 400', (await api('/api/feedback', { method: 'POST', token: tokenA, body: { type: 'bug', content: 'x', imageUrls: ['/api/community/images/ffffffffffffffff'] } })).status === 400)
+  const fb = await api('/api/feedback', { method: 'POST', token: tokenA, body: { type: 'bug', content: '统计页数据不对', contact: 'qq:12345' } })
+  check('提交反馈成功 201', fb.status === 201 && !!fb.data?.id, JSON.stringify(fb.data))
+  check('非管理员访问反馈列表 403', (await api('/api/admin/feedback', { token: tokenB })).status === 403)
+  const fbList = await api('/api/admin/feedback', { token: tokenA })
+  check('管理员查看反馈列表', fbList.status === 200 && fbList.data?.feedbacks?.some(f => f.type === 'bug' && f.contact === 'qq:12345'), JSON.stringify(fbList.data))
+  const fbId = fbList.data?.feedbacks?.find(f => f.type === 'bug' && f.contact === 'qq:12345')?.id
+  check('非法状态返回 400', (await api(`/api/admin/feedback/${fbId}`, { method: 'PUT', token: tokenA, body: { status: 'xx' } })).status === 400)
+  check('管理员标记已处理', (await api(`/api/admin/feedback/${fbId}`, { method: 'PUT', token: tokenA, body: { status: 'resolved' } })).status === 200)
+  check('提交者收到处理通知', (await api('/api/community/notifications', { token: tokenA })).data?.items?.some(n => n.type === 'system' && (n.content || '').includes('反馈')))
+  check('按状态筛选生效', (await api('/api/admin/feedback?status=resolved', { token: tokenA })).data?.feedbacks?.every(f => f.status === 'resolved'))
+
+  // ---- 学习搭子（P2-7）----
+  // 前置：A（管理员）/B/C 已注册并持有 token；study_partners 本运行内无记录。
+  console.log('[学习搭子]')
+  check('未认证访问搭子列表返回 401', (await api('/api/community/partners')).status === 401)
+  check('未认证访问搭子推荐返回 401', (await api('/api/community/partners/suggestions')).status === 401)
+  check('不能与自己成为搭子（400）', (await api(`/api/community/partners/${userIdB}`, { method: 'POST', token: tokenB })).status === 400)
+  check('搭子请求不存在的用户（404）', (await api('/api/community/partners/nouser000000000', { method: 'POST', token: tokenB })).status === 404)
+  const pReq1 = await api(`/api/community/partners/${userIdC}`, { method: 'POST', token: tokenB })
+  check('B 向 C 发起搭子请求（201 + accepted=false）', pReq1.status === 201 && pReq1.data?.accepted === false, JSON.stringify(pReq1.data))
+  check('重复发起被拒绝（400）', (await api(`/api/community/partners/${userIdC}`, { method: 'POST', token: tokenB })).status === 400)
+  const cIncoming = await api('/api/community/partners', { token: tokenC })
+  const pReqId = cIncoming.data?.incoming?.find(p => p.userId === userIdB)?.reqId
+  check('C 的待处理请求含 B', !!pReqId, JSON.stringify(cIncoming.data?.incoming))
+  const cNotifData = (await api('/api/community/notifications', { token: tokenC })).data
+  const cNotif = cNotifData?.items?.find(n => (n.content || '').includes('学习搭子'))
+  check('C 收到搭子请求通知', !!cNotif, JSON.stringify(cNotifData?.items?.map(n => n.content)))
+  check('单条通知已读', (await api(`/api/community/notifications/${cNotif?.id}/read`, { method: 'PUT', token: tokenC })).status === 200)
+  check('已读后该通知 isRead=true', (await api('/api/community/notifications', { token: tokenC })).data?.items?.some(n => n.id === cNotif?.id && n.isRead === true))
+  check('非法 action 返回 400', (await api(`/api/community/partners/${pReqId}`, { method: 'PUT', token: tokenC, body: { action: 'xxx' } })).status === 400)
+  check('C 接受请求', (await api(`/api/community/partners/${pReqId}`, { method: 'PUT', token: tokenC, body: { action: 'accept' } })).data?.ok === true)
+  check('C 的搭子列表含 B', (await api('/api/community/partners', { token: tokenC })).data?.partners?.some(p => p.userId === userIdB))
+  check('B 的搭子列表含 C', (await api('/api/community/partners', { token: tokenB })).data?.partners?.some(p => p.userId === userIdC))
+  check('已是搭子再发起被拒绝（400）', (await api(`/api/community/partners/${userIdC}`, { method: 'POST', token: tokenB })).status === 400)
+  const suggB = await api('/api/community/partners/suggestions', { token: tokenB })
+  check('搭子推荐排除已搭子且含评分结构',
+    suggB.status === 200 && suggB.data?.suggestions?.length >= 1 && !suggB.data.suggestions.some(s => s.userId === userIdC) &&
+    suggB.data.suggestions.every(s => typeof s.score === 'number' && Array.isArray(s.reasons)), JSON.stringify(suggB.data?.suggestions))
+  // 拒绝后重发：rejected 状态下重新发起回 pending
+  const pReq2 = await api(`/api/community/partners/${userIdB}`, { method: 'POST', token: tokenA })
+  check('A 向 B 发起搭子请求', pReq2.status === 201 && pReq2.data?.accepted === false, JSON.stringify(pReq2.data))
+  const pReq2Id = (await api('/api/community/partners', { token: tokenB })).data?.incoming?.find(p => p.userId === userIdA)?.reqId
+  check('B 拒绝 A 的请求', (await api(`/api/community/partners/${pReq2Id}`, { method: 'PUT', token: tokenB, body: { action: 'reject' } })).data?.ok === true)
+  check('拒绝后重新发起成功（201）', (await api(`/api/community/partners/${userIdB}`, { method: 'POST', token: tokenA })).status === 201)
+
+  // ---- PDF 原文分片存储（D1，替代 R2）----
+  // 前置：A/B 已登录；pdf_chunks 表由 schema.sql 建好，文件按 (user_id, pdf_id) 隔离。
+  console.log('[PDF 存储]')
+  const pdfFetch = async (token, pdfId, { method = 'GET', bytes } = {}) => {
+    const res = await fetch(`${BASE}/api/pdfs/${pdfId}`, {
+      method,
+      headers: { Origin: ORIGIN, 'X-Desktop-Token': 'zsb-desktop-v2', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(bytes !== undefined ? { body: bytes } : {})
+    })
+    if (method === 'GET' && res.status === 200) {
+      return { status: res.status, headers: res.headers, bytes: new Uint8Array(await res.arrayBuffer()) }
+    }
+    let data = null
+    try { data = await res.json() } catch { /* GET 返回二进制 */ }
+    return { status: res.status, data, headers: res.headers, bytes: null }
+  }
+  const smallPdf = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n')
+  const pdfId = `smokepdf${uniq}`
+  check('未认证上传 PDF 返回 401', (await pdfFetch(null, pdfId, { method: 'PUT', bytes: smallPdf })).status === 401)
+  check('未认证读取 PDF 返回 401', (await pdfFetch(null, pdfId)).status === 401)
+  check('非法 PDF id 返回 400', (await pdfFetch(tokenA, 'bad_id-!', { method: 'PUT', bytes: smallPdf })).status === 400)
+  check('非 PDF 魔数被拒绝（400）', (await pdfFetch(tokenA, pdfId, { method: 'PUT', bytes: Buffer.from('not a pdf') })).status === 400)
+  check('空文件被拒绝（400）', (await pdfFetch(tokenA, pdfId, { method: 'PUT', bytes: Buffer.alloc(0) })).status === 400)
+  const upPdf = await pdfFetch(tokenA, pdfId, { method: 'PUT', bytes: smallPdf })
+  check('上传 PDF 返回 200 + size', upPdf.status === 200 && upPdf.data?.size === smallPdf.length, JSON.stringify(upPdf.data))
+  const getPdf = await pdfFetch(tokenA, pdfId)
+  check('读取 PDF 返回 200 + 内容类型', getPdf.status === 200 && (getPdf.headers.get('content-type') || '').startsWith('application/pdf'))
+  check('PDF 内容往返一致', !!getPdf.bytes && Buffer.from(getPdf.bytes).equals(smallPdf))
+  check('跨用户读取 PDF 被拒（404）', (await pdfFetch(tokenB, pdfId)).status === 404)
+  // 多分片：200KB 超过单分片 95KB，强制拆分多片后拼装还原
+  const bigPdf = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(200 * 1024, 0x41)])
+  const bigId = `smokepdfbig${uniq}`
+  const upBig = await pdfFetch(tokenA, bigId, { method: 'PUT', bytes: bigPdf })
+  check('上传 200KB PDF 成功（多分片）', upBig.status === 200 && upBig.data?.size === bigPdf.length, JSON.stringify(upBig.data))
+  const getBig = await pdfFetch(tokenA, bigId)
+  check('多分片 PDF 拼接还原', !!getBig.bytes && getBig.bytes.length === bigPdf.length && Buffer.from(getBig.bytes).equals(bigPdf))
+  check('删除 PDF 成功', (await pdfFetch(tokenA, pdfId, { method: 'DELETE' })).status === 200)
+  check('删除后读取返回 404', (await pdfFetch(tokenA, pdfId)).status === 404)
+  await pdfFetch(tokenA, bigId, { method: 'DELETE' })
+
+  // ---- 踩投票（赞踩互斥 + 积分回收）----
+  // 前置：shareId 为 B 的经验帖（精华帖段创建，仍存在且无赞踩）；A 为踩方。
+  console.log('[踩投票]')
+  check('未认证踩返回 401', (await api('/api/community/dislikes', { method: 'POST', body: { targetType: 'post', targetId: shareId } })).status === 401)
+  check('缺参数踩返回 400', (await api('/api/community/dislikes', { method: 'POST', token: tokenA, body: {} })).status === 400)
+  check('踩不存在的帖子返回 404', (await api('/api/community/dislikes', { method: 'POST', token: tokenA, body: { targetType: 'post', targetId: 'nopost0000000000' } })).status === 404)
+  const dis1 = await api('/api/community/dislikes', { method: 'POST', token: tokenA, body: { targetType: 'post', targetId: shareId } })
+  check('A 踩 B 的帖子成功', dis1.data?.disliked === true, JSON.stringify(dis1.data))
+  const postDis = (await api(`/api/community/posts/${shareId}`, { token: tokenA })).data?.post
+  check('踩后详情 dislikedByMe + dislikesCount=1', postDis?.dislikedByMe === true && postDis?.dislikesCount === 1)
+  check('再次踩为取消', (await api('/api/community/dislikes', { method: 'POST', token: tokenA, body: { targetType: 'post', targetId: shareId } })).data?.disliked === false)
+  // 赞踩互斥：A 点赞后踩，赞被自动取消并回收 B 的获赞积分
+  const bPtsBase = await pointsOf(tokenB)
+  await api('/api/community/likes', { method: 'POST', token: tokenA, body: { targetType: 'post', targetId: shareId } })
+  check('点赞后 B 获赞 +1', (await pointsOf(tokenB)) === bPtsBase + 1)
+  const dis3 = await api('/api/community/dislikes', { method: 'POST', token: tokenA, body: { targetType: 'post', targetId: shareId } })
+  check('踩时自动取消赞（likeRevoked=true）', dis3.data?.disliked === true && dis3.data?.likeRevoked === true, JSON.stringify(dis3.data))
+  check('赞转踩回收 B 获赞积分', (await pointsOf(tokenB)) === bPtsBase)
+  const postMix = (await api(`/api/community/posts/${shareId}`, { token: tokenA })).data?.post
+  check('赞踩互斥后仅 dislikedByMe 且计数正确', postMix?.dislikedByMe === true && postMix?.likedByMe === false && postMix?.dislikesCount === 1 && postMix?.likesCount === 0)
+  await api('/api/community/dislikes', { method: 'POST', token: tokenA, body: { targetType: 'post', targetId: shareId } })
+  check('取消踩后计数归零', (await api(`/api/community/posts/${shareId}`, { token: tokenA })).data?.post?.dislikesCount === 0)
+
+  // ---- 用户学习统计（个人主页成长可视化）----
+  // 前置：A 的全量快照含今日 70 分钟学习记录与 20/15 的刷题记录。
+  console.log('[用户学习统计]')
+  check('未认证访问学习统计返回 401', (await api(`/api/community/users/${userIdA}/stats`)).status === 401)
+  check('统计不存在的用户返回 404', (await api('/api/community/users/nouser000000000/stats', { token: tokenA })).status === 404)
+  const stats = await api(`/api/community/users/${userIdA}/stats`, { token: tokenA })
+  check('学习统计返回 200 + 结构完整', stats.status === 200 && Array.isArray(stats.data?.heatmap) && typeof stats.data?.totalStudy?.minutes === 'number', JSON.stringify(stats.data))
+  check('热力图含今日学习时长', stats.data?.heatmap?.some(h => h.date === todayUtc8 && h.minutes === 70), JSON.stringify(stats.data?.heatmap?.filter(h => h.minutes > 0)))
+  check('总学习时长与天数正确', stats.data?.totalStudy?.minutes === 70 && stats.data?.totalStudy?.days === 1)
+  check('做题统计与正确率正确', stats.data?.problems?.total === 20 && stats.data?.problems?.correct === 15 && stats.data?.problems?.accuracy === 75)
+  check('科目分布含数学', stats.data?.subjects?.some(s => s.id === 'math' && s.minutes === 70))
+
+  // ---- 社区发现类只读接口 ----
+  console.log('[社区发现类接口]')
+  check('未认证访问周报返回 401', (await api('/api/community/weekly-report')).status === 401)
+  const wr = await api('/api/community/weekly-report', { token: tokenA })
+  check('周报返回 200 + 上周区间结构', wr.status === 200 && /^\d{4}-\d{2}-\d{2}$/.test(wr.data?.weekStart || '') && /^\d{4}-\d{2}-\d{2}$/.test(wr.data?.weekEnd || '') && typeof wr.data?.minutes === 'number', JSON.stringify(wr.data))
+  check('未认证访问进步榜返回 401', (await api('/api/community/progress-board')).status === 401)
+  const pb = await api('/api/community/progress-board', { token: tokenA })
+  check('进步榜返回 200 + joined=false + 本人值',
+    pb.status === 200 && pb.data?.joined === false && pb.data?.weekMinutes?.me?.value === 70 && pb.data?.monthProblems?.me?.value === 20 &&
+    Array.isArray(pb.data?.weekMinutes?.list), JSON.stringify(pb.data))
+  check('未认证访问推荐返回 401', (await api('/api/community/recommend')).status === 401)
+  const rec = await api('/api/community/recommend', { token: tokenA })
+  check('推荐返回 200 + 三块结构', rec.status === 200 && Array.isArray(rec.data?.posts) && Array.isArray(rec.data?.circles) && Array.isArray(rec.data?.users))
+  const hotPublic0 = await api('/api/community/hot-topics')
+  check('热门话题公开返回 200 + topics 数组', hotPublic0.status === 200 && Array.isArray(hotPublic0.data?.topics))
+
+  // ---- 热门话题运营位（管理员）----
+  console.log('[热门话题运营位]')
+  check('非管理员访问运营位返回 403', (await api('/api/admin/hot-topics', { token: tokenB })).status === 403)
+  const htList = await api('/api/admin/hot-topics', { token: tokenA })
+  check('管理员查看运营位', htList.status === 200 && Array.isArray(htList.data?.stats) && Array.isArray(htList.data?.overrides))
+  check('添加干预缺 tag 返回 400', (await api('/api/admin/hot-topics', { method: 'POST', token: tokenA, body: { text: '置顶', action: 'pin' } })).status === 400)
+  check('添加干预非法 action 返回 400', (await api('/api/admin/hot-topics', { method: 'POST', token: tokenA, body: { text: '置顶', tag: '#升本', action: 'xxx' } })).status === 400)
+  const htAdd = await api('/api/admin/hot-topics', { method: 'POST', token: tokenA, body: { text: '置顶话题', tag: '#升本', action: 'pin' } })
+  check('添加置顶话题成功 201', htAdd.status === 201 && !!htAdd.data?.id, JSON.stringify(htAdd.data))
+  const hotPublic1 = await api('/api/community/hot-topics')
+  check('公开热门话题含置顶条目', hotPublic1.data?.topics?.some(t => t.pinned === true && t.text === '置顶话题'), JSON.stringify(hotPublic1.data?.topics))
+  check('删除干预条目', (await api(`/api/admin/hot-topics/${htAdd.data.id}`, { method: 'DELETE', token: tokenA })).status === 200)
+
+  // ---- 墨墨代理补充（未配置 Token 时）----
+  console.log('[墨墨代理补充]')
+  check('未配置墨墨 Token 访问进度返回 400', (await api('/api/proxy/maimemo/progress', { token: tokenA })).status === 400)
+  check('未配置墨墨 Token 访问今日明细返回 400', (await api('/api/proxy/maimemo/today-detail', { method: 'POST', token: tokenA })).status === 400)
+
+  // ---- 发布检查（GitHub Release 中转）----
+  console.log('[发布检查]')
+  const rel = await api('/api/latest-release')
+  check('latest-release 公开返回 JSON 且含 success 字段', typeof rel.data?.success === 'boolean', JSON.stringify(rel.data))
 
   // ---- 404 ----
   console.log('[路由]')

@@ -20,10 +20,13 @@ import { registerMaimemoRoutes } from './proxy/maimemo'
 import { registerWallpaperRoutes } from './proxy/wallpaper'
 import { registerReleaseRoutes } from './api/release'
 import { registerCommunityRoutes } from './api/community'
+import { registerPartnerRoutes } from './api/partners'
 import { registerAdminRoutes } from './api/admin'
 import { registerLearningPathRoutes } from './api/learningPath'
 import { registerPdfRoutes } from './api/pdfs'
 import { registerUploadRoutes } from './api/uploads'
+import { registerFeedbackRoutes } from './api/feedback'
+import './api/teams'
 import { HttpError } from './db'
 import { canCache, getCached, putCache } from './middleware/cache'
 
@@ -123,7 +126,9 @@ registerMaimemoRoutes()
 registerWallpaperRoutes()
 registerReleaseRoutes()
 registerCommunityRoutes()
+registerPartnerRoutes()
 registerAdminRoutes()
 registerLearningPathRoutes()
 registerPdfRoutes()
 registerUploadRoutes()
+registerFeedbackRoutes()

@@ -258,6 +258,8 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: false,
+      // 窗口最小化 / 收进托盘后不节流定时器，保证待办开始与截止提醒按时弹出
+      backgroundThrottling: false,
       preload: path.join(__dirname, 'preload.cjs')
     }
   })

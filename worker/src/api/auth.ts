@@ -64,8 +64,8 @@ export function registerAuthRoutes() {
     const row: UserRow = { id: uid(), username, password_hash: hashPassword(password), role: 'user', created_at: Date.now() }
     await run(ctx.env, 'INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)',
       row.id, row.username, row.password_hash, row.created_at)
-    // 初始化用户设置与游戏化数据（默认值由表结构兜底）
-    await run(ctx.env, 'INSERT INTO user_settings (user_id) VALUES (?)', row.id)
+    // 初始化用户设置与游戏化数据（昵称取登录用户名，其余默认值由表结构兜底）
+    await run(ctx.env, 'INSERT INTO user_settings (user_id, user_name) VALUES (?, ?)', row.id, row.username)
     await run(ctx.env, 'INSERT INTO gamification (user_id) VALUES (?)', row.id)
     const token = await signToken(row.id, ctx.env.JWT_SECRET)
     return Response.json({ token, user: toUser(row) }, { status: 201 })

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 /**
  * 桌面端自动更新弹窗
@@ -108,6 +109,8 @@ function close() {
   show.value = false
 }
 
+const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close)
+
 onMounted(() => {
   if (!updater) return
   updater.onAvailable((i) => {
@@ -141,7 +144,7 @@ onBeforeUnmount(() => { show.value = false })
 <template>
   <Teleport to="body">
     <Transition name="update-fade">
-      <div v-if="show && info" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" @click.self="close">
+      <div v-if="show && info" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" @mousedown="onOverlayMousedown" @click="onOverlayClick">
         <div class="update-pop bg-white dark:bg-slate-800 w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[85vh]">
           <!-- 头部：版本标题 + 前往发布页 -->
           <div class="flex items-center justify-between px-6 pt-5 pb-3">

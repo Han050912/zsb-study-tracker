@@ -2,9 +2,10 @@ import type { Env } from '../index'
 import { on, body } from '../router'
 import { all, first, run, batch, uid, utc8Today, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
-import { deleteUploads, uploadIdsOf, IMAGE_MAX_PER_POST, IMAGE_MAX_PER_COMMENT } from './uploads'
-import { assertClean } from './sensitive'
+import { deleteUploads, uploadIdsOf, IMAGE_MAX_PER_POST, IMAGE_MAX_PER_COMMENT, IMAGE_MAX_PER_MESSAGE } from './uploads'
+import { assertClean, moderate } from './sensitive'
 import { awardBadge, hasBadge } from './badges'
+import { parseMutedTypes } from './settings'
 
 /**
  * 社区广场：帖子 / 评论 / 点赞 / 通知 / 图片 / 举报 / 榜单。
@@ -40,10 +41,12 @@ function mapPost(r: any) {
     userName: r.user_name || '升本人',
     userPoints: r.user_points ?? 0,
     userVerified: !!r.user_verified,
+    userAvatar: r.user_avatar ?? undefined,
     type: r.type,
     content: r.content,
     tags: parseStrArray(r.tags),
     imageUrls: parseStrArray(r.image_urls),
+    imageThumbs: parseStrArray(r.image_urls).map(u => u + '?thumb=1'),
     isResolved: !!r.is_resolved,
     acceptedAnswerId: r.accepted_answer_id ?? undefined,
     isFeatured: !!r.is_featured,
@@ -54,10 +57,13 @@ function mapPost(r: any) {
     refType: r.ref_type ?? undefined,
     refId: r.ref_id ?? undefined,
     likesCount: r.likes_count,
+    dislikesCount: r.dislikes_count,
     commentsCount: r.comments_count,
     isPinned: !!r.is_pinned,
     isHidden: !!r.is_hidden,
+    isFlagged: !!r.is_flagged,
     likedByMe: !!r.liked_by_me,
+    dislikedByMe: !!r.disliked_by_me,
     createdAt: r.created_at
   }
 }
@@ -68,14 +74,18 @@ function mapComment(r: any) {
     postId: r.post_id,
     userId: r.user_id,
     userName: r.user_name || '升本人',
+    userAvatar: r.user_avatar ?? undefined,
     parentId: r.parent_id ?? undefined,
     content: r.content,
     imageUrls: parseStrArray(r.image_urls),
     userVerified: !!r.user_verified,
     likesCount: r.likes_count,
+    dislikesCount: r.dislikes_count,
     isAccepted: !!r.is_accepted,
     isHidden: !!r.is_hidden,
+    isFlagged: !!r.is_flagged,
     likedByMe: !!r.liked_by_me,
+    dislikedByMe: !!r.disliked_by_me,
     createdAt: r.created_at
   }
 }
@@ -86,8 +96,11 @@ function mapNotification(r: any) {
     type: r.type,
     actorId: r.actor_id ?? undefined,
     actorName: r.actor_name ?? undefined,
+    actorAvatar: r.actor_avatar ?? undefined,
     postId: r.post_id ?? undefined,
     commentId: r.comment_id ?? undefined,
+    targetType: r.target_type ?? undefined,
+    targetId: r.target_id ?? undefined,
     content: r.content,
     isRead: !!r.is_read,
     createdAt: r.created_at
@@ -96,17 +109,19 @@ function mapNotification(r: any) {
 
 // ---------- 通用 SQL 片段 ----------
 
-/** 帖子查询：JOIN 作者展示名/积分 + 当前用户点赞态。参数顺序固定为 [viewerId, ...] */
+/** 帖子查询：JOIN 作者展示名/积分 + 当前用户点赞/踩态。参数顺序固定为 [viewerId, viewerId, ...] */
 const POST_SELECT = `
   SELECT p.*, COALESCE(s.user_name, u.username) AS user_name, COALESCE(g.points, 0) AS user_points,
-    u.verified AS user_verified, ci.name AS circle_name,
-    (l.user_id IS NOT NULL) AS liked_by_me
+    u.verified AS user_verified, s.avatar AS user_avatar, ci.name AS circle_name,
+    (l.user_id IS NOT NULL) AS liked_by_me,
+    (d.user_id IS NOT NULL) AS disliked_by_me
   FROM community_posts p
   JOIN users u ON u.id = p.user_id
   LEFT JOIN user_settings s ON s.user_id = p.user_id
   LEFT JOIN gamification g ON g.user_id = p.user_id
   LEFT JOIN community_circles ci ON ci.id = p.circle_id
-  LEFT JOIN community_likes l ON l.target_type = 'post' AND l.target_id = p.id AND l.user_id = ?`
+  LEFT JOIN community_likes l ON l.target_type = 'post' AND l.target_id = p.id AND l.user_id = ?
+  LEFT JOIN community_dislikes d ON d.target_type = 'post' AND d.target_id = p.id AND d.user_id = ?`
 
 // ---------- 积分 / 通知 ----------
 
@@ -150,11 +165,20 @@ async function revokeLikeStatements(env: Env, targetType: 'post' | 'comment', ta
 
 export function notifyStatement(env: Env, n: {
   userId: string; type: string; actorId?: string; postId?: string; commentId?: string; content: string
+  targetType?: string; targetId?: string
 }): D1PreparedStatement {
+  // 未显式指定跳转目标时按类型自动推导：帖子类(评论/点赞/采纳) → 帖子；关注 → 用户主页；私信 → 会话
+  let tt = n.targetType ?? null
+  let tid = n.targetId ?? null
+  if (!tt) {
+    if (n.postId) { tt = 'post'; tid = n.postId }
+    else if (n.type === 'follow' && n.actorId) { tt = 'user'; tid = n.actorId }
+    else if (n.type === 'message' && n.actorId) { tt = 'message'; tid = n.actorId }
+  }
   return env.DB.prepare(
-    'INSERT INTO community_notifications (id, user_id, type, actor_id, post_id, comment_id, content, is_read, created_at) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)'
-  ).bind(uid(), n.userId, n.type, n.actorId ?? null, n.postId ?? null, n.commentId ?? null, n.content, nowSec())
+    'INSERT INTO community_notifications (id, user_id, type, actor_id, post_id, comment_id, target_type, target_id, content, is_read, created_at) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)'
+  ).bind(uid(), n.userId, n.type, n.actorId ?? null, n.postId ?? null, n.commentId ?? null, tt, tid, n.content, nowSec())
 }
 
 /** 用户展示名（用户设置昵称优先，回退用户名） */
@@ -169,6 +193,12 @@ export async function displayName(env: Env, userId: string): Promise<string> {
 async function isAdmin(env: Env, userId: string): Promise<boolean> {
   const u = await first<{ role: string }>(env, 'SELECT role FROM users WHERE id = ?', userId)
   return u?.role === 'admin'
+}
+
+/** 主页可见性校验：private 仅本人、login 需登录、public 放行 */
+async function assertProfileVisible(ctx: { env: Env; userId: string }, targetUserId: string, visibility: string): Promise<void> {
+  if (visibility === 'private' && ctx.userId !== targetUserId) throw new HttpError(403, '对方设置了主页仅自己可见')
+  if (visibility === 'login' && !ctx.userId) throw new HttpError(401, '请登录后查看')
 }
 
 /** LIKE 通配符转义（tags JSON 子串匹配用） */
@@ -224,6 +254,10 @@ export function postCascadeStatements(env: Env, postId: string): D1PreparedState
       `DELETE FROM community_likes WHERE (target_type = 'post' AND target_id = ?)
        OR (target_type = 'comment' AND target_id IN (SELECT id FROM community_comments WHERE post_id = ?))`
     ).bind(postId, postId),
+    env.DB.prepare(
+      `DELETE FROM community_dislikes WHERE (target_type = 'post' AND target_id = ?)
+       OR (target_type = 'comment' AND target_id IN (SELECT id FROM community_comments WHERE post_id = ?))`
+    ).bind(postId, postId),
     env.DB.prepare('DELETE FROM community_notifications WHERE post_id = ?').bind(postId),
     env.DB.prepare(
       `DELETE FROM community_reports WHERE (target_type = 'post' AND target_id = ?)
@@ -251,6 +285,7 @@ export async function commentCascadeStatements(env: Env, commentId: string, post
       // 清理这些评论触发的通知（被评论/被回复/被赞评论），避免通知指向已删除内容
       env.DB.prepare(`DELETE FROM community_notifications WHERE comment_id IN (${ph})`).bind(...removedIds),
       env.DB.prepare(`DELETE FROM community_likes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
+      env.DB.prepare(`DELETE FROM community_dislikes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
       env.DB.prepare(`DELETE FROM community_reports WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
       env.DB.prepare(`DELETE FROM community_comments WHERE id IN (${ph})`).bind(...removedIds),
       env.DB.prepare('UPDATE community_posts SET comments_count = MAX(comments_count - ?, 0) WHERE id = ?')
@@ -266,7 +301,7 @@ export async function commentCascadeStatements(env: Env, commentId: string, post
 
 export function registerCommunityRoutes() {
   // 帖子列表（游标分页；默认仅广场公开帖，circle 参数显式指定圈内流）
-  on('GET', '/api/community/posts', true, async (ctx) => {
+  on('GET', '/api/community/posts', false, async (ctx) => {
     const url = new URL(ctx.request.url)
     const sort = url.searchParams.get('sort') === 'hot' ? 'hot' : 'latest'
     const tag = (url.searchParams.get('tag') || '').trim()
@@ -282,8 +317,11 @@ export function registerCommunityRoutes() {
 
     const admin = await isAdmin(ctx.env, ctx.userId)
     const where: string[] = []
-    if (!admin) where.push('p.is_hidden = 0')
-    const params: unknown[] = [ctx.userId]
+    const params: unknown[] = [ctx.userId, ctx.userId]
+    if (!admin) {
+      where.push('p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)')
+      params.push(ctx.userId)
+    }
     if (type && POST_TYPES.includes(type)) { where.push('p.type = ?'); params.push(type) }
     if (tag) { where.push(`p.tags LIKE ? ESCAPE '\\'`); params.push(`%"${escapeLike(tag)}"%`) }
     if (featured) where.push('p.is_featured = 1')
@@ -330,24 +368,32 @@ export function registerCommunityRoutes() {
   })
 
   // 帖子详情（含评论列表，前端组装二级树；管理员可见隐藏内容）
-  on('GET', '/api/community/posts/:id', true, async (ctx) => {
+  on('GET', '/api/community/posts/:id', false, async (ctx) => {
     const admin = await isAdmin(ctx.env, ctx.userId)
-    const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0'
-    const post = await first(ctx.env, `${POST_SELECT} WHERE ${postWhere}`, ctx.userId, ctx.params.id)
+    const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)'
+    const postParams: unknown[] = [ctx.userId, ctx.userId, ctx.params.id]
+    if (!admin) postParams.push(ctx.userId)
+    const post = await first(ctx.env, `${POST_SELECT} WHERE ${postWhere}`, ...postParams)
     if (!post) throw new HttpError(404, '帖子不存在')
     // 圈子帖：与列表接口同一口径校验可读性（审核圈仅活跃成员/管理员可见）
     if (post.circle_id) await assertCircleReadable(ctx, post.circle_id)
-    const commentWhere = admin ? 'c.post_id = ?' : 'c.post_id = ? AND c.is_hidden = 0'
+    const commentWhere = admin
+      ? 'c.post_id = ?'
+      : 'c.post_id = ? AND c.is_hidden = 0 AND (c.is_flagged = 0 OR c.user_id = ?)'
+    const commentParams: unknown[] = [ctx.userId, ctx.userId, ctx.params.id]
+    if (!admin) commentParams.push(ctx.userId)
     const comments = await all(ctx.env, `
       SELECT c.*, COALESCE(s.user_name, u.username) AS user_name,
-        u.verified AS user_verified,
-        (l.user_id IS NOT NULL) AS liked_by_me
+        u.verified AS user_verified, s.avatar AS user_avatar,
+        (l.user_id IS NOT NULL) AS liked_by_me,
+        (d.user_id IS NOT NULL) AS disliked_by_me
       FROM community_comments c
       JOIN users u ON u.id = c.user_id
       LEFT JOIN user_settings s ON s.user_id = c.user_id
       LEFT JOIN community_likes l ON l.target_type = 'comment' AND l.target_id = c.id AND l.user_id = ?
+      LEFT JOIN community_dislikes d ON d.target_type = 'comment' AND d.target_id = c.id AND d.user_id = ?
       WHERE ${commentWhere}
-      ORDER BY c.created_at ASC, c.id ASC`, ctx.userId, ctx.params.id)
+      ORDER BY c.created_at ASC, c.id ASC`, ...commentParams)
     return Response.json({ post: mapPost(post), comments: comments.map(mapComment) })
   })
 
@@ -355,9 +401,24 @@ export function registerCommunityRoutes() {
   on('POST', '/api/community/posts', true, async (ctx) => {
     rateLimit(ctx.request, 'community:post', 5)
     const b = await body(ctx.request)
+    // 分级发帖冷却：青铜(0-499)10min / 白银(500-1499)5min / 黄金(1500+)不限
+    const myPoints = await first<{ points: number }>(ctx.env,
+      'SELECT COALESCE(points, 0) AS points FROM gamification WHERE user_id = ?', ctx.userId)
+    const pts = myPoints?.points ?? 0
+    const cooldown = pts < 500 ? 600 : pts < 1500 ? 300 : 0
+    if (cooldown > 0) {
+      const last = await first<{ created_at: number }>(ctx.env,
+        'SELECT created_at FROM community_posts WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', ctx.userId)
+      if (last && nowSec() - last.created_at < cooldown) {
+        const wait = Math.ceil((cooldown - (nowSec() - last.created_at)) / 60)
+        throw new HttpError(429, `发帖过于频繁，请 ${wait} 分钟后再试`)
+      }
+    }
     const content = String(b?.content ?? '').trim()
-    if (!content || content.length > 5000) throw new HttpError(400, '帖子内容需为 1-5000 字')
-    assertClean(content)
+    if (content.length > 5000) throw new HttpError(400, '帖子内容最多 5000 字')
+    if (content) assertClean(content)
+    // 软违规：先发布但标记待审（仅作者/管理员可见），由管理员复核
+    const flagged = content ? (moderate(content).soft ? 1 : 0) : 0
     const type = POST_TYPES.includes(b?.type) ? b.type : 'share'
     const tags = (Array.isArray(b?.tags) ? b.tags : [])
       .filter((t: unknown) => typeof t === 'string').slice(0, 5)
@@ -381,6 +442,8 @@ export function registerCommunityRoutes() {
         ctx.userId, ...ids)
       if (owned.length !== new Set(ids).size) throw new HttpError(400, '图片不存在或已失效，请重新上传')
     }
+    // 图文至少一项：支持纯图片 / 纯文字 / 图文混合发帖
+    if (!content && !imageUrls.length) throw new HttpError(400, '请输入帖子内容或添加图片')
 
     // 圈内发帖：必须是该圈活跃成员
     let circleId: string | null = null
@@ -408,11 +471,11 @@ export function registerCommunityRoutes() {
     const now = nowSec()
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare(
-        'INSERT INTO community_posts (id, user_id, type, content, tags, image_urls, circle_id, topic_ref, ref_type, ref_id, created_at, updated_at) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO community_posts (id, user_id, type, content, tags, image_urls, circle_id, topic_ref, ref_type, ref_id, is_flagged, created_at, updated_at) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).bind(id, ctx.userId, type, content, JSON.stringify(tags), JSON.stringify(imageUrls), circleId, topicRef,
         typeof b?.refType === 'string' ? b.refType.slice(0, 20) : null,
-        typeof b?.refId === 'string' ? b.refId.slice(0, 64) : null, now, now)
+        typeof b?.refId === 'string' ? b.refId.slice(0, 64) : null, flagged, now, now)
     ]
     const awarded = await first(ctx.env,
       'SELECT id FROM points_log WHERE user_id = ? AND date = ? AND reason = ?', ctx.userId, utc8Today(), '社区打卡')
@@ -422,15 +485,15 @@ export function registerCommunityRoutes() {
     // 徽章：首次发帖 / 首次提问（主键去重，仅首次发放并通知）
     const myPostCount = await first<{ n: number }>(ctx.env,
       'SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ?', ctx.userId)
-    if (myPostCount?.n === 1) await awardBadge(ctx.env, ctx.userId, 'first_post')
+    if (myPostCount?.n === 1) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_post'))
     if (type === 'question') {
       const myQCount = await first<{ n: number }>(ctx.env,
         "SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ? AND type = 'question'", ctx.userId)
-      if (myQCount?.n === 1) await awardBadge(ctx.env, ctx.userId, 'first_question')
+      if (myQCount?.n === 1) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_question'))
     }
 
     // 刚写入的帖子被并发删除/隐藏时读不回，明确报错而非 500 崩溃
-    const created = await first(ctx.env, `${POST_SELECT} WHERE p.id = ?`, ctx.userId, id)
+    const created = await first(ctx.env, `${POST_SELECT} WHERE p.id = ?`, ctx.userId, ctx.userId, id)
     if (!created) throw new HttpError(500, '发布成功但读取详情失败，请刷新查看')
     return Response.json(mapPost(created), { status: 201 })
   })
@@ -479,8 +542,10 @@ export function registerCommunityRoutes() {
 
     const b = await body(ctx.request)
     const content = String(b?.content ?? '').trim()
-    if (!content || content.length > 1000) throw new HttpError(400, '评论内容需为 1-1000 字')
-    assertClean(content)
+    if (content.length > 1000) throw new HttpError(400, '评论内容最多 1000 字')
+    if (content) assertClean(content)
+    // 软违规：先发布但标记待审（仅作者/管理员可见），由管理员复核
+    const flagged = content ? (moderate(content).soft ? 1 : 0) : 0
 
     // 评论配图（最多 3 张）：与发帖同一口径——仅认本系统上传路径且必须属于当前用户
     const rawImageUrls: unknown[] = Array.isArray(b?.imageUrls) ? b.imageUrls : []
@@ -496,6 +561,8 @@ export function registerCommunityRoutes() {
         ctx.userId, ...ids)
       if (owned.length !== new Set(ids).size) throw new HttpError(400, '图片不存在或已失效，请重新上传')
     }
+    // 图文至少一项：支持纯图片 / 纯文字 / 图文混合评论
+    if (!content && !imageUrls.length) throw new HttpError(400, '请输入评论内容或添加图片')
 
     let parent: { user_id: string; parent_id: string | null } | null = null
     if (typeof b?.parentId === 'string' && b.parentId) {
@@ -512,8 +579,8 @@ export function registerCommunityRoutes() {
     const me = await first<{ verified: number }>(ctx.env, 'SELECT verified FROM users WHERE id = ?', ctx.userId)
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare(
-        'INSERT INTO community_comments (id, post_id, user_id, parent_id, content, image_urls, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(id, postId, ctx.userId, parent ? b.parentId : null, content, JSON.stringify(imageUrls), now, now),
+        'INSERT INTO community_comments (id, post_id, user_id, parent_id, content, image_urls, is_flagged, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, postId, ctx.userId, parent ? b.parentId : null, content, JSON.stringify(imageUrls), flagged, now, now),
       ctx.env.DB.prepare('UPDATE community_posts SET comments_count = comments_count + 1 WHERE id = ?').bind(postId),
       ...awardStatements(ctx.env, ctx.userId, 1, '评论帖子', id)
     ]
@@ -535,7 +602,7 @@ export function registerCommunityRoutes() {
       id, postId, userId: ctx.userId, userName: myName,
       parentId: parent ? b.parentId : undefined,
       content, imageUrls, userVerified: !!me?.verified,
-      likesCount: 0, isAccepted: false, isHidden: false, likedByMe: false, createdAt: now
+      likesCount: 0, isAccepted: false, isHidden: false, isFlagged: !!flagged, likedByMe: false, createdAt: now
     }, { status: 201 })
   })
 
@@ -602,9 +669,25 @@ export function registerCommunityRoutes() {
     // 圈子内容：仅可读者可点赞（与详情/评论同一口径）
     if (target.circle_id) await assertCircleReadable(ctx, target.circle_id)
 
+    // 与踩互斥：若已踩则取消踩（删记录 + 计数-1），保证赞/踩二选一，避免同时点亮的状态矛盾
+    const disliked = await first(ctx.env,
+      'SELECT 1 AS x FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?',
+      ctx.userId, targetType, targetId)
+    if (disliked) {
+      await batch(ctx.env, [
+        ctx.env.DB.prepare('DELETE FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?')
+          .bind(ctx.userId, targetType, targetId),
+        ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = MAX(dislikes_count - 1, 0) WHERE id = ?`).bind(targetId)
+      ])
+    }
+
+    // 原子 INSERT OR IGNORE 抢占点赞记录，消除并发双击导致的「主键冲突 500」（changes=0 表示已赞，幂等返回）
+    const inserted = await run(ctx.env,
+      'INSERT OR IGNORE INTO community_likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)',
+      ctx.userId, targetType, targetId, nowSec())
+    if (!inserted.meta.changes) return Response.json({ liked: true })
+
     const stmts: D1PreparedStatement[] = [
-      ctx.env.DB.prepare('INSERT INTO community_likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)')
-        .bind(ctx.userId, targetType, targetId, nowSec()),
       ctx.env.DB.prepare(`UPDATE ${table} SET likes_count = likes_count + 1 WHERE id = ?`).bind(targetId)
     ]
     // 被赞 +1 积分 + 通知（自己赞自己不加、不通知）；refId 编码点赞者身份，取消点赞时可精确回收
@@ -625,9 +708,71 @@ export function registerCommunityRoutes() {
         `SELECT (SELECT COALESCE(SUM(likes_count), 0) FROM community_posts WHERE user_id = ?)
               + (SELECT COALESCE(SUM(likes_count), 0) FROM community_comments WHERE user_id = ?) AS n`,
         target.user_id, target.user_id)
-      if ((total?.n ?? 0) >= 100) await awardBadge(ctx.env, target.user_id, 'likes_100')
+      if ((total?.n ?? 0) >= 100) await batch(ctx.env, await awardBadge(ctx.env, target.user_id, 'likes_100'))
     }
     return Response.json({ liked: true })
+  })
+
+  // 踩/取消踩（toggle，幂等；与赞互斥：踩时若已赞则取消赞并回收积分，防刷分）
+  on('POST', '/api/community/dislikes', true, async (ctx) => {
+    rateLimit(ctx.request, 'community:dislike', 30)
+    const b = await body(ctx.request)
+    const targetType = b?.targetType === 'comment' ? 'comment' : b?.targetType === 'post' ? 'post' : null
+    const targetId = typeof b?.targetId === 'string' ? b.targetId : ''
+    if (!targetType || !targetId) throw new HttpError(400, '参数错误')
+    const table = targetType === 'post' ? 'community_posts' : 'community_comments'
+
+    const existing = await first(ctx.env,
+      'SELECT 1 AS x FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?',
+      ctx.userId, targetType, targetId)
+    if (existing) {
+      await batch(ctx.env, [
+        ctx.env.DB.prepare('DELETE FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?')
+          .bind(ctx.userId, targetType, targetId),
+        ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = MAX(dislikes_count - 1, 0) WHERE id = ?`).bind(targetId)
+      ])
+      return Response.json({ disliked: false })
+    }
+
+    // 校验目标存在 + 圈子可读性
+    const target = await first<{ user_id: string; circle_id?: string | null }>(ctx.env,
+      targetType === 'post'
+        ? 'SELECT user_id, circle_id FROM community_posts WHERE id = ? AND is_hidden = 0'
+        : `SELECT c.user_id, p.circle_id FROM community_comments c
+           JOIN community_posts p ON p.id = c.post_id
+           WHERE c.id = ? AND c.is_hidden = 0`, targetId)
+    if (!target) throw new HttpError(404, '内容不存在')
+    if (target.circle_id) await assertCircleReadable(ctx, target.circle_id)
+
+    // 与赞互斥：若已赞，完整取消赞（删记录 + 计数-1 + 撤通知 + 回收积分）
+    const liked = await first(ctx.env,
+      'SELECT 1 AS x FROM community_likes WHERE user_id = ? AND target_type = ? AND target_id = ?',
+      ctx.userId, targetType, targetId)
+    let likeRevoked = false
+    if (liked) {
+      likeRevoked = true
+      const unlikeStmts: D1PreparedStatement[] = [
+        ctx.env.DB.prepare('DELETE FROM community_likes WHERE user_id = ? AND target_type = ? AND target_id = ?')
+          .bind(ctx.userId, targetType, targetId),
+        ctx.env.DB.prepare(`UPDATE ${table} SET likes_count = MAX(likes_count - 1, 0) WHERE id = ?`).bind(targetId),
+        ctx.env.DB.prepare(
+          `DELETE FROM community_notifications WHERE type = 'like' AND actor_id = ? AND ${targetType === 'post' ? 'post_id' : 'comment_id'} = ?`
+        ).bind(ctx.userId, targetId),
+        ...(await revokeStatements(ctx.env, `srv:like:${ctx.userId}:${targetType}:${targetId}`))
+      ]
+      await batch(ctx.env, unlikeStmts)
+    }
+
+    // 原子 INSERT OR IGNORE 抢占踩记录，防并发双击 500（changes=0 表示已踩，幂等返回）
+    const inserted = await run(ctx.env,
+      'INSERT OR IGNORE INTO community_dislikes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)',
+      ctx.userId, targetType, targetId, nowSec())
+    if (!inserted.meta.changes) return Response.json({ disliked: true, likeRevoked })
+
+    await batch(ctx.env, [
+      ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = dislikes_count + 1 WHERE id = ?`).bind(targetId)
+    ])
+    return Response.json({ disliked: true, likeRevoked })
   })
 
   // 提问帖标记解决/取消解决（仅楼主；已采纳最佳答案时需先取消采纳，避免「已采纳但未解答」矛盾态）
@@ -697,7 +842,7 @@ export function registerCommunityRoutes() {
     if (!(await hasBadge(ctx.env, comment.user_id, 'answer_expert'))) {
       const accepted = await first<{ n: number }>(ctx.env,
         'SELECT COUNT(*) AS n FROM community_comments WHERE user_id = ? AND is_accepted = 1', comment.user_id)
-      if ((accepted?.n ?? 0) >= 10) await awardBadge(ctx.env, comment.user_id, 'answer_expert')
+      if ((accepted?.n ?? 0) >= 10) await batch(ctx.env, await awardBadge(ctx.env, comment.user_id, 'answer_expert'))
     }
     return Response.json({ acceptedAnswerId: commentId, isResolved: true })
   })
@@ -708,7 +853,8 @@ export function registerCommunityRoutes() {
   on('GET', '/api/community/messages/conversations', true, async (ctx) => {
     // 用相关方的最大 created_at 分组聚合；未读数仅统计「发给我且未读」
     const rows = await all<any>(ctx.env, `
-      SELECT m.*, COALESCE(s.user_name, u.username) AS peer_name, u.verified AS peer_verified
+      SELECT m.*, COALESCE(s.user_name, u.username) AS peer_name, u.verified AS peer_verified,
+        s.avatar AS peer_avatar
       FROM community_messages m
       JOIN (
         SELECT CASE WHEN from_id = ? THEN to_id ELSE from_id END AS peer, MAX(created_at) AS latest
@@ -733,7 +879,8 @@ export function registerCommunityRoutes() {
             peerId,
             peerName: r.peer_name || '升本人',
             peerVerified: !!r.peer_verified,
-            lastContent: r.content.slice(0, 60),
+            peerAvatar: r.peer_avatar ?? undefined,
+            lastContent: (r.content || (r.image_urls ? '[图片]' : '')).slice(0, 60),
             lastAt: r.created_at,
             lastFromMe: r.from_id === ctx.userId,
             unread: unreadMap.get(peerId) ?? 0
@@ -763,7 +910,9 @@ export function registerCommunityRoutes() {
     return Response.json({
       messages: items.map(r => ({
         id: r.id, fromId: r.from_id, toId: r.to_id, content: r.content,
-        isRead: !!r.is_read, createdAt: r.created_at, fromMe: r.from_id === ctx.userId
+        imageUrls: r.image_urls ? parseStrArray(r.image_urls) : undefined,
+        // 打开记录即已读：对方发来的消息在本次返回中即视为已读（与上方 UPDATE 同步）
+        isRead: r.from_id === peerId ? true : !!r.is_read, createdAt: r.created_at, fromMe: r.from_id === ctx.userId
       })),
       nextCursor: rows.length > limit ? String(items[items.length - 1].created_at) : null
     })
@@ -778,20 +927,39 @@ export function registerCommunityRoutes() {
     if (!peer) throw new HttpError(404, '用户不存在')
     const b = await body(ctx.request)
     const content = String(b?.content ?? '').trim()
-    if (!content || content.length > 500) throw new HttpError(400, '私信内容需为 1-500 字')
-    assertClean(content)
+    if (content.length > 500) throw new HttpError(400, '私信内容最多 500 字')
+    if (content) assertClean(content)
+
+    // 私信配图（最多 3 张）：与发帖/评论同一口径——仅认本系统上传路径且必须属于当前用户
+    const rawImageUrls: unknown[] = Array.isArray(b?.imageUrls) ? b.imageUrls : []
+    const imageUrls = [...new Set(rawImageUrls.filter((u): u is string => typeof u === 'string'))]
+      .slice(0, IMAGE_MAX_PER_MESSAGE)
+    if (imageUrls.length) {
+      if (imageUrls.some(u => !/^\/api\/community\/images\/[a-f0-9]{16}$/.test(u))) {
+        throw new HttpError(400, '图片地址无效')
+      }
+      const ids = imageUrls.map(u => u.split('/').pop()!)
+      const owned = await all<{ id: string }>(ctx.env,
+        `SELECT id FROM community_uploads WHERE user_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
+        ctx.userId, ...ids)
+      if (owned.length !== new Set(ids).size) throw new HttpError(400, '图片不存在或已失效，请重新上传')
+    }
+    // 图文至少一项：支持纯图片 / 纯文字 / 图文混合私信
+    if (!content && !imageUrls.length) throw new HttpError(400, '请输入私信内容或添加图片')
+
     const id = uid()
     const now = nowSec()
     const myName = await displayName(ctx.env, ctx.userId)
+    const preview = content || (imageUrls.length ? '[图片]' : '')
     await batch(ctx.env, [
-      ctx.env.DB.prepare('INSERT INTO community_messages (id, from_id, to_id, content, created_at) VALUES (?, ?, ?, ?, ?)')
-        .bind(id, ctx.userId, peerId, content, now),
+      ctx.env.DB.prepare('INSERT INTO community_messages (id, from_id, to_id, content, image_urls, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(id, ctx.userId, peerId, content, JSON.stringify(imageUrls), now),
       notifyStatement(ctx.env, {
         userId: peerId, type: 'message', actorId: ctx.userId,
-        content: `${myName} 给你发来私信：${content.slice(0, 40)}${content.length > 40 ? '…' : ''}`
+        content: `${myName} 给你发来私信：${preview.slice(0, 40)}${preview.length > 40 ? '…' : ''}`
       })
     ])
-    return Response.json({ id, fromId: ctx.userId, toId: peerId, content, isRead: false, createdAt: now, fromMe: true }, { status: 201 })
+    return Response.json({ id, fromId: ctx.userId, toId: peerId, content, imageUrls, isRead: false, createdAt: now, fromMe: true }, { status: 201 })
   })
 
   // 私信未读总数（并入顶栏通知角标）
@@ -845,7 +1013,7 @@ export function registerCommunityRoutes() {
     const circle = await first<any>(ctx.env, 'SELECT * FROM community_circles WHERE id = ?', ctx.params.id)
     if (!circle) throw new HttpError(404, '圈子不存在')
     const members = await all<any>(ctx.env, `
-      SELECT m.user_id, m.role, COALESCE(s.user_name, u.username) AS user_name, u.verified
+      SELECT m.user_id, m.role, COALESCE(s.user_name, u.username) AS user_name, u.verified, s.avatar AS user_avatar
       FROM circle_members m
       JOIN users u ON u.id = m.user_id
       LEFT JOIN user_settings s ON s.user_id = m.user_id
@@ -859,7 +1027,7 @@ export function registerCommunityRoutes() {
     let pending: any[] = []
     if (mine?.role === 'owner') {
       pending = await all<any>(ctx.env, `
-        SELECT m.user_id, COALESCE(s.user_name, u.username) AS user_name, m.created_at
+        SELECT m.user_id, COALESCE(s.user_name, u.username) AS user_name, m.created_at, s.avatar AS user_avatar
         FROM circle_members m
         JOIN users u ON u.id = m.user_id
         LEFT JOIN user_settings s ON s.user_id = m.user_id
@@ -868,8 +1036,8 @@ export function registerCommunityRoutes() {
     }
     return Response.json({
       circle: mapCircle(circle, myStatus),
-      members: members.map(m => ({ userId: m.user_id, userName: m.user_name || '升本人', role: m.role, verified: !!m.verified })),
-      pending: pending.map(p => ({ userId: p.user_id, userName: p.user_name || '升本人', createdAt: p.created_at }))
+      members: members.map(m => ({ userId: m.user_id, userName: m.user_name || '升本人', role: m.role, verified: !!m.verified, userAvatar: m.user_avatar ?? undefined })),
+      pending: pending.map(p => ({ userId: p.user_id, userName: p.user_name || '升本人', createdAt: p.created_at, userAvatar: p.user_avatar ?? undefined }))
     })
   })
 
@@ -914,6 +1082,7 @@ export function registerCommunityRoutes() {
     } else {
       stmts.push(notifyStatement(ctx.env, {
         userId: circle.creator_id, type: 'system', actorId: ctx.userId,
+        targetType: 'circle', targetId: ctx.params.id,
         content: `${myName} 申请加入圈子「${circle.name}」，请到圈子详情页审批`
       }))
     }
@@ -935,6 +1104,7 @@ export function registerCommunityRoutes() {
       ctx.env.DB.prepare('UPDATE community_circles SET member_count = member_count + 1 WHERE id = ?').bind(ctx.params.id),
       notifyStatement(ctx.env, {
         userId: ctx.params.uid, type: 'system',
+        targetType: 'circle', targetId: ctx.params.id,
         content: `🎉 你加入圈子「${circle.name}」的申请已通过`
       })
     ])
@@ -961,16 +1131,36 @@ export function registerCommunityRoutes() {
   })
 
   // 用户资料卡：社区公开荣誉信息（等级/连续打卡/徽章墙/专家认证），不含私有学习数据
-  on('GET', '/api/community/users/:id/profile', true, async (ctx) => {
+  on('GET', '/api/community/users/:id/profile', false, async (ctx) => {
     const u = await first<any>(ctx.env, `
       SELECT u.id, COALESCE(s.user_name, u.username) AS user_name, u.verified, u.expertise,
-        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak
+        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak, s.profile_visibility, s.avatar,
+        COALESCE(s.bio, '') AS bio
       FROM users u
       LEFT JOIN user_settings s ON s.user_id = u.id
       LEFT JOIN gamification g ON g.user_id = u.id
       WHERE u.id = ?`, ctx.params.id)
     if (!u) throw new HttpError(404, '用户不存在')
-    const [stats, badges, followers, followedByMe] = await Promise.all([
+    const visibility = u.profile_visibility ?? 'login'
+    // 私密主页（非本人）：不抛错，降级返回公开子集（昵称/头像/蓝V 在公开帖子流本就可见）。
+    // 关注关系属社交信息（非隐私学习数据），私密主页仍可关注/取关，需一并返回当前关注状态
+    if (visibility === 'private' && ctx.userId !== ctx.params.id) {
+      const [followedByMe, followsMe] = await Promise.all([
+        first<{ follower_id: string }>(ctx.env,
+          'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.userId, ctx.params.id),
+        first<{ follower_id: string }>(ctx.env,
+          'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.params.id, ctx.userId)
+      ])
+      return Response.json({
+        profilePrivate: true,
+        userId: u.id, userName: u.user_name || '升本人',
+        avatar: u.avatar ?? undefined, verified: !!u.verified, expertise: u.expertise || '',
+        bio: u.bio, followedByMe: !!followedByMe, followsMe: !!followsMe
+      })
+    }
+    // login 可见性 + 访客：需登录（登录用户可见完整资料）
+    if (visibility === 'login' && !ctx.userId) throw new HttpError(401, '请登录后查看')
+    const [stats, badges, followers, followedByMe, followsMe, threads, social] = await Promise.all([
       first<{ posts: number; likes: number }>(ctx.env, `
         SELECT (SELECT COUNT(*) FROM community_posts WHERE user_id = ? AND is_hidden = 0)
              + (SELECT COUNT(*) FROM community_comments WHERE user_id = ? AND is_hidden = 0) AS posts,
@@ -981,16 +1171,40 @@ export function registerCommunityRoutes() {
         'SELECT badge_key, awarded_at FROM user_badges WHERE user_id = ? ORDER BY awarded_at ASC', ctx.params.id),
       first<{ n: number }>(ctx.env, 'SELECT COUNT(*) AS n FROM user_follows WHERE followee_id = ?', ctx.params.id),
       first<{ follower_id: string }>(ctx.env,
-        'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.userId, ctx.params.id)
+        'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.userId, ctx.params.id),
+      first<{ follower_id: string }>(ctx.env,
+        'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.params.id, ctx.userId),
+      first<{ n: number }>(ctx.env,
+        'SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ? AND is_hidden = 0 AND circle_id IS NULL AND topic_ref IS NULL', ctx.params.id),
+      first<{ following: number; mutual: number; liked: number }>(ctx.env, `
+        SELECT (SELECT COUNT(*) FROM user_follows WHERE follower_id = ?) AS following,
+          (SELECT COUNT(*) FROM user_follows f1 JOIN user_follows f2
+             ON f2.follower_id = f1.followee_id AND f2.followee_id = f1.follower_id
+           WHERE f1.follower_id = ?) AS mutual,
+          (SELECT COUNT(*) FROM community_likes l JOIN community_posts p
+             ON p.id = l.target_id AND p.is_hidden = 0
+           WHERE l.user_id = ? AND l.target_type = 'post') AS liked`,
+        ctx.params.id, ctx.params.id, ctx.params.id)
     ])
     return Response.json({
       userId: u.id, userName: u.user_name || '升本人',
+      avatar: u.avatar ?? undefined,
       points: u.points, streak: u.streak,
       verified: !!u.verified, expertise: u.expertise || '',
       postCount: stats?.posts ?? 0, likesReceived: stats?.likes ?? 0,
       badges: badges.map(b => ({ key: b.badge_key, awardedAt: b.awarded_at })),
       followers: followers?.n ?? 0,
-      followedByMe: !!followedByMe
+      followedByMe: !!followedByMe,
+      bio: u.bio,
+      followsMe: !!followsMe,
+      threadsCount: threads?.n ?? 0,
+      followingCount: social?.following ?? 0,
+      mutualCount: social?.mutual ?? 0,
+      ...(ctx.userId === ctx.params.id ? { likedCount: social?.liked ?? 0 } : {}),
+      relation: ctx.userId === ctx.params.id ? 'none'
+        : (followedByMe && followsMe) ? 'mutual'
+        : followedByMe ? 'following'
+        : followsMe ? 'follower' : 'none'
     })
   })
 
@@ -998,11 +1212,14 @@ export function registerCommunityRoutes() {
   on('GET', '/api/community/users/:id/stats', true, async (ctx) => {
     const userId = ctx.params.id
     // 确认用户存在
-    const u = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', userId)
+    const u = await first<{ id: string; profile_visibility: string }>(ctx.env,
+      `SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?`, userId)
     if (!u) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, userId, u.profile_visibility ?? 'login')
 
     // 365 天热力图：按日期汇总学习分钟数（日期口径与 utc8Today 一致：UTC+8）
-    const oneYearAgo = new Date(Date.now() + 8 * 3600_000 - 86400_000 * 365)
+    // 364 天前 → 今天共 365 天，避免 off-by-one 多生成一天
+    const oneYearAgo = new Date(Date.now() + 8 * 3600_000 - 86400_000 * 364)
     const startDate = oneYearAgo.toISOString().slice(0, 10)
     const heatmapRows = await all<{ date: string; minutes: number }>(ctx.env, `
       SELECT date, SUM(minutes) AS minutes FROM study_records
@@ -1082,10 +1299,166 @@ export function registerCommunityRoutes() {
     return Response.json({ following: true })
   })
 
+  // 用户发布的帖子（公开广场帖口径：排除圈子帖/知识点讨论帖；游标分页，与 feed latest 同模式）
+  on('GET', '/api/community/users/:id/posts', false, async (ctx) => {
+    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
+      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    const where = ['p.user_id = ?', 'p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)',
+      'p.circle_id IS NULL', 'p.topic_ref IS NULL']
+    const params: unknown[] = [ctx.userId, ctx.userId, ctx.params.id, ctx.userId]
+    if (c) { where.push('(p.created_at < ? OR (p.created_at = ? AND p.id < ?))'); params.push(c.ts, c.ts, c.id) }
+    const rows = await all(ctx.env,
+      `${POST_SELECT} WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC, p.id DESC LIMIT ?`, ...params, limit + 1)
+    let nextCursor: string | null = null
+    if (rows.length > limit) {
+      const last = rows[limit - 1] as any
+      nextCursor = `${last.created_at}_${last.id}`
+    }
+    return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor })
+  })
+
+  // 我点赞过的帖子（按点赞时间倒序；游标 `${lk.created_at}_${p.id}`）
+  on('GET', '/api/community/me/liked-posts', true, async (ctx) => {
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    const where = ["lk.target_type = 'post'", 'lk.user_id = ?', 'p.is_hidden = 0', '(p.is_flagged = 0 OR p.user_id = ?)']
+    const params: unknown[] = [ctx.userId, ctx.userId, ctx.userId, ctx.userId]
+    if (c) { where.push('(lk.created_at < ? OR (lk.created_at = ? AND p.id < ?))'); params.push(c.ts, c.ts, c.id) }
+    const sql = POST_SELECT
+      .replace('SELECT p.*,', 'SELECT p.*, lk.created_at AS lk_created_at,')
+      .replace('FROM community_posts p', 'FROM community_posts p JOIN community_likes lk ON lk.target_id = p.id') +
+      ` WHERE ${where.join(' AND ')} ORDER BY lk.created_at DESC, p.id DESC LIMIT ?`
+    const rows = await all<any>(ctx.env, sql, ...params, limit + 1)
+    let nextCursor: string | null = null
+    if (rows.length > limit) {
+      const last = rows[limit - 1]
+      nextCursor = `${last.lk_created_at}_${last.id}`
+    }
+    return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor })
+  })
+
+  interface FollowRow {
+    user_id: string; user_name: string | null; username: string; avatar: string | null;
+    verified: number; bio: string; created_at: number; rel_id: string
+  }
+
+  /** 关系列表公共逻辑：游标分页 + 批量补当前用户与列表项的双向关系 */
+  async function followListResponse(ctx: any, sql: string, params: unknown[], limit: number) {
+    const rows = await all<FollowRow>(ctx.env, sql, ...params, limit + 1)
+    const page = rows.slice(0, limit)
+    let nextCursor: string | null = null
+    if (rows.length > limit) {
+      const last = rows[limit - 1]
+      nextCursor = `${last.created_at}_${last.rel_id}`
+    }
+    const ids = page.map(r => r.user_id)
+    let myFollowing = new Set<string>(), myFollowers = new Set<string>()
+    if (ctx.userId && ids.length) {
+      const ph = ids.map(() => '?').join(',')
+      const [a, b] = await Promise.all([
+        all<{ followee_id: string }>(ctx.env,
+          `SELECT followee_id FROM user_follows WHERE follower_id = ? AND followee_id IN (${ph})`, ctx.userId, ...ids),
+        all<{ follower_id: string }>(ctx.env,
+          `SELECT follower_id FROM user_follows WHERE followee_id = ? AND follower_id IN (${ph})`, ctx.userId, ...ids)
+      ])
+      myFollowing = new Set(a.map(r => r.followee_id))
+      myFollowers = new Set(b.map(r => r.follower_id))
+    }
+    const items = page.map(r => {
+      const followedByMe = myFollowing.has(r.user_id)
+      const followsMe = myFollowers.has(r.user_id)
+      return {
+        userId: r.user_id,
+        userName: r.user_name || r.username,
+        avatar: r.avatar ?? undefined,
+        verified: !!r.verified,
+        bio: r.bio || '',
+        followedByMe, followsMe,
+        relation: r.user_id === ctx.userId ? 'none'
+          : followedByMe && followsMe ? 'mutual'
+          : followedByMe ? 'following' : followsMe ? 'follower' : 'none'
+      }
+    })
+    return Response.json({ items, nextCursor })
+  }
+
+  // 粉丝列表（公开路由；item 含与当前用户的双向关系）
+  on('GET', '/api/community/users/:id/followers', false, async (ctx) => {
+    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
+      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    let sql = `
+      SELECT u.id AS user_id, s.user_name, u.username, s.avatar, u.verified,
+        COALESCE(s.bio, '') AS bio, f.created_at AS created_at, f.follower_id AS rel_id
+      FROM user_follows f
+      JOIN users u ON u.id = f.follower_id
+      LEFT JOIN user_settings s ON s.user_id = u.id
+      WHERE f.followee_id = ?`
+    const params: unknown[] = [ctx.params.id]
+    if (c) { sql += ' AND (f.created_at < ? OR (f.created_at = ? AND f.follower_id < ?))'; params.push(c.ts, c.ts, c.id) }
+    sql += ' ORDER BY f.created_at DESC, f.follower_id DESC LIMIT ?'
+    return followListResponse(ctx, sql, params, limit)
+  })
+
+  // 关注列表（公开路由；结构与粉丝列表相同，方向取 followee）
+  on('GET', '/api/community/users/:id/following', false, async (ctx) => {
+    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
+      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    let sql = `
+      SELECT u.id AS user_id, s.user_name, u.username, s.avatar, u.verified,
+        COALESCE(s.bio, '') AS bio, f.created_at AS created_at, f.followee_id AS rel_id
+      FROM user_follows f
+      JOIN users u ON u.id = f.followee_id
+      LEFT JOIN user_settings s ON s.user_id = u.id
+      WHERE f.follower_id = ?`
+    const params: unknown[] = [ctx.params.id]
+    if (c) { sql += ' AND (f.created_at < ? OR (f.created_at = ? AND f.followee_id < ?))'; params.push(c.ts, c.ts, c.id) }
+    sql += ' ORDER BY f.created_at DESC, f.followee_id DESC LIMIT ?'
+    return followListResponse(ctx, sql, params, limit)
+  })
+
+  // 互关列表（公开路由；f1/f2 双向 JOIN 取互相跟随者）
+  on('GET', '/api/community/users/:id/mutual', false, async (ctx) => {
+    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
+      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    let sql = `
+      SELECT u.id AS user_id, s.user_name, u.username, s.avatar, u.verified,
+        COALESCE(s.bio, '') AS bio, f1.created_at AS created_at, f1.followee_id AS rel_id
+      FROM user_follows f1
+      JOIN user_follows f2 ON f2.follower_id = f1.followee_id AND f2.followee_id = f1.follower_id
+      JOIN users u ON u.id = f1.followee_id
+      LEFT JOIN user_settings s ON s.user_id = u.id
+      WHERE f1.follower_id = ?`
+    const params: unknown[] = [ctx.params.id]
+    if (c) { sql += ' AND (f1.created_at < ? OR (f1.created_at = ? AND f1.followee_id < ?))'; params.push(c.ts, c.ts, c.id) }
+    sql += ' ORDER BY f1.created_at DESC, f1.followee_id DESC LIMIT ?'
+    return followListResponse(ctx, sql, params, limit)
+  })
+
   // 每日一题：最新一条被标记且未隐藏的帖子（广场顶部展示）
-  on('GET', '/api/community/daily', true, async (ctx) => {
+  on('GET', '/api/community/daily', false, async (ctx) => {
     const row = await first<any>(ctx.env,
-      `${POST_SELECT} WHERE p.is_daily = 1 AND p.is_hidden = 0 ORDER BY p.created_at DESC LIMIT 1`, ctx.userId)
+      `${POST_SELECT} WHERE p.is_daily = 1 AND p.is_hidden = 0 ORDER BY p.created_at DESC LIMIT 1`, ctx.userId, ctx.userId)
     return Response.json({ post: row ? mapPost(row) : null })
   })
 
@@ -1093,9 +1466,9 @@ export function registerCommunityRoutes() {
   on('GET', '/api/community/leaderboard', true, async (ctx) => {
     const today = utc8Today()
     const [todayRows, streakRows, subjectRows] = await Promise.all([
-      all<{ user_id: string; user_name: string; points: number; streak: number; today_points: number; verified: number }>(ctx.env, `
+      all<{ user_id: string; user_name: string; points: number; streak: number; today_points: number; verified: number; user_avatar?: string }>(ctx.env, `
         SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak, u.verified,
-          SUM(pl.points) AS today_points
+          s.avatar AS user_avatar, SUM(pl.points) AS today_points
         FROM points_log pl
         JOIN gamification g ON g.user_id = pl.user_id AND g.last_checkin = ?
         JOIN users u ON u.id = pl.user_id
@@ -1104,8 +1477,9 @@ export function registerCommunityRoutes() {
         GROUP BY pl.user_id
         ORDER BY today_points DESC, g.points DESC
         LIMIT 10`, today, today),
-      all<{ user_id: string; user_name: string; points: number; streak: number; verified: number }>(ctx.env, `
-        SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak, u.verified
+      all<{ user_id: string; user_name: string; points: number; streak: number; verified: number; user_avatar?: string }>(ctx.env, `
+        SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak, u.verified,
+          s.avatar AS user_avatar
         FROM gamification g
         JOIN users u ON u.id = g.user_id
         LEFT JOIN user_settings s ON s.user_id = g.user_id
@@ -1125,13 +1499,217 @@ export function registerCommunityRoutes() {
     }
     return Response.json({
       today: todayRows.map(r => ({
-        userName: r.user_name || '升本人', todayPoints: r.today_points,
+        userId: r.user_id, userName: r.user_name || '升本人', userAvatar: r.user_avatar ?? undefined, todayPoints: r.today_points,
         streak: r.streak, totalPoints: r.points, verified: !!r.verified, subjects: subjMap.get(r.user_id) ?? []
       })),
       streak: streakRows.map(r => ({
-        userName: r.user_name || '升本人', streak: r.streak, totalPoints: r.points, verified: !!r.verified
+        userId: r.user_id, userName: r.user_name || '升本人', userAvatar: r.user_avatar ?? undefined, streak: r.streak, totalPoints: r.points, verified: !!r.verified
       }))
     })
+  })
+
+  // 每周学习周报：上周一至周日（UTC+8）惰性聚合，纯读无缓存，周界变更自动刷新
+  on('GET', '/api/community/weekly-report', true, async (ctx) => {
+    // 上周区间：以 UTC+8 当前时刻推算，周一为一周起点
+    const t = new Date(Date.now() + 8 * 3600_000)
+    const daysSinceMonday = (t.getUTCDay() + 6) % 7
+    const monday = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() - daysSinceMonday - 7))
+    const fmt = (d: Date) => d.toISOString().slice(0, 10)
+    const weekStart = fmt(monday)
+    const weekEnd = fmt(new Date(monday.getTime() + 6 * 86400_000))
+    // created_at（unix 秒）区间：周一起点 至 下周一 00:00（开区间）
+    const startTs = Math.floor(monday.getTime() / 1000) - 8 * 3600
+    const endTs = startTs + 7 * 86400
+    const [study, problems, points, posts, comments] = await Promise.all([
+      first<{ minutes: number; days: number }>(ctx.env,
+        'SELECT COALESCE(SUM(minutes), 0) AS minutes, COUNT(DISTINCT date) AS days FROM study_records WHERE user_id = ? AND date >= ? AND date <= ?',
+        ctx.userId, weekStart, weekEnd),
+      first<{ total: number; correct: number }>(ctx.env,
+        'SELECT COALESCE(SUM(total), 0) AS total, COALESCE(SUM(correct), 0) AS correct FROM problem_sessions WHERE user_id = ? AND date >= ? AND date <= ?',
+        ctx.userId, weekStart, weekEnd),
+      first<{ points: number }>(ctx.env,
+        'SELECT COALESCE(SUM(points), 0) AS points FROM points_log WHERE user_id = ? AND date >= ? AND date <= ?',
+        ctx.userId, weekStart, weekEnd),
+      first<{ n: number }>(ctx.env,
+        'SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ? AND created_at >= ? AND created_at < ?',
+        ctx.userId, startTs, endTs),
+      first<{ n: number }>(ctx.env,
+        'SELECT COUNT(*) AS n FROM community_comments WHERE user_id = ? AND created_at >= ? AND created_at < ?',
+        ctx.userId, startTs, endTs)
+    ])
+    return Response.json({
+      weekStart, weekEnd,
+      minutes: study?.minutes ?? 0,
+      studyDays: study?.days ?? 0,
+      problems: problems?.total ?? 0,
+      correct: problems?.correct ?? 0,
+      points: points?.points ?? 0,
+      interactions: (posts?.n ?? 0) + (comments?.n ?? 0)
+    })
+  })
+
+  // 学习进度对比：本周学习时长榜 / 本月刷题数榜（仅 join_progress_board=1 用户上榜，TOP 50；不展示末位排名）
+  on('GET', '/api/community/progress-board', true, async (ctx) => {
+    const t = new Date(Date.now() + 8 * 3600_000)
+    const fmt = (d: Date) => d.toISOString().slice(0, 10)
+    const daysSinceMonday = (t.getUTCDay() + 6) % 7
+    const weekStart = fmt(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() - daysSinceMonday)))
+    const today = fmt(t)
+    const monthStart = today.slice(0, 8) + '01'
+
+    /** 参与者聚合行：user_id、展示名、蓝V、总积分、区间内 SUM 值 */
+    const participantsSql = (table: string, valueCol: string) => `
+      SELECT r.user_id, COALESCE(s.user_name, u.username) AS user_name, u.verified,
+        s.avatar AS user_avatar, COALESCE(g.points, 0) AS total_points, SUM(r.${valueCol}) AS value
+      FROM ${table} r
+      JOIN user_settings us ON us.user_id = r.user_id AND us.join_progress_board = 1
+      JOIN users u ON u.id = r.user_id
+      LEFT JOIN user_settings s ON s.user_id = r.user_id
+      LEFT JOIN gamification g ON g.user_id = r.user_id
+      WHERE r.date >= ? AND r.date <= ?
+      GROUP BY r.user_id`
+
+    /** 本人区间内总值（无论是否参与榜单，都返回用于自我对照） */
+    const myValueSql = (table: string, valueCol: string, start: string, end: string) =>
+      first<{ v: number }>(ctx.env,
+        `SELECT COALESCE(SUM(${valueCol}), 0) AS v FROM ${table} WHERE user_id = ? AND date >= ? AND date <= ?`,
+        ctx.userId, start, end)
+
+    const [weekRows, monthRows, meWeek, meMonth] = await Promise.all([
+      all<any>(ctx.env, participantsSql('study_records', 'minutes'), weekStart, today),
+      all<any>(ctx.env, participantsSql('problem_sessions', 'total'), monthStart, today),
+      myValueSql('study_records', 'minutes', weekStart, today),
+      myValueSql('problem_sessions', 'total', monthStart, today)
+    ])
+
+    /** 榜单块：TOP 50 + 本人排名/百分位（rank = 参与者中严格大于本人值的人数 + 1；无参与者时 rank/percentile 为 null） */
+    const boardBlock = (rows: any[], myValue: number) => {
+      const sorted = rows.sort((a, b) => b.value - a.value || b.total_points - a.total_points)
+      const list = sorted.slice(0, 50).map((r, i) => ({
+        userId: r.user_id, userName: r.user_name || '升本人', verified: !!r.verified,
+        userAvatar: r.user_avatar ?? undefined,
+        totalPoints: r.total_points, value: r.value, isMe: r.user_id === ctx.userId
+      }))
+      const greater = sorted.filter(r => r.value > myValue).length
+      const total = sorted.length
+      const me = total
+        ? { value: myValue, rank: greater + 1, percentile: Math.round(((total - greater - 1) / total) * 100) }
+        : { value: myValue, rank: null, percentile: null }
+      return { list, me }
+    }
+
+    const joinedRow = await first<{ joined: number }>(ctx.env,
+      'SELECT (join_progress_board = 1) AS joined FROM user_settings WHERE user_id = ?', ctx.userId)
+    const joined = !!joinedRow?.joined
+
+    return Response.json({
+      joined,
+      weekMinutes: boardBlock(weekRows, meWeek?.v ?? 0),
+      monthProblems: boardBlock(monthRows, meMonth?.v ?? 0)
+    })
+  })
+
+  // 个性化推荐：帖子(关注作者/常用tag) + 圈子(人气) + 用户(活跃同科目)；冷启动回退热门
+  on('GET', '/api/community/recommend', true, async (ctx) => {
+    const weekAgoDate = new Date(Date.now() + 8 * 3600_000 - 7 * 86400_000).toISOString().slice(0, 10)
+
+    // 1. 我的常用 tag（近 30 天我发过/赞过/评论过的帖子 tags）
+    const myTags = await all<{ tag: string }>(ctx.env, `
+      SELECT t.value AS tag FROM (
+        SELECT p.tags FROM community_posts p WHERE p.user_id = ? AND p.created_at >= ?
+        UNION ALL SELECT p.tags FROM community_posts p
+          JOIN community_likes l ON l.target_type = 'post' AND l.target_id = p.id AND l.user_id = ?
+        UNION ALL SELECT p.tags FROM community_posts p
+          JOIN community_comments c ON c.post_id = p.id AND c.user_id = ?
+      ) x, json_each(x.tags) t
+      WHERE t.value LIKE '#%' GROUP BY t.value ORDER BY COUNT(*) DESC LIMIT 5`,
+      ctx.userId, nowSec() - 30 * 86400, ctx.userId, ctx.userId)
+    const tags = myTags.map(r => r.tag)
+    const followIds = (await all<{ followee_id: string }>(ctx.env,
+      'SELECT followee_id FROM user_follows WHERE follower_id = ?', ctx.userId)).map(r => r.followee_id)
+
+    // 2. 帖子推荐：关注作者 OR 常用 tag；无信号或结果为空则回退热门
+    let postRows: any[]
+    // 软违规待审帖仅作者/管理员可见（与列表/详情接口同一口径）
+    const postsParams: unknown[] = [ctx.userId]
+    let postWhere = 'p.is_hidden = 0 AND p.circle_id IS NULL AND (p.is_flagged = 0 OR p.user_id = ?)'
+    if (followIds.length || tags.length) {
+      const ors: string[] = []
+      if (followIds.length) { ors.push(`p.user_id IN (${followIds.map(() => '?').join(',')})`); postsParams.push(...followIds) }
+      if (tags.length) { ors.push(`EXISTS (SELECT 1 FROM json_each(p.tags) j WHERE j.value IN (${tags.map(() => '?').join(',')}))`); postsParams.push(...tags) }
+      postWhere += ` AND (${ors.join(' OR ')})`
+    }
+    postRows = await all<any>(ctx.env,
+      `${POST_SELECT} WHERE ${postWhere} ORDER BY (p.likes_count * 2 + p.comments_count * 3) DESC, p.created_at DESC LIMIT 10`,
+      ctx.userId, ctx.userId, ...postsParams)
+    if (!postRows.length) {
+      postRows = await all<any>(ctx.env,
+        `${POST_SELECT} WHERE p.is_hidden = 0 AND p.circle_id IS NULL AND (p.is_flagged = 0 OR p.user_id = ?) ORDER BY (p.likes_count * 2 + p.comments_count * 3) DESC, p.created_at DESC LIMIT 10`,
+        ctx.userId, ctx.userId, ctx.userId)
+    }
+
+    // 3. 圈子推荐：人气降序，排除已加入
+    const circles = await all<any>(ctx.env, `
+      SELECT c.id, c.name, c.description, c.creator_id, c.is_public, c.member_count, c.created_at,
+        (cm.user_id IS NOT NULL) AS joined
+      FROM community_circles c
+      LEFT JOIN circle_members cm ON cm.circle_id = c.id AND cm.user_id = ? AND cm.status = 'active'
+      WHERE c.is_public = 1
+      ORDER BY c.member_count DESC, c.created_at DESC
+      LIMIT 5`, ctx.userId)
+    const circleList = circles.map((r: any) => ({
+      id: r.id, name: r.name, description: r.description, creatorId: r.creator_id,
+      isPublic: !!r.is_public, memberCount: r.member_count, createdAt: r.created_at,
+      myStatus: r.joined ? 'member' : null
+    }))
+
+    // 4. 用户推荐：近 7 天活跃 + 同薄弱科目；排除自己/已关注
+    const weakMine = await all<{ subject_id: string }>(ctx.env, `
+      SELECT c.subject_id FROM topics t JOIN chapters c ON c.id = t.chapter_id AND c.user_id = t.user_id
+      WHERE t.user_id = ? AND t.mastery > 0 GROUP BY c.subject_id HAVING AVG(t.mastery) < 3`, ctx.userId)
+    const myWeak = weakMine.map(r => r.subject_id)
+    const activeUsers = await all<any>(ctx.env, `
+      SELECT r.user_id, COALESCE(s.user_name, u.username) AS user_name, u.verified,
+        s.avatar AS user_avatar, COALESCE(g.points, 0) AS total_points, SUM(r.minutes) AS minutes
+      FROM study_records r
+      JOIN users u ON u.id = r.user_id
+      LEFT JOIN user_settings s ON s.user_id = r.user_id
+      LEFT JOIN gamification g ON g.user_id = r.user_id
+      WHERE r.date >= ? AND r.user_id != ?
+        AND r.user_id NOT IN (SELECT followee_id FROM user_follows WHERE follower_id = ?)
+      GROUP BY r.user_id ORDER BY minutes DESC LIMIT 20`, weekAgoDate, ctx.userId, ctx.userId)
+    const users = []
+    for (const u of activeUsers) {
+      const uWeak = (await all<{ subject_id: string }>(ctx.env, `
+        SELECT c.subject_id FROM topics t JOIN chapters c ON c.id = t.chapter_id AND c.user_id = t.user_id
+        WHERE t.user_id = ? AND t.mastery > 0 GROUP BY c.subject_id HAVING AVG(t.mastery) < 3`, u.user_id)).map(r => r.subject_id)
+      const overlap = uWeak.filter((s: string) => myWeak.includes(s)).length
+      users.push({
+        userId: u.user_id, userName: u.user_name || '升本人', verified: !!u.verified,
+        userAvatar: u.user_avatar ?? undefined,
+        totalPoints: u.total_points, reason: overlap ? '与你有相同的薄弱科目' : '近一周学习活跃'
+      })
+    }
+
+    return Response.json({ posts: postRows.map(mapPost), circles: circleList, users: users.slice(0, 5) })
+  })
+
+  // 热门话题运营位：近 7 天帖子 tag 频次自动统计（D1 JSON1），叠加管理员 pin/block 干预，上限 5 条
+  on('GET', '/api/community/hot-topics', false, async (ctx) => {
+    const overrides = await all<{ id: string; text: string; tag: string; action: string }>(ctx.env,
+      'SELECT id, text, tag, action FROM community_hot_topics')
+    const pins = overrides.filter(o => o.action === 'pin')
+    const blocks = new Set(overrides.filter(o => o.action === 'block').map(o => o.tag))
+    const weekAgo = nowSec() - 7 * 86400
+    const rows = await all<{ tag: string; count: number }>(ctx.env,
+      `SELECT t.value AS tag, COUNT(*) AS count FROM community_posts p, json_each(p.tags) t
+       WHERE p.created_at >= ? AND p.is_hidden = 0 GROUP BY t.value ORDER BY count DESC LIMIT 50`, weekAgo)
+    const pinnedTags = new Set(pins.map(p => p.tag))
+    const auto = rows
+      .filter(r => r.tag.startsWith('#') && r.tag.length <= 20 && !blocks.has(r.tag) && !pinnedTags.has(r.tag))
+      .map(r => ({ text: r.tag, tag: r.tag, count: r.count, pinned: false }))
+    const pinned = pins.map(p => ({ text: p.text, tag: p.tag, count: 0, pinned: true }))
+    return Response.json({ topics: [...pinned, ...auto].slice(0, 5) })
   })
 
   // 举报帖子/评论/私信（举报人匿名，仅管理员可见；同一内容重复举报去重）
@@ -1169,22 +1747,49 @@ export function registerCommunityRoutes() {
     await run(ctx.env,
       "INSERT INTO community_reports (id, reporter_id, target_type, target_id, reason, detail, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
       uid(), ctx.userId, targetType, targetId, reason, detail, nowSec())
+    // 举报达阈值自动隐藏（≥5 个不同举报人）：减轻管理员负担；「一人一内容仅一次 pending 举报」已去重防刷
+    if (targetType !== 'message') {
+      const cnt = await first<{ n: number }>(ctx.env,
+        "SELECT COUNT(*) AS n FROM community_reports WHERE target_type = ? AND target_id = ? AND status = 'pending'",
+        targetType, targetId)
+      if ((cnt?.n ?? 0) >= 5) {
+        const table = targetType === 'post' ? 'community_posts' : 'community_comments'
+        await batch(ctx.env, [
+          ctx.env.DB.prepare(`UPDATE ${table} SET is_hidden = 1 WHERE id = ? AND is_hidden = 0`).bind(targetId),
+          ctx.env.DB.prepare(
+            "UPDATE community_reports SET status = 'resolved' WHERE target_type = ? AND target_id = ? AND status = 'pending'"
+          ).bind(targetType, targetId),
+          ctx.env.DB.prepare(
+            'INSERT INTO community_moderation_log (id, admin_id, action, target_type, target_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+          ).bind(uid(), 'system', 'auto-hide', targetType, targetId, '举报达阈值自动隐藏', nowSec()),
+          notifyStatement(ctx.env, {
+            userId: targetUserId, type: 'system',
+            content: `你的${targetType === 'post' ? '帖子' : '评论'}因多次被举报已被系统自动隐藏，如有异议可联系管理员`
+          })
+        ])
+      }
+    }
     return Response.json({ ok: true }, { status: 201 })
   })
 
-  // 通知列表（含未读数）
+  // 通知列表（含未读数；可选 type 过滤；unreadExcludingMuted 供勿扰红点判定）
   on('GET', '/api/community/notifications', true, async (ctx) => {
     const url = new URL(ctx.request.url)
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const cursor = url.searchParams.get('cursor') || ''
+    const type = url.searchParams.get('type') || ''
 
     let sql = `
-      SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name
+      SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name, s.avatar AS actor_avatar
       FROM community_notifications n
       LEFT JOIN users u ON u.id = n.actor_id
       LEFT JOIN user_settings s ON s.user_id = n.actor_id
       WHERE n.user_id = ?`
     const params: unknown[] = [ctx.userId]
+    if (type) {
+      sql += ' AND n.type = ?'
+      params.push(type)
+    }
     const c = cursor ? parseCursor(cursor) : null
     if (c) {
       sql += ' AND (n.created_at < ? OR (n.created_at = ? AND n.id < ?))'
@@ -1196,12 +1801,29 @@ export function registerCommunityRoutes() {
     const rows = await all(ctx.env, sql, ...params)
     const unread = await first<{ n: number }>(ctx.env,
       'SELECT COUNT(*) AS n FROM community_notifications WHERE user_id = ? AND is_read = 0', ctx.userId)
+    // 排除被屏蔽类型的未读数（勿扰红点用；无条件计算，客户端按需取用）
+    const settingsRow = await first<{ dnd_muted_types: string | null }>(ctx.env,
+      'SELECT dnd_muted_types FROM user_settings WHERE user_id = ?', ctx.userId)
+    const muted = parseMutedTypes(settingsRow?.dnd_muted_types)
+    let unreadExcludingMuted = unread?.n ?? 0
+    if (muted.length) {
+      const ph = muted.map(() => '?').join(',')
+      const r = await first<{ n: number }>(ctx.env,
+        `SELECT COUNT(*) AS n FROM community_notifications WHERE user_id = ? AND is_read = 0 AND type NOT IN (${ph})`,
+        ctx.userId, ...muted)
+      unreadExcludingMuted = r?.n ?? 0
+    }
     let nextCursor: string | null = null
     if (rows.length > limit) {
       const last = rows[limit - 1] as any
       nextCursor = `${last.created_at}_${last.id}`
     }
-    return Response.json({ items: rows.slice(0, limit).map(mapNotification), unreadCount: unread?.n ?? 0, nextCursor })
+    return Response.json({
+      items: rows.slice(0, limit).map(mapNotification),
+      unreadCount: unread?.n ?? 0,
+      unreadExcludingMuted,
+      nextCursor
+    })
   })
 
   // 全部已读

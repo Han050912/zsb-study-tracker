@@ -13,11 +13,14 @@ const routes = [
   { path: '/habits', name: 'habits', component: () => import('../pages/Habits.vue'), meta: { title: '习惯追踪' } },
   { path: '/daily-summary', name: 'daily-summary', component: () => import('../pages/DailySummary.vue'), meta: { title: '每日总结' } },
   { path: '/community', name: 'community', component: () => import('../pages/Community.vue'), meta: { title: '社区广场' } },
+  { path: '/teams', name: 'teams', component: () => import('../pages/Teams.vue'), meta: { title: '组队挑战' } },
+  { path: '/teams/:id', name: 'team-detail', component: () => import('../pages/TeamDetail.vue'), meta: { title: '小组详情' } },
   { path: '/community/circles', name: 'circles', component: () => import('../pages/Circles.vue'), meta: { title: '话题圈子' } },
   { path: '/community/circles/:id', name: 'circle-detail', component: () => import('../pages/CircleDetail.vue'), meta: { title: '圈子详情' } },
   { path: '/community/topic/:subjectId', name: 'topic-discussion', component: () => import('../pages/TopicDiscussion.vue'), meta: { title: '知识点讨论' } },
   { path: '/community/post/:id', name: 'community-post', component: () => import('../pages/CommunityPost.vue'), meta: { title: '帖子详情' } },
   { path: '/community/messages', name: 'messages', component: () => import('../pages/Messages.vue'), meta: { title: '私信' } },
+  { path: '/community/partners', name: 'partners', component: () => import('../pages/Partners.vue'), meta: { title: '学习搭子' } },
   { path: '/community/messages/:peerId', name: 'message-chat', component: () => import('../pages/MessageChat.vue'), meta: { title: '私信对话' } },
   { path: '/community/notifications', name: 'community-notifications', component: () => import('../pages/CommunityNotifications.vue'), meta: { title: '通知中心' } },
   { path: '/admin', name: 'admin', component: () => import('../pages/AdminReports.vue'), meta: { title: '审核中心' } },
@@ -27,6 +30,8 @@ const routes = [
   { path: '/rewards', name: 'rewards', component: () => import('../pages/Rewards.vue'), meta: { title: '成就激励' } },
   { path: '/materials', name: 'materials', component: () => import('../pages/Materials.vue'), meta: { title: '资料库' } },
   { path: '/account', name: 'account', component: () => import('../pages/Account.vue'), meta: { title: '个人中心' } },
+  { path: '/follows/:id', name: 'follows', component: () => import('../pages/FollowsPage.vue'), meta: { title: '关系列表' } },
+  { path: '/feedback', name: 'feedback', component: () => import('../pages/Feedback.vue'), meta: { title: '意见反馈' } },
   { path: '/profile/:id', name: 'profile', component: () => import('../pages/ProfilePage.vue'), meta: { title: '成长主页' } },
   { path: '/settings', name: 'settings', component: () => import('../pages/Settings.vue'), meta: { title: '设置' } }
 ]
@@ -36,9 +41,10 @@ export const router = createRouter({
   routes
 })
 
-// 登录守卫：未登录访问任意页面跳转登录页；已登录访问登录页跳转首页（按路由名判断，避免路径硬编码）
+// 登录守卫：未登录访问任意页面统一落地社区广场（访客浏览模式）；已登录访问登录页跳转首页（按路由名判断，避免路径硬编码）
 router.beforeEach((to) => {
-  if (!isLoggedIn.value && to.name !== 'login') return { name: 'login' }
+  const guestAllowed = to.name === 'community' || to.name === 'community-post' || to.name === 'teams'
+  if (!isLoggedIn.value && !guestAllowed && to.name !== 'login') return { name: 'community' }
   if (isLoggedIn.value && to.name === 'login') return { name: 'dashboard' }
   // 管理员守卫：审核中心仅管理员可见
   if (to.name === 'admin' && !isAdmin.value) return { name: 'community' }

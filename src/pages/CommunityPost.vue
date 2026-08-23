@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
-import { sessionUser, isAdmin } from '../services/auth'
+import { sessionUser, isAdmin, requireLogin } from '../services/auth'
 import type { CommunityComment, CommunityPost } from '../types'
 import PostCard from '../components/community/PostCard.vue'
 import CommentItem from '../components/community/CommentItem.vue'
@@ -16,18 +16,24 @@ const route = useRoute()
 const router = useRouter()
 const store = useCommunityStore()
 const toast = inject<(m: string) => void>('toast', () => {})
+/** 侧边栏是否折叠（App.vue 注入），用于底部回复框与主内容区同列对齐 */
+const navCollapsed = inject<Ref<boolean>>('navCollapsed', ref(false))
 
 const postId = route.params.id as string
 const post = ref<CommunityPost | null>(null)
 const comments = ref<CommunityComment[]>([])
 const loading = ref(true)
 const notFound = ref(false)
+/** 通知跳转锚定的评论 id（经 ?comment= 查询参数进入），用于滚动定位与高亮 */
+const highlightCommentId = ref('')
 
 onMounted(async () => {
   try {
     const d = await communityApi.post(postId)
     post.value = d.post
     comments.value = d.comments
+    const anchor = typeof route.query.comment === 'string' ? route.query.comment : ''
+    if (anchor) await anchorToComment(anchor)
   } catch {
     notFound.value = true
   } finally {
@@ -35,10 +41,30 @@ onMounted(async () => {
   }
 })
 
+/** 滚动定位并高亮指定评论（通知跳转锚定；二级回复先展开其一级评论再定位） */
+async function anchorToComment(id: string) {
+  const c = findComment(id)
+  if (!c) return
+  if (c.parentId) expandedReplies.value = new Set([...expandedReplies.value, c.parentId])
+  highlightCommentId.value = id
+  await nextTick()
+  document.getElementById(`comment-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
 const isMine = computed(() => post.value?.userId === sessionUser.value?.id)
 const canDeletePost = computed(() => isMine.value || isAdmin.value)
 
-/** 一级评论 + 二级回复树（回复的 parentId 始终指向一级评论）；被采纳的最佳答案置顶展示 */
+/** 评论排序：热度（默认，抖音习惯）或最新 */
+const commentSort = ref<'hot' | 'latest'>('hot')
+/** 已展开回复的一级评论 id 集合（二级回复默认折叠，抖音式） */
+const expandedReplies = ref(new Set<string>())
+function toggleReplies(id: string) {
+  const s = new Set(expandedReplies.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  expandedReplies.value = s
+}
+
+/** 一级评论 + 二级回复树（回复的 parentId 始终指向一级评论）；最佳答案置顶，其余按热度/时间排序 */
 const commentTree = computed(() => {
   const roots = comments.value.filter(c => !c.parentId)
   const byParent = new Map<string, CommunityComment[]>()
@@ -48,8 +74,12 @@ const commentTree = computed(() => {
     list.push(c)
     byParent.set(c.parentId, list)
   }
-  roots.sort((a, b) => Number(b.isAccepted) - Number(a.isAccepted))
-  return roots.map(r => ({ ...r, replies: byParent.get(r.id) || [] }))
+  const accepted = roots.filter(c => c.isAccepted)
+  const others = roots.filter(c => !c.isAccepted)
+  others.sort((a, b) => commentSort.value === 'hot'
+    ? (b.likesCount - a.likesCount) || (b.createdAt - a.createdAt)
+    : b.createdAt - a.createdAt)
+  return [...accepted, ...others].map(r => ({ ...r, replies: byParent.get(r.id) || [] }))
 })
 
 function findComment(id: string): CommunityComment | undefined {
@@ -58,6 +88,7 @@ function findComment(id: string): CommunityComment | undefined {
 
 // ---- 点赞 ----
 async function likePost() {
+  if (requireLogin(router)) return
   if (!post.value) return
   const liked = await store.likePost(postId).catch((e: any) => { toast(e?.message || '操作失败'); return null })
   if (liked === null) return
@@ -66,6 +97,7 @@ async function likePost() {
 }
 
 async function likeComment(c: CommunityComment) {
+  if (requireLogin(router)) return
   const liked = await store.likeComment(c.id).catch((e: any) => { toast(e?.message || '操作失败'); return null })
   if (liked === null) return
   // 一级评论在 commentTree 中被展开为副本（携带 replies），必须更新原始数组中的对象
@@ -76,24 +108,66 @@ async function likeComment(c: CommunityComment) {
   }
 }
 
+// ---- 踩 ----
+async function dislikePost() {
+  if (requireLogin(router)) return
+  if (!post.value) return
+  const res = await store.dislikePost(postId).catch((e: any) => { toast(e?.message || '操作失败'); return null })
+  if (res === null) return
+  post.value.dislikedByMe = res.disliked
+  post.value.dislikesCount = Math.max(0, post.value.dislikesCount + (res.disliked ? 1 : -1))
+  if (res.likeRevoked) {
+    post.value.likedByMe = false
+    post.value.likesCount = Math.max(0, post.value.likesCount - 1)
+  }
+}
+
+async function dislikeComment(c: CommunityComment) {
+  if (requireLogin(router)) return
+  const res = await store.dislikeComment(c.id).catch((e: any) => { toast(e?.message || '操作失败'); return null })
+  if (res === null) return
+  const target = findComment(c.id)
+  if (target) {
+    target.dislikedByMe = res.disliked
+    target.dislikesCount = Math.max(0, target.dislikesCount + (res.disliked ? 1 : -1))
+    if (res.likeRevoked) {
+      target.likedByMe = false
+      target.likesCount = Math.max(0, target.likesCount - 1)
+    }
+  }
+}
+
 // ---- 评论 / 回复 ----
+/** 发送时的 parentId（回复二级评论时仍指向其一级评论，最多二级） */
 const replyTarget = ref<CommunityComment | null>(null)
-const presetText = ref('')
+/** 用户实际点击的评论（用于高亮锚定与「正在回复 @xxx」提示） */
+const replySource = ref<CommunityComment | null>(null)
+const commentInputRef = ref<{ focus: () => void } | null>(null)
 
 function reply(c: CommunityComment) {
-  // 回复二级评论时，parentId 仍指向其一级评论（最多二级）
+  if (requireLogin(router)) return
+  // 重复点击同一条评论：保持现有回复状态，不重置输入
+  if (replySource.value?.id === c.id) return
+  replySource.value = c
   replyTarget.value = c.parentId ? (findComment(c.parentId) || c) : c
-  presetText.value = ''
-  requestAnimationFrame(() => { presetText.value = `@${c.userName} ` })
+  // 聚焦输入框，用户直接输入回复内容（不再自动填入 @用户名）
+  commentInputRef.value?.focus()
+}
+
+function cancelReply() {
+  replyTarget.value = null
+  replySource.value = null
 }
 
 async function send(text: string, imageUrls: string[]) {
+  if (requireLogin(router)) return
   try {
     const c = await store.postComment(postId, text, replyTarget.value?.id, imageUrls)
     comments.value.push(c)
     // store.postComment 已同步广场列表内的计数，此处仅当本帖不在列表时手动 +1，避免重复计数
     if (post.value && !store.posts.some(p => p.id === postId)) post.value.commentsCount++
     replyTarget.value = null
+    replySource.value = null
   } catch (e: any) {
     toast(e?.message || '评论失败')
   }
@@ -147,12 +221,14 @@ function openLightbox(i: number) {
 const showReport = ref(false)
 const reportTarget = ref<{ type: 'post' | 'comment'; id: string }>({ type: 'post', id: '' })
 function openReport(type: 'post' | 'comment', id: string) {
+  if (requireLogin(router)) return
   reportTarget.value = { type, id }
   showReport.value = true
 }
 
 // ---- 提问帖标记解决 ----
 async function toggleResolve() {
+  if (requireLogin(router)) return
   if (!post.value) return
   try {
     const { isResolved } = await communityApi.resolvePost(postId)
@@ -175,6 +251,7 @@ function acceptVisible(c: CommunityComment) {
 const accepting = ref(false) // 采纳请求在途标记：防止双击并发采纳导致积分重复发放
 
 async function accept(c: CommunityComment) {
+  if (requireLogin(router)) return
   if (!post.value || accepting.value) return
   const current = post.value.acceptedAnswerId
   if (current === c.id) {
@@ -210,6 +287,7 @@ function openCommentLightbox(c: CommunityComment, i: number) {
 const showProfile = ref(false)
 const profileUserId = ref('')
 function openProfile(userId: string) {
+  // 资料卡后端公开（auth:false）；访客可见性由弹窗内 401 引导处理
   profileUserId.value = userId
   showProfile.value = true
 }
@@ -253,7 +331,7 @@ async function toggleHideComment(c: CommunityComment) {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
+  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4 pb-36 md:pb-32">
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2.5" @click="router.back()">←</button>
       <h1 class="page-title">帖子详情</h1>
@@ -266,7 +344,7 @@ async function toggleHideComment(c: CommunityComment) {
     </div>
 
     <template v-else-if="post">
-      <PostCard :post="post" detail @like="likePost" @pin="togglePin" @feature="toggleFeature" @hide="toggleHidePost"
+      <PostCard :post="post" detail @like="likePost" @dislike="dislikePost" @pin="togglePin" @feature="toggleFeature" @hide="toggleHidePost"
         @image="openLightbox" @report="openReport('post', post.id)" @profile="openProfile(post.userId)">
         <template #actions>
           <!-- 已采纳最佳答案时禁用手动标记（需先取消采纳），避免出现矛盾态 -->
@@ -278,26 +356,36 @@ async function toggleHideComment(c: CommunityComment) {
 
       <!-- 评论区 -->
       <div class="card space-y-4">
-        <div class="section-title !mb-0">💬 评论 {{ post.commentsCount || '' }}</div>
-        <CommentInput :preset-text="presetText"
-          :placeholder="replyTarget ? `回复 @${replyTarget.userName}…` : '写下你的评论…（支持 emoji）'"
-          @send="send" />
-        <div v-if="replyTarget" class="text-xs text-slate-400">
-          正在回复 @{{ replyTarget.userName }}
-          <button class="text-primary-500 ml-1" @click="replyTarget = null">取消回复</button>
+        <div class="flex items-center justify-between">
+          <div class="section-title !mb-0">💬 评论 {{ post.commentsCount || '' }}</div>
+          <div class="flex items-center gap-1 text-xs">
+            <button class="px-2 py-1 rounded-md transition-colors"
+              :class="commentSort === 'hot' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium' : 'text-slate-400 hover:text-slate-600'"
+              @click="commentSort = 'hot'">热度</button>
+            <button class="px-2 py-1 rounded-md transition-colors"
+              :class="commentSort === 'latest' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium' : 'text-slate-400 hover:text-slate-600'"
+              @click="commentSort = 'latest'">最新</button>
+          </div>
         </div>
 
         <div v-if="!commentTree.length" class="text-center text-xs text-slate-400 py-4">暂无评论，来抢沙发～</div>
-        <div v-for="c in commentTree" :key="c.id" class="space-y-3">
-          <CommentItem :comment="c" :show-accept="acceptVisible(c)" @like="likeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
+        <div v-for="c in commentTree" :key="c.id" :id="`comment-${c.id}`" class="space-y-3 scroll-mt-24">
+          <CommentItem :comment="c" :show-accept="acceptVisible(c)" :post-author-id="post?.userId" :replying="replySource?.id === c.id" :highlight="highlightCommentId === c.id" @like="likeComment(c)" @dislike="dislikeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
             @hide="toggleHideComment(c)" @report="openReport('comment', c.id)" @accept="accept(c)" @image="openCommentLightbox(c, $event)"
             @profile="openProfile(c.userId)" />
-          <!-- 二级回复 -->
-          <div v-if="c.replies?.length" class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
-            <CommentItem v-for="r in c.replies" :key="r.id" :comment="r"
-              @like="likeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
-              @report="openReport('comment', r.id)" @image="openCommentLightbox(r, $event)" @profile="openProfile(r.userId)" />
-          </div>
+          <!-- 二级回复：默认折叠，点击展开（抖音式） -->
+          <template v-if="c.replies?.length">
+            <button v-if="!expandedReplies.has(c.id)" class="text-xs text-slate-400 hover:text-primary-500 ml-11"
+              @click="toggleReplies(c.id)">展开 {{ c.replies.length }} 条回复 ↓</button>
+            <div v-else class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
+              <div v-for="r in c.replies" :key="r.id" :id="`comment-${r.id}`" class="scroll-mt-24">
+                <CommentItem :comment="r" :post-author-id="post?.userId" :replying="replySource?.id === r.id" :highlight="highlightCommentId === r.id"
+                  @like="likeComment(r)" @dislike="dislikeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
+                  @report="openReport('comment', r.id)" @image="openCommentLightbox(r, $event)" @profile="openProfile(r.userId)" />
+              </div>
+              <button class="text-xs text-slate-400 hover:text-primary-500" @click="toggleReplies(c.id)">收起回复 ↑</button>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -305,6 +393,23 @@ async function toggleHideComment(c: CommunityComment) {
       <Lightbox v-model:show="showCommentLightbox" v-model:index="commentLightboxIndex" :urls="commentLightboxUrls" />
       <ReportDialog v-model:show="showReport" :target-type="reportTarget.type" :target-id="reportTarget.id" />
       <UserProfileModal v-model:show="showProfile" :user-id="profileUserId" />
+
+      <!-- 抖音式：评论输入框固定在视口底部（移动端避开底导航）；
+           白色背景条在 max-w-2xl 内再缩进 页面padding+cardpadding，与评论区 card 同栏宽对齐
+           （移动端 px-8=32，桌面 px-6=24），并加圆角与上阴影与 card 视觉协调 -->
+      <div class="fixed bottom-16 md:bottom-0 inset-x-0 z-20" :class="navCollapsed ? 'md:left-16' : 'md:left-56'">
+        <div class="max-w-2xl mx-auto px-8 md:px-6">
+          <div class="px-4 py-2 bg-white dark:bg-slate-800 border-t border-x border-slate-100 dark:border-slate-700 rounded-t-2xl shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
+            <div v-if="replySource" class="flex items-center text-xs text-slate-400 mb-1.5">
+              <span class="truncate">正在回复 @{{ replySource.userName }}</span>
+              <button class="text-primary-500 ml-2 shrink-0" @click="cancelReply">取消</button>
+            </div>
+            <CommentInput ref="commentInputRef"
+              :placeholder="replySource ? '写下你的回复…' : '写下你的评论…'"
+              @send="send" />
+          </div>
+        </div>
+      </div>
     </template>
   </div>
 </template>

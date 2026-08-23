@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on } from '../router'
-import { all, first, run, uid, HttpError } from '../db'
+import { all, first, run, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { awardBadge, hasBadge } from './badges'
 
@@ -17,6 +17,8 @@ export const IMAGE_MAX_BYTES = 5 * 1024 * 1024
 export const IMAGE_MAX_PER_POST = 9
 /** 单条评论最多 3 张 */
 export const IMAGE_MAX_PER_COMMENT = 3
+/** 单条私信最多 3 张 */
+export const IMAGE_MAX_PER_MESSAGE = 3
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
@@ -130,9 +132,35 @@ export function uploadIdsOf(raw: unknown): string[] {
 export async function deleteUploads(env: Env, ids: string[]): Promise<void> {
   if (!ids.length) return
   const ph = ids.map(() => '?').join(',')
-  const rows = await all<{ r2_key: string }>(env, `SELECT r2_key FROM community_uploads WHERE id IN (${ph})`, ...ids)
-  await Promise.all(rows.map(r => env.IMAGES.delete(r.r2_key).catch(e => console.error('R2 删除失败', r.r2_key, e))))
+  const rows = await all<{ r2_key: string; thumb_r2_key: string | null }>(env,
+    `SELECT r2_key, thumb_r2_key FROM community_uploads WHERE id IN (${ph})`, ...ids)
+  await Promise.all(rows.flatMap(r => {
+    const dels: Promise<void>[] = [env.IMAGES.delete(r.r2_key).catch(e => console.error('R2 删除失败', r.r2_key, e))]
+    if (r.thumb_r2_key) dels.push(env.IMAGES.delete(r.thumb_r2_key).catch(e => console.error('R2 删除失败', r.thumb_r2_key, e)))
+    return dels
+  }))
   await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...ids)
+}
+
+/** 惰性清理：删除 30 天前且未被任何帖子/评论引用的孤图（上传时顺带调用，无 cron） */
+export async function cleanupOrphanUploads(env: Env): Promise<void> {
+  const cutoff = nowSec() - 30 * 86400
+  const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null }>(env,
+    'SELECT id, r2_key, thumb_r2_key FROM community_uploads WHERE created_at < ? LIMIT 50', cutoff)
+  for (const r of rows) {
+    const refPost = await first(env,
+      `SELECT 1 AS x FROM community_posts WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
+    const refComment = refPost ? null : await first(env,
+      `SELECT 1 AS x FROM community_comments WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
+    // 反馈截图也引用 community_uploads，需纳入引用检查，避免 30 天后被误清
+    const refFeedback = (refPost || refComment) ? null : await first(env,
+      `SELECT 1 AS x FROM feedback WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
+    if (!refPost && !refComment && !refFeedback) {
+      await env.IMAGES.delete(r.r2_key).catch(() => {})
+      if (r.thumb_r2_key) await env.IMAGES.delete(r.thumb_r2_key).catch(() => {})
+      await run(env, 'DELETE FROM community_uploads WHERE id = ?', r.id)
+    }
+  }
 }
 
 // ---------- 路由 ----------
@@ -141,6 +169,9 @@ export function registerUploadRoutes() {
   // 上传图片（裸二进制；?filename= 可选，仅用于记录原始文件名）
   on('POST', '/api/community/upload', true, async (ctx) => {
     rateLimit(ctx.request, 'community:upload', 20)
+    const q = new URL(ctx.request.url).searchParams
+    const variant = q.get('variant')
+    const thumbFor = q.get('id')
     const declared = Number(ctx.request.headers.get('Content-Length') || 0)
     if (declared > IMAGE_MAX_BYTES) throw new HttpError(413, '图片超过 5MB 上限')
     const buf = new Uint8Array(await ctx.request.arrayBuffer())
@@ -160,6 +191,42 @@ export function registerUploadRoutes() {
       throw new HttpError(400, '图片文件损坏，无法处理')
     }
 
+    // 缩略图：关联到已有原图记录（原图必须先上传成功）
+    if (variant === 'thumb') {
+      if (!thumbFor || !/^[a-f0-9]{16}$/.test(thumbFor)) throw new HttpError(400, '参数错误')
+      const owner = await first<{ id: string }>(ctx.env,
+        'SELECT id FROM community_uploads WHERE id = ? AND user_id = ?', thumbFor, ctx.userId)
+      if (!owner) throw new HttpError(404, '原图不存在')
+      const tKind = sniff(buf)
+      if (!tKind || tKind.ext === 'gif') throw new HttpError(400, '缩略图须为 PNG/JPEG/WebP')
+      const tData = tKind.ext === 'jpg' ? stripJpeg(buf) : tKind.ext === 'png' ? stripPng(buf) : stripWebp(buf)
+      const tKey = `posts/${thumbFor}.thumb.${tKind.ext}`
+      await ctx.env.IMAGES.put(tKey, tData, { httpMetadata: { contentType: tKind.mime } })
+      await run(ctx.env, 'UPDATE community_uploads SET thumb_r2_key = ? WHERE id = ?', tKey, thumbFor)
+      return Response.json({ id: thumbFor, url: `/api/community/images/${thumbFor}` }, { status: 201 })
+    }
+
+    // 头像：独立 R2 前缀 + user_settings.avatar 字段；不写 community_uploads，
+    // 否则 cleanupOrphanUploads 会因头像不被帖子/评论/反馈引用而在 30 天后误删
+    if (variant === 'avatar') {
+      if (kind.ext === 'gif') throw new HttpError(400, '头像仅支持 PNG / JPEG / WebP')
+      const old = await first<{ avatar: string | null }>(ctx.env,
+        'SELECT avatar FROM user_settings WHERE user_id = ?', ctx.userId)
+      const avId = uid()
+      const avKey = `avatars/${avId}.${kind.ext}`
+      await ctx.env.IMAGES.put(avKey, data, { httpMetadata: { contentType: kind.mime } })
+      const url = `/api/avatar/${avId}.${kind.ext}`
+      await run(ctx.env,
+        'INSERT INTO user_settings (user_id, avatar) VALUES (?, ?) ' +
+        'ON CONFLICT(user_id) DO UPDATE SET avatar = excluded.avatar',
+        ctx.userId, url)
+      // 删除旧头像对象（失败仅记日志；下次换头像时会随新流程再尝试删除）
+      const oldFile = old?.avatar?.match(/^\/api\/avatar\/([a-f0-9]{16}\.(?:png|jpg|webp))$/)?.[1]
+      if (oldFile) await ctx.env.IMAGES.delete(`avatars/${oldFile}`)
+        .catch(e => console.error('[avatar] 旧头像删除失败', oldFile, e))
+      return Response.json({ url }, { status: 201 })
+    }
+
     const id = uid()
     const key = `posts/${id}.${kind.ext}`
     await ctx.env.IMAGES.put(key, data, { httpMetadata: { contentType: kind.mime } })
@@ -172,8 +239,10 @@ export function registerUploadRoutes() {
     if (!(await hasBadge(ctx.env, ctx.userId, 'image_50'))) {
       const cnt = await first<{ n: number }>(ctx.env,
         'SELECT COUNT(*) AS n FROM community_uploads WHERE user_id = ?', ctx.userId)
-      if ((cnt?.n ?? 0) >= 50) await awardBadge(ctx.env, ctx.userId, 'image_50')
+      if ((cnt?.n ?? 0) >= 50) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'image_50'))
     }
+    // 惰性清理孤图失败不应阻断上传（如 feedback 表尚未迁移时）
+    await cleanupOrphanUploads(ctx.env).catch(e => console.error('[upload] 孤图清理失败', e))
     return Response.json({ id, url, size: data.byteLength, contentType: kind.mime }, { status: 201 })
   })
 
@@ -181,14 +250,33 @@ export function registerUploadRoutes() {
   on('GET', '/api/community/images/:id', false, async (ctx) => {
     const { id } = ctx.params
     if (!/^[a-f0-9]{16}$/.test(id)) throw new HttpError(400, '非法图片 ID')
-    const row = await first<{ r2_key: string; content_type: string }>(ctx.env,
-      'SELECT r2_key, content_type FROM community_uploads WHERE id = ?', id)
+    const thumb = new URL(ctx.request.url).searchParams.get('thumb') === '1'
+    const row = await first<{ r2_key: string; thumb_r2_key: string | null; content_type: string }>(ctx.env,
+      'SELECT r2_key, thumb_r2_key, content_type FROM community_uploads WHERE id = ?', id)
     if (!row) throw new HttpError(404, '图片不存在')
-    const obj = await ctx.env.IMAGES.get(row.r2_key)
+    const key = thumb && row.thumb_r2_key ? row.thumb_r2_key : row.r2_key
+    const obj = await ctx.env.IMAGES.get(key)
     if (!obj) throw new HttpError(404, '图片不存在')
     return new Response(obj.body, {
       headers: {
-        'Content-Type': row.content_type,
+        'Content-Type': (thumb && row.thumb_r2_key) ? 'image/webp' : row.content_type,
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'X-Content-Type-Options': 'nosniff'
+      }
+    })
+  })
+
+  // 读取头像（公开路由，供 <img> 直引；文件名含扩展名，按扩展名给 Content-Type，immutable 长缓存）
+  on('GET', '/api/avatar/:file', false, async (ctx) => {
+    const { file } = ctx.params
+    const m = file.match(/^([a-f0-9]{16})\.(png|jpg|webp)$/)
+    if (!m) throw new HttpError(400, '非法头像文件名')
+    const obj = await ctx.env.IMAGES.get(`avatars/${file}`)
+    if (!obj) throw new HttpError(404, '头像不存在')
+    const mime = m[2] === 'png' ? 'image/png' : m[2] === 'jpg' ? 'image/jpeg' : 'image/webp'
+    return new Response(obj.body, {
+      headers: {
+        'Content-Type': mime,
         'Cache-Control': 'public, max-age=31536000, immutable',
         'X-Content-Type-Options': 'nosniff'
       }
