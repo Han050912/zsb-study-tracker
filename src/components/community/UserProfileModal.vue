@@ -63,7 +63,8 @@ async function toggleFollow() {
   try {
     const res = await communityApi.follow(props.userId)
     profile.value.followedByMe = res.following
-    profile.value.followers += res.following ? 1 : -1
+    // 私密主页降级视图缺少 followers 字段（undefined），跳过计数修正避免产生 NaN
+    if (typeof profile.value.followers === 'number') profile.value.followers += res.following ? 1 : -1
     toast(res.following ? '已关注，对方的帖子会出现在「关注」Tab' : '已取消关注')
   } catch (e: any) { toast(e?.message || '操作失败') }
   finally { followSubmitting.value = false }
@@ -129,8 +130,9 @@ async function revokeVerify() {
               :style="{ background: level.color + '1a', color: level.color }">{{ level.name }}学者</span>
           </div>
         </div>
-        <div v-if="!isSelf && !profile.profilePrivate" class="shrink-0 flex items-center gap-1.5">
-          <button class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
+        <div v-if="!isSelf" class="shrink-0 flex items-center gap-1.5">
+          <!-- 主页已隐私，私密降级视图下无需再跳转主页，仅保留私信/关注 -->
+          <button v-if="!profile.profilePrivate" class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
             @click="emit('update:show', false); router.push(`/profile/${userId}`)">📊 主页</button>
           <button class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
             @click="emit('update:show', false); router.push(`/community/messages/${userId}`)">✉️ 私信</button>

@@ -30,6 +30,7 @@ const routes = [
   { path: '/rewards', name: 'rewards', component: () => import('../pages/Rewards.vue'), meta: { title: '成就激励' } },
   { path: '/materials', name: 'materials', component: () => import('../pages/Materials.vue'), meta: { title: '资料库' } },
   { path: '/account', name: 'account', component: () => import('../pages/Account.vue'), meta: { title: '个人中心' } },
+  { path: '/follows/:id', name: 'follows', component: () => import('../pages/FollowsPage.vue'), meta: { title: '关系列表' } },
   { path: '/feedback', name: 'feedback', component: () => import('../pages/Feedback.vue'), meta: { title: '意见反馈' } },
   { path: '/profile/:id', name: 'profile', component: () => import('../pages/ProfilePage.vue'), meta: { title: '成长主页' } },
   { path: '/settings', name: 'settings', component: () => import('../pages/Settings.vue'), meta: { title: '设置' } }

@@ -148,6 +148,16 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   ALTER TABLE study_teams ADD COLUMN invite_code TEXT;
 --   ALTER TABLE study_teams ADD COLUMN invite_code_expires_at INTEGER;
 --   CREATE TABLE IF NOT EXISTS team_join_requests ( team_id TEXT NOT NULL REFERENCES study_teams(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL, PRIMARY KEY (team_id, user_id) );
+-- 已建库升级：个人简介 bio（#14），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN bio TEXT NOT NULL DEFAULT '';
+-- 已建库升级：勿扰模式（#17），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN do_not_disturb INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE user_settings ADD COLUMN dnd_start_time TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE user_settings ADD COLUMN dnd_end_time TEXT NOT NULL DEFAULT '';
+--   ALTER TABLE user_settings ADD COLUMN dnd_muted_types TEXT NOT NULL DEFAULT '';
+-- 已建库升级：通知精准跳转目标（#11），执行一次：
+--   ALTER TABLE community_notifications ADD COLUMN target_type TEXT;
+--   ALTER TABLE community_notifications ADD COLUMN target_id TEXT;
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -177,7 +187,12 @@ CREATE TABLE IF NOT EXISTS user_settings (
   onboarded INTEGER DEFAULT 0,  -- 是否完成新手引导
   join_progress_board INTEGER NOT NULL DEFAULT 0,  -- 参与学习进步榜（本周时长/本月刷题榜；默认不参与）
   profile_visibility TEXT NOT NULL DEFAULT 'login',  -- 主页可见性：'public'所有人 / 'login'登录(默认) / 'private'仅自己
-  avatar TEXT                                   -- 自定义头像相对 URL（/api/avatar/<file>；NULL = 首字母兜底）
+  avatar TEXT,                                  -- 自定义头像相对 URL（/api/avatar/<file>；NULL = 首字母兜底）
+  bio TEXT NOT NULL DEFAULT '',                 -- 个人简介（≤100 字，我的页/访客主页展示）
+  do_not_disturb INTEGER NOT NULL DEFAULT 0,  -- 勿扰模式总开关
+  dnd_start_time TEXT NOT NULL DEFAULT '',    -- 勿扰开始 'HH:mm'（空=全天）
+  dnd_end_time TEXT NOT NULL DEFAULT '',      -- 勿扰结束 'HH:mm'（空=全天）
+  dnd_muted_types TEXT NOT NULL DEFAULT ''    -- 勿扰屏蔽通知类型（JSON 数组）
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========

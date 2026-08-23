@@ -1,7 +1,7 @@
 import { request, authFetch, API_BASE, handleUnauthorized } from './client'
 import { compressImage } from '../utils/imageCompress'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, HotTopic, HotTopicOverride, MessageConversation, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserStudyStats, WeeklyReport
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, NotificationType, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -124,6 +124,13 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
   })
 }
 
+function followList(path: string, cursor?: string | null): Promise<FollowListResult> {
+  const params = new URLSearchParams()
+  if (cursor) params.set('cursor', cursor)
+  const qs = params.toString()
+  return request<FollowListResult>(`${path}${qs ? `?${qs}` : ''}`)
+}
+
 export const communityApi = {
   feed: (q: FeedQuery = {}) => {
     const params = new URLSearchParams()
@@ -175,6 +182,26 @@ export const communityApi = {
   /** 关注/取关（toggle） */
   follow: (userId: string) =>
     request<{ following: boolean }>(`/api/community/users/${userId}/follow`, { method: 'PUT' }),
+  /** 用户发布的帖子（公开广场帖口径，游标分页） */
+  userPosts: (userId: string, cursor?: string | null) => {
+    const params = new URLSearchParams()
+    if (cursor) params.set('cursor', cursor)
+    const qs = params.toString()
+    return request<FeedResult>(`/api/community/users/${userId}/posts${qs ? `?${qs}` : ''}`)
+  },
+  /** 我点赞过的帖子（仅本人，游标分页） */
+  likedPosts: (cursor?: string | null) => {
+    const params = new URLSearchParams()
+    if (cursor) params.set('cursor', cursor)
+    const qs = params.toString()
+    return request<FeedResult>(`/api/community/me/liked-posts${qs ? `?${qs}` : ''}`)
+  },
+  /** 粉丝列表 */
+  followers: (userId: string, cursor?: string | null) => followList(`/api/community/users/${userId}/followers`, cursor),
+  /** 关注列表 */
+  following: (userId: string, cursor?: string | null) => followList(`/api/community/users/${userId}/following`, cursor),
+  /** 互关列表 */
+  mutualFollows: (userId: string, cursor?: string | null) => followList(`/api/community/users/${userId}/mutual`, cursor),
   /** 每日一题：最新一条被标记且未隐藏的帖子（无则 post 为 null） */
   daily: () => request<{ post: CommunityPost | null }>('/api/community/daily'),
   /** 圈子列表（按成员数倒序） */

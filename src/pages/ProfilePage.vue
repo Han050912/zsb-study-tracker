@@ -1,17 +1,20 @@
 <script setup lang="ts">
 /**
- * 个人成长主页：学习履历可视化。
+ * 个人主页（访客态/本人态通用）：社交资料 + 作品 + 学习履历可视化。
  * 公开信息：等级/积分/徽章墙/连续打卡/学习时长热力图/做题统计/科目分布。
  * 隐私控制：仅公开为主，后续可扩展可见性设置。
  */
 import { onMounted, ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
-import { COMMUNITY_BADGES, levelOf, LEVELS } from '../data/defaults'
-import { fromNow } from '../utils/date'
+import { COMMUNITY_BADGES } from '../data/defaults'
 import { sessionUser } from '../services/auth'
 import StreakHeatmap from '../components/community/StreakHeatmap.vue'
-import UserAvatar from '../components/community/UserAvatar.vue'
+import Modal from '../components/Modal.vue'
+import ProfileHeader from '../components/profile/ProfileHeader.vue'
+import SocialStatsBar from '../components/profile/SocialStatsBar.vue'
+import UserWorksTabs from '../components/profile/UserWorksTabs.vue'
+import EditProfileModal from '../components/profile/EditProfileModal.vue'
 import type { CommunityUserProfile, UserStudyStats } from '../types'
 
 const route = useRoute()
@@ -23,10 +26,26 @@ const profile = ref<CommunityUserProfile | null>(null)
 const stats = ref<UserStudyStats | null>(null)
 const loading = ref(true)
 const error = ref('')
-
-const level = computed(() => profile.value ? levelOf(profile.value.points) : LEVELS[0])
+const worksTab = ref<'posts' | 'likes'>('posts')
+const showEdit = ref(false)
 
 const isSelf = computed(() => userId === (sessionUser.value?.id ?? ''))
+/** 私密主页降级视图：profile 仅含公开子集（昵称/头像/蓝V/关注状态），学习数据与作品缺省 */
+const profilePrivate = computed(() => !!profile.value?.profilePrivate)
+
+// 热力图点击：查看选中日期的学习总时长（公开数据，与首页热力图交互一致）
+const heatDate = ref('')
+const heatMinutes = computed(() => {
+  if (!heatDate.value || !stats.value?.heatmap) return 0
+  return stats.value.heatmap.find(h => h.date === heatDate.value)?.minutes ?? 0
+})
+
+/** 分钟格式化：X 小时 Y 分钟 */
+function formatMinutes(min: number) {
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return h > 0 ? `${h} 小时 ${m} 分钟` : `${m} 分钟`
+}
 
 // 徽章目录：已获得的高亮，未获得的置灰
 const earnedKeys = computed(() => new Set(profile.value?.badges?.map(b => b.key) ?? []))
@@ -37,29 +56,53 @@ const totalMinutes = computed(() => (stats.value?.totalStudy.minutes ?? 0) % 60)
 const monthHours = computed(() => Math.floor((stats.value?.monthStudy.minutes ?? 0) / 60))
 const monthMinutes = computed(() => (stats.value?.monthStudy.minutes ?? 0) % 60)
 
-onMounted(async () => {
+// profile 与 stats 分开加载：私密主页（非本人）时 stats 会 403，但不阻塞资料卡与关注按钮渲染
+async function loadAll() {
   try {
-    const [p, s] = await Promise.all([
-      communityApi.profile(userId),
-      communityApi.stats(userId)
-    ])
-    profile.value = p
-    stats.value = s
+    profile.value = await communityApi.profile(userId)
   } catch (e: any) {
     if (e?.status === 403) error.value = '对方设置了主页仅自己可见'
     else error.value = '用户不存在或已注销'
-  } finally {
     loading.value = false
+    return
   }
-})
+  // 私密主页降级视图：跳过学习统计加载（接口会 403）
+  if (!profile.value.profilePrivate) {
+    try {
+      stats.value = await communityApi.stats(userId)
+    } catch {
+      stats.value = null // 统计加载失败不阻塞主页展示
+    }
+  }
+  loading.value = false
+}
+
+// FollowButton 乐观更新后的受控回写：同步关注状态 / 粉丝数 / 关系
+function onFollowChange(following: boolean) {
+  const p = profile.value
+  if (!p) return
+  p.followedByMe = following
+  // 降级视图缺少 followers 字段（undefined），跳过计数修正避免产生 NaN
+  if (typeof p.followers === 'number') p.followers += following ? 1 : -1
+  p.relation = p.followedByMe && p.followsMe ? 'mutual'
+    : p.followedByMe ? 'following' : p.followsMe ? 'follower' : 'none'
+}
+
+/** 返回上一级路由；直接打开（无站内历史）时回退到广场 */
+function goBack() {
+  if (history.state?.back) router.back()
+  else router.push('/community')
+}
+
+onMounted(loadAll)
 </script>
 
 <template>
   <div class="max-w-4xl mx-auto space-y-6">
     <!-- 返回导航 -->
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2" @click="router.push('/community')">← 广场</button>
-      <h2 class="text-lg font-bold flex-1">📊 成长主页</h2>
+      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
+      <h2 class="text-lg font-bold flex-1">主页</h2>
     </div>
 
     <!-- 加载中 -->
@@ -68,39 +111,29 @@ onMounted(async () => {
     <!-- 错误/不存在 -->
     <div v-else-if="error" class="card text-center py-20">
       <p class="text-slate-400">{{ error }}</p>
-      <button class="btn mt-4" @click="router.push('/community')">返回广场</button>
+      <button class="btn mt-4" @click="goBack">返回</button>
     </div>
 
     <template v-else-if="profile">
-      <!-- 用户信息头部 -->
-      <div class="card">
-        <div class="flex items-start gap-4">
-          <UserAvatar :name="profile.userName" :avatar="profile.avatar" class="w-16 h-16 text-2xl" />
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <h1 class="text-xl font-bold">{{ profile.userName }}</h1>
-              <span v-if="profile.verified" class="text-xs bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 px-1.5 py-0.5 rounded-full"
-                title="专家认证">✅ 蓝 V</span>
-              <span class="text-xs font-bold px-2 py-0.5 rounded-full"
-                :style="{ background: level.color + '22', color: level.color }">
-                {{ level.name }}
-              </span>
-            </div>
-            <div class="text-sm text-slate-500 mt-1">
-              💎 {{ profile.points }} 积分 · 🔥 {{ profile.streak }} 天连续打卡
-            </div>
-            <div v-if="profile.expertise" class="text-xs text-slate-400 mt-1">
-              专长：{{ profile.expertise }}
-            </div>
-          </div>
-          <!-- 编辑资料：仅自己可见 -->
-          <button v-if="isSelf" class="btn-ghost text-xs" @click="router.push('/account')">
-            编辑资料
-          </button>
-        </div>
+      <!-- 社交资料头部（本人态显示编辑资料，访客态显示关注/私信） -->
+      <ProfileHeader :profile="profile" :is-self="isSelf" @edit="showEdit = true" @follow-change="onFollowChange" />
 
-        <!-- 统计卡片 -->
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+      <!-- 私密主页降级视图：仅公开子集（昵称/头像/蓝V + 关注），学习数据与作品缺省 -->
+      <div v-if="profilePrivate" class="card text-center py-10">
+        <p class="text-slate-400 text-sm">该用户开启了主页隐私保护，仅展示公开资料</p>
+      </div>
+
+      <template v-else>
+        <!-- 社交数据条 -->
+        <SocialStatsBar :profile="profile" :is-self="isSelf" @show-works="worksTab = $event" />
+
+        <!-- 作品 Tab（帖子 / 点赞） -->
+        <UserWorksTabs :user-id="userId" :is-self="isSelf" v-model:active-tab="worksTab" />
+
+      <!-- 学习概览：总学习时长 / 总做题数 / 本月学习 -->
+      <div class="card">
+        <h3 class="text-sm font-bold mb-3">📊 学习概览</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
             <div class="text-lg font-bold text-blue-600">
               {{ totalHours }}<span class="text-sm font-normal">h</span> {{ totalMinutes }}<span class="text-sm font-normal">m</span>
@@ -114,30 +147,19 @@ onMounted(async () => {
             <div class="text-[10px] text-slate-400">正确率 {{ stats?.problems.accuracy ?? 0 }}%</div>
           </div>
           <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
-            <div class="text-lg font-bold text-purple-600">{{ profile.postCount }}</div>
-            <div class="text-xs text-slate-400">社区贡献</div>
-            <div class="text-[10px] text-slate-400">获赞 {{ profile.likesReceived }}</div>
+            <div class="text-lg font-bold text-blue-600">
+              {{ monthHours }}<span class="text-sm font-normal">h</span> {{ monthMinutes }}<span class="text-sm font-normal">m</span>
+            </div>
+            <div class="text-xs text-slate-400">本月学习</div>
           </div>
-          <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
-            <div class="text-lg font-bold text-amber-600">{{ profile.followers }}</div>
-            <div class="text-xs text-slate-400">粉丝</div>
-            <div class="text-[10px] text-slate-400">关注者</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 本月学习 -->
-      <div class="card">
-        <h3 class="text-sm font-bold mb-2">📅 本月学习</h3>
-        <div class="text-2xl font-bold text-blue-600">
-          {{ monthHours }}<span class="text-sm font-normal text-slate-400"> 小时 </span>{{ monthMinutes }}<span class="text-sm font-normal text-slate-400"> 分钟</span>
         </div>
       </div>
 
       <!-- 学习热力图 -->
       <div class="card">
-        <h3 class="text-sm font-bold mb-3">🔥 学习热力图（近 365 天）</h3>
-        <StreakHeatmap v-if="stats?.heatmap" :data="stats.heatmap" />
+        <h3 class="text-sm font-bold mb-3">学习热力图（近 30 周）</h3>
+        <StreakHeatmap v-if="stats?.heatmap" :data="stats.heatmap" @select="heatDate = $event" />
+        <p class="text-[10px] text-slate-400 mt-2">点击色块可查看当日学习时长</p>
       </div>
 
       <!-- 科目分布 -->
@@ -175,6 +197,19 @@ onMounted(async () => {
           </div>
         </div>
       </div>
+      </template>
     </template>
+
+    <!-- 编辑资料弹窗（仅本人态经 ProfileHeader 触发打开） -->
+    <EditProfileModal v-model:show="showEdit" @saved="loadAll" />
+
+    <!-- 热力图当日学习时长弹窗 -->
+    <Modal :title="`${heatDate} 学习记录`" :show="!!heatDate" @close="heatDate = ''">
+      <div class="flex items-center justify-between bg-primary-50 dark:bg-primary-900/30 rounded-xl px-4 py-3">
+        <span class="text-sm text-slate-500 dark:text-slate-400">当日学习总时长</span>
+        <span class="text-xl font-black text-primary-500">{{ formatMinutes(heatMinutes) }}</span>
+      </div>
+      <p class="text-xs text-slate-400 text-center pt-3">{{ heatMinutes > 0 ? '具体科目明细仅本人可见' : '当日未学习' }}</p>
+    </Modal>
   </div>
 </template>

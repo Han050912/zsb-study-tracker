@@ -1120,24 +1120,33 @@ export function registerCommunityRoutes() {
   on('GET', '/api/community/users/:id/profile', false, async (ctx) => {
     const u = await first<any>(ctx.env, `
       SELECT u.id, COALESCE(s.user_name, u.username) AS user_name, u.verified, u.expertise,
-        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak, s.profile_visibility, s.avatar
+        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak, s.profile_visibility, s.avatar,
+        COALESCE(s.bio, '') AS bio
       FROM users u
       LEFT JOIN user_settings s ON s.user_id = u.id
       LEFT JOIN gamification g ON g.user_id = u.id
       WHERE u.id = ?`, ctx.params.id)
     if (!u) throw new HttpError(404, '用户不存在')
     const visibility = u.profile_visibility ?? 'login'
-    // 私密主页（非本人）：不抛错，降级返回公开子集（昵称/头像/蓝V 在公开帖子流本就可见）
+    // 私密主页（非本人）：不抛错，降级返回公开子集（昵称/头像/蓝V 在公开帖子流本就可见）。
+    // 关注关系属社交信息（非隐私学习数据），私密主页仍可关注/取关，需一并返回当前关注状态
     if (visibility === 'private' && ctx.userId !== ctx.params.id) {
+      const [followedByMe, followsMe] = await Promise.all([
+        first<{ follower_id: string }>(ctx.env,
+          'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.userId, ctx.params.id),
+        first<{ follower_id: string }>(ctx.env,
+          'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.params.id, ctx.userId)
+      ])
       return Response.json({
         profilePrivate: true,
         userId: u.id, userName: u.user_name || '升本人',
-        avatar: u.avatar ?? undefined, verified: !!u.verified, expertise: u.expertise || ''
+        avatar: u.avatar ?? undefined, verified: !!u.verified, expertise: u.expertise || '',
+        bio: u.bio, followedByMe: !!followedByMe, followsMe: !!followsMe
       })
     }
     // login 可见性 + 访客：需登录（登录用户可见完整资料）
     if (visibility === 'login' && !ctx.userId) throw new HttpError(401, '请登录后查看')
-    const [stats, badges, followers, followedByMe] = await Promise.all([
+    const [stats, badges, followers, followedByMe, followsMe, threads, social] = await Promise.all([
       first<{ posts: number; likes: number }>(ctx.env, `
         SELECT (SELECT COUNT(*) FROM community_posts WHERE user_id = ? AND is_hidden = 0)
              + (SELECT COUNT(*) FROM community_comments WHERE user_id = ? AND is_hidden = 0) AS posts,
@@ -1148,7 +1157,20 @@ export function registerCommunityRoutes() {
         'SELECT badge_key, awarded_at FROM user_badges WHERE user_id = ? ORDER BY awarded_at ASC', ctx.params.id),
       first<{ n: number }>(ctx.env, 'SELECT COUNT(*) AS n FROM user_follows WHERE followee_id = ?', ctx.params.id),
       first<{ follower_id: string }>(ctx.env,
-        'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.userId, ctx.params.id)
+        'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.userId, ctx.params.id),
+      first<{ follower_id: string }>(ctx.env,
+        'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.params.id, ctx.userId),
+      first<{ n: number }>(ctx.env,
+        'SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ? AND is_hidden = 0 AND circle_id IS NULL AND topic_ref IS NULL', ctx.params.id),
+      first<{ following: number; mutual: number; liked: number }>(ctx.env, `
+        SELECT (SELECT COUNT(*) FROM user_follows WHERE follower_id = ?) AS following,
+          (SELECT COUNT(*) FROM user_follows f1 JOIN user_follows f2
+             ON f2.follower_id = f1.followee_id AND f2.followee_id = f1.follower_id
+           WHERE f1.follower_id = ?) AS mutual,
+          (SELECT COUNT(*) FROM community_likes l JOIN community_posts p
+             ON p.id = l.target_id AND p.is_hidden = 0
+           WHERE l.user_id = ? AND l.target_type = 'post') AS liked`,
+        ctx.params.id, ctx.params.id, ctx.params.id)
     ])
     return Response.json({
       userId: u.id, userName: u.user_name || '升本人',
@@ -1158,7 +1180,17 @@ export function registerCommunityRoutes() {
       postCount: stats?.posts ?? 0, likesReceived: stats?.likes ?? 0,
       badges: badges.map(b => ({ key: b.badge_key, awardedAt: b.awarded_at })),
       followers: followers?.n ?? 0,
-      followedByMe: !!followedByMe
+      followedByMe: !!followedByMe,
+      bio: u.bio,
+      followsMe: !!followsMe,
+      threadsCount: threads?.n ?? 0,
+      followingCount: social?.following ?? 0,
+      mutualCount: social?.mutual ?? 0,
+      ...(ctx.userId === ctx.params.id ? { likedCount: social?.liked ?? 0 } : {}),
+      relation: ctx.userId === ctx.params.id ? 'none'
+        : (followedByMe && followsMe) ? 'mutual'
+        : followedByMe ? 'following'
+        : followsMe ? 'follower' : 'none'
     })
   })
 
@@ -1172,7 +1204,8 @@ export function registerCommunityRoutes() {
     await assertProfileVisible(ctx, userId, u.profile_visibility ?? 'login')
 
     // 365 天热力图：按日期汇总学习分钟数（日期口径与 utc8Today 一致：UTC+8）
-    const oneYearAgo = new Date(Date.now() + 8 * 3600_000 - 86400_000 * 365)
+    // 364 天前 → 今天共 365 天，避免 off-by-one 多生成一天
+    const oneYearAgo = new Date(Date.now() + 8 * 3600_000 - 86400_000 * 364)
     const startDate = oneYearAgo.toISOString().slice(0, 10)
     const heatmapRows = await all<{ date: string; minutes: number }>(ctx.env, `
       SELECT date, SUM(minutes) AS minutes FROM study_records
@@ -1250,6 +1283,162 @@ export function registerCommunityRoutes() {
       notifyStatement(ctx.env, { userId: targetId, type: 'follow', actorId: ctx.userId, content: `${myName} 关注了你` })
     ])
     return Response.json({ following: true })
+  })
+
+  // 用户发布的帖子（公开广场帖口径：排除圈子帖/知识点讨论帖；游标分页，与 feed latest 同模式）
+  on('GET', '/api/community/users/:id/posts', false, async (ctx) => {
+    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
+      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    const where = ['p.user_id = ?', 'p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)',
+      'p.circle_id IS NULL', 'p.topic_ref IS NULL']
+    const params: unknown[] = [ctx.userId, ctx.userId, ctx.params.id, ctx.userId]
+    if (c) { where.push('(p.created_at < ? OR (p.created_at = ? AND p.id < ?))'); params.push(c.ts, c.ts, c.id) }
+    const rows = await all(ctx.env,
+      `${POST_SELECT} WHERE ${where.join(' AND ')} ORDER BY p.created_at DESC, p.id DESC LIMIT ?`, ...params, limit + 1)
+    let nextCursor: string | null = null
+    if (rows.length > limit) {
+      const last = rows[limit - 1] as any
+      nextCursor = `${last.created_at}_${last.id}`
+    }
+    return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor })
+  })
+
+  // 我点赞过的帖子（按点赞时间倒序；游标 `${lk.created_at}_${p.id}`）
+  on('GET', '/api/community/me/liked-posts', true, async (ctx) => {
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    const where = ["lk.target_type = 'post'", 'lk.user_id = ?', 'p.is_hidden = 0', '(p.is_flagged = 0 OR p.user_id = ?)']
+    const params: unknown[] = [ctx.userId, ctx.userId, ctx.userId, ctx.userId]
+    if (c) { where.push('(lk.created_at < ? OR (lk.created_at = ? AND p.id < ?))'); params.push(c.ts, c.ts, c.id) }
+    const sql = POST_SELECT
+      .replace('SELECT p.*,', 'SELECT p.*, lk.created_at AS lk_created_at,')
+      .replace('FROM community_posts p', 'FROM community_posts p JOIN community_likes lk ON lk.target_id = p.id') +
+      ` WHERE ${where.join(' AND ')} ORDER BY lk.created_at DESC, p.id DESC LIMIT ?`
+    const rows = await all<any>(ctx.env, sql, ...params, limit + 1)
+    let nextCursor: string | null = null
+    if (rows.length > limit) {
+      const last = rows[limit - 1]
+      nextCursor = `${last.lk_created_at}_${last.id}`
+    }
+    return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor })
+  })
+
+  interface FollowRow {
+    user_id: string; user_name: string | null; username: string; avatar: string | null;
+    verified: number; bio: string; created_at: number; rel_id: string
+  }
+
+  /** 关系列表公共逻辑：游标分页 + 批量补当前用户与列表项的双向关系 */
+  async function followListResponse(ctx: any, sql: string, params: unknown[], limit: number) {
+    const rows = await all<FollowRow>(ctx.env, sql, ...params, limit + 1)
+    const page = rows.slice(0, limit)
+    let nextCursor: string | null = null
+    if (rows.length > limit) {
+      const last = rows[limit - 1]
+      nextCursor = `${last.created_at}_${last.rel_id}`
+    }
+    const ids = page.map(r => r.user_id)
+    let myFollowing = new Set<string>(), myFollowers = new Set<string>()
+    if (ctx.userId && ids.length) {
+      const ph = ids.map(() => '?').join(',')
+      const [a, b] = await Promise.all([
+        all<{ followee_id: string }>(ctx.env,
+          `SELECT followee_id FROM user_follows WHERE follower_id = ? AND followee_id IN (${ph})`, ctx.userId, ...ids),
+        all<{ follower_id: string }>(ctx.env,
+          `SELECT follower_id FROM user_follows WHERE followee_id = ? AND follower_id IN (${ph})`, ctx.userId, ...ids)
+      ])
+      myFollowing = new Set(a.map(r => r.followee_id))
+      myFollowers = new Set(b.map(r => r.follower_id))
+    }
+    const items = page.map(r => {
+      const followedByMe = myFollowing.has(r.user_id)
+      const followsMe = myFollowers.has(r.user_id)
+      return {
+        userId: r.user_id,
+        userName: r.user_name || r.username,
+        avatar: r.avatar ?? undefined,
+        verified: !!r.verified,
+        bio: r.bio || '',
+        followedByMe, followsMe,
+        relation: r.user_id === ctx.userId ? 'none'
+          : followedByMe && followsMe ? 'mutual'
+          : followedByMe ? 'following' : followsMe ? 'follower' : 'none'
+      }
+    })
+    return Response.json({ items, nextCursor })
+  }
+
+  // 粉丝列表（公开路由；item 含与当前用户的双向关系）
+  on('GET', '/api/community/users/:id/followers', false, async (ctx) => {
+    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
+      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    let sql = `
+      SELECT u.id AS user_id, s.user_name, u.username, s.avatar, u.verified,
+        COALESCE(s.bio, '') AS bio, f.created_at AS created_at, f.follower_id AS rel_id
+      FROM user_follows f
+      JOIN users u ON u.id = f.follower_id
+      LEFT JOIN user_settings s ON s.user_id = u.id
+      WHERE f.followee_id = ?`
+    const params: unknown[] = [ctx.params.id]
+    if (c) { sql += ' AND (f.created_at < ? OR (f.created_at = ? AND f.follower_id < ?))'; params.push(c.ts, c.ts, c.id) }
+    sql += ' ORDER BY f.created_at DESC, f.follower_id DESC LIMIT ?'
+    return followListResponse(ctx, sql, params, limit)
+  })
+
+  // 关注列表（公开路由；结构与粉丝列表相同，方向取 followee）
+  on('GET', '/api/community/users/:id/following', false, async (ctx) => {
+    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
+      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    let sql = `
+      SELECT u.id AS user_id, s.user_name, u.username, s.avatar, u.verified,
+        COALESCE(s.bio, '') AS bio, f.created_at AS created_at, f.followee_id AS rel_id
+      FROM user_follows f
+      JOIN users u ON u.id = f.followee_id
+      LEFT JOIN user_settings s ON s.user_id = u.id
+      WHERE f.follower_id = ?`
+    const params: unknown[] = [ctx.params.id]
+    if (c) { sql += ' AND (f.created_at < ? OR (f.created_at = ? AND f.followee_id < ?))'; params.push(c.ts, c.ts, c.id) }
+    sql += ' ORDER BY f.created_at DESC, f.followee_id DESC LIMIT ?'
+    return followListResponse(ctx, sql, params, limit)
+  })
+
+  // 互关列表（公开路由；f1/f2 双向 JOIN 取互相跟随者）
+  on('GET', '/api/community/users/:id/mutual', false, async (ctx) => {
+    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
+      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    if (!target) throw new HttpError(404, '用户不存在')
+    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
+    const c = parseCursor(url.searchParams.get('cursor') || '')
+    let sql = `
+      SELECT u.id AS user_id, s.user_name, u.username, s.avatar, u.verified,
+        COALESCE(s.bio, '') AS bio, f1.created_at AS created_at, f1.followee_id AS rel_id
+      FROM user_follows f1
+      JOIN user_follows f2 ON f2.follower_id = f1.followee_id AND f2.followee_id = f1.follower_id
+      JOIN users u ON u.id = f1.followee_id
+      LEFT JOIN user_settings s ON s.user_id = u.id
+      WHERE f1.follower_id = ?`
+    const params: unknown[] = [ctx.params.id]
+    if (c) { sql += ' AND (f1.created_at < ? OR (f1.created_at = ? AND f1.followee_id < ?))'; params.push(c.ts, c.ts, c.id) }
+    sql += ' ORDER BY f1.created_at DESC, f1.followee_id DESC LIMIT ?'
+    return followListResponse(ctx, sql, params, limit)
   })
 
   // 每日一题：最新一条被标记且未隐藏的帖子（广场顶部展示）

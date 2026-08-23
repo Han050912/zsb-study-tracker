@@ -1,17 +1,40 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
-import { Camera } from '@lucide/vue'
+import { ChevronDown } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import { sessionUser } from '../services/auth'
-import { imageUrl } from '../api/community'
-import AvatarEditor from '../components/AvatarEditor.vue'
+import { communityApi } from '../api/community'
+import type { CommunityUserProfile } from '../types'
+import ProfileHeader from '../components/profile/ProfileHeader.vue'
+import SocialStatsBar from '../components/profile/SocialStatsBar.vue'
+import UserWorksTabs from '../components/profile/UserWorksTabs.vue'
+import EditProfileModal from '../components/profile/EditProfileModal.vue'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 
 const user = computed(() => sessionUser.value)
+const myId = computed(() => sessionUser.value?.id ?? '')
 
-const showAvatarEditor = ref(false)
+const profile = ref<CommunityUserProfile | null>(null)
+const profileLoading = ref(true)
+const profileError = ref(false)
+const worksTab = ref<'posts' | 'likes'>('posts')
+const showEdit = ref(false)
+const showDataCenter = ref(false)
+
+async function reloadProfile() {
+  if (!myId.value) return
+  profileLoading.value = true
+  profileError.value = false
+  try {
+    profile.value = await communityApi.profile(myId.value)
+  } catch {
+    profileError.value = true
+  } finally {
+    profileLoading.value = false
+  }
+}
 
 function fmtTime(ts?: number) {
   if (!ts) return '—'
@@ -23,6 +46,7 @@ function fmtTime(ts?: number) {
 const myDataSize = ref('—')
 
 onMounted(async () => {
+  reloadProfile()
   try {
     myDataSize.value = await store.storageUsageText()
   } catch (e) {
@@ -64,65 +88,64 @@ function exportBackup() {
 
 <template>
   <div class="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
-    <h1 class="page-title">个人数据中心</h1>
-
-    <!-- 账号卡片 -->
-    <div class="card flex items-center gap-4">
-      <div class="relative w-14 h-14 shrink-0 cursor-pointer group" title="更换头像" @click="showAvatarEditor = true">
-        <img v-if="store.settings.avatar" :src="imageUrl(store.settings.avatar)"
-          class="w-14 h-14 rounded-2xl object-cover" alt="我的头像">
-        <div v-else class="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center text-2xl font-bold">
-          {{ user?.username?.slice(0, 1).toUpperCase() }}
-        </div>
-        <span class="absolute inset-0 rounded-2xl bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-          <Camera :size="20" aria-hidden="true" />
-        </span>
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="font-bold text-lg truncate">{{ user?.username }}</div>
-        <div class="text-xs text-slate-400 mt-0.5">
-          {{ store.level.name }}学者 · {{ store.gamification.points }} 积分 · 🔥连胜 {{ store.gamification.streak }} 天
-        </div>
-      </div>
+    <!-- 加载中 -->
+    <div v-if="profileLoading" class="text-center text-xs text-slate-400 py-20">加载中…</div>
+    <!-- 加载失败 -->
+    <div v-else-if="profileError" class="card text-center py-10">
+      <p class="text-xs text-slate-400">资料加载失败</p>
+      <button class="btn-primary !text-xs mt-3" @click="reloadProfile">重试</button>
     </div>
+    <template v-else-if="profile">
+      <ProfileHeader :profile="profile" :is-self="true" @edit="showEdit = true" />
+      <SocialStatsBar :profile="profile" :is-self="true" @show-works="worksTab = $event" />
+      <UserWorksTabs :user-id="myId" :is-self="true" v-model:active-tab="worksTab" />
+    </template>
 
-    <!-- 账号与云端数据信息 -->
-    <div class="card space-y-2.5">
-      <h2 class="font-semibold text-sm">☁️ 云端数据（Cloudflare D1）</h2>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-        <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
-          <span class="text-slate-500 dark:text-slate-400">注册时间</span>
-          <span>{{ fmtTime(user?.createdAt) }}</span>
-        </div>
-        <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
-          <span class="text-slate-500 dark:text-slate-400">我的数据大小</span>
-          <span>{{ myDataSize }}</span>
-        </div>
-      </div>
-      <p class="text-[11px] text-slate-400">所有数据实时同步到云端数据库，多设备登录同一账号即可访问；建议定期导出备份作为应急恢复手段。</p>
-    </div>
-
-    <!-- 数据统计 -->
+    <!-- 数据中心（折叠，独立于 profile 加载状态，始终可用） -->
     <div class="card">
-      <h2 class="font-semibold text-sm mb-3">📊 我的数据概览</h2>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div v-for="s in stats" :key="s.label" class="bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2.5 text-center">
-          <div class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ s.value }}<span class="text-xs font-normal text-slate-400 ml-0.5">{{ s.unit }}</span></div>
-          <div class="text-xs text-slate-500 dark:text-slate-400">{{ s.label }}</div>
+      <button class="w-full flex items-center justify-between" @click="showDataCenter = !showDataCenter">
+        <span class="font-semibold text-sm">🗄️ 数据中心</span>
+        <ChevronDown :size="16" class="transition-transform text-slate-400" :class="showDataCenter ? 'rotate-180' : ''" />
+      </button>
+      <div v-if="showDataCenter" class="mt-3 space-y-4">
+        <!-- 账号与云端数据信息 -->
+        <div class="space-y-2.5">
+          <h2 class="font-semibold text-sm">☁️ 云端数据（Cloudflare D1）</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+            <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
+              <span class="text-slate-500 dark:text-slate-400">注册时间</span>
+              <span>{{ fmtTime(user?.createdAt) }}</span>
+            </div>
+            <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
+              <span class="text-slate-500 dark:text-slate-400">我的数据大小</span>
+              <span>{{ myDataSize }}</span>
+            </div>
+          </div>
+          <p class="text-[11px] text-slate-400">所有数据实时同步到云端数据库，多设备登录同一账号即可访问；建议定期导出备份作为应急恢复手段。</p>
+        </div>
+
+        <!-- 数据统计 -->
+        <div>
+          <h2 class="font-semibold text-sm mb-3">📊 我的数据概览</h2>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div v-for="s in stats" :key="s.label" class="bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2.5 text-center">
+              <div class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ s.value }}<span class="text-xs font-normal text-slate-400 ml-0.5">{{ s.unit }}</span></div>
+              <div class="text-xs text-slate-500 dark:text-slate-400">{{ s.label }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 数据操作 -->
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="font-semibold text-sm">💾 数据备份</h2>
+            <p class="text-xs text-slate-400 mt-0.5">导出当前账号全部数据为 JSON 文件，可在设置页导入恢复</p>
+          </div>
+          <button class="btn-primary !text-xs shrink-0" @click="exportBackup">导出备份</button>
         </div>
       </div>
     </div>
 
-    <!-- 数据操作 -->
-    <div class="card flex items-center justify-between">
-      <div>
-        <h2 class="font-semibold text-sm">💾 数据备份</h2>
-        <p class="text-xs text-slate-400 mt-0.5">导出当前账号全部数据为 JSON 文件，可在设置页导入恢复</p>
-      </div>
-      <button class="btn-primary !text-xs shrink-0" @click="exportBackup">导出备份</button>
-    </div>
-
-    <AvatarEditor :show="showAvatarEditor" @update:show="showAvatarEditor = $event"
-      @uploaded="store.settings.avatar = $event" />
+    <EditProfileModal v-model:show="showEdit" @saved="reloadProfile" />
   </div>
 </template>

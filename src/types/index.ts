@@ -184,6 +184,12 @@ export interface Todo {
   dueNotifiedAt?: number
 }
 
+/** 社区通知类型 */
+export type NotificationType = 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system'
+
+/** 通知点击跳转目标类型 */
+export type NotificationTargetType = 'post' | 'user' | 'message' | 'team' | 'circle' | 'partner'
+
 /** 设置 */
 export interface Settings {
   userName: string
@@ -204,6 +210,16 @@ export interface Settings {
   profileVisibility: 'public' | 'login' | 'private'
   /** 自定义头像相对 URL（/api/avatar/<file>；空 = 首字母兜底） */
   avatar: string
+  /** 个人简介（≤100 字，我的页/访客主页展示） */
+  bio: string
+  /** 勿扰模式总开关 */
+  doNotDisturb: boolean
+  /** 勿扰开始时间 'HH:mm'（空 = 全天勿扰） */
+  dndStartTime: string
+  /** 勿扰结束时间 'HH:mm'（空 = 全天勿扰） */
+  dndEndTime: string
+  /** 勿扰期间屏蔽的通知类型 */
+  dndMutedTypes: NotificationType[]
 }
 
 export interface AppState {
@@ -410,6 +426,26 @@ export interface UserBadge {
   awardedAt: number // Unix 秒
 }
 
+/** 社交关系状态：互关 / 我已关注 / 对方关注我（待回关） / 无关系 */
+export type RelationStatus = 'mutual' | 'following' | 'follower' | 'none'
+
+/** 粉丝/关注/互关列表项 */
+export interface FollowListItem {
+  userId: string
+  userName: string
+  avatar?: string
+  verified: boolean
+  bio: string
+  followedByMe: boolean
+  followsMe: boolean
+  relation: RelationStatus
+}
+
+export interface FollowListResult {
+  items: FollowListItem[]
+  nextCursor: string | null
+}
+
 /** 社区用户资料卡（公开荣誉信息，不含私有学习数据） */
 export interface CommunityUserProfile {
   userId: string
@@ -431,6 +467,18 @@ export interface CommunityUserProfile {
   followers: number
   /** 当前登录用户是否已关注该用户 */
   followedByMe: boolean
+  /** 个人简介 */
+  bio: string
+  /** 该用户是否关注了我 */
+  followsMe: boolean
+  /** 纯帖子数（公开广场帖口径，区别于 postCount 帖子+评论合计） */
+  threadsCount: number
+  followingCount: number
+  mutualCount: number
+  /** 我点赞过的帖子数（仅本人请求时返回） */
+  likedCount?: number
+  /** 我与该用户的关系 */
+  relation: RelationStatus
 }
 
 /** 个人主页学习统计（热力图 + 总览 + 科目分布） */

@@ -129,6 +129,9 @@ export const useAppStore = defineStore('app', {
         !Object.keys(data.pomodoro?.daily ?? {}).length && !data.pomodoro?.interruptions?.length &&
         !data.gamification?.pointsLog?.length
       if (isNewUser) {
+        // 注册时后端已将 user_name 初始化为登录用户名；用云端真实昵称覆盖默认占位"升本人"，
+        // 否则全量推送时 settingsReplaceStatements 会把昵称改回默认占位符
+        if (data.settings?.userName) this.settings.userName = data.settings.userName
         // 保留启动时的默认数据（内置科目/习惯/引言），推送到云端作为初始数据
         hasHydrated = true // 先置位，允许 saveAsync 推送初始数据
         await this.saveAsync()

@@ -140,6 +140,11 @@ export function createDefaultState(): AppState {
       joinProgressBoard: false,
       profileVisibility: 'login',
       avatar: '',
+      bio: '',
+      doNotDisturb: false,
+      dndStartTime: '',
+      dndEndTime: '',
+      dndMutedTypes: [],
     }
   }
 }
