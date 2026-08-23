@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import { useCommunityStore } from './stores/community'
@@ -11,14 +11,45 @@ import AchievementModal from './components/AchievementModal.vue'
 import Onboarding from './components/Onboarding.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import { imageUrl } from './api/community'
+import { isDndActive } from './utils/dnd'
 
 const store = useAppStore()
 const community = useCommunityStore()
 const route = useRoute()
 const router = useRouter()
 
-// 登录后拉取社区未读通知数；退出/过期时清空社区数据避免串号
-watch(isLoggedIn, v => { if (v) community.fetchUnreadCount().catch(() => {}) }, { immediate: true })
+// 登录后定时拉取社区未读通知数（实时红点）；切后台暂停、回前台立即补拉；退出/过期时停止轮询
+let unreadTimer: ReturnType<typeof setInterval> | null = null
+function fetchUnread() {
+  community.fetchUnreadCount().catch(() => {})
+}
+function startUnreadTimer() {
+  if (unreadTimer) clearInterval(unreadTimer)
+  unreadTimer = setInterval(fetchUnread, 30000)
+}
+function stopUnreadTimer() {
+  if (unreadTimer) { clearInterval(unreadTimer); unreadTimer = null }
+}
+function onUnreadVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    fetchUnread()
+    if (isLoggedIn.value) startUnreadTimer()
+  } else {
+    stopUnreadTimer()
+  }
+}
+function startUnreadPolling() {
+  stopUnreadPolling()
+  fetchUnread()
+  startUnreadTimer()
+  document.addEventListener('visibilitychange', onUnreadVisibilityChange)
+}
+function stopUnreadPolling() {
+  stopUnreadTimer()
+  document.removeEventListener('visibilitychange', onUnreadVisibilityChange)
+}
+watch(isLoggedIn, v => { if (v) startUnreadPolling(); else stopUnreadPolling() }, { immediate: true })
+onBeforeUnmount(stopUnreadPolling)
 
 // 导航动态生成：科目项随科目列表实时增减（删除科目自动隐藏，新增科目自动出现）
 // 侧边栏展示科目全名；移动端由 CSS truncate 截断
@@ -86,8 +117,9 @@ onMounted(() => {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme)
 })
 
-// 401 登录过期：清空内存中的用户数据，防止串号到下一个登录的账号
-window.addEventListener('auth:expired', () => { store.resetState(); community.resetState() })
+// 401 登录过期：清空会话与内存中的用户数据，防止串号到下一个登录的账号
+// （logout 置空 currentUser → isLoggedIn 变 false → 触发未读轮询停止）
+window.addEventListener('auth:expired', () => { logout(); store.resetState(); community.resetState() })
 
 // ---- 每日学习提醒（浏览器 + 桌面端共用 src/services/reminder.ts 一套逻辑） ----
 // 监听设置变更即时重调度：开关切换、时间修改均无需重启应用即可生效
@@ -95,7 +127,7 @@ watch(
   () => [store.settings.reminderEnabled, store.settings.reminderTime] as const,
   () => {
     restartReminder(
-      () => ({ enabled: store.settings.reminderEnabled, time: store.settings.reminderTime }),
+      () => ({ enabled: store.settings.reminderEnabled, time: store.settings.reminderTime, suppressed: isDndActive(store.settings) }),
       (shown) => { if (!shown) toastRef.value?.show('提醒时间到！该开始学习啦 💪') }
     )
   },
@@ -108,7 +140,8 @@ onMounted(() => {
   startTodoReminder({
     getTodos: () => store.todos,
     onNotified: (ids, kind) => store.markTodosNotified(ids, kind),
-    onFallback: msg => toastRef.value?.show(msg)
+    onFallback: msg => toastRef.value?.show(msg),
+    isSuppressed: () => isDndActive(store.settings)
   })
 })
 // 云端数据到位、新增待办或改动时间后立即检查一次，无需等下一轮轮询
@@ -116,6 +149,8 @@ watch(
   () => store.todos.map(t => `${t.id}:${t.startAt ?? ''}:${t.dueAt ?? ''}:${t.done ? 1 : 0}`).join('|'),
   () => checkTodoReminders()
 )
+
+const dndActive = computed(() => isDndActive(store.settings))
 
 const isPomodoro = computed(() => route.path === '/pomodoro')
 const isAuthPage = computed(() => route.path === '/login')
@@ -144,6 +179,10 @@ function goAccount() {
 function goFeedback() {
   avatarOpen.value = false
   router.push('/feedback')
+}
+function goNotifications() {
+  avatarOpen.value = false
+  router.push('/community/notifications')
 }
 /** 切换账号 / 退出登录：立即退出，数据保存不阻塞 UI */
 async function accountLogout(switchAccount: boolean) {
@@ -194,7 +233,7 @@ if (window.nav) {
           <div class="text-[10px] opacity-80">距考试还有</div>
           <div class="text-xl font-bold leading-tight">{{ store.examCountdown }} 天</div>
         </template>
-        <div v-else class="text-sm font-bold leading-tight py-1">考试就是今天，加油！💪</div>
+        <div v-else class="text-sm font-bold leading-tight py-1">考试就是今天，加油！</div>
       </div>
       <button v-else-if="!isLoggedIn && !navCollapsed" class="mx-4 mb-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white px-3 py-2.5 text-center hover:opacity-90 transition-opacity"
         @click="goLogin(router)">
@@ -220,28 +259,31 @@ if (window.nav) {
       <div v-if="isLoggedIn && !navCollapsed" class="px-5 py-3 text-[10px] text-slate-400">积分 {{ store.gamification.points }} · 🔥{{ store.gamification.streak }}天</div>
     </aside>
 
-    <!-- 右上角：登录态显示通知铃铛 + 账号头像入口；访客态显示登录按钮 -->
-    <div v-if="!hideNav && !isNotesEditing" class="fixed top-3 right-4 z-40 flex items-center gap-2">
+    <!-- 右上角：登录态显示账号头像入口（含未读通知角标，通知中心已并入头像下拉菜单）；访客态显示登录按钮 -->
+    <div v-if="!hideNav && !isNotesEditing" class="fixed top-3 right-4 z-40 flex items-center gap-3">
       <template v-if="isLoggedIn">
-        <button class="relative w-9 h-9 rounded-full bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 text-base flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
-          title="通知中心" @click="router.push('/community/notifications')">
-          🔔
-          <span v-if="community.unreadCount"
-            class="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">
+        <button class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
+          title="账号菜单" @click.stop="avatarOpen = !avatarOpen">
+          <img v-if="store.settings.avatar" :src="imageUrl(store.settings.avatar)" class="w-full h-full object-cover rounded-full" alt="我的头像">
+          <template v-else>{{ avatarLetter }}</template>
+          <!-- 未读通知角标：勿扰仅红点（无数字）；普通数字角标 -->
+          <span v-if="dndActive && community.unreadExcludingMuted"
+            class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 ring-2 ring-white dark:ring-slate-800"></span>
+          <span v-else-if="!dndActive && community.unreadCount"
+            class="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center ring-2 ring-white dark:ring-slate-800">
             {{ community.unreadCount > 99 ? '99+' : community.unreadCount }}
           </span>
         </button>
-        <button class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow overflow-hidden"
-          title="账号菜单" @click.stop="avatarOpen = !avatarOpen">
-          <img v-if="store.settings.avatar" :src="imageUrl(store.settings.avatar)" class="w-full h-full object-cover" alt="我的头像">
-          <template v-else>{{ avatarLetter }}</template>
-        </button>
         <div v-if="avatarOpen" class="fixed inset-0 z-40" @click="avatarOpen = false"></div>
         <div v-if="avatarOpen" class="absolute right-0 top-11 z-50 w-40 rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-lg py-1.5">
-          <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goFeedback">💡 意见反馈</button>
-          <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goAccount">👤 个人中心</button>
-          <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="accountLogout(true)">🔁 切换账号</button>
-          <button class="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" @click="accountLogout(false)">🚪 退出登录</button>
+          <button class="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goNotifications">
+            <span>通知中心</span>
+            <span v-if="community.unreadCount" class="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">{{ community.unreadCount > 99 ? '99+' : community.unreadCount }}</span>
+          </button>
+          <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goFeedback">意见反馈</button>
+          <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goAccount">个人中心</button>
+          <button class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="accountLogout(true)">切换账号</button>
+          <button class="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20" @click="accountLogout(false)">退出登录</button>
         </div>
       </template>
       <button v-else class="px-4 py-2 rounded-full bg-primary-500 text-white text-sm font-semibold shadow-md hover:bg-primary-600 hover:shadow-lg transition-colors"

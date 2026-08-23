@@ -34,6 +34,7 @@ export interface PostDetail {
 export interface NotificationResult {
   items: CommunityNotification[]
   unreadCount: number
+  unreadExcludingMuted: number
   nextCursor: string | null
 }
 
@@ -239,10 +240,11 @@ export const communityApi = {
   messageUnreadCount: () => request<{ count: number }>('/api/community/messages/unread-count'),
   report: (targetType: 'post' | 'comment' | 'message', targetId: string, reason: string, detail?: string) =>
     request<{ ok: boolean }>('/api/community/reports', { method: 'POST', body: JSON.stringify({ targetType, targetId, reason, detail }) }),
-  notifications: (cursor?: string | null, limit?: number) => {
+  notifications: (cursor?: string | null, limit?: number, type?: NotificationType) => {
     const params = new URLSearchParams()
     if (cursor) params.set('cursor', cursor)
     if (limit) params.set('limit', String(limit))
+    if (type) params.set('type', type)
     const qs = params.toString()
     return request<NotificationResult>(`/api/community/notifications${qs ? `?${qs}` : ''}`)
   },

@@ -134,7 +134,7 @@ export function registerPartnerRoutes() {
           // 对方已向我发 pending → 互相接受
           await batch(ctx.env, [
             ctx.env.DB.prepare('UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?').bind('accepted', nowSec(), existing.id),
-            notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '🤝 有人已成为你的学习搭子' })
+            notifyStatement(ctx.env, { userId: targetId, type: 'system', targetType: 'partner', content: '🤝 有人已成为你的学习搭子' })
           ])
           return Response.json({ accepted: true })
         }
@@ -144,7 +144,7 @@ export function registerPartnerRoutes() {
       await batch(ctx.env, [
         ctx.env.DB.prepare('UPDATE study_partners SET from_id = ?, to_id = ?, status = ?, updated_at = ? WHERE id = ?')
           .bind(ctx.userId, targetId, 'pending', nowSec(), existing.id),
-        notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '有人想成为你的学习搭子，去看看' })
+        notifyStatement(ctx.env, { userId: targetId, type: 'system', targetType: 'partner', content: '有人想成为你的学习搭子，去看看' })
       ])
       return Response.json({ accepted: false }, { status: 201 })
     }
@@ -161,7 +161,7 @@ export function registerPartnerRoutes() {
       if (dup && dup.status === 'pending' && dup.to_id === ctx.userId) {
         await batch(ctx.env, [
           ctx.env.DB.prepare('UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?').bind('accepted', nowSec(), dup.id),
-          notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '🤝 有人已成为你的学习搭子' })
+          notifyStatement(ctx.env, { userId: targetId, type: 'system', targetType: 'partner', content: '🤝 有人已成为你的学习搭子' })
         ])
         return Response.json({ accepted: true })
       }
@@ -169,7 +169,7 @@ export function registerPartnerRoutes() {
     }
 
     await batch(ctx.env, [
-      notifyStatement(ctx.env, { userId: targetId, type: 'system', content: '有人想成为你的学习搭子，去看看' })
+      notifyStatement(ctx.env, { userId: targetId, type: 'system', targetType: 'partner', content: '有人想成为你的学习搭子，去看看' })
     ])
     return Response.json({ accepted: false }, { status: 201 })
   })
@@ -187,7 +187,7 @@ export function registerPartnerRoutes() {
         .bind(action === 'accept' ? 'accepted' : 'rejected', nowSec(), req.id)
     ]
     if (action === 'accept') {
-      stmts.push(notifyStatement(ctx.env, { userId: req.from_id, type: 'system', content: '🤝 对方已接受你的学习搭子请求' }))
+      stmts.push(notifyStatement(ctx.env, { userId: req.from_id, type: 'system', targetType: 'partner', content: '🤝 对方已接受你的学习搭子请求' }))
     }
     await batch(ctx.env, stmts)
     return Response.json({ ok: true })

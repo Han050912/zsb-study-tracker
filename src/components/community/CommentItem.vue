@@ -16,7 +16,9 @@ const props = withDefaults(defineProps<{
   postAuthorId?: string
   /** 是否正在被回复（持续高亮，锚定回复目标） */
   replying?: boolean
-}>(), { showAccept: false, replying: false })
+  /** 通知跳转锚定该评论时的一次性高亮闪烁 */
+  highlight?: boolean
+}>(), { showAccept: false, replying: false, highlight: false })
 const emit = defineEmits<{ like: []; dislike: []; reply: []; remove: []; hide: []; report: []; accept: []; image: [index: number]; profile: [] }>()
 
 const isMine = computed(() => props.comment.userId === sessionUser.value?.id)
@@ -41,7 +43,7 @@ function onClickReply() {
       replying
         ? 'bg-primary-50/80 dark:bg-primary-900/20 -mx-2 px-2 py-2'
         : (comment.isAccepted ? 'bg-emerald-50/60 dark:bg-emerald-900/10 -mx-2 px-2 py-2 ring-1 ring-emerald-200 dark:ring-emerald-800' : ''),
-      flashing ? 'reply-flash' : ''
+      (flashing || highlight) ? 'reply-flash' : ''
     ]"
     @click="onClickReply">
     <UserAvatar :name="comment.userName" :avatar="comment.userAvatar" class="cursor-pointer" @click.stop="emit('profile')" />

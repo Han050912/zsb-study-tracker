@@ -5,6 +5,7 @@ import { rateLimit } from '../middleware/rateLimit'
 import { deleteUploads, uploadIdsOf, IMAGE_MAX_PER_POST, IMAGE_MAX_PER_COMMENT, IMAGE_MAX_PER_MESSAGE } from './uploads'
 import { assertClean, moderate } from './sensitive'
 import { awardBadge, hasBadge } from './badges'
+import { parseMutedTypes } from './settings'
 
 /**
  * 社区广场：帖子 / 评论 / 点赞 / 通知 / 图片 / 举报 / 榜单。
@@ -98,6 +99,8 @@ function mapNotification(r: any) {
     actorAvatar: r.actor_avatar ?? undefined,
     postId: r.post_id ?? undefined,
     commentId: r.comment_id ?? undefined,
+    targetType: r.target_type ?? undefined,
+    targetId: r.target_id ?? undefined,
     content: r.content,
     isRead: !!r.is_read,
     createdAt: r.created_at
@@ -162,11 +165,20 @@ async function revokeLikeStatements(env: Env, targetType: 'post' | 'comment', ta
 
 export function notifyStatement(env: Env, n: {
   userId: string; type: string; actorId?: string; postId?: string; commentId?: string; content: string
+  targetType?: string; targetId?: string
 }): D1PreparedStatement {
+  // 未显式指定跳转目标时按类型自动推导：帖子类(评论/点赞/采纳) → 帖子；关注 → 用户主页；私信 → 会话
+  let tt = n.targetType ?? null
+  let tid = n.targetId ?? null
+  if (!tt) {
+    if (n.postId) { tt = 'post'; tid = n.postId }
+    else if (n.type === 'follow' && n.actorId) { tt = 'user'; tid = n.actorId }
+    else if (n.type === 'message' && n.actorId) { tt = 'message'; tid = n.actorId }
+  }
   return env.DB.prepare(
-    'INSERT INTO community_notifications (id, user_id, type, actor_id, post_id, comment_id, content, is_read, created_at) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)'
-  ).bind(uid(), n.userId, n.type, n.actorId ?? null, n.postId ?? null, n.commentId ?? null, n.content, nowSec())
+    'INSERT INTO community_notifications (id, user_id, type, actor_id, post_id, comment_id, target_type, target_id, content, is_read, created_at) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)'
+  ).bind(uid(), n.userId, n.type, n.actorId ?? null, n.postId ?? null, n.commentId ?? null, tt, tid, n.content, nowSec())
 }
 
 /** 用户展示名（用户设置昵称优先，回退用户名） */
@@ -1070,6 +1082,7 @@ export function registerCommunityRoutes() {
     } else {
       stmts.push(notifyStatement(ctx.env, {
         userId: circle.creator_id, type: 'system', actorId: ctx.userId,
+        targetType: 'circle', targetId: ctx.params.id,
         content: `${myName} 申请加入圈子「${circle.name}」，请到圈子详情页审批`
       }))
     }
@@ -1091,6 +1104,7 @@ export function registerCommunityRoutes() {
       ctx.env.DB.prepare('UPDATE community_circles SET member_count = member_count + 1 WHERE id = ?').bind(ctx.params.id),
       notifyStatement(ctx.env, {
         userId: ctx.params.uid, type: 'system',
+        targetType: 'circle', targetId: ctx.params.id,
         content: `🎉 你加入圈子「${circle.name}」的申请已通过`
       })
     ])
@@ -1758,11 +1772,12 @@ export function registerCommunityRoutes() {
     return Response.json({ ok: true }, { status: 201 })
   })
 
-  // 通知列表（含未读数）
+  // 通知列表（含未读数；可选 type 过滤；unreadExcludingMuted 供勿扰红点判定）
   on('GET', '/api/community/notifications', true, async (ctx) => {
     const url = new URL(ctx.request.url)
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const cursor = url.searchParams.get('cursor') || ''
+    const type = url.searchParams.get('type') || ''
 
     let sql = `
       SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name, s.avatar AS actor_avatar
@@ -1771,6 +1786,10 @@ export function registerCommunityRoutes() {
       LEFT JOIN user_settings s ON s.user_id = n.actor_id
       WHERE n.user_id = ?`
     const params: unknown[] = [ctx.userId]
+    if (type) {
+      sql += ' AND n.type = ?'
+      params.push(type)
+    }
     const c = cursor ? parseCursor(cursor) : null
     if (c) {
       sql += ' AND (n.created_at < ? OR (n.created_at = ? AND n.id < ?))'
@@ -1782,12 +1801,29 @@ export function registerCommunityRoutes() {
     const rows = await all(ctx.env, sql, ...params)
     const unread = await first<{ n: number }>(ctx.env,
       'SELECT COUNT(*) AS n FROM community_notifications WHERE user_id = ? AND is_read = 0', ctx.userId)
+    // 排除被屏蔽类型的未读数（勿扰红点用；无条件计算，客户端按需取用）
+    const settingsRow = await first<{ dnd_muted_types: string | null }>(ctx.env,
+      'SELECT dnd_muted_types FROM user_settings WHERE user_id = ?', ctx.userId)
+    const muted = parseMutedTypes(settingsRow?.dnd_muted_types)
+    let unreadExcludingMuted = unread?.n ?? 0
+    if (muted.length) {
+      const ph = muted.map(() => '?').join(',')
+      const r = await first<{ n: number }>(ctx.env,
+        `SELECT COUNT(*) AS n FROM community_notifications WHERE user_id = ? AND is_read = 0 AND type NOT IN (${ph})`,
+        ctx.userId, ...muted)
+      unreadExcludingMuted = r?.n ?? 0
+    }
     let nextCursor: string | null = null
     if (rows.length > limit) {
       const last = rows[limit - 1] as any
       nextCursor = `${last.created_at}_${last.id}`
     }
-    return Response.json({ items: rows.slice(0, limit).map(mapNotification), unreadCount: unread?.n ?? 0, nextCursor })
+    return Response.json({
+      items: rows.slice(0, limit).map(mapNotification),
+      unreadCount: unread?.n ?? 0,
+      unreadExcludingMuted,
+      nextCursor
+    })
   })
 
   // 全部已读

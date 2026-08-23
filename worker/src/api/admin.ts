@@ -93,6 +93,7 @@ export function registerAdminRoutes() {
       modLogStatement(ctx.env, ctx.userId, 'verify', 'user', ctx.params.id, null, expertise),
       notifyStatement(ctx.env, {
         userId: ctx.params.id, type: 'system',
+        targetType: 'user', targetId: ctx.params.id,
         content: `🎓 你已被认证为「${expertise}」学科专家，你的帖子与评论将展示蓝 V 标识`
       })
     ])
@@ -110,6 +111,7 @@ export function registerAdminRoutes() {
       modLogStatement(ctx.env, ctx.userId, 'unverify', 'user', ctx.params.id, null, ''),
       notifyStatement(ctx.env, {
         userId: ctx.params.id, type: 'system',
+        targetType: 'user', targetId: ctx.params.id,
         content: '你的专家认证已被撤销，如有疑问可联系管理员'
       })
     ])

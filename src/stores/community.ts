@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { communityApi } from '../api/community'
 import { gamificationApi } from '../api/gamification'
 import { useAppStore } from './app'
-import type { CommunityCircle, CommunityComment, CommunityNotification, CommunityPost, PostType, RecommendUser } from '../types'
+import type { CommunityCircle, CommunityComment, CommunityNotification, CommunityPost, NotificationType, PostType, RecommendUser } from '../types'
 
 /**
  * 社区广场状态。动态流为公共数据，通知为当前用户私有；
@@ -29,6 +29,10 @@ interface CommunityState {
   notifyCursor: string | null
   hasMoreNotify: boolean
   unreadCount: number
+  /** 排除勿扰屏蔽类型后的未读数（勿扰红点判定用） */
+  unreadExcludingMuted: number
+  /** 通知中心类型筛选（'' = 全部） */
+  notifyFilter: '' | NotificationType
 }
 
 export const useCommunityStore = defineStore('community', {
@@ -45,7 +49,9 @@ export const useCommunityStore = defineStore('community', {
     notifications: [],
     notifyCursor: null,
     hasMoreNotify: true,
-    unreadCount: 0
+    unreadCount: 0,
+    unreadExcludingMuted: 0,
+    notifyFilter: ''
   }),
 
   actions: {
@@ -243,6 +249,7 @@ export const useCommunityStore = defineStore('community', {
     async fetchUnreadCount() {
       const res = await communityApi.notifications(null, 1)
       this.unreadCount = res.unreadCount
+      this.unreadExcludingMuted = res.unreadExcludingMuted
     },
 
     async fetchNotifications(reset = false) {
@@ -252,18 +259,28 @@ export const useCommunityStore = defineStore('community', {
         this.hasMoreNotify = true
       }
       if (!this.hasMoreNotify) return
-      const res = await communityApi.notifications(this.notifyCursor)
+      const res = await communityApi.notifications(this.notifyCursor, undefined, this.notifyFilter || undefined)
       const existing = new Set(this.notifications.map(n => n.id))
       this.notifications.push(...res.items.filter(n => !existing.has(n.id)))
       this.unreadCount = res.unreadCount
+      this.unreadExcludingMuted = res.unreadExcludingMuted
       this.notifyCursor = res.nextCursor
       this.hasMoreNotify = !!res.nextCursor
+    },
+
+    /** 切换通知类型筛选（切换即重置并重新拉取） */
+    async setNotifyFilter(type: '' | NotificationType) {
+      if (this.notifyFilter === type) return
+      this.notifyFilter = type
+      await this.fetchNotifications(true)
     },
 
     async markRead(n: CommunityNotification) {
       if (n.isRead) return
       n.isRead = true
       this.unreadCount = Math.max(0, this.unreadCount - 1)
+      const muted = useAppStore().settings.dndMutedTypes ?? []
+      if (!muted.includes(n.type)) this.unreadExcludingMuted = Math.max(0, this.unreadExcludingMuted - 1)
       await communityApi.markRead(n.id)
     },
 
@@ -271,6 +288,7 @@ export const useCommunityStore = defineStore('community', {
       await communityApi.markAllRead()
       for (const n of this.notifications) n.isRead = true
       this.unreadCount = 0
+      this.unreadExcludingMuted = 0
     },
 
     // ---- 管理员操作 ----

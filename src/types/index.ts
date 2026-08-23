@@ -321,13 +321,17 @@ export interface CommunityComment {
 /** 社区通知 */
 export interface CommunityNotification {
   id: string
-  type: 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system'
+  type: NotificationType
   actorId?: string
   actorName?: string
   /** 触发者自定义头像相对 URL（未设置 = undefined） */
   actorAvatar?: string
   postId?: string
   commentId?: string
+  /** 点击跳转目标类型（后端通知接口返回） */
+  targetType?: NotificationTargetType
+  /** 点击跳转目标 id */
+  targetId?: string
   content: string
   isRead: boolean
   createdAt: number // Unix 秒

@@ -3,6 +3,7 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
 import { isDesktopNotify, notifyPermission, requestNotifyPermission } from '../services/notify'
+import type { NotificationType } from '../types'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
@@ -139,6 +140,23 @@ function addQuote() {
   newQuote.value = ''
   store.save()
 }
+
+// ---- 勿扰模式 ----
+const notifTypeOptions: { k: NotificationType; l: string }[] = [
+  { k: 'like', l: '点赞' },
+  { k: 'comment', l: '评论' },
+  { k: 'follow', l: '关注' },
+  { k: 'achievement', l: '成就' },
+  { k: 'message', l: '私信' },
+  { k: 'system', l: '系统' }
+]
+function toggleMutedType(t: NotificationType) {
+  const list = [...s.value.dndMutedTypes]
+  const i = list.indexOf(t)
+  if (i >= 0) list.splice(i, 1)
+  else list.push(t)
+  update('dndMutedTypes', list)
+}
 </script>
 
 <template>
@@ -224,9 +242,33 @@ function addQuote() {
           <option value="private">仅自己可见</option>
         </select>
       </div>
+      <div class="pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="text-sm">勿扰模式</span>
+            <p class="text-[10px] text-slate-400 mt-0.5">开启后不弹数字角标、不弹系统推送，通知中心照常记录历史</p>
+          </div>
+          <button class="btn !text-xs" :class="s.doNotDisturb ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+            @click="update('doNotDisturb', !s.doNotDisturb)">{{ s.doNotDisturb ? '已开启' : '已关闭' }}</button>
+        </div>
+        <div v-if="s.doNotDisturb" class="space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="label">开始时间（留空=全天）</label><input type="time" :value="s.dndStartTime" class="input" @change="update('dndStartTime', ($event.target as HTMLInputElement).value)" /></div>
+            <div><label class="label">结束时间（留空=全天）</label><input type="time" :value="s.dndEndTime" class="input" @change="update('dndEndTime', ($event.target as HTMLInputElement).value)" /></div>
+          </div>
+          <div>
+            <label class="label">屏蔽的通知类型（勿扰期间不提示）</label>
+            <div class="flex flex-wrap gap-2 mt-1">
+              <button v-for="t in notifTypeOptions" :key="t.k" class="btn !text-xs !py-1 !px-2.5"
+                :class="s.dndMutedTypes.includes(t.k) ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+                @click="toggleMutedType(t.k)">{{ t.l }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <p v-if="!notifSupported" class="text-xs text-amber-500">当前浏览器不支持通知功能，无法使用每日提醒。</p>
       <p v-else-if="notifPermission === 'denied'" class="text-xs text-red-500">
-        通知权限已被拒绝。请点击浏览器地址栏左侧的 🔒 图标，将「通知」改为「允许」，然后重新打开此页面并开启提醒。
+        通知权限已被拒绝。请点击浏览器地址栏左侧的图标，将「通知」改为「允许」，然后重新打开此页面并开启提醒。
       </p>
       <p v-else-if="notifPermission === 'default'" class="text-xs text-slate-400">开启提醒时会请求浏览器通知权限。</p>
       <p v-else class="text-xs text-emerald-500">通知权限已授权。</p>

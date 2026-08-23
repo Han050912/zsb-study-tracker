@@ -524,6 +524,8 @@ CREATE TABLE IF NOT EXISTS community_notifications (
   actor_id TEXT,                        -- 触发者
   post_id TEXT,
   comment_id TEXT,
+  target_type TEXT,                     -- 点击跳转目标类型：'post' | 'user' | 'message' | 'team' | 'circle' | 'partner'
+  target_id TEXT,                       -- 点击跳转目标 id
   content TEXT NOT NULL DEFAULT '',
   is_read INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL

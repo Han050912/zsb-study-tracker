@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, type Ref } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, type Ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
@@ -24,18 +24,32 @@ const post = ref<CommunityPost | null>(null)
 const comments = ref<CommunityComment[]>([])
 const loading = ref(true)
 const notFound = ref(false)
+/** 通知跳转锚定的评论 id（经 ?comment= 查询参数进入），用于滚动定位与高亮 */
+const highlightCommentId = ref('')
 
 onMounted(async () => {
   try {
     const d = await communityApi.post(postId)
     post.value = d.post
     comments.value = d.comments
+    const anchor = typeof route.query.comment === 'string' ? route.query.comment : ''
+    if (anchor) await anchorToComment(anchor)
   } catch {
     notFound.value = true
   } finally {
     loading.value = false
   }
 })
+
+/** 滚动定位并高亮指定评论（通知跳转锚定；二级回复先展开其一级评论再定位） */
+async function anchorToComment(id: string) {
+  const c = findComment(id)
+  if (!c) return
+  if (c.parentId) expandedReplies.value = new Set([...expandedReplies.value, c.parentId])
+  highlightCommentId.value = id
+  await nextTick()
+  document.getElementById(`comment-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
 
 const isMine = computed(() => post.value?.userId === sessionUser.value?.id)
 const canDeletePost = computed(() => isMine.value || isAdmin.value)
@@ -355,8 +369,8 @@ async function toggleHideComment(c: CommunityComment) {
         </div>
 
         <div v-if="!commentTree.length" class="text-center text-xs text-slate-400 py-4">暂无评论，来抢沙发～</div>
-        <div v-for="c in commentTree" :key="c.id" class="space-y-3">
-          <CommentItem :comment="c" :show-accept="acceptVisible(c)" :post-author-id="post?.userId" :replying="replySource?.id === c.id" @like="likeComment(c)" @dislike="dislikeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
+        <div v-for="c in commentTree" :key="c.id" :id="`comment-${c.id}`" class="space-y-3 scroll-mt-24">
+          <CommentItem :comment="c" :show-accept="acceptVisible(c)" :post-author-id="post?.userId" :replying="replySource?.id === c.id" :highlight="highlightCommentId === c.id" @like="likeComment(c)" @dislike="dislikeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
             @hide="toggleHideComment(c)" @report="openReport('comment', c.id)" @accept="accept(c)" @image="openCommentLightbox(c, $event)"
             @profile="openProfile(c.userId)" />
           <!-- 二级回复：默认折叠，点击展开（抖音式） -->
@@ -364,9 +378,11 @@ async function toggleHideComment(c: CommunityComment) {
             <button v-if="!expandedReplies.has(c.id)" class="text-xs text-slate-400 hover:text-primary-500 ml-11"
               @click="toggleReplies(c.id)">展开 {{ c.replies.length }} 条回复 ↓</button>
             <div v-else class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
-              <CommentItem v-for="r in c.replies" :key="r.id" :comment="r" :post-author-id="post?.userId" :replying="replySource?.id === r.id"
-                @like="likeComment(r)" @dislike="dislikeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
-                @report="openReport('comment', r.id)" @image="openCommentLightbox(r, $event)" @profile="openProfile(r.userId)" />
+              <div v-for="r in c.replies" :key="r.id" :id="`comment-${r.id}`" class="scroll-mt-24">
+                <CommentItem :comment="r" :post-author-id="post?.userId" :replying="replySource?.id === r.id" :highlight="highlightCommentId === r.id"
+                  @like="likeComment(r)" @dislike="dislikeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
+                  @report="openReport('comment', r.id)" @image="openCommentLightbox(r, $event)" @profile="openProfile(r.userId)" />
+              </div>
               <button class="text-xs text-slate-400 hover:text-primary-500" @click="toggleReplies(c.id)">收起回复 ↑</button>
             </div>
           </template>

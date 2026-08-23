@@ -22,6 +22,8 @@ export interface TodoReminderHooks {
   onNotified: (ids: string[], kind: 'start' | 'due') => void
   /** 系统通知未弹出时的兜底提示（如浏览器未授权通知权限） */
   onFallback?: (message: string) => void
+  /** 勿扰期间是否抑制推送（返回 true 时不弹系统通知；去重标记仍照常写入） */
+  isSuppressed?: () => boolean
 }
 
 let timer: ReturnType<typeof setInterval> | null = null
@@ -33,6 +35,7 @@ function joinNames(list: Todo[]): string {
 }
 
 function deliver(title: string, body: string) {
+  if (hooks?.isSuppressed?.()) return
   if (!sendNotification(title, body)) hooks?.onFallback?.(`${title}：${body}`)
 }
 

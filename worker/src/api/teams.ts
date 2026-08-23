@@ -373,6 +373,7 @@ on('POST', '/api/teams/:id/apply', true, async ctx => {
       userId: team.creator_id,
       type: 'system',
       actorId: ctx.userId,
+      targetType: 'team', targetId: teamId,
       content: `${applicant?.name ?? '有人'} 申请加入小组「${team.name}」`
     })
   ])
@@ -398,7 +399,11 @@ function removeMemberStmts(env: Env, teamId: string, userId: string, notify?: { 
     ).bind(teamId)
   ]
   if (notify) {
-    stmts.push(notifyStatement(env, { userId, type: 'system', actorId: notify.actorId, content: notify.content }))
+    stmts.push(notifyStatement(env, {
+      userId, type: 'system', actorId: notify.actorId,
+      targetType: 'team', targetId: teamId,
+      content: notify.content
+    }))
   }
   return stmts
 }
@@ -473,6 +478,7 @@ on('POST', '/api/teams/:id/transfer-leader', true, async ctx => {
       userId: newLeaderId,
       type: 'system',
       actorId: ctx.userId,
+      targetType: 'team', targetId: teamId,
       content: `你已成为小组「${team?.name ?? ''}」的队长`
     })
   ])
@@ -546,6 +552,7 @@ on('POST', '/api/teams/:id/requests/:userId/approve', true, async ctx => {
       userId: targetId,
       type: 'system',
       actorId: ctx.userId,
+      targetType: 'team', targetId: teamId,
       content: `你已加入小组「${team?.name ?? ''}」`
     })
   ])
@@ -575,6 +582,7 @@ on('POST', '/api/teams/:id/requests/:userId/reject', true, async ctx => {
       userId: targetId,
       type: 'system',
       actorId: ctx.userId,
+      targetType: 'team', targetId: teamId,
       content: reasonStr
         ? `你的加入小组「${team?.name ?? ''}」申请被拒绝，原因：${reasonStr}`
         : `你的加入小组「${team?.name ?? ''}」申请被拒绝`
@@ -749,6 +757,7 @@ on('POST', '/api/teams/challenges/:id/sync', true, async ctx => {
     stmts.push(notifyStatement(ctx.env, {
       userId: ctx.userId,
       type: 'achievement',
+      targetType: 'team', targetId: challenge.team_id,
       content: `恭喜！您完成了「${team?.name}」的挑战目标`
     }))
   }
@@ -790,6 +799,7 @@ on('POST', '/api/teams/challenges/:id/sync', true, async ctx => {
         teamStmts.push(notifyStatement(ctx.env, {
           userId: m.user_id,
           type: 'achievement',
+          targetType: 'team', targetId: challenge.team_id,
           content: `🎉 「${team?.name}」全员达标！获得团队徽章`
         }))
       }
