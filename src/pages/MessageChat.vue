@@ -77,17 +77,40 @@ async function scrollToBottom() {
   listRef.value?.scrollTo({ top: listRef.value.scrollHeight })
 }
 
+/** 拉取一次最新消息，若数量变化则滚动到底部 */
+async function pollOnce() {
+  const before = messages.value.length
+  await load(true)
+  if (messages.value.length !== before) await scrollToBottom()
+}
+/** 页面可见时每 5s 轮询新消息；切后台（标签页隐藏/桌面端最小化）暂停，回前台立即补拉一次 */
+function startPolling() {
+  stopPolling()
+  pollTimer = setInterval(pollOnce, 5000)
+}
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    pollOnce()
+    startPolling()
+  } else {
+    stopPolling()
+  }
+}
+
 onMounted(async () => {
   await load(true)
   await scrollToBottom()
-  pollTimer = setInterval(async () => {
-    const before = messages.value.length
-    await load(true)
-    if (messages.value.length !== before) await scrollToBottom()
-  }, 5000)
+  startPolling()
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
+onUnmounted(() => {
+  stopPolling()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 
 // ---- 图片 ----
 const fileInput = ref<HTMLInputElement | null>(null)
