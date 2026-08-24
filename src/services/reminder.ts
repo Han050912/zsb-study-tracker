@@ -41,7 +41,7 @@ export function restartReminder(
 
   timer = setTimeout(() => {
     if (!getConfig().suppressed) {
-      const shown = sendNotification('专升本学习提醒', '该开始学习啦！坚持就是胜利 💪')
+      const shown = sendNotification('专升本学习提醒', '该开始学习啦！坚持就是胜利')
       onFire?.(shown)
     }
     // 递归调度下一天（重新读取配置，设置改动即时生效）

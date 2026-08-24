@@ -95,7 +95,7 @@ const mobileNav = computed(() => {
     return [
       { path: '/community', icon: '💬', label: '社区', subject: false },
       { path: '/teams', icon: '👥', label: '组队', subject: false },
-      { path: `/login?redirect=${encodeURIComponent(route.path || '/community')}`, icon: '🔑', label: '登录', subject: false }
+      { path: `/login?redirect=${encodeURIComponent(route.path || '/community')}`, label: '登录', subject: false }
     ]
   }
   const subjectPaths = NAV.value.filter(n => n.subject).slice(0, 1).map(n => n.path)
@@ -131,7 +131,7 @@ watch(
   () => {
     restartReminder(
       () => ({ enabled: store.settings.reminderEnabled, time: store.settings.reminderTime, suppressed: isDndActive(store.settings) }),
-      (shown) => { if (!shown) toastRef.value?.show('提醒时间到！该开始学习啦 💪') }
+      (shown) => { if (!shown) toastRef.value?.show('提醒时间到！该开始学习啦') }
     )
   },
   { immediate: true }
@@ -263,7 +263,16 @@ if (window.nav) {
         :title="navCollapsed ? '展开导航' : '收起导航'" @click="toggleNav">
         <span>{{ navCollapsed ? '»' : '«' }}</span><span v-if="!navCollapsed">收起导航</span>
       </button>
-      <div v-if="isLoggedIn && !navCollapsed" class="px-5 py-3 text-[10px] text-slate-400">积分 {{ store.gamification.points }} · 🔥{{ store.gamification.streak }}天</div>
+      <div v-if="isLoggedIn && !navCollapsed" class="mx-3 mb-3 grid grid-cols-2 gap-2">
+        <div class="rounded-xl bg-amber-50 dark:bg-amber-500/10 px-3 py-2 flex flex-col items-center justify-center text-center">
+          <div class="text-[15px] font-bold leading-none text-amber-600 dark:text-amber-400">{{ store.gamification.points }}</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">积分</div>
+        </div>
+        <div class="rounded-xl bg-purple-50 dark:bg-purple-500/10 px-3 py-2 flex flex-col items-center justify-center text-center">
+          <div class="text-[15px] font-bold leading-none text-purple-600 dark:text-purple-400">{{ store.gamification.streak }}</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">连续学习天数</div>
+        </div>
+      </div>
     </aside>
 
     <!-- 右上角：登录态显示账号头像入口（含未读通知角标，通知中心已并入头像下拉菜单）；访客态显示登录按钮 -->
