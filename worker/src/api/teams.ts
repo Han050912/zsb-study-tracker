@@ -4,7 +4,7 @@ import { all, first, run, batch, uid, utc8Today, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { notifyStatement } from './community'
 import { awardBadge } from './badges'
-import { assertClean } from './sensitive'
+import { assertCleanAsync } from './sensitive'
 
 /**
  * 组队挑战 API（P2-2）
@@ -98,12 +98,12 @@ function mapChallenge(r: ChallengeRow & { my_progress?: number; my_completed?: n
 }
 
 /** 校验小组名称/描述/人数，返回规范化后的字段值（创建与编辑共用） */
-function validateTeamFields(nameRaw: unknown, descRaw: unknown, maxRaw: unknown): { name: string; description: string; max: number } {
+async function validateTeamFields(env: Env, nameRaw: unknown, descRaw: unknown, maxRaw: unknown): Promise<{ name: string; description: string; max: number }> {
   const name = typeof nameRaw === 'string' ? nameRaw.trim() : ''
   if (name.length < 1 || name.length > 30) throw new HttpError(400, '小组名称长度为 1-30 字')
-  assertClean(name)
+  await assertCleanAsync(name, env)
   const description = typeof descRaw === 'string' ? descRaw.trim().slice(0, 200) : ''
-  if (description) assertClean(description)
+  if (description) await assertCleanAsync(description, env)
   const max = Math.round(Number(maxRaw ?? 10))
   if (!Number.isFinite(max) || max < 2 || max > 50) throw new HttpError(400, '小组人数范围为 2-50 人')
   return { name, description, max }
@@ -188,7 +188,7 @@ on('POST', '/api/teams', true, async ctx => {
     isPublic?: boolean
   }>(ctx.request)
 
-  const fields = validateTeamFields(nameRaw, descRaw, maxMembers)
+  const fields = await validateTeamFields(ctx.env, nameRaw, descRaw, maxMembers)
 
   const teamId = uid()
   const now = nowSec()
@@ -496,7 +496,7 @@ on('PUT', '/api/teams/:id', true, async ctx => {
   if (!team) throw new HttpError(404, '小组不存在')
 
   const { name, description, maxMembers } = await body<{ name: unknown; description?: unknown; maxMembers?: unknown }>(ctx.request)
-  const fields = validateTeamFields(name, description, maxMembers)
+  const fields = await validateTeamFields(ctx.env, name, description, maxMembers)
 
   if (fields.max < team.member_count) {
     throw new HttpError(400, `人数上限不能低于当前成员数（${team.member_count} 人）`)

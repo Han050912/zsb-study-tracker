@@ -75,7 +75,7 @@ async function pullAll(env: Env, userId: string) {
 }
 
 /** 生成全量替换语句：先清空该用户全部数据表，再按快照逐条插入 */
-function pushAllStatements(env: Env, userId: string, state: any): D1PreparedStatement[] {
+async function pushAllStatements(env: Env, userId: string, state: any): Promise<D1PreparedStatement[]> {
   const stmts: D1PreparedStatement[] = []
 
   // 1. 删除：科目树与简单单表（习惯/游戏化/番茄钟由各自的替换 helper 自带删除）
@@ -133,7 +133,7 @@ function pushAllStatements(env: Env, userId: string, state: any): D1PreparedStat
 
   // 8. 用户设置（upsert，不清空）
   if (state.settings) {
-    stmts.push(...settingsReplaceStatements(env, userId, state.settings))
+    stmts.push(...await settingsReplaceStatements(env, userId, state.settings))
   }
 
   return stmts
@@ -147,6 +147,7 @@ export function registerSyncRoutes() {
   on('POST', '/api/data/sync', true, async (ctx) => {
     const state = await body(ctx.request)
     if (!state || typeof state !== 'object') throw new HttpError(400, '快照格式错误')
+
 
     // 服务端积分规则（基于推送快照检测，refId 去重保证每日/每档仅发放一次）。
     // 发放语句排在全量替换之后执行，避免被 gamification 行覆盖冲掉
@@ -172,7 +173,7 @@ export function registerSyncRoutes() {
 
     // 全量替换前记录现存 PDF 笔记，替换后清理已删笔记的 D1 孤儿分片
     const before = await all(ctx.env, "SELECT id FROM notes WHERE user_id = ? AND type = 'pdf'", ctx.userId)
-    await batch(ctx.env, [...pushAllStatements(ctx.env, ctx.userId, state), ...awardStmts])
+    await batch(ctx.env, [...await pushAllStatements(ctx.env, ctx.userId, state), ...awardStmts])
     const keep = new Set(
       (state.notes ?? []).filter((n: any) => n?.type === 'pdf').map((n: any) => String(n.id))
     )

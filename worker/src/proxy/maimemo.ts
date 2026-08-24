@@ -1,6 +1,7 @@
 import type { Env } from '../index'
 import { on } from '../router'
 import { first, HttpError } from '../db'
+import { decryptSecret } from '../crypto'
 
 /**
  * 墨墨背单词开放 API 代理。
@@ -25,8 +26,10 @@ interface InterpretationItem {
 
 async function maimemoToken(env: Env, userId: string): Promise<string> {
   const row = await first(env, 'SELECT maimemo_token FROM user_settings WHERE user_id = ?', userId)
-  const token = (row as any)?.maimemo_token
-  if (!token) throw new HttpError(400, '请先在设置中填写墨墨开放 API Token')
+  const stored = (row as any)?.maimemo_token
+  if (!stored) throw new HttpError(400, '请先在设置中填写墨墨开放 API Token')
+  const token = await decryptSecret(env, String(stored))
+  if (!token) throw new HttpError(400, '墨墨 Token 配置异常，请重新填写')
   return token
 }
 

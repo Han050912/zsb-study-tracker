@@ -47,17 +47,23 @@ function delVocab(id: string) {
 const totalVocab = computed(() => eng.value.vocab.reduce((s, v) => s + v.newWords, 0))
 
 // ---- 墨墨背单词同步（官方开放 API，公测） ----
-const maimemoToken = ref(store.settings.maimemoToken || '')
+const maimemoToken = ref('') // 不回显明文；已配置状态见 store.settings.maimemoConnected
 const syncing = ref(false)
 async function saveMaimemoToken() {
-  store.updateSettings({ maimemoToken: maimemoToken.value.trim() || undefined })
-  // 立即推送到云端（Worker 代理从 user_settings 读取 Token），不等待防抖
-  await store.saveAsync()
-  toast('墨墨 Token 已保存')
+  const raw = maimemoToken.value.trim()
+  if (!raw) { toast('请输入墨墨开放 API Token'); return }
+  store.updateSettings({ maimemoToken: raw })
+  // 立即推送到云端（Worker 加密存储），不等待防抖
+  const ok = await store.saveAsync()
+  if (ok) {
+    // 明文不落前端状态：保存成功后清空输入，仅保留「已配置」标志
+    store.updateSettings({ maimemoToken: undefined, maimemoConnected: true })
+    maimemoToken.value = ''
+    toast('墨墨 Token 已保存')
+  }
 }
 async function syncMaimemo() {
-  const token = (store.settings.maimemoToken || '').trim()
-  if (!token) { toast('请先填写并保存墨墨开放 API Token'); return }
+  if (!store.settings.maimemoConnected) { toast('请先填写并保存墨墨开放 API Token'); return }
   if (syncing.value) return
   syncing.value = true
   try {
@@ -141,8 +147,7 @@ const loadingWords = ref(false)
 
 /** 拉取墨墨今日全部单词明细（含释义），供打卡列表使用 */
 async function loadTodayWords() {
-  const token = (store.settings.maimemoToken || '').trim()
-  if (!token) { toast('请先填写并保存墨墨开放 API Token'); return }
+  if (!store.settings.maimemoConnected) { toast('请先填写并保存墨墨开放 API Token'); return }
   if (loadingWords.value) return
   loadingWords.value = true
   try {
@@ -290,7 +295,7 @@ const { el: vocabEl } = useChart(() => {
           <span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">云端同步</span>
         </div>
         <div class="flex gap-2">
-          <input v-model="maimemoToken" type="password" class="input" placeholder="墨墨开放 API Token（App：我的→更多设置→实验功能→开放 API）" />
+          <input v-model="maimemoToken" type="password" class="input" :placeholder="store.settings.maimemoConnected ? '已配置（输入新 Token 可覆盖）' : '墨墨开放 API Token（App：我的→更多设置→实验功能→开放 API）'" />
           <button class="btn-ghost shrink-0" @click="saveMaimemoToken">保存</button>
         </div>
         <button class="btn-primary w-full" :disabled="syncing" @click="syncMaimemo">
