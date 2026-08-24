@@ -11,9 +11,11 @@ import CommentInput from '../components/community/CommentInput.vue'
 import Lightbox from '../components/community/Lightbox.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
+import { useBack } from '../composables/useBack'
 
 const route = useRoute()
 const router = useRouter()
+const { goBack } = useBack()
 const store = useCommunityStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 /** 侧边栏是否折叠（App.vue 注入），用于底部回复框与主内容区同列对齐 */
@@ -142,7 +144,7 @@ async function dislikeComment(c: CommunityComment) {
 const replyTarget = ref<CommunityComment | null>(null)
 /** 用户实际点击的评论（用于高亮锚定与「正在回复 @xxx」提示） */
 const replySource = ref<CommunityComment | null>(null)
-const commentInputRef = ref<{ focus: () => void } | null>(null)
+const commentInputRef = ref<{ focus: () => void; reset: () => void } | null>(null)
 
 function reply(c: CommunityComment) {
   if (requireLogin(router)) return
@@ -159,8 +161,13 @@ function cancelReply() {
   replySource.value = null
 }
 
+/** 评论提交中：承载 AI 复审约 1-3s 延迟，禁用发送按钮防重复提交 */
+const commentSubmitting = ref(false)
+
 async function send(text: string, imageUrls: string[]) {
   if (requireLogin(router)) return
+  if (commentSubmitting.value) return
+  commentSubmitting.value = true
   try {
     const c = await store.postComment(postId, text, replyTarget.value?.id, imageUrls)
     comments.value.push(c)
@@ -168,8 +175,12 @@ async function send(text: string, imageUrls: string[]) {
     if (post.value && !store.posts.some(p => p.id === postId)) post.value.commentsCount++
     replyTarget.value = null
     replySource.value = null
+    // 发送成功后清空输入框（失败时保留用户输入，避免重打内容）
+    commentInputRef.value?.reset()
   } catch (e: any) {
     toast(e?.message || '评论失败')
+  } finally {
+    commentSubmitting.value = false
   }
 }
 
@@ -333,7 +344,7 @@ async function toggleHideComment(c: CommunityComment) {
 <template>
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4 pb-36 md:pb-32">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2.5" @click="router.back()">←</button>
+      <button class="btn-ghost !px-2.5" @click="goBack">← 返回</button>
       <h1 class="page-title">帖子详情</h1>
     </div>
 
@@ -406,6 +417,7 @@ async function toggleHideComment(c: CommunityComment) {
             </div>
             <CommentInput ref="commentInputRef"
               :placeholder="replySource ? '写下你的回复…' : '写下你的评论…'"
+              :submitting="commentSubmitting"
               @send="send" />
           </div>
         </div>
