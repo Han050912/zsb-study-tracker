@@ -7,7 +7,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "init:local": "wrangler d1 execute zsb-study-db --local --file=./schema.sql",
-    "smoke": "node test/smoke.mjs"
+    "smoke": "node test/smoke.mjs",
+    "sync:lexicon": "node scripts/sync-lexicon.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

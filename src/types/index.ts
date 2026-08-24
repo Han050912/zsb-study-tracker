@@ -201,8 +201,10 @@ export interface Settings {
   reminderEnabled: boolean
   reminderTime: string
   quotes: string[]
-  /** 墨墨背单词开放 API Token（可选，App 内 我的→更多设置→实验功能→开放 API 获取） */
+  /** 墨墨背单词开放 API Token（仅写入时传明文；读取永不回传） */
   maimemoToken?: string
+  /** 是否已配置墨墨开放 API Token（读取用，不回传明文） */
+  maimemoConnected?: boolean
   onboarded: boolean
   /** 参与学习进步榜（社区展示昵称与学习时长/刷题数排名；默认关闭） */
   joinProgressBoard: boolean
@@ -220,6 +222,8 @@ export interface Settings {
   dndEndTime: string
   /** 勿扰期间屏蔽的通知类型 */
   dndMutedTypes: NotificationType[]
+  /** 勿扰期间是否屏蔽消息 */
+  dndMuteMessage: boolean
 }
 
 export interface AppState {
@@ -453,6 +457,8 @@ export interface FollowListResult {
 /** 社区用户资料卡（公开荣誉信息，不含私有学习数据） */
 export interface CommunityUserProfile {
   userId: string
+  /** 对外唯一用户 ID（8 位随机短码） */
+  userCode?: string
   userName: string
   /** 自定义头像相对 URL（未设置 = undefined） */
   avatar?: string
@@ -484,6 +490,25 @@ export interface CommunityUserProfile {
   /** 我与该用户的关系 */
   relation: RelationStatus
 }
+
+/** 精确查找用户（lookup）返回的用户卡片 */
+export interface UserLookupResult {
+  userId: string
+  userCode: string
+  userName: string
+  avatar?: string
+  verified: boolean
+  expertise: string
+  bio: string
+  followedByMe: boolean
+  followsMe: boolean
+  relation: RelationStatus
+  partnerStatus: PartnerStatus
+  profilePrivate?: boolean
+}
+
+/** 学习搭子关系状态（lookup 视角：当前用户 vs 目标用户） */
+export type PartnerStatus = 'self' | 'none' | 'accepted' | 'pending_sent' | 'pending_received' | 'rejected'
 
 /** 个人主页学习统计（热力图 + 总览 + 科目分布） */
 export interface UserStudyStats {

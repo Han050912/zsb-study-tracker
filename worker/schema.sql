@@ -1,3 +1,18 @@
+-- 已建库升级：用户对外 ID 改为随机短码 user_code（替代自增 user_no），执行一次：
+--   ALTER TABLE users ADD COLUMN user_code TEXT;
+--   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_user_code ON users(user_code);
+--   -- 存量用户回填 8 位随机码（字符集去掉 0/O/1/I）：
+--   UPDATE users SET user_code = (
+--     WITH RECURSIVE seq(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM seq WHERE x < 8)
+--     SELECT group_concat(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', (abs(random()) % 32) + 1, 1), '')
+--     FROM seq
+--     WHERE users.id IS NOT NULL   -- 相关子查询：强制逐行求值，否则所有行会得到同一随机码导致 UNIQUE 冲突
+--   ) WHERE user_code IS NULL;
+--   -- 验证无 NULL、无重复（均应无结果）后，废弃旧自增号（最后一步）：
+--   --   SELECT COUNT(*) FROM users WHERE user_code IS NULL;
+--   --   SELECT user_code, COUNT(*) c FROM users GROUP BY user_code HAVING c > 1;
+--   DROP INDEX IF EXISTS idx_users_user_no;
+--   ALTER TABLE users DROP COLUMN user_no;
 -- 已建库升级：notes 表新增 type 列（PDF 笔记），执行一次：
 --   ALTER TABLE notes ADD COLUMN type TEXT;
 -- 已建库升级：pdf_chunks 分片表（替代 R2），执行一次：
@@ -155,6 +170,8 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   ALTER TABLE user_settings ADD COLUMN dnd_start_time TEXT NOT NULL DEFAULT '';
 --   ALTER TABLE user_settings ADD COLUMN dnd_end_time TEXT NOT NULL DEFAULT '';
 --   ALTER TABLE user_settings ADD COLUMN dnd_muted_types TEXT NOT NULL DEFAULT '';
+-- 已建库升级：勿扰屏蔽消息（#18），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN dnd_mute_message INTEGER NOT NULL DEFAULT 0;
 -- 已建库升级：通知精准跳转目标（#11），执行一次：
 --   ALTER TABLE community_notifications ADD COLUMN target_type TEXT;
 --   ALTER TABLE community_notifications ADD COLUMN target_id TEXT;
@@ -163,6 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 -- ========== 用户认证 ==========
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
+  user_code TEXT,                        -- 对外唯一用户 ID（8 位随机短码，去掉 0/O/1/I）
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'user',   -- 'user' | 'admin'
@@ -170,6 +188,7 @@ CREATE TABLE IF NOT EXISTS users (
   expertise TEXT NOT NULL DEFAULT '',  -- 专长领域（如 "高等数学,英语"）
   created_at INTEGER NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_user_code ON users(user_code);
 
 -- ========== 用户设置（一行一用户） ==========
 CREATE TABLE IF NOT EXISTS user_settings (
@@ -192,7 +211,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   do_not_disturb INTEGER NOT NULL DEFAULT 0,  -- 勿扰模式总开关
   dnd_start_time TEXT NOT NULL DEFAULT '',    -- 勿扰开始 'HH:mm'（空=全天）
   dnd_end_time TEXT NOT NULL DEFAULT '',      -- 勿扰结束 'HH:mm'（空=全天）
-  dnd_muted_types TEXT NOT NULL DEFAULT ''    -- 勿扰屏蔽通知类型（JSON 数组）
+  dnd_muted_types TEXT NOT NULL DEFAULT '',   -- 勿扰屏蔽通知类型（JSON 数组）
+  dnd_mute_message INTEGER NOT NULL DEFAULT 0 -- 勿扰屏蔽消息（1=屏蔽）
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========
@@ -685,3 +705,10 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);
+
+-- ========== 认证吊销 ==========
+-- JWT 登出吊销黑名单：jti 为主键，expires_at 记录令牌过期时间（登出时顺带惰性清理）
+CREATE TABLE IF NOT EXISTS jwt_blacklist (
+  jti TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL
+);
