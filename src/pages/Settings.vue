@@ -147,7 +147,6 @@ const notifTypeOptions: { k: NotificationType; l: string }[] = [
   { k: 'comment', l: '评论' },
   { k: 'follow', l: '关注' },
   { k: 'achievement', l: '成就' },
-  { k: 'message', l: '私信' },
   { k: 'system', l: '系统' }
 ]
 function toggleMutedType(t: NotificationType) {
@@ -257,11 +256,14 @@ function toggleMutedType(t: NotificationType) {
             <div><label class="label">结束时间（留空=全天）</label><input type="time" :value="s.dndEndTime" class="input" @change="update('dndEndTime', ($event.target as HTMLInputElement).value)" /></div>
           </div>
           <div>
-            <label class="label">屏蔽的通知类型（勿扰期间不提示）</label>
+            <label class="label">屏蔽的提醒类型（勿扰期间不提示）</label>
             <div class="flex flex-wrap gap-2 mt-1">
               <button v-for="t in notifTypeOptions" :key="t.k" class="btn !text-xs !py-1 !px-2.5"
                 :class="s.dndMutedTypes.includes(t.k) ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
                 @click="toggleMutedType(t.k)">{{ t.l }}</button>
+              <button class="btn !text-xs !py-1 !px-2.5"
+                :class="s.dndMuteMessage ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+                @click="update('dndMuteMessage', !s.dndMuteMessage)">消息</button>
             </div>
           </div>
         </div>

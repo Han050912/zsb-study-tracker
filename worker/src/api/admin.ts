@@ -4,7 +4,7 @@ import { all, first, batch, run, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { notifyStatement, postCascadeStatements, commentCascadeStatements } from './community'
 import { deleteUploads, uploadIdsOf } from './uploads'
-import { assertClean } from './sensitive'
+import { assertCleanAsync } from './sensitive'
 
 /**
  * 社区管理端点：帖子置顶/隐藏、评论隐藏、举报处理。
@@ -85,7 +85,7 @@ export function registerAdminRoutes() {
     const b = await body(ctx.request)
     const expertise = String(b?.expertise ?? '').trim().slice(0, 50)
     if (!expertise) throw new HttpError(400, '请填写专长领域（1-50 字）')
-    assertClean(expertise) // 专长随蓝 V 公开展示，过敏感词
+    await assertCleanAsync(expertise, ctx.env) // 专长随蓝 V 公开展示，过敏感词
     const target = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', ctx.params.id)
     if (!target) throw new HttpError(404, '用户不存在')
     await batch(ctx.env, [
@@ -323,8 +323,8 @@ export function registerAdminRoutes() {
     if (!text) throw new HttpError(400, '请填写展示文案（1-20 字）')
     if (!/^#.{1,19}$/.test(tag)) throw new HttpError(400, 'tag 需为 # 开头且不超过 20 字')
     if (!action) throw new HttpError(400, 'action 需为 pin 或 block')
-    assertClean(text)
-    assertClean(tag)
+    await assertCleanAsync(text, ctx.env)
+    await assertCleanAsync(tag, ctx.env)
     const id = uid()
     await run(ctx.env,
       'INSERT INTO community_hot_topics (id, text, tag, action, created_at) VALUES (?, ?, ?, ?, ?)',

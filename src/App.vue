@@ -10,7 +10,7 @@ import Toast from './components/Toast.vue'
 import AchievementModal from './components/AchievementModal.vue'
 import Onboarding from './components/Onboarding.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
-import { imageUrl } from './api/community'
+import { imageUrl, communityApi } from './api/community'
 import { isDndActive } from './utils/dnd'
 
 const store = useAppStore()
@@ -18,10 +18,13 @@ const community = useCommunityStore()
 const route = useRoute()
 const router = useRouter()
 
-// 登录后定时拉取社区未读通知数（实时红点）；切后台暂停、回前台立即补拉；退出/过期时停止轮询
+// 登录后定时拉取社区未读通知数 + 消息未读数（实时红点）；切后台暂停、回前台立即补拉；退出/过期时停止轮询
 let unreadTimer: ReturnType<typeof setInterval> | null = null
+/** 消息未读数（私信模块独立，不与通知未读混算） */
+const messageUnread = ref(0)
 function fetchUnread() {
   community.fetchUnreadCount().catch(() => {})
+  communityApi.messageUnreadCount().then(r => { messageUnread.value = r.count }).catch(() => {})
 }
 function startUnreadTimer() {
   if (unreadTimer) clearInterval(unreadTimer)
@@ -184,6 +187,10 @@ function goNotifications() {
   avatarOpen.value = false
   router.push('/community/notifications')
 }
+function goMessages() {
+  avatarOpen.value = false
+  router.push('/messages')
+}
 /** 切换账号 / 退出登录：立即退出，数据保存不阻塞 UI */
 async function accountLogout(switchAccount: boolean) {
   avatarOpen.value = false
@@ -266,16 +273,20 @@ if (window.nav) {
           title="账号菜单" @click.stop="avatarOpen = !avatarOpen">
           <img v-if="store.settings.avatar" :src="imageUrl(store.settings.avatar)" class="w-full h-full object-cover rounded-full" alt="我的头像">
           <template v-else>{{ avatarLetter }}</template>
-          <!-- 未读通知角标：勿扰仅红点（无数字）；普通数字角标 -->
-          <span v-if="dndActive && community.unreadExcludingMuted"
+          <!-- 未读角标（通知未读 + 消息未读）：勿扰仅红点（无数字）；普通数字角标 -->
+          <span v-if="dndActive && (community.unreadExcludingMuted || (messageUnread && !store.settings.dndMuteMessage))"
             class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 ring-2 ring-white dark:ring-slate-800"></span>
-          <span v-else-if="!dndActive && community.unreadCount"
+          <span v-else-if="!dndActive && (community.unreadCount + messageUnread)"
             class="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center ring-2 ring-white dark:ring-slate-800">
-            {{ community.unreadCount > 99 ? '99+' : community.unreadCount }}
+            {{ (community.unreadCount + messageUnread) > 99 ? '99+' : (community.unreadCount + messageUnread) }}
           </span>
         </button>
         <div v-if="avatarOpen" class="fixed inset-0 z-40" @click="avatarOpen = false"></div>
         <div v-if="avatarOpen" class="absolute right-0 top-11 z-50 w-40 rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-lg py-1.5">
+          <button class="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goMessages">
+            <span>消息</span>
+            <span v-if="messageUnread" class="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">{{ messageUnread > 99 ? '99+' : messageUnread }}</span>
+          </button>
           <button class="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goNotifications">
             <span>通知中心</span>
             <span v-if="community.unreadCount" class="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">{{ community.unreadCount > 99 ? '99+' : community.unreadCount }}</span>

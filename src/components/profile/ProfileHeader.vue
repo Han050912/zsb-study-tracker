@@ -6,6 +6,7 @@ import { BadgeCheck, Camera } from '@lucide/vue'
 import type { CommunityUserProfile } from '../../types'
 import { imageUrl } from '../../api/community'
 import { levelOf } from '../../data/defaults'
+import { requireLogin } from '../../services/auth'
 import FollowButton from './FollowButton.vue'
 
 const props = defineProps<{ profile: CommunityUserProfile; isSelf: boolean }>()
@@ -19,6 +20,12 @@ watch(() => props.profile.avatar, () => { avatarFailed.value = false })
 
 function onAvatarClick() {
   if (props.isSelf) emit('edit')
+}
+
+/** 发起私聊：访客先引导登录 */
+function goMessage() {
+  if (requireLogin(router)) return
+  router.push(`/messages/${props.profile.userId}`)
 }
 </script>
 
@@ -53,7 +60,7 @@ function onAvatarClick() {
           <span v-if="!profile.profilePrivate" class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
             :style="{ background: level.color + '1a', color: level.color }">{{ level.name }}学者</span>
         </div>
-        <div class="text-xs text-slate-400 mt-0.5">UID：{{ profile.userId }}</div>
+        <div class="text-xs text-slate-400 mt-0.5">用户ID：{{ profile.userCode ?? '' }}</div>
         <p class="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
           {{ profile.bio || '这个人很懒，什么都没写' }}</p>
         <div class="text-xs text-slate-400 mt-1">
@@ -70,7 +77,7 @@ function onAvatarClick() {
             :follows-me="profile.followsMe" @change="f => emit('follow-change', f)" />
           <button
             class="text-xs px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500 transition-colors"
-            @click="router.push(`/community/messages/${profile.userId}`)">私信</button>
+            @click="goMessage">消息</button>
         </template>
       </div>
     </div>

@@ -15,7 +15,6 @@ const FILTERS: { k: NotificationType | ''; l: string }[] = [
   { k: 'comment', l: '评论' },
   { k: 'follow', l: '关注' },
   { k: 'achievement', l: '成就' },
-  { k: 'message', l: '私信' },
   { k: 'system', l: '系统' }
 ]
 function switchFilter(k: NotificationType | '') {
@@ -30,7 +29,7 @@ onMounted(() => {
 const NOTIFY_TARGET_ROUTES: Record<NotificationTargetType, string> = {
   post: '/community/post',
   user: '/profile',
-  message: '/community/messages',
+  message: '/messages',
   team: '/teams',
   circle: '/community/circles',
   partner: '/community/partners'

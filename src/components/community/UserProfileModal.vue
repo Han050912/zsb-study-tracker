@@ -5,7 +5,7 @@ import Modal from '../Modal.vue'
 import UserAvatar from './UserAvatar.vue'
 import { communityApi } from '../../api/community'
 import { COMMUNITY_BADGES, levelOf } from '../../data/defaults'
-import { isAdmin, sessionUser, goLogin } from '../../services/auth'
+import { isAdmin, sessionUser, goLogin, requireLogin } from '../../services/auth'
 import { fromNow } from '../../utils/date'
 import type { CommunityUserProfile } from '../../types'
 
@@ -58,6 +58,7 @@ watch(() => props.show, async v => {
 const followSubmitting = ref(false)
 
 async function toggleFollow() {
+  if (requireLogin(router)) return
   if (!profile.value || followSubmitting.value) return
   followSubmitting.value = true
   try {
@@ -68,6 +69,13 @@ async function toggleFollow() {
     toast(res.following ? '已关注，对方的帖子会出现在「关注」Tab' : '已取消关注')
   } catch (e: any) { toast(e?.message || '操作失败') }
   finally { followSubmitting.value = false }
+}
+
+/** 发起私聊：访客先引导登录 */
+function goMessage() {
+  emit('update:show', false)
+  if (requireLogin(router)) return
+  router.push(`/messages/${props.userId}`)
 }
 
 // ---- 管理员：专家认证 ----
@@ -135,7 +143,7 @@ async function revokeVerify() {
           <button v-if="!profile.profilePrivate" class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
             @click="emit('update:show', false); router.push(`/profile/${userId}`)">📊 主页</button>
           <button class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
-            @click="emit('update:show', false); router.push(`/community/messages/${userId}`)">✉️ 私信</button>
+            @click="goMessage">✉️ 消息</button>
           <button class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors"
             :class="profile.followedByMe
               ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-red-500'

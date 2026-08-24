@@ -145,6 +145,7 @@ export function createDefaultState(): AppState {
       dndStartTime: '',
       dndEndTime: '',
       dndMutedTypes: [],
+      dndMuteMessage: false,
     }
   }
 }

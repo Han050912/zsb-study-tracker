@@ -1,7 +1,7 @@
 import { request, authFetch, API_BASE, handleUnauthorized } from './client'
 import { compressImage } from '../utils/imageCompress'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, NotificationType, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserStudyStats, WeeklyReport
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, NotificationType, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserLookupResult, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -88,8 +88,14 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
     const postBlob = (url: string, blob: Blob, onDone: (data: any) => void) => {
       const xhr = new XMLHttpRequest()
       xhr.open('POST', url)
-      const token = localStorage.getItem('jwt_token')
-      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      // Web 端会话在 HttpOnly Cookie（withCredentials），桌面端走 Authorization Bearer + 桌面令牌
+      if (__DESKTOP_BUILD__) {
+        const token = localStorage.getItem('jwt_token')
+        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+        xhr.setRequestHeader('X-Desktop-Token', __DESKTOP_TOKEN__)
+      } else {
+        xhr.withCredentials = true
+      }
       xhr.setRequestHeader('Content-Type', blob.type || 'application/octet-stream')
       xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress?.(Math.min(1, e.loaded / e.total)) }
       xhr.onload = () => {
@@ -119,6 +125,9 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
       if (!res?.id) { reject(new Error('上传返回异常')); return }
       // 2. 上传缩略图，关联到原图 id
       postBlob(`${API_BASE}/api/community/upload?variant=thumb&id=${encodeURIComponent(res.id)}`, thumb, () => {
+        // 两段上传各自的 onprogress 未必以 1 收尾（小缩略图可能不派发 100% 事件），完成时显式归 1，
+        // 保证调用方按 progress >= 1 判定「上传完成」的响应式状态能正确解除
+        onProgress?.(1)
         resolve(res as UploadResult)
       })
     })
@@ -178,6 +187,8 @@ export const communityApi = {
   hotTopics: () => request<{ topics: HotTopic[] }>('/api/community/hot-topics'),
   /** 用户资料卡（等级/徽章墙/认证状态等公开荣誉信息） */
   profile: (userId: string) => request<CommunityUserProfile>(`/api/community/users/${userId}/profile`),
+  /** 精确查找用户（按对外用户 ID） */
+  lookup: (key: string) => request<UserLookupResult>(`/api/community/users/lookup?key=${encodeURIComponent(key)}`),
   /** 个人主页学习统计（热力图 + 总览 + 科目分布） */
   stats: (userId: string) => request<UserStudyStats>(`/api/community/users/${userId}/stats`),
   /** 关注/取关（toggle） */
