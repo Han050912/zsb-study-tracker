@@ -16,9 +16,6 @@ const SOURCES = [
   { file: '色情词库.txt', level: 'hard' },
   { file: '暴恐词库.txt', level: 'hard' },
   { file: '涉枪涉爆.txt', level: 'hard' },
-  { file: '非法网址.txt', level: 'hard' },
-  // 注：不含「广告类型.txt」——该源混杂政治词与泛化误伤词（网络/客服/招聘/淘宝等），
-  // 且其中的赌博/违法/色情词已筛选补充到下方 MANUAL_HARD。
 ]
 
 // 手工补充词（学习社区场景特定词 + 高置信度辱骂词，不来自开源库）
