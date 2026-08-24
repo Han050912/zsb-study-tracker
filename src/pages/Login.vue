@@ -2,7 +2,7 @@
 import { ref, defineAsyncComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Eye, EyeOff } from '@lucide/vue'
-import { login, register } from '../services/auth'
+import { login, register, enterGuestMode } from '../services/auth'
 import { useAppStore } from '../stores/app'
 import { sanitizeInternalPath } from '../utils/path'
 
@@ -35,6 +35,12 @@ function retryTurnstile() {
   turnstileError.value = false
   turnstileToken.value = ''
   turnstileKey.value++
+}
+
+/** 访客入口：唯一进入访客浏览模式的路径（开启后路由守卫才放行公开页） */
+function enterGuest() {
+  enterGuestMode()
+  router.replace('/community')
 }
 
 function switchMode(m: 'login' | 'register') {
@@ -173,10 +179,10 @@ async function submit() {
           </button>
         </form>
 
-        <!-- 访客入口：社区广场内容公开，可先浏览再决定注册 -->
+        <!-- 访客入口：唯一进入访客浏览模式的路径 -->
         <div class="text-center mt-4">
           <button type="button" class="text-xs text-slate-400 hover:text-primary-500 transition-colors"
-            @click="router.replace('/community')">先随便看看 →</button>
+            @click="enterGuest">先随便看看 →</button>
         </div>
       </div>
 

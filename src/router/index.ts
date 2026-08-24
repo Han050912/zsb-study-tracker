@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { isLoggedIn, isAdmin } from '../services/auth'
+import { isLoggedIn, isAdmin, isGuestMode } from '../services/auth'
 
 
 const routes = [
@@ -41,12 +41,20 @@ export const router = createRouter({
   routes
 })
 
-// 登录守卫：未登录访问任意页面统一落地社区广场（访客浏览模式）；已登录访问登录页跳转首页（按路由名判断，避免路径硬编码）
+// 登录守卫（访问控制）：
+// 1. 已登录访问登录/注册页 → 首页
+// 2. 未登录仅可访问两类页面：登录页；或已通过「先随便看看」开启访客模式后的公开页（社区广场/帖子详情/组队）。
+//    其余路径（含直接输入 URL 进入公开页、未开启访客模式即访问公开页）一律回登录页
+// 3. 审核中心仅管理员可见（未登录已在上一步拦截，此处仅约束已登录的非管理员）
 router.beforeEach((to) => {
-  const guestAllowed = to.name === 'community' || to.name === 'community-post' || to.name === 'teams'
-  if (!isLoggedIn.value && !guestAllowed && to.name !== 'login') return { name: 'community' }
   if (isLoggedIn.value && to.name === 'login') return { name: 'dashboard' }
-  // 管理员守卫：审核中心仅管理员可见
+
+  if (!isLoggedIn.value) {
+    const guestAllowed = to.name === 'community' || to.name === 'community-post' || to.name === 'teams'
+    const canBrowse = isGuestMode.value && guestAllowed
+    if (to.name !== 'login' && !canBrowse) return { name: 'login' }
+  }
+
   if (to.name === 'admin' && !isAdmin.value) return { name: 'community' }
 })
 

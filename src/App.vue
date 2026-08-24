@@ -206,8 +206,8 @@ async function accountLogout(switchAccount: boolean) {
   logout()
   store.resetState()
   community.resetState()
-  // 退出后即访客：落地社区广场（与新守卫的访客默认落地一致）
-  router.replace('/community')
+  // 退出后回登录页；访客浏览模式仅能由登录页「先随便看看」入口进入
+  router.replace('/login')
 }
 
 /** 导航激活判断：精确匹配或子路径匹配（避免 '/materials' 误激活 '/math' 这类前缀碰撞） */
