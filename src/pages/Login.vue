@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { Eye, EyeOff } from '@lucide/vue'
 import { login, register } from '../services/auth'
 import { useAppStore } from '../stores/app'
+import { sanitizeInternalPath } from '../utils/path'
 
 const router = useRouter()
 const route = useRoute()
@@ -79,8 +80,8 @@ async function submit() {
     // 登录/注册成功后从云端载入该用户的历史数据
     await withTimeout(store.hydrate(), 20000, '数据同步')
     // 回跳：登录前从某页面触发（携带 redirect）则返回原页面；否则回首页。仅允许站内路径，防 open redirect
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
-    router.replace(redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/')
+    const redirect = sanitizeInternalPath(route.query.redirect) ?? '/'
+    router.replace(redirect)
   } catch (e: any) {
     errorMsg.value = e?.message || '操作失败，请重试'
     turnstileWidget.value?.reset()

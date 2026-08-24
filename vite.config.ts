@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 
@@ -37,8 +37,11 @@ export default defineConfig(({ mode }) => ({
   // --mode desktop 时为 true，Login.vue 中的 Turnstile 组件分支被整体 tree-shake，不进入桌面产物
   define: {
     __DESKTOP_BUILD__: JSON.stringify(mode === 'desktop'),
-    // 桌面端认证令牌：编译进桌面产物，前端请求带此头，Worker 校验以跳过 Turnstile
-    __DESKTOP_TOKEN__: JSON.stringify(mode === 'desktop' ? 'zsb-desktop-v2' : '')
+    // 桌面端认证令牌：优先取 CI 环境变量 DESKTOP_TOKEN，其次读 .env.desktop.local（已 gitignore）；
+    // 与 Worker env.DESKTOP_TOKEN 保持一致，不写死源码；都未配置时桌面端回退人机验证（fail-closed）
+    __DESKTOP_TOKEN__: JSON.stringify(mode === 'desktop'
+      ? (process.env.DESKTOP_TOKEN || loadEnv(mode, process.cwd(), '').DESKTOP_TOKEN || '')
+      : '')
   },
   build: {
     chunkSizeWarningLimit: 1500
