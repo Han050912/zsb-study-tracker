@@ -1,11 +1,14 @@
 <script setup lang="ts">
 /** 关注按钮：四态文案（+ 关注 / 回关 / 已关注 / 互相关注），乐观更新失败回滚。本人场景由父组件不渲染 */
 import { computed, inject, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { communityApi } from '../../api/community'
+import { requireLogin } from '../../services/auth'
 
 const props = defineProps<{ userId: string; followedByMe: boolean; followsMe?: boolean }>()
 const emit = defineEmits<{ change: [following: boolean] }>()
 const toast = inject<(m: string) => void>('toast', () => {})
+const router = useRouter()
 
 const submitting = ref(false)
 const label = computed(() =>
@@ -14,6 +17,7 @@ const label = computed(() =>
     : (props.followsMe ? '回关' : '+ 关注'))
 
 async function toggle() {
+  if (requireLogin(router)) return
   if (submitting.value) return
   submitting.value = true
   const next = !props.followedByMe

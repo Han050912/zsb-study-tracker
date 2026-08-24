@@ -2,9 +2,10 @@ import type { Env } from '../index'
 import { on, body } from '../router'
 import { all, first, run, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
-import { assertClean } from './sensitive'
+import { assertCleanAsync } from './sensitive'
 import { displayName, notifyStatement } from './community'
 import { requireAdmin } from './admin'
+import { githubFetch } from './github'
 
 /**
  * 意见反馈：提交后先落 D1（站内管理员后台查看），再尽力创建 GitHub issue 回写链接。
@@ -66,15 +67,13 @@ function toFeedback(r: FeedbackRow) {
 }
 
 /**
- * 尽力而为地创建 GitHub issue，复用 release.ts 的服务端 GITHUB_TOKEN 代理模式。
+ * 尽力而为地创建 GitHub issue，经 githubFetch 统一发起（token / 超时 / 限额监控均由其处理）。
  * 未配置 token / 超时 / 非 2xx 均返回 null（静默降级，不影响反馈落库）。
  * 联系方式不进入 issue（公开仓库，仅存 D1）。
  */
 async function createGitHubIssue(
-  env: Env, type: FeedbackType, content: string, imageUrls: string[], userName: string
+  env: Env, type: FeedbackType, content: string, imageUrls: string[], userName: string, origin: string
 ): Promise<string | null> {
-  const token = env.GITHUB_TOKEN
-  if (!token) return null
   const lines = [
     `**类型**：${TYPE_LABEL[type]}`,
     `**提交人**：${userName}`,
@@ -85,37 +84,29 @@ async function createGitHubIssue(
   ]
   if (imageUrls.length) {
     lines.push('', '**截图**')
-    for (const u of imageUrls) lines.push(`![](${u})`)
+    // 截图存于本服务 R2，issue 为跨站公开页面，须拼绝对地址才能显示（相对路径会被 GitHub 解析到仓库路径下）
+    for (const u of imageUrls) lines.push(`![](${origin}${u})`)
   }
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 4000)
-  try {
-    const res = await fetch(`https://api.github.com/repos/${GH_REPO}/issues`, {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${token}`,
-        'User-Agent': 'zsb-study-api-worker'
-      },
-      body: JSON.stringify({
-        // 标题折叠换行为空格：GitHub issue 标题不允许含换行（含换行会 422 静默失败）
-        title: `[${TYPE_LABEL[type]}] ${content.slice(0, 30).replace(/\s+/g, ' ').trim()}`,
-        body: lines.join('\n')
-      }),
-      signal: ctrl.signal
-    })
-    if (!res.ok) {
-      console.error(`[feedback] 创建 GitHub issue 失败: ${res.status}`)
-      return null
+  // 标题折叠换行为空格：GitHub issue 标题不允许含换行（含换行会 422 静默失败）
+  const title = `[${TYPE_LABEL[type]}] ${content.slice(0, 30).replace(/\s+/g, ' ').trim()}`
+
+  const result = await githubFetch<{ html_url?: string }>(env, `/repos/${GH_REPO}/issues`, {
+    method: 'POST',
+    body: JSON.stringify({ title, body: lines.join('\n') }),
+    timeoutMs: 4000
+  })
+  if (result.tokenMissing) return null
+  if (!result.ok) {
+    // 限流与普通失败分开打日志：限流说明共享 token 额度耗尽，issue 链接本次不回写，
+    // 可在 Cloudflare 日志按关键字检索，必要时人工补建
+    if (result.rateLimited) {
+      console.error('[feedback] 创建 GitHub issue 被限流（token 额度耗尽），本次不回写 issue 链接')
+    } else {
+      console.error(`[feedback] 创建 GitHub issue 失败: ${result.status}`)
     }
-    const data = await res.json() as { html_url?: string }
-    return data.html_url ?? null
-  } catch (e) {
-    console.error('[feedback] 创建 GitHub issue 异常', e)
     return null
-  } finally {
-    clearTimeout(timer)
   }
+  return result.data?.html_url ?? null
 }
 
 export function registerFeedbackRoutes() {
@@ -145,8 +136,8 @@ export function registerFeedbackRoutes() {
       if (owned.length !== new Set(ids).size) throw new HttpError(400, '截图不存在或已失效，请重新上传')
     }
 
-    assertClean(content)
-    if (contact) assertClean(contact)
+    await assertCleanAsync(content, ctx.env)
+    if (contact) await assertCleanAsync(contact, ctx.env)
 
     const id = uid()
     await run(ctx.env,
@@ -155,7 +146,7 @@ export function registerFeedbackRoutes() {
 
     // GitHub issue：尽力而为，失败不影响已落库的反馈（联系方式不进 issue）
     const userName = await displayName(ctx.env, ctx.userId)
-    const issueUrl = await createGitHubIssue(ctx.env, type, content, imageUrls, userName)
+    const issueUrl = await createGitHubIssue(ctx.env, type, content, imageUrls, userName, new URL(ctx.request.url).origin)
     if (issueUrl) await run(ctx.env, 'UPDATE feedback SET github_issue_url = ? WHERE id = ?', issueUrl, id)
 
     return Response.json({ id }, { status: 201 })

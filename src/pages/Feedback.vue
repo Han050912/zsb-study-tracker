@@ -3,9 +3,11 @@ import { computed, inject, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { feedbackApi } from '../api/feedback'
 import { uploadImage, imageUrl } from '../api/community'
+import { useBack } from '../composables/useBack'
 import type { FeedbackType } from '../types'
 
 const router = useRouter()
+const { goBack } = useBack()
 const toast = inject<(m: string) => void>('toast', () => {})
 
 const TYPE_OPTIONS: { value: FeedbackType; label: string }[] = [
@@ -63,7 +65,7 @@ async function submit() {
       imageUrls: images.value.map(i => i.url)
     })
     toast('反馈已提交，感谢！')
-    router.back()
+    goBack()
   } catch (e: any) {
     toast(e?.message || '提交失败')
   } finally {
@@ -75,7 +77,7 @@ async function submit() {
 <template>
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2.5" @click="router.back()">←</button>
+      <button class="btn-ghost !px-2.5" @click="goBack">← 返回</button>
       <h1 class="page-title">意见反馈</h1>
     </div>
 

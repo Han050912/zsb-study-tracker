@@ -7,6 +7,7 @@ import PostComposer from '../components/community/PostComposer.vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
+import { useBack } from '../composables/useBack'
 import type { CircleDetail, CommunityPost } from '../types'
 
 /**
@@ -15,6 +16,7 @@ import type { CircleDetail, CommunityPost } from '../types'
  */
 const route = useRoute()
 const router = useRouter()
+const { goBack } = useBack()
 const toast = inject<(m: string) => void>('toast', () => {})
 const circleId = route.params.id as string
 
@@ -135,7 +137,7 @@ function openReport(postId: string) {
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
 
     <template v-else-if="circle">
-      <button class="btn-ghost !px-2" @click="router.push('/community/circles')">← 圈子列表</button>
+      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
 
       <!-- 圈子信息头 -->
       <div class="card space-y-3">

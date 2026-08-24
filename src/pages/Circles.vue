@@ -2,11 +2,13 @@
 import { inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
+import { useBack } from '../composables/useBack'
 import Modal from '../components/Modal.vue'
 import type { CommunityCircle } from '../types'
 
 /** 话题圈子列表：全部圈子（按成员数倒序）+ 建圈入口 */
 const router = useRouter()
+const { goBack } = useBack()
 const toast = inject<(m: string) => void>('toast', () => {})
 
 const circles = ref<CommunityCircle[]>([])
@@ -57,7 +59,7 @@ const statusLabel = (c: CommunityCircle) =>
 <template>
   <div class="space-y-4 max-w-3xl mx-auto">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2" @click="router.push('/community')">← 广场</button>
+      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
       <h2 class="text-lg font-bold flex-1">话题圈子</h2>
       <button class="btn-primary !text-xs" @click="showCreate = true">＋ 创建圈子</button>
     </div>

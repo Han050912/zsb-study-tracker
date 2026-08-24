@@ -7,6 +7,7 @@ import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
+import { useBack } from '../composables/useBack'
 import type { CommunityPost } from '../types'
 
 /**
@@ -16,6 +17,7 @@ import type { CommunityPost } from '../types'
  */
 const route = useRoute()
 const router = useRouter()
+const { goBack } = useBack()
 const toast = inject<(m: string) => void>('toast', () => {})
 const appStore = useAppStore()
 
@@ -96,7 +98,7 @@ function openReport(postId: string) {
 <template>
   <div class="max-w-3xl mx-auto space-y-4">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2" @click="router.back()">← 返回</button>
+      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
       <h2 class="text-lg font-bold flex-1 min-w-0 truncate">
         {{ subject?.icon ?? '📘' }} {{ subject?.name ?? subjectId }} · {{ chapterName }}
       </h2>

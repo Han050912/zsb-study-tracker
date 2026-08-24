@@ -7,9 +7,11 @@ import { Crown, UserMinus } from '@lucide/vue'
 import Modal from '../components/Modal.vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
+import { useBack } from '../composables/useBack'
 
 const route = useRoute()
 const router = useRouter()
+const { goBack } = useBack()
 const toast = inject<(m: string) => void>('toast', () => {})
 const teamId = route.params.id as string
 
@@ -363,7 +365,7 @@ async function handleResume(c: TeamChallenge) {
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
 
     <template v-else-if="team">
-      <button class="btn-ghost !px-2" @click="router.push('/teams')">← 组队挑战列表</button>
+      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
 
       <div class="card space-y-3">
         <div class="flex items-center gap-2 flex-wrap">

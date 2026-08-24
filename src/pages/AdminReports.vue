@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { communityApi, imageUrl } from '../api/community'
 import { feedbackApi } from '../api/feedback'
 import { fromNow } from '../utils/date'
+import { useBack } from '../composables/useBack'
 import type { AdminReport, Feedback, FeedbackStatus, HotTopicOverride } from '../types'
 
 /**
@@ -11,6 +12,7 @@ import type { AdminReport, Feedback, FeedbackStatus, HotTopicOverride } from '..
  * 处理动作：隐藏 / 删除 / 驳回，均可选填处理说明；处理结果由服务端通知当事人并留痕。
  */
 const router = useRouter()
+const { goBack } = useBack()
 const toast = inject<(m: string) => void>('toast', () => {})
 
 const reports = ref<AdminReport[]>([])
@@ -142,7 +144,7 @@ async function removeHotTopic(id: string) {
 <template>
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2.5" @click="router.back()">←</button>
+      <button class="btn-ghost !px-2.5" @click="goBack">← 返回</button>
       <h1 class="page-title">🛡️ 审核中心</h1>
       <span v-if="reports.length" class="text-xs px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-900/30 text-rose-500">
         {{ reports.length }} 条待处理

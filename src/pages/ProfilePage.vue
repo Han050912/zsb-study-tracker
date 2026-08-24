@@ -15,10 +15,12 @@ import ProfileHeader from '../components/profile/ProfileHeader.vue'
 import SocialStatsBar from '../components/profile/SocialStatsBar.vue'
 import UserWorksTabs from '../components/profile/UserWorksTabs.vue'
 import EditProfileModal from '../components/profile/EditProfileModal.vue'
+import { useBack } from '../composables/useBack'
 import type { CommunityUserProfile, UserStudyStats } from '../types'
 
 const route = useRoute()
 const router = useRouter()
+const { goBack } = useBack()
 
 const userId = route.params.id as string
 
@@ -86,12 +88,6 @@ function onFollowChange(following: boolean) {
   if (typeof p.followers === 'number') p.followers += following ? 1 : -1
   p.relation = p.followedByMe && p.followsMe ? 'mutual'
     : p.followedByMe ? 'following' : p.followsMe ? 'follower' : 'none'
-}
-
-/** 返回上一级路由；直接打开（无站内历史）时回退到广场 */
-function goBack() {
-  if (history.state?.back) router.back()
-  else router.push('/community')
 }
 
 onMounted(loadAll)
