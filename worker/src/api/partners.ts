@@ -2,9 +2,29 @@ import type { Env } from '../index'
 import { on, body } from '../router'
 import { all, first, run, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
-import { notifyStatement } from './community'
+import { displayName, notifyStatement } from './community'
 
 const nowSec = () => Math.floor(Date.now() / 1000)
+
+/** 搭子上限：最多 3 位，防止社交泛滥 */
+const MAX_PARTNERS = 3
+
+/** 校验当前用户搭子数是否已达上限（accepted 状态计入） */
+async function checkPartnerLimit(env: Env, userId: string) {
+  const row = await first<{ n: number }>(env,
+    `SELECT COUNT(*) AS n FROM study_partners WHERE (from_id = ? OR to_id = ?) AND status = 'accepted'`,
+    userId, userId)
+  if ((row?.n ?? 0) >= MAX_PARTNERS) throw new HttpError(400, `搭子上限 ${MAX_PARTNERS} 人，请先解绑后再添加`)
+}
+
+/** 校验两用户是否为已确认搭子（双向绑定），返回关系行（供协作模块复用） */
+export async function assertPartner(env: Env, userId: string, partnerId: string) {
+  const pairKey = [userId, partnerId].sort().join(':')
+  const rel = await first<{ id: string; from_id: string; to_id: string; status: string }>(env,
+    `SELECT id, from_id, to_id, status FROM study_partners WHERE pair_key = ?`, pairKey)
+  if (rel?.status !== 'accepted') throw new HttpError(403, '非搭子关系')
+  return rel
+}
 
 /** 用户近 30 天学习最活跃的 Top 3 小时（UTC+8），用于活跃时段重叠匹配 */
 async function topHours(env: Env, userId: string): Promise<number[]> {
@@ -131,7 +151,8 @@ export function registerPartnerRoutes() {
       if (existing.status === 'accepted') throw new HttpError(400, '你们已是搭子')
       if (existing.status === 'pending') {
         if (existing.to_id === ctx.userId) {
-          // 对方已向我发 pending → 互相接受
+          // 对方已向我发 pending → 互相接受（立即成为搭子，校验上限）
+          await checkPartnerLimit(ctx.env, ctx.userId)
           await batch(ctx.env, [
             ctx.env.DB.prepare('UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?').bind('accepted', nowSec(), existing.id),
             notifyStatement(ctx.env, { userId: targetId, type: 'system', targetType: 'partner', content: '🤝 有人已成为你的学习搭子' })
@@ -159,6 +180,8 @@ export function registerPartnerRoutes() {
       const dup = await first<{ id: string; from_id: string; to_id: string; status: string }>(ctx.env,
         'SELECT id, from_id, to_id, status FROM study_partners WHERE pair_key = ?', pairKey)
       if (dup && dup.status === 'pending' && dup.to_id === ctx.userId) {
+        // 并发冲突互相接受（立即成为搭子，校验上限）
+        await checkPartnerLimit(ctx.env, ctx.userId)
         await batch(ctx.env, [
           ctx.env.DB.prepare('UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?').bind('accepted', nowSec(), dup.id),
           notifyStatement(ctx.env, { userId: targetId, type: 'system', targetType: 'partner', content: '🤝 有人已成为你的学习搭子' })
@@ -182,6 +205,8 @@ export function registerPartnerRoutes() {
     const req = await first<{ id: string; from_id: string }>(ctx.env,
       `SELECT id, from_id FROM study_partners WHERE id = ? AND to_id = ? AND status = 'pending'`, ctx.params.requestId, ctx.userId)
     if (!req) throw new HttpError(404, '请求不存在')
+    // 接受请求 → 立即成为搭子，校验我的上限
+    if (action === 'accept') await checkPartnerLimit(ctx.env, ctx.userId)
     const stmts = [
       ctx.env.DB.prepare(`UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?`)
         .bind(action === 'accept' ? 'accepted' : 'rejected', nowSec(), req.id)
@@ -190,6 +215,92 @@ export function registerPartnerRoutes() {
       stmts.push(notifyStatement(ctx.env, { userId: req.from_id, type: 'system', targetType: 'partner', content: '🤝 对方已接受你的学习搭子请求' }))
     }
     await batch(ctx.env, stmts)
+    return Response.json({ ok: true })
+  })
+
+  // 一键解绑搭子（无需对方同意，浅社交无心理负担）
+  on('DELETE', '/api/community/partners/:userId', true, async (ctx) => {
+    const partnerId = ctx.params.userId
+    if (partnerId === ctx.userId) throw new HttpError(400, '不能解绑自己')
+    const pairKey = [ctx.userId, partnerId].sort().join(':')
+    const res = await run(ctx.env, `DELETE FROM study_partners WHERE pair_key = ?`, pairKey)
+    if (!res.meta.changes) throw new HttpError(404, '搭子关系不存在')
+    // 通知对方：搭子关系已解除（进入通知中心「搭子」分类）
+    await batch(ctx.env, [
+      notifyStatement(ctx.env, {
+        userId: partnerId, type: 'partner', actorId: ctx.userId,
+        targetType: 'partner', targetId: ctx.userId,
+        content: `${await displayName(ctx.env, ctx.userId)} 解除了与你的搭子关系`
+      })
+    ])
+    return Response.json({ ok: true })
+  })
+
+  // 搭子周报对比（本周学习时长/连续打卡/刷题数/番茄专注时长；受对方隐私开关管控）
+  on('GET', '/api/community/partners/:userId/weekly-report', true, async (ctx) => {
+    const partnerId = ctx.params.userId
+    await assertPartner(ctx.env, ctx.userId, partnerId)
+
+    // 对方隐私开关：未开放则仅返回标识，前端展示提示
+    const settings = await first<{ partner_share_enabled: number }>(ctx.env,
+      `SELECT partner_share_enabled FROM user_settings WHERE user_id = ?`, partnerId)
+    if (!settings?.partner_share_enabled) {
+      return Response.json({ shared: false })
+    }
+
+    // 本周区间（本周一至周日，UTC+8）
+    const t = new Date(Date.now() + 8 * 3600_000)
+    const daysSinceMonday = (t.getUTCDay() + 6) % 7
+    const monday = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() - daysSinceMonday))
+    const fmt = (d: Date) => d.toISOString().slice(0, 10)
+    const weekStart = fmt(monday)
+    const weekEnd = fmt(new Date(monday.getTime() + 6 * 86400_000))
+
+    async function stats(uid: string) {
+      const [study, problems, pomodoro, gam] = await Promise.all([
+        first<{ minutes: number }>(ctx.env,
+          'SELECT COALESCE(SUM(minutes), 0) AS minutes FROM study_records WHERE user_id = ? AND date >= ? AND date <= ?',
+          uid, weekStart, weekEnd),
+        first<{ total: number }>(ctx.env,
+          'SELECT COALESCE(SUM(total), 0) AS total FROM problem_sessions WHERE user_id = ? AND date >= ? AND date <= ?',
+          uid, weekStart, weekEnd),
+        first<{ minutes: number }>(ctx.env,
+          'SELECT COALESCE(SUM(minutes), 0) AS minutes FROM pomodoro_daily WHERE user_id = ? AND date >= ? AND date <= ?',
+          uid, weekStart, weekEnd),
+        first<{ streak: number }>(ctx.env, 'SELECT streak FROM gamification WHERE user_id = ?', uid)
+      ])
+      return {
+        minutes: study?.minutes ?? 0,           // 本周学习时长（分钟）
+        problems: problems?.total ?? 0,         // 本周刷题数
+        pomodoroMinutes: pomodoro?.minutes ?? 0, // 本周番茄专注时长（分钟）
+        streak: gam?.streak ?? 0                // 连续打卡天数
+      }
+    }
+
+    const [mine, theirs] = await Promise.all([stats(ctx.userId), stats(partnerId)])
+    const partnerName = await displayName(ctx.env, partnerId)
+    return Response.json({ shared: true, weekStart, weekEnd, partnerName, mine, theirs })
+  })
+
+  // 发送学习鼓励提醒（复用站内通知；受对方提醒开关管控）
+  on('POST', '/api/community/partners/:userId/remind', true, async (ctx) => {
+    rateLimit(ctx.request, 'community:partner:remind', 10)
+    const partnerId = ctx.params.userId
+    await assertPartner(ctx.env, ctx.userId, partnerId)
+
+    // 对方提醒开关：完全关闭则拒绝，杜绝骚扰
+    const settings = await first<{ partner_remind_enabled: number }>(ctx.env,
+      `SELECT partner_remind_enabled FROM user_settings WHERE user_id = ?`, partnerId)
+    if (!settings?.partner_remind_enabled) throw new HttpError(403, '对方已关闭学习提醒')
+
+    const myName = await displayName(ctx.env, ctx.userId)
+    await batch(ctx.env, [
+      notifyStatement(ctx.env, {
+        userId: partnerId, type: 'partner', actorId: ctx.userId,
+        targetType: 'partner', targetId: ctx.userId,
+        content: `${myName} 提醒你：该学习啦，一起加油～`
+      })
+    ])
     return Response.json({ ok: true })
   })
 }

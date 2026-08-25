@@ -14,6 +14,10 @@ export const BACK_FALLBACK: Record<string, string> = {
   'follows': '/community',
   'circles': '/community',
   'partners': '/community',
+  'partner-study': '/community/partners',
+  'partner-plans': '/community/partners',
+  'partner-reviews': '/community/partners',
+  'partner-shares': '/community/partners',
   'feedback': '/settings',
   'admin': '/community',
 }

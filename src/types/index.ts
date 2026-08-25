@@ -224,6 +224,10 @@ export interface Settings {
   dndMutedTypes: NotificationType[]
   /** 勿扰期间是否屏蔽消息 */
   dndMuteMessage: boolean
+  /** 允许搭子查看我的学习数据（周报对比/定向分享；默认关闭） */
+  partnerShareEnabled: boolean
+  /** 允许搭子向我发送学习鼓励提醒（默认开启） */
+  partnerRemindEnabled: boolean
 }
 
 export interface AppState {
@@ -699,6 +703,118 @@ export interface PartnerItem {
   /** 自定义头像相对 URL（未设置 = undefined） */
   userAvatar?: string
   totalPoints: number
+}
+
+// ========== 学习搭子协作 ==========
+
+/** 搭子周报对比数据 */
+export interface PartnerWeeklyStats {
+  minutes: number          // 本周学习时长（分钟）
+  problems: number         // 本周刷题数
+  pomodoroMinutes: number  // 本周番茄专注时长（分钟）
+  streak: number           // 连续打卡天数
+}
+export interface PartnerWeeklyReport {
+  shared: boolean
+  weekStart?: string
+  weekEnd?: string
+  partnerName?: string
+  mine?: PartnerWeeklyStats
+  theirs?: PartnerWeeklyStats
+}
+
+/** 错题/笔记分享列表项 */
+export interface PartnerShareItem {
+  id: string
+  ownerId: string
+  ownerName: string
+  partnerId: string
+  partnerName: string
+  itemType: 'error' | 'note'
+  itemId: string
+  commentCount: number
+  createdAt: number
+}
+
+/** 分享批注 */
+export interface PartnerShareComment {
+  id: string
+  userId: string
+  userName: string
+  content: string
+  createdAt: number
+}
+
+/** 分享详情 */
+export interface PartnerShareDetail {
+  id: string
+  ownerId: string
+  ownerName: string
+  partnerId: string
+  partnerName: string
+  itemType: 'error' | 'note'
+  itemId: string
+  item: unknown
+  createdAt: number
+  comments: PartnerShareComment[]
+}
+
+/** 双人番茄自习室会话 */
+export interface PartnerStudySession {
+  id: string
+  status: 'active' | 'done'
+  partnerId: string
+  partnerName: string
+  /** 专注时长（分钟，双方一致） */
+  focusMinutes: number
+  /** 休息时长（分钟，双方一致） */
+  breakMinutes: number
+  myState: 'idle' | 'focus' | 'break' | 'done'
+  myMinutes: number
+  partnerState: 'idle' | 'focus' | 'break' | 'done'
+  partnerMinutes: number
+}
+
+/** 协作备考计划列表项 */
+export interface PartnerPlan {
+  id: string
+  title: string
+  partnerId: string
+  partnerName: string
+  taskTotal: number
+  myDone: number
+  createdAt: number
+}
+
+/** 计划任务 */
+export interface PartnerPlanTask {
+  id: string
+  title: string
+  phase: string
+  myDone: boolean
+  partnerDone: boolean
+  createdAt: number
+}
+
+/** 计划详情 */
+export interface PartnerPlanDetail {
+  id: string
+  title: string
+  partnerId: string
+  partnerName: string
+  tasks: PartnerPlanTask[]
+}
+
+/** 复盘邀约 */
+export interface PartnerReview {
+  id: string
+  partnerId: string
+  partnerName: string
+  scheduledAt: number
+  status: 'pending' | 'accepted' | 'done'
+  note: string
+  isFrom: boolean
+  createdAt: number
 }
 
 /** 推荐关注用户条目 */

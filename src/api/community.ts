@@ -1,7 +1,7 @@
 import { request, authFetch, API_BASE, handleUnauthorized } from './client'
 import { compressImage } from '../utils/imageCompress'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, NotificationType, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserLookupResult, UserStudyStats, WeeklyReport
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, NotificationType, PartnerItem, PartnerPlan, PartnerPlanDetail, PartnerReview, PartnerShareDetail, PartnerShareItem, PartnerStudySession, PartnerSuggestion, PartnerWeeklyReport, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserLookupResult, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -304,5 +304,62 @@ export const communityApi = {
     request<{ accepted: boolean }>(`/api/community/partners/${userId}`, { method: 'POST' }),
   /** 接受/拒绝请求 */
   respondPartner: (requestId: string, action: 'accept' | 'reject') =>
-    request<{ ok: boolean }>(`/api/community/partners/${requestId}`, { method: 'PUT', body: JSON.stringify({ action }) })
+    request<{ ok: boolean }>(`/api/community/partners/${requestId}`, { method: 'PUT', body: JSON.stringify({ action }) }),
+  /** 一键解绑搭子（无需对方同意） */
+  unbindPartner: (userId: string) =>
+    request<{ ok: boolean }>(`/api/community/partners/${userId}`, { method: 'DELETE' }),
+  /** 搭子周报对比（受对方隐私开关管控） */
+  partnerWeeklyReport: (userId: string) =>
+    request<PartnerWeeklyReport>(`/api/community/partners/${userId}/weekly-report`),
+  /** 发送学习鼓励提醒 */
+  partnerRemind: (userId: string) =>
+    request<{ ok: boolean }>(`/api/community/partners/${userId}/remind`, { method: 'POST' }),
+
+  // ========== 错题/笔记定向分享 ==========
+  createPartnerShare: (partnerId: string, itemType: 'error' | 'note', itemId: string) =>
+    request<{ id: string }>('/api/partner-shares', { method: 'POST', body: JSON.stringify({ partnerId, itemType, itemId }) }),
+  partnerShares: () =>
+    request<{ received: PartnerShareItem[]; sent: PartnerShareItem[] }>('/api/partner-shares'),
+  partnerShare: (id: string) => request<PartnerShareDetail>(`/api/partner-shares/${id}`),
+  addShareComment: (shareId: string, content: string) =>
+    request<{ id: string }>(`/api/partner-shares/${shareId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
+  deleteShare: (id: string) =>
+    request<{ ok: boolean }>(`/api/partner-shares/${id}`, { method: 'DELETE' }),
+
+  // ========== 双人番茄自习室 ==========
+  createStudySession: (partnerId: string, focusMinutes?: number, breakMinutes?: number) =>
+    request<{ id: string }>('/api/partner-study/sessions', { method: 'POST', body: JSON.stringify({ partnerId, focusMinutes, breakMinutes }) }),
+  activeStudySession: () =>
+    request<{ session: PartnerStudySession | null }>('/api/partner-study/sessions/active'),
+  studySession: (id: string) =>
+    request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`),
+  updateStudySession: (id: string, state: 'idle' | 'focus' | 'break' | 'done', minutes: number) =>
+    request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`, { method: 'PUT', body: JSON.stringify({ state, minutes }) }),
+  endStudySession: (id: string) =>
+    request<{ ok: boolean }>(`/api/partner-study/sessions/${id}`, { method: 'DELETE' }),
+
+  // ========== 协作备考计划 ==========
+  createPartnerPlan: (partnerId: string, title: string) =>
+    request<{ id: string }>('/api/partner-plans', { method: 'POST', body: JSON.stringify({ partnerId, title }) }),
+  partnerPlans: () => request<{ items: PartnerPlan[] }>('/api/partner-plans'),
+  partnerPlan: (id: string) => request<PartnerPlanDetail>(`/api/partner-plans/${id}`),
+  updatePartnerPlan: (id: string, title: string) =>
+    request<{ ok: boolean }>(`/api/partner-plans/${id}`, { method: 'PUT', body: JSON.stringify({ title }) }),
+  deletePartnerPlan: (id: string) =>
+    request<{ ok: boolean }>(`/api/partner-plans/${id}`, { method: 'DELETE' }),
+  addPlanTask: (planId: string, title: string, phase: string) =>
+    request<{ id: string }>(`/api/partner-plans/${planId}/tasks`, { method: 'POST', body: JSON.stringify({ title, phase }) }),
+  updatePlanTask: (planId: string, taskId: string, done: boolean) =>
+    request<{ ok: boolean }>(`/api/partner-plans/${planId}/tasks/${taskId}`, { method: 'PUT', body: JSON.stringify({ done }) }),
+  deletePlanTask: (planId: string, taskId: string) =>
+    request<{ ok: boolean }>(`/api/partner-plans/${planId}/tasks/${taskId}`, { method: 'DELETE' }),
+
+  // ========== 双向复盘邀约 ==========
+  createPartnerReview: (partnerId: string, scheduledAt: number) =>
+    request<{ id: string }>('/api/partner-reviews', { method: 'POST', body: JSON.stringify({ partnerId, scheduledAt }) }),
+  partnerReviews: () => request<{ items: PartnerReview[] }>('/api/partner-reviews'),
+  updatePartnerReview: (id: string, action: 'accept' | 'done', note?: string) =>
+    request<{ ok: boolean }>(`/api/partner-reviews/${id}`, { method: 'PUT', body: JSON.stringify({ action, note }) }),
+  deletePartnerReview: (id: string) =>
+    request<{ ok: boolean }>(`/api/partner-reviews/${id}`, { method: 'DELETE' })
 }

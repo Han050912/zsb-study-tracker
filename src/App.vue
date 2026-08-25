@@ -6,6 +6,7 @@ import { useCommunityStore } from './stores/community'
 import { sessionUser, logout, isLoggedIn, isAdmin, goLogin } from './services/auth'
 import { restartReminder } from './services/reminder'
 import { startTodoReminder, checkTodoReminders } from './services/todoReminder'
+import { startPartnerReminder, stopPartnerReminder } from './services/partnerReminder'
 import Toast from './components/Toast.vue'
 import AchievementModal from './components/AchievementModal.vue'
 import Onboarding from './components/Onboarding.vue'
@@ -46,13 +47,20 @@ function startUnreadPolling() {
   fetchUnread()
   startUnreadTimer()
   document.addEventListener('visibilitychange', onUnreadVisibilityChange)
+  window.addEventListener('message:read', onMessageRead)
 }
 function stopUnreadPolling() {
   stopUnreadTimer()
   document.removeEventListener('visibilitychange', onUnreadVisibilityChange)
+  window.removeEventListener('message:read', onMessageRead)
+}
+/** 打开聊天页标记已读后即时扣减消息未读数，无需等下一轮轮询 */
+function onMessageRead(e: Event) {
+  const n = (e as CustomEvent<number>).detail || 0
+  if (n > 0) messageUnread.value = Math.max(0, messageUnread.value - n)
 }
 watch(isLoggedIn, v => { if (v) startUnreadPolling(); else stopUnreadPolling() }, { immediate: true })
-onBeforeUnmount(stopUnreadPolling)
+onBeforeUnmount(() => { stopUnreadPolling(); stopPartnerReminder() })
 
 // 导航动态生成：科目项随科目列表实时增减（删除科目自动隐藏，新增科目自动出现）
 // 侧边栏展示科目全名；移动端由 CSS truncate 截断
@@ -151,6 +159,23 @@ onMounted(() => {
 watch(
   () => store.todos.map(t => `${t.id}:${t.startAt ?? ''}:${t.dueAt ?? ''}:${t.done ? 1 : 0}`).join('|'),
   () => checkTodoReminders()
+)
+
+// ---- 学习搭子提醒推送（见 src/services/partnerReminder.ts）----
+// 登录后轮询未读的搭子通知并推系统通知（与每日学习提醒同机制），退出/过期时停止
+watch(
+  isLoggedIn,
+  v => {
+    if (v) {
+      startPartnerReminder({
+        onFallback: msg => toastRef.value?.show(msg),
+        isSuppressed: () => isDndActive(store.settings)
+      })
+    } else {
+      stopPartnerReminder()
+    }
+  },
+  { immediate: true }
 )
 
 const dndActive = computed(() => isDndActive(store.settings))

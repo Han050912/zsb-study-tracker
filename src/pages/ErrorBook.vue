@@ -3,9 +3,13 @@ import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import { today } from '../utils/date'
 import Modal from '../components/Modal.vue'
+import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
+
+// ---- 分享给搭子（目标错题 id，空 = 关闭弹窗） ----
+const shareTarget = ref('')
 
 const filterSubject = ref('')
 const showOnlyUnmastered = ref(false)
@@ -128,6 +132,7 @@ function removeError(id: string) {
         <div class="flex gap-2 mt-3 pt-2 border-t border-slate-100 dark:border-slate-700">
           <button class="btn-ghost !py-1 !text-xs" @click="store.reviewError(q.id); toast('复习 +1，积分 +2')">🔄 复习({{ q.reviewCount }})</button>
           <button class="btn-ghost !py-1 !text-xs" @click="store.toggleErrorMastered(q.id)">{{ q.mastered ? '↩ 取消攻克' : '✅ 标记攻克' }}</button>
+          <button class="btn-ghost !py-1 !text-xs" @click="shareTarget = q.id">分享给搭子</button>
           <button class="btn-danger !py-1 !text-xs ml-auto" @click="removeError(q.id)">删除</button>
         </div>
       </div>
@@ -163,6 +168,9 @@ function removeError(id: string) {
         <button class="btn-primary" @click="add">保存</button>
       </template>
     </Modal>
+
+    <!-- 分享给搭子弹窗 -->
+    <PartnerShareModal v-if="shareTarget" item-type="error" :item-id="shareTarget" @close="shareTarget = ''" />
 
     <!-- 图片灯箱：全屏放大查看，点击任意处或按 Esc 关闭 -->
     <Teleport to="body">

@@ -21,6 +21,8 @@ import { registerWallpaperRoutes } from './proxy/wallpaper'
 import { registerReleaseRoutes } from './api/release'
 import { registerCommunityRoutes } from './api/community'
 import { registerPartnerRoutes } from './api/partners'
+import { registerPartnerShareRoutes } from './api/partnerShares'
+import { registerPartnerCollabRoutes } from './api/partnerCollab'
 import { registerAdminRoutes } from './api/admin'
 import { registerLearningPathRoutes } from './api/learningPath'
 import { registerPdfRoutes } from './api/pdfs'
@@ -109,6 +111,8 @@ registerWallpaperRoutes()
 registerReleaseRoutes()
 registerCommunityRoutes()
 registerPartnerRoutes()
+registerPartnerShareRoutes()
+registerPartnerCollabRoutes()
 registerAdminRoutes()
 registerLearningPathRoutes()
 registerPdfRoutes()

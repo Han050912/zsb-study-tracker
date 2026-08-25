@@ -146,6 +146,8 @@ export function createDefaultState(): AppState {
       dndEndTime: '',
       dndMutedTypes: [],
       dndMuteMessage: false,
+      partnerShareEnabled: false,
+      partnerRemindEnabled: true,
     }
   }
 }

@@ -147,6 +147,7 @@ const notifTypeOptions: { k: NotificationType; l: string }[] = [
   { k: 'comment', l: '评论' },
   { k: 'follow', l: '关注' },
   { k: 'achievement', l: '成就' },
+  { k: 'partner', l: '搭子' },
   { k: 'system', l: '系统' }
 ]
 function toggleMutedType(t: NotificationType) {
@@ -240,6 +241,22 @@ function toggleMutedType(t: NotificationType) {
           <option value="login">仅登录用户可见</option>
           <option value="private">仅自己可见</option>
         </select>
+      </div>
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm">允许搭子查看我的学习数据</span>
+          <p class="text-[10px] text-slate-400 mt-0.5">开启后搭子可查看你的周报对比与定向分享内容，默认关闭</p>
+        </div>
+        <button class="btn !text-xs" :class="s.partnerShareEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="update('partnerShareEnabled', !s.partnerShareEnabled)">{{ s.partnerShareEnabled ? '已开启' : '已关闭' }}</button>
+      </div>
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm">允许搭子向我发送学习提醒</span>
+          <p class="text-[10px] text-slate-400 mt-0.5">关闭后搭子将无法向你发送学习鼓励提醒，默认开启</p>
+        </div>
+        <button class="btn !text-xs" :class="s.partnerRemindEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="update('partnerRemindEnabled', !s.partnerRemindEnabled)">{{ s.partnerRemindEnabled ? '已开启' : '已关闭' }}</button>
       </div>
       <div class="pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3">
         <div class="flex items-center justify-between">

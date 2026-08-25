@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { renderMarkdown } from '../utils/markdown'
 import PdfViewer from '../components/PdfViewer.vue'
+import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 import { uploadPdf, fetchPdf, PDF_MAX_BYTES, PDF_MAX_MB, PDF_REF_PREFIX, pdfRefOf } from '../api/pdfs'
 import { uid } from '../utils/date'
 import type { Note } from '../types'
@@ -197,6 +198,13 @@ watch(selectedId, (id) => {
   })
 }, { immediate: true })
 
+// ---- 分享给搭子（仅已保存的笔记可分享，草稿需先保存） ----
+const shareNoteId = ref('')
+function shareNote() {
+  if (!draft.value?.id) { toast('请先保存笔记再分享'); return }
+  shareNoteId.value = draft.value.id
+}
+
 // ---- 移动端：列表/编辑 视图切换 ----
 const isEditing = computed(() => !!draft.value)
 
@@ -259,6 +267,7 @@ onUnmounted(() => {
               {{ previewMode === 'preview' ? '编辑' : '预览' }}
             </button>
           </template>
+          <button class="btn-ghost !py-1.5 !text-xs shrink-0" @click="shareNote">分享给搭子</button>
           <button class="btn-danger !py-1.5 shrink-0" @click="removeNote">删除</button>
           <button class="btn-primary !py-1.5 shrink-0" @click="doSave()">保存</button>
         </div>
@@ -294,5 +303,8 @@ onUnmounted(() => {
         <button class="btn-primary" @click="newNote">＋ 新建笔记</button>
       </div>
     </section>
+
+    <!-- 分享给搭子弹窗 -->
+    <PartnerShareModal v-if="shareNoteId" item-type="note" :item-id="shareNoteId" @close="shareNoteId = ''" />
   </div>
 </template>

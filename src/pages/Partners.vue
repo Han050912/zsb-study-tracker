@@ -3,6 +3,7 @@ import { inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import UserAvatar from '../components/community/UserAvatar.vue'
+import PartnerWeeklyModal from '../components/partner/PartnerWeeklyModal.vue'
 import { useBack } from '../composables/useBack'
 import type { PartnerSuggestion, PartnerItem, UserLookupResult } from '../types'
 
@@ -42,6 +43,29 @@ async function respond(reqId: string, action: 'accept' | 'reject') {
   try {
     await communityApi.respondPartner(reqId, action)
     toast(action === 'accept' ? '已接受' : '已拒绝')
+    await load()
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
+// ---- 我的搭子：周报对比 / 学习提醒 / 一键解绑 ----
+const weeklyTarget = ref<PartnerItem | null>(null)
+
+function openWeekly(p: PartnerItem) {
+  weeklyTarget.value = p
+}
+
+async function remind(p: PartnerItem) {
+  try {
+    await communityApi.partnerRemind(p.userId)
+    toast('已发送学习提醒')
+  } catch (e: any) { toast(e?.message || '操作失败') }
+}
+
+async function unbind(p: PartnerItem) {
+  if (!window.confirm(`确认与「${p.userName}」解除搭子关系？`)) return
+  try {
+    await communityApi.unbindPartner(p.userId)
+    toast('已解除搭子关系')
     await load()
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
@@ -134,6 +158,30 @@ async function addPartner(userId: string) {
         </div>
       </div>
 
+      <!-- 我的搭子 -->
+      <div class="card space-y-2">
+        <div class="flex items-center">
+          <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">我的搭子（{{ partners.length }}/3）</div>
+          <button class="ml-auto btn-ghost !text-xs" @click="router.push('/partners/shares')">搭子分享 →</button>
+        </div>
+        <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">还没有搭子，去下方推荐里找一个吧</div>
+        <div v-for="p in partners" :key="p.reqId" class="text-xs border-b border-slate-50 dark:border-slate-700 last:border-0 py-1.5 space-y-1.5">
+          <div class="flex items-center gap-2 cursor-pointer group" @click="router.push(`/profile/${p.userId}`)">
+            <UserAvatar :name="p.userName" :avatar="p.userAvatar" size="sm" />
+            <span class="font-medium group-hover:text-primary-500">{{ p.userName }}</span>
+          </div>
+          <div class="flex flex-wrap gap-1">
+            <button class="btn-ghost !text-xs" @click="openWeekly(p)">周报</button>
+            <button class="btn-ghost !text-xs" @click="remind(p)">提醒</button>
+            <button class="btn-ghost !text-xs" @click="router.push(`/partners/study?partner=${p.userId}`)">开黑</button>
+            <button class="btn-ghost !text-xs" @click="router.push(`/partners/plans?partner=${p.userId}`)">计划</button>
+            <button class="btn-ghost !text-xs" @click="router.push(`/partners/reviews?partner=${p.userId}`)">复盘</button>
+            <button class="btn-ghost !text-xs" @click="router.push(`/messages/${p.userId}`)">私信</button>
+            <button class="btn-ghost !text-xs text-red-400" @click="unbind(p)">解绑</button>
+          </div>
+        </div>
+      </div>
+
       <!-- 推荐 -->
       <div class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">为你推荐</div>
@@ -149,19 +197,10 @@ async function addPartner(userId: string) {
           <button class="ml-auto btn-primary !text-xs shrink-0" @click="send(s.userId)">加搭子</button>
         </div>
       </div>
-
-      <!-- 我的搭子 -->
-      <div class="card space-y-2">
-        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">我的搭子（{{ partners.length }}）</div>
-        <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">还没有搭子，去上方推荐里找一个吧</div>
-        <div v-for="p in partners" :key="p.reqId" class="flex items-center gap-2 text-xs">
-          <div class="flex items-center gap-2 cursor-pointer group" @click="router.push(`/profile/${p.userId}`)">
-            <UserAvatar :name="p.userName" :avatar="p.userAvatar" size="sm" />
-            <span class="font-medium group-hover:text-primary-500">{{ p.userName }}</span>
-          </div>
-          <button class="ml-auto btn-ghost !text-xs" @click="router.push(`/profile/${p.userId}`)">看主页</button>
-        </div>
-      </div>
     </template>
+
+    <!-- 搭子周报对比弹窗 -->
+    <PartnerWeeklyModal v-if="weeklyTarget" :partner-id="weeklyTarget.userId" :partner-name="weeklyTarget.userName"
+      @close="weeklyTarget = null" />
   </div>
 </template>
