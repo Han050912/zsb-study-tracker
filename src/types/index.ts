@@ -185,7 +185,7 @@ export interface Todo {
 }
 
 /** 社区通知类型 */
-export type NotificationType = 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system'
+export type NotificationType = 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system' | 'partner'
 
 /** 通知点击跳转目标类型 */
 export type NotificationTargetType = 'post' | 'user' | 'message' | 'team' | 'circle' | 'partner'
@@ -339,6 +339,16 @@ export interface CommunityNotification {
   content: string
   isRead: boolean
   createdAt: number // Unix 秒
+  /** 触发者与我的关系（无 actor_id 时为 none） */
+  relation?: RelationStatus
+  /** 帖子缩略图路径（对应 imageUrls 首图加 ?thumb=1，无图帖为 undefined） */
+  postThumb?: string
+  /** 评论文字（type='comment' 时） */
+  commentContent?: string
+  /** 当前用户是否已赞该评论 */
+  commentLikedByMe?: boolean
+  /** 评论点赞数 */
+  commentLikesCount?: number
 }
 
 /** 今日打卡榜条目 */

@@ -91,6 +91,7 @@ function mapComment(r: any) {
 }
 
 function mapNotification(r: any) {
+  const thumbs = r.image_urls ? parseStrArray(r.image_urls) : []
   return {
     id: r.id,
     type: r.type,
@@ -103,7 +104,12 @@ function mapNotification(r: any) {
     targetId: r.target_id ?? undefined,
     content: r.content,
     isRead: !!r.is_read,
-    createdAt: r.created_at
+    createdAt: r.created_at,
+    relation: r.relation ?? 'none',
+    postThumb: thumbs.length ? thumbs[0] + '?thumb=1' : undefined,
+    commentContent: r.comment_content ?? undefined,
+    commentLikedByMe: !!r.comment_liked_by_me,
+    commentLikesCount: r.comment_likes_count ?? 0
   }
 }
 
@@ -1823,12 +1829,17 @@ export function registerCommunityRoutes() {
     const type = url.searchParams.get('type') || ''
 
     let sql = `
-      SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name, s.avatar AS actor_avatar
+      SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name, s.avatar AS actor_avatar,
+        p.image_urls, c.content AS comment_content, c.likes_count AS comment_likes_count,
+        (cl.user_id IS NOT NULL) AS comment_liked_by_me
       FROM community_notifications n
       LEFT JOIN users u ON u.id = n.actor_id
       LEFT JOIN user_settings s ON s.user_id = n.actor_id
+      LEFT JOIN community_posts p ON p.id = n.post_id
+      LEFT JOIN community_comments c ON c.id = n.comment_id
+      LEFT JOIN community_likes cl ON cl.target_type = 'comment' AND cl.target_id = n.comment_id AND cl.user_id = ?
       WHERE n.user_id = ? AND n.type != 'message'`
-    const params: unknown[] = [ctx.userId]
+    const params: unknown[] = [ctx.userId, ctx.userId]
     if (type) {
       sql += ' AND n.type = ?'
       params.push(type)
@@ -1841,7 +1852,28 @@ export function registerCommunityRoutes() {
     sql += ' ORDER BY n.created_at DESC, n.id DESC LIMIT ?'
     params.push(limit + 1)
 
-    const rows = await all(ctx.env, sql, ...params)
+    const rows = await all<any>(ctx.env, sql, ...params)
+
+    // 关系计算：按 actor_id 去重批量查询双向关注，复用三元表达式得 relation
+    const actorIds = [...new Set(rows.map((r: any) => r.actor_id).filter(Boolean))] as string[]
+    let myFollowing = new Set<string>(), myFollowers = new Set<string>()
+    if (actorIds.length) {
+      const ph = actorIds.map(() => '?').join(',')
+      const [a, b] = await Promise.all([
+        all<{ followee_id: string }>(ctx.env,
+          `SELECT followee_id FROM user_follows WHERE follower_id = ? AND followee_id IN (${ph})`, ctx.userId, ...actorIds),
+        all<{ follower_id: string }>(ctx.env,
+          `SELECT follower_id FROM user_follows WHERE followee_id = ? AND follower_id IN (${ph})`, ctx.userId, ...actorIds)
+      ])
+      myFollowing = new Set(a.map(r => r.followee_id))
+      myFollowers = new Set(b.map(r => r.follower_id))
+    }
+    for (const r of rows) {
+      if (!r.actor_id) { r.relation = 'none'; continue }
+      const followedByMe = myFollowing.has(r.actor_id)
+      const followsMe = myFollowers.has(r.actor_id)
+      r.relation = followedByMe && followsMe ? 'mutual' : followedByMe ? 'following' : followsMe ? 'follower' : 'none'
+    }
     // 未读私信由「消息」模块单独承载（messages/unread-count），此处通知未读排除 message 避免重复计数
     const unread = await first<{ n: number }>(ctx.env,
       "SELECT COUNT(*) AS n FROM community_notifications WHERE user_id = ? AND is_read = 0 AND type != 'message'", ctx.userId)

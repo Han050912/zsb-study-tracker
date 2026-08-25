@@ -43,7 +43,7 @@ onMounted(async () => {
   }
 })
 
-/** 滚动定位并高亮指定评论（通知跳转锚定；二级回复先展开其一级评论再定位） */
+/** 滚动定位并高亮指定评论（通知跳转锚定；二级回复先展开其一级评论再定位；query reply=1 时自动进入回复态） */
 async function anchorToComment(id: string) {
   const c = findComment(id)
   if (!c) return
@@ -51,6 +51,7 @@ async function anchorToComment(id: string) {
   highlightCommentId.value = id
   await nextTick()
   document.getElementById(`comment-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  if (route.query.reply === '1') reply(c)
 }
 
 const isMine = computed(() => post.value?.userId === sessionUser.value?.id)
