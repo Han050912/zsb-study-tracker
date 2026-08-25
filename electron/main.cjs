@@ -167,14 +167,41 @@ function setupAutoUpdater() {
  * 桌面原生通知（学习提醒等），与浏览器端共用 src/services/notify.ts 一套逻辑。
  * 模块顶层注册：不依赖 autoUpdater，开发模式下桌面端同样可弹提醒。
  */
-ipcMain.on('notify:show', (_e, payload) => {
+ipcMain.on('notify:show', async (_e, payload) => {
   if (!Notification.isSupported()) return
-  const { title, body } = payload || {}
+  const { title, body, icon } = payload || {}
   if (!title) return
+  // 头像图标：data URL 直接解析；http(s) URL 由主进程 net.fetch 下载（不受渲染进程 CORS 限制）；失败降级默认图标
+  let iconImage
+  if (icon) {
+    const s = String(icon)
+    if (s.startsWith('data:')) {
+      try {
+        const img = nativeImage.createFromDataURL(s)
+        if (!img.isEmpty()) iconImage = img
+      } catch (e) {
+        console.error('[notify] createFromDataURL 失败:', e)
+      }
+    } else if (/^https?:\/\//.test(s)) {
+      try {
+        const res = await net.fetch(s)
+        if (res.ok) {
+          const buf = Buffer.from(await res.arrayBuffer())
+          const img = nativeImage.createFromBuffer(buf)
+          if (!img.isEmpty()) iconImage = img
+        } else {
+          console.error('[notify] net.fetch 头像失败, HTTP:', res.status)
+        }
+      } catch (e) {
+        console.error('[notify] net.fetch 下载头像异常:', e)
+      }
+    }
+  }
   const n = new Notification({
     title: String(title),
     body: String(body || ''),
-    silent: false
+    silent: false,
+    ...(iconImage ? { icon: iconImage } : {})
   })
   // 点击通知时唤起主窗口，便于用户直接进入学习
   n.on('click', () => {
@@ -310,6 +337,8 @@ function createTray() {
 
 function init() {
   app.setName(APP_NAME)
+  // Windows 通知（含图标）依赖稳定的 AppUserModelID；dev 环境未打包时默认值会导致通知图标不显示
+  app.setAppUserModelId('com.zsb.study.helper')
   if (!isDev) registerAppProtocol()
   createSplash()
   createMainWindow()

@@ -33,18 +33,55 @@ export async function requestNotifyPermission(): Promise<NotifyPermission> {
   }
 }
 
+/** 生成首字母渐变头像 data URL（用户未设置头像时兜底，与 UserAvatar 视觉一致） */
+function buildInitialIcon(name: string): string {
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = 128
+    canvas.height = 128
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return ''
+    const grad = ctx.createLinearGradient(0, 0, 128, 128)
+    grad.addColorStop(0, '#6366f1')
+    grad.addColorStop(1, '#4f46e5')
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, 128, 128)
+    ctx.fillStyle = '#ffffff'
+    ctx.font = 'bold 64px system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText((name || '升').trim().slice(0, 1).toUpperCase(), 64, 68)
+    return canvas.toDataURL('image/png')
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 构建通知图标。有头像时返回头像完整 URL（由 Electron 主进程 net.fetch 下载，绕开渲染进程 CORS 限制）；
+ * 无头像时返回首字母渐变头像 data URL。
+ * @param name      用户昵称（生成首字母头像用）
+ * @param avatarUrl 头像完整 URL（无则 undefined）
+ */
+export function buildAvatarIcon(name: string, avatarUrl?: string): string {
+  return avatarUrl || buildInitialIcon(name)
+}
+
 /**
  * 弹出一条系统通知。两端统一入口。
+ * @param title 通知标题
+ * @param body  通知正文
+ * @param icon  通知图标：头像完整 URL 或 data URL（缺省用系统默认图标；可用 buildAvatarIcon 生成）
  * 返回是否成功弹出（浏览器端未授权时返回 false，调用方可用 toast 兜底提示）。
  */
-export function sendNotification(title: string, body: string): boolean {
+export function sendNotification(title: string, body: string, icon?: string): boolean {
   if (isDesktopNotify()) {
-    window.desktopNotify!.show(title, body)
+    window.desktopNotify!.show(title, body, icon)
     return true
   }
   if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
     try {
-      new Notification(title, { body })
+      new Notification(title, { body, icon })
       return true
     } catch {
       return false
