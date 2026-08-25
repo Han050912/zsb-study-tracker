@@ -908,8 +908,8 @@ export function registerCommunityRoutes() {
     const rows = await all<any>(ctx.env,
       `SELECT * FROM community_messages WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ${limit + 1}`, ...params)
     const items = rows.slice(0, limit)
-    // 标为已读（对方发来的未读消息）
-    await run(ctx.env,
+    // 标为已读（对方发来的未读消息），返回本次标记数量供前端即时扣减全局未读计数
+    const markRes = await run(ctx.env,
       'UPDATE community_messages SET is_read = 1 WHERE from_id = ? AND to_id = ? AND is_read = 0', peerId, ctx.userId)
     return Response.json({
       messages: items.map(r => ({
@@ -918,7 +918,8 @@ export function registerCommunityRoutes() {
         // 打开记录即已读：对方发来的消息在本次返回中即视为已读（与上方 UPDATE 同步）
         isRead: r.from_id === peerId ? true : !!r.is_read, createdAt: r.created_at, fromMe: r.from_id === ctx.userId
       })),
-      nextCursor: rows.length > limit ? String(items[items.length - 1].created_at) : null
+      nextCursor: rows.length > limit ? String(items[items.length - 1].created_at) : null,
+      markedRead: markRes.meta.changes
     })
   })
 

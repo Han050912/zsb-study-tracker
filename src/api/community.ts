@@ -241,7 +241,7 @@ export const communityApi = {
     const params = new URLSearchParams()
     if (cursor) params.set('cursor', cursor)
     const qs = params.toString()
-    return request<{ messages: CommunityMessage[]; nextCursor: string | null }>(
+    return request<{ messages: CommunityMessage[]; nextCursor: string | null; markedRead: number }>(
       `/api/community/messages/with/${peerId}${qs ? `?${qs}` : ''}`)
   },
   /** 发送私信 */

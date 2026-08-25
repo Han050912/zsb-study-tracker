@@ -29,6 +29,9 @@ const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 const peerId = route.params.peerId as string
 
+/** 「打招呼」自动发送的问候语 */
+const GREETING = '你好，很高兴认识你'
+
 const messages = ref<CommunityMessage[]>([]) // 服务端返回倒序，渲染时正序
 const nextCursor = ref<string | null>(null)
 const peerName = ref('')
@@ -48,6 +51,8 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 async function load(reset = false) {
   try {
     const res = await communityApi.messagesWith(peerId, reset ? null : nextCursor.value)
+    // 打开/刷新即已读对方消息：本次标记数即时同步全局未读计数，无需等轮询
+    if (res.markedRead > 0) window.dispatchEvent(new CustomEvent('message:read', { detail: res.markedRead }))
     if (reset) {
       // 刷新最新一页：保留已向上翻页加载的更早历史（否则 5s 轮询会把历史冲掉）；
       // 更早历史必然比最新一页更旧，直接拼接在后面仍保持倒序
@@ -106,6 +111,15 @@ function onVisibilityChange() {
 onMounted(async () => {
   await load(true)
   await scrollToBottom()
+  // 「打招呼」跳转：自动发送一条问候语（清除 query 防重复触发）
+  if (route.query.greet === '1' && !messages.value.some(m => m.fromMe && m.content === GREETING)) {
+    try {
+      const m = await communityApi.sendMessage(peerId, GREETING)
+      messages.value.unshift(m)
+      await scrollToBottom()
+    } catch { /* 发送失败静默忽略，用户可手动发消息 */ }
+  }
+  if (route.query.greet) router.replace({ query: {} })
   startPolling()
   document.addEventListener('visibilitychange', onVisibilityChange)
   updateThumb()
