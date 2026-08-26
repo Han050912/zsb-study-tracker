@@ -188,7 +188,7 @@ export interface Todo {
 export type NotificationType = 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system' | 'partner'
 
 /** 通知点击跳转目标类型 */
-export type NotificationTargetType = 'post' | 'user' | 'message' | 'team' | 'circle' | 'partner'
+export type NotificationTargetType = 'post' | 'user' | 'message' | 'team' | 'circle' | 'partner' | 'partner_share' | 'partner_comment' | 'partner_study' | 'partner_plan' | 'partner_review' | 'partner_remind' | 'partner_unbind' | 'partner_weekly'
 
 /** 设置 */
 export interface Settings {

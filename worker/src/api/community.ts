@@ -1351,10 +1351,10 @@ export function registerCommunityRoutes() {
 
   // 用户发布的帖子（公开广场帖口径：排除圈子帖/知识点讨论帖；游标分页，与 feed latest 同模式）
   on('GET', '/api/community/users/:id/posts', false, async (ctx) => {
-    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
-      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    // 帖子默认对外可见：仅校验目标用户存在，不按主页可见性过滤（主页可见性只控主页访问，不控帖子）
+    const target = await first<{ id: string }>(ctx.env,
+      'SELECT u.id FROM users u WHERE u.id = ?', ctx.params.id)
     if (!target) throw new HttpError(404, '用户不存在')
-    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
     const url = new URL(ctx.request.url)
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const c = parseCursor(url.searchParams.get('cursor') || '')

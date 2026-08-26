@@ -16,7 +16,8 @@ const iconCls = computed(() => isAchievement.value
   ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-500 dark:text-amber-400'
   : 'bg-sky-50 dark:bg-sky-900/30 text-sky-500 dark:text-sky-400')
 
-const ROUTES: Record<NotificationTargetType, string> = {
+// 仅覆盖 GenericItem 实际处理的 targetType 子集；搭子细分类型（partner_share/comment/study/plan/review/remind/unbind）走 NotificationPartnerItem
+const ROUTES: Partial<Record<NotificationTargetType, string>> = {
   post: '/community/post', user: '/profile', message: '/messages', team: '/teams', circle: '/community/circles', partner: '/community/partners'
 }
 const STATIC: NotificationTargetType[] = ['partner']
