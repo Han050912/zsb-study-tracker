@@ -316,8 +316,8 @@ export const communityApi = {
     request<{ ok: boolean }>(`/api/community/partners/${userId}/remind`, { method: 'POST' }),
 
   // ========== 错题/笔记定向分享 ==========
-  createPartnerShare: (partnerId: string, itemType: 'error' | 'note', itemId: string) =>
-    request<{ id: string }>('/api/partner-shares', { method: 'POST', body: JSON.stringify({ partnerId, itemType, itemId }) }),
+  createPartnerShare: (partnerId: string, itemType: 'error' | 'note', itemId: string, force = false) =>
+    request<{ id: string; duplicate?: boolean }>('/api/partner-shares', { method: 'POST', body: JSON.stringify({ partnerId, itemType, itemId, force }) }),
   partnerShares: () =>
     request<{ received: PartnerShareItem[]; sent: PartnerShareItem[] }>('/api/partner-shares'),
   partnerShare: (id: string) => request<PartnerShareDetail>(`/api/partner-shares/${id}`),
@@ -325,6 +325,18 @@ export const communityApi = {
     request<{ id: string }>(`/api/partner-shares/${shareId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
   deleteShare: (id: string) =>
     request<{ ok: boolean }>(`/api/partner-shares/${id}`, { method: 'DELETE' }),
+  /** 分享 PDF 原文（受分享权限保护，供预览渲染） */
+  partnerSharePdf: async (id: string): Promise<Uint8Array> => {
+    const res = await authFetch(`/api/partner-shares/${id}/pdf`)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: '加载 PDF 失败' }))
+      throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })
+    }
+    return new Uint8Array(await res.arrayBuffer())
+  },
+  /** 复制分享的笔记到我的笔记，返回新笔记 */
+  copyPartnerShare: (id: string, subjectId: string) =>
+    request<Note>(`/api/partner-shares/${id}/copy`, { method: 'POST', body: JSON.stringify({ subjectId }) }),
 
   // ========== 双人番茄自习室 ==========
   createStudySession: (partnerId: string, focusMinutes?: number, breakMinutes?: number) =>

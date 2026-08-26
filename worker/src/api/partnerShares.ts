@@ -17,21 +17,35 @@ async function assertShareEnabled(env: Env, ownerId: string) {
 /** 获取分享项内容（错题/笔记），归属校验 */
 async function getItem(env: Env, itemType: string, itemId: string, ownerId: string) {
   if (itemType === 'error') {
-    // error_questions 实际列为 content（题目）/ answer（答案）/ review_count（复习次数），无 note 列，
-    // 此处以别名映射到前端期望的 question/answer/wrong_count 字段
+    // error_questions 实际列为 content（题目）/ answer（答案）/ image（题目配图，base64）/ review_count（复习次数），
+    // 此处以别名映射到前端期望的 question/answer/image/wrong_count 字段
     const r = await first<{
-      id: string; question: string; answer: string; wrong_count: number; subject_id: string
+      id: string; question: string; answer: string; image: string | null; wrong_count: number; subject_id: string
     }>(env,
-      `SELECT id, content AS question, answer, review_count AS wrong_count, subject_id FROM error_questions WHERE id = ? AND user_id = ?`,
+      `SELECT id, content AS question, answer, image, review_count AS wrong_count, subject_id FROM error_questions WHERE id = ? AND user_id = ?`,
       itemId, ownerId)
     if (!r) throw new HttpError(404, '错题不存在')
     return r
   }
   if (itemType === 'note') {
-    const r = await first<{ id: string; title: string; content: string }>(env,
-      `SELECT id, title, content FROM notes WHERE id = ? AND user_id = ?`, itemId, ownerId)
+    const r = await first<{ id: string; title: string; content: string; subject_id: string; tags: string; type: string | null }>(env,
+      `SELECT id, title, content, subject_id, tags, type FROM notes WHERE id = ? AND user_id = ?`, itemId, ownerId)
     if (!r) throw new HttpError(404, '笔记不存在')
-    return r
+    let tags: string[] = []
+    try {
+      tags = JSON.parse(r.tags || '[]')
+      if (!Array.isArray(tags)) tags = []
+    } catch {
+      tags = []
+    }
+    return {
+      id: r.id,
+      title: r.title,
+      content: r.content,
+      subjectId: r.subject_id,
+      tags,
+      type: r.type === 'pdf' ? 'pdf' : undefined
+    }
   }
   throw new HttpError(400, 'itemType 需为 error 或 note')
 }
@@ -44,6 +58,7 @@ export function registerPartnerShareRoutes() {
     const partnerId = typeof b?.partnerId === 'string' ? b.partnerId : ''
     const itemType = typeof b?.itemType === 'string' ? b.itemType : ''
     const itemId = typeof b?.itemId === 'string' ? b.itemId : ''
+    const force = b?.force === true
     if (!partnerId || !itemId) throw new HttpError(400, 'partnerId 与 itemId 必填')
     if (partnerId === ctx.userId) throw new HttpError(400, '不能分享给自己')
 
@@ -51,11 +66,11 @@ export function registerPartnerShareRoutes() {
     await assertShareEnabled(ctx.env, ctx.userId)
     await getItem(ctx.env, itemType, itemId, ctx.userId)
 
-    // 防止重复分享同一内容给同一搭子
+    // 防止重复分享同一内容给同一搭子：未强制时返回重复信号由前端二次确认；force 时允许重复分享
     const dup = await first<{ id: string }>(ctx.env,
       `SELECT id FROM partner_shares WHERE owner_id = ? AND partner_id = ? AND item_type = ? AND item_id = ?`,
       ctx.userId, partnerId, itemType, itemId)
-    if (dup) return Response.json({ id: dup.id })
+    if (dup && !force) return Response.json({ id: dup.id, duplicate: true })
 
     const id = uid()
     await batch(ctx.env, [
@@ -64,7 +79,7 @@ export function registerPartnerShareRoutes() {
       ).bind(id, ctx.userId, partnerId, itemType, itemId, nowSec()),
       notifyStatement(ctx.env, {
         userId: partnerId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner', targetId: id,
+        targetType: 'partner_share', targetId: id,
         content: `${await displayName(ctx.env, ctx.userId)} 分享了一篇${itemType === 'error' ? '错题' : '笔记'}给你`
       })
     ])
@@ -140,6 +155,40 @@ export function registerPartnerShareRoutes() {
     })
   })
 
+  // 分享 PDF 原文读取（接收者无 owner 的 pdf_chunks 直读权限，经此代理返回字节）
+  on('GET', '/api/partner-shares/:id/pdf', true, async (ctx) => {
+    const share = await first<{ owner_id: string; partner_id: string; item_type: string; item_id: string }>(ctx.env,
+      `SELECT owner_id, partner_id, item_type, item_id FROM partner_shares WHERE id = ?`, ctx.params.id)
+    if (!share) throw new HttpError(404, '分享不存在')
+    if (share.owner_id !== ctx.userId && share.partner_id !== ctx.userId) throw new HttpError(403, '无权查看')
+    if (share.item_type !== 'note') throw new HttpError(400, '非笔记分享')
+    await assertShareEnabled(ctx.env, share.owner_id)
+
+    const note = await first<{ content: string; type: string | null }>(ctx.env,
+      `SELECT content, type FROM notes WHERE id = ? AND user_id = ?`, share.item_id, share.owner_id)
+    if (!note) throw new HttpError(404, '笔记不存在')
+    if (note.type !== 'pdf') throw new HttpError(400, '非 PDF 笔记')
+
+    const pdfId = note.content.slice(3) // 'd1:' 前缀后的 pdf_id（与前端 pdfRefOf 一致）
+    const rows = await all<{ data: ArrayBuffer }>(ctx.env,
+      `SELECT data FROM pdf_chunks WHERE user_id = ? AND pdf_id = ? ORDER BY chunk_index`, share.owner_id, pdfId)
+    if (!rows.length) throw new HttpError(404, 'PDF 文件不存在')
+
+    const chunks = rows.map((r: any) => new Uint8Array(r.data))
+    const totalLen = chunks.reduce((s, c) => s + c.byteLength, 0)
+    const buf = new Uint8Array(totalLen)
+    let offset = 0
+    for (const c of chunks) { buf.set(c, offset); offset += c.byteLength }
+
+    return new Response(buf, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Length': String(totalLen),
+        'Cache-Control': 'private, max-age=3600'
+      }
+    })
+  })
+
   // 添加批注（双人私密交流）
   on('POST', '/api/partner-shares/:id/comments', true, async (ctx) => {
     rateLimit(ctx.request, 'partner:comment', 30)
@@ -161,11 +210,60 @@ export function registerPartnerShareRoutes() {
       ).bind(id, share.id, ctx.userId, content, nowSec()),
       notifyStatement(ctx.env, {
         userId: otherId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner', targetId: share.id,
+        targetType: 'partner_comment', targetId: share.id,
         content: `${await displayName(ctx.env, ctx.userId)} 批注了你分享的内容`
       })
     ])
     return Response.json({ id }, { status: 201 })
+  })
+
+  // 复制分享的笔记到我的笔记（仅接收者；生成独立副本，PDF 同步复制分片）
+  on('POST', '/api/partner-shares/:id/copy', true, async (ctx) => {
+    rateLimit(ctx.request, 'partner:copy', 30)
+    const b = await body(ctx.request)
+    const subjectId = typeof b?.subjectId === 'string' ? b.subjectId : ''
+    if (!subjectId) throw new HttpError(400, '请选择归属科目')
+
+    const share = await first<{ owner_id: string; partner_id: string; item_type: string; item_id: string }>(ctx.env,
+      `SELECT owner_id, partner_id, item_type, item_id FROM partner_shares WHERE id = ?`, ctx.params.id)
+    if (!share) throw new HttpError(404, '分享不存在')
+    if (share.partner_id !== ctx.userId) throw new HttpError(403, '仅接收者可收藏')
+    if (share.item_type !== 'note') throw new HttpError(400, '仅笔记可收藏')
+    await assertShareEnabled(ctx.env, share.owner_id)
+
+    const note = await first<{ title: string; content: string; tags: string; type: string | null }>(ctx.env,
+      `SELECT title, content, tags, type FROM notes WHERE id = ? AND user_id = ?`, share.item_id, share.owner_id)
+    if (!note) throw new HttpError(404, '笔记不存在')
+
+    const newId = uid()
+    const isPdf = note.type === 'pdf'
+    // PDF 笔记 content 引用需指向新 pdf_id（= 新笔记 id），否则副本仍指向 owner 分片
+    const newContent = isPdf ? `d1:${newId}` : note.content
+    const stmts: D1PreparedStatement[] = [
+      ctx.env.DB.prepare(
+        `INSERT INTO notes (id, user_id, subject_id, title, content, tags, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(newId, ctx.userId, subjectId, note.title, newContent, note.tags, isPdf ? 'pdf' : null, Date.now())
+    ]
+    if (isPdf) {
+      // 复制 PDF 原文分片到新 pdf_id，保证副本与原笔记完全独立（原作者删除不影响副本）
+      const srcPdfId = note.content.slice(3) // 'd1:' 前缀后的 pdf_id
+      stmts.push(ctx.env.DB.prepare(
+        `INSERT INTO pdf_chunks (user_id, pdf_id, chunk_index, data)
+         SELECT ?, ?, chunk_index, data FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?`
+      ).bind(ctx.userId, newId, share.owner_id, srcPdfId))
+    }
+    await batch(ctx.env, stmts)
+
+    let tags: string[] = []
+    try {
+      tags = JSON.parse(note.tags || '[]')
+      if (!Array.isArray(tags)) tags = []
+    } catch {
+      tags = []
+    }
+    return Response.json({
+      id: newId, subjectId, title: note.title, content: newContent, tags, updatedAt: Date.now(), type: isPdf ? 'pdf' : undefined
+    }, { status: 201 })
   })
 
   // 删除分享（仅分享者）

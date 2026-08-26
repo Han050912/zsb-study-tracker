@@ -25,6 +25,7 @@ const routes = [
   { path: '/partners/plans', name: 'partner-plans', component: () => import('../pages/PartnerPlans.vue'), meta: { title: '协作备考计划' } },
   { path: '/partners/reviews', name: 'partner-reviews', component: () => import('../pages/PartnerReviews.vue'), meta: { title: '复盘邀约' } },
   { path: '/partners/shares', name: 'partner-shares', component: () => import('../pages/PartnerShares.vue'), meta: { title: '搭子分享' } },
+  { path: '/partners/shares/preview/:id', name: 'partner-share-preview', component: () => import('../pages/PartnerSharePreview.vue'), meta: { title: '分享预览' } },
   { path: '/messages/:peerId', name: 'message-chat', component: () => import('../pages/MessageChat.vue'), meta: { title: '消息' } },
   { path: '/community/notifications', name: 'community-notifications', component: () => import('../pages/CommunityNotifications.vue'), meta: { title: '通知中心' } },
   { path: '/admin', name: 'admin', component: () => import('../pages/AdminReports.vue'), meta: { title: '审核中心' } },

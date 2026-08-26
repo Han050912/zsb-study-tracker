@@ -759,12 +759,33 @@ export interface PartnerShareDetail {
   comments: PartnerShareComment[]
 }
 
+/** 分享详情中的笔记条目 */
+export interface PartnerShareNoteItem {
+  id: string
+  title: string
+  content: string
+  subjectId: string
+  tags: string[]
+  type?: 'pdf'
+}
+
+/** 分享详情中的错题条目（后端 SQL 别名直出，snake_case；error_questions 无 note 列） */
+export interface PartnerShareErrorItem {
+  id: string
+  question: string
+  answer?: string | null
+  image?: string | null
+  wrong_count?: number
+}
+
 /** 双人番茄自习室会话 */
 export interface PartnerStudySession {
   id: string
   status: 'active' | 'done'
   partnerId: string
   partnerName: string
+  /** 对方自定义头像相对 URL（未设置 = undefined，前端回退首字母） */
+  partnerAvatar?: string
   /** 专注时长（分钟，双方一致） */
   focusMinutes: number
   /** 休息时长（分钟，双方一致） */
