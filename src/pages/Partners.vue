@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { inject, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import PartnerWeeklyModal from '../components/partner/PartnerWeeklyModal.vue'
@@ -8,6 +8,7 @@ import { useBack } from '../composables/useBack'
 import type { PartnerSuggestion, PartnerItem, UserLookupResult } from '../types'
 
 const router = useRouter()
+const route = useRoute()
 const { goBack } = useBack()
 const toast = inject<(m: string) => void>('toast', () => {})
 const suggestions = ref<PartnerSuggestion[]>([])
@@ -15,7 +16,14 @@ const incoming = ref<PartnerItem[]>([])
 const partners = ref<PartnerItem[]>([])
 const loading = ref(false)
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  const weeklyId = typeof route.query.weekly === 'string' ? route.query.weekly : ''
+  if (weeklyId) {
+    const p = partners.value.find(x => x.userId === weeklyId)
+    if (p) openWeekly(p)
+  }
+})
 
 async function load() {
   loading.value = true

@@ -830,3 +830,14 @@ CREATE TABLE IF NOT EXISTS partner_reviews (
 );
 CREATE INDEX IF NOT EXISTS idx_pr_from ON partner_reviews(from_id, status);
 CREATE INDEX IF NOT EXISTS idx_pr_to ON partner_reviews(to_id, status);
+
+-- ========== 周报推送去重（cron 重试防重复推送） ==========
+-- 已建库升级：周报推送去重表（cron 重试防重复推送），执行一次：
+--   CREATE TABLE IF NOT EXISTS weekly_report_push_log ( week_key TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (week_key, from_id, to_id) );
+CREATE TABLE IF NOT EXISTS weekly_report_push_log (
+  week_key TEXT NOT NULL,          -- 上周一日期 YYYY-MM-DD（UTC+8）
+  from_id TEXT NOT NULL,           -- 周报数据主人
+  to_id TEXT NOT NULL,             -- 接收者
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (week_key, from_id, to_id)
+);

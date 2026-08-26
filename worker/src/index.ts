@@ -20,7 +20,7 @@ import { registerMaimemoRoutes } from './proxy/maimemo'
 import { registerWallpaperRoutes } from './proxy/wallpaper'
 import { registerReleaseRoutes } from './api/release'
 import { registerCommunityRoutes } from './api/community'
-import { registerPartnerRoutes } from './api/partners'
+import { registerPartnerRoutes, pushWeeklyReports } from './api/partners'
 import { registerPartnerShareRoutes } from './api/partnerShares'
 import { registerPartnerCollabRoutes } from './api/partnerCollab'
 import { registerAdminRoutes } from './api/admin'
@@ -86,6 +86,11 @@ export default {
       if (status === 500) console.error(e)
       return Response.json({ message }, { status, headers: cors })
     }
+  },
+
+  /** 每周一 08:00（UTC+8）触发：双向推送上周学习周报通知 */
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    await pushWeeklyReports(env)
   }
 }
 

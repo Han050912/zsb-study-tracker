@@ -6,6 +6,36 @@ import { displayName, notifyStatement } from './community'
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
+/** 周报四项统计 */
+export interface WeeklyStats {
+  minutes: number
+  problems: number
+  pomodoroMinutes: number
+  streak: number
+}
+
+/** 统计某用户在 [weekStart, weekEnd] 区间（YYYY-MM-DD）的四项学习指标 */
+async function weeklyStats(env: Env, uid: string, weekStart: string, weekEnd: string): Promise<WeeklyStats> {
+  const [study, problems, pomodoro, gam] = await Promise.all([
+    first<{ minutes: number }>(env,
+      'SELECT COALESCE(SUM(minutes), 0) AS minutes FROM study_records WHERE user_id = ? AND date >= ? AND date <= ?',
+      uid, weekStart, weekEnd),
+    first<{ total: number }>(env,
+      'SELECT COALESCE(SUM(total), 0) AS total FROM problem_sessions WHERE user_id = ? AND date >= ? AND date <= ?',
+      uid, weekStart, weekEnd),
+    first<{ minutes: number }>(env,
+      'SELECT COALESCE(SUM(minutes), 0) AS minutes FROM pomodoro_daily WHERE user_id = ? AND date >= ? AND date <= ?',
+      uid, weekStart, weekEnd),
+    first<{ streak: number }>(env, 'SELECT streak FROM gamification WHERE user_id = ?', uid)
+  ])
+  return {
+    minutes: study?.minutes ?? 0,
+    problems: problems?.total ?? 0,
+    pomodoroMinutes: pomodoro?.minutes ?? 0,
+    streak: gam?.streak ?? 0
+  }
+}
+
 /** 搭子上限：最多 3 位，防止社交泛滥 */
 const MAX_PARTNERS = 3
 
@@ -229,7 +259,7 @@ export function registerPartnerRoutes() {
     await batch(ctx.env, [
       notifyStatement(ctx.env, {
         userId: partnerId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner', targetId: ctx.userId,
+        targetType: 'partner_unbind', targetId: ctx.userId,
         content: `${await displayName(ctx.env, ctx.userId)} 解除了与你的搭子关系`
       })
     ])
@@ -256,28 +286,10 @@ export function registerPartnerRoutes() {
     const weekStart = fmt(monday)
     const weekEnd = fmt(new Date(monday.getTime() + 6 * 86400_000))
 
-    async function stats(uid: string) {
-      const [study, problems, pomodoro, gam] = await Promise.all([
-        first<{ minutes: number }>(ctx.env,
-          'SELECT COALESCE(SUM(minutes), 0) AS minutes FROM study_records WHERE user_id = ? AND date >= ? AND date <= ?',
-          uid, weekStart, weekEnd),
-        first<{ total: number }>(ctx.env,
-          'SELECT COALESCE(SUM(total), 0) AS total FROM problem_sessions WHERE user_id = ? AND date >= ? AND date <= ?',
-          uid, weekStart, weekEnd),
-        first<{ minutes: number }>(ctx.env,
-          'SELECT COALESCE(SUM(minutes), 0) AS minutes FROM pomodoro_daily WHERE user_id = ? AND date >= ? AND date <= ?',
-          uid, weekStart, weekEnd),
-        first<{ streak: number }>(ctx.env, 'SELECT streak FROM gamification WHERE user_id = ?', uid)
-      ])
-      return {
-        minutes: study?.minutes ?? 0,           // 本周学习时长（分钟）
-        problems: problems?.total ?? 0,         // 本周刷题数
-        pomodoroMinutes: pomodoro?.minutes ?? 0, // 本周番茄专注时长（分钟）
-        streak: gam?.streak ?? 0                // 连续打卡天数
-      }
-    }
-
-    const [mine, theirs] = await Promise.all([stats(ctx.userId), stats(partnerId)])
+    const [mine, theirs] = await Promise.all([
+      weeklyStats(ctx.env, ctx.userId, weekStart, weekEnd),
+      weeklyStats(ctx.env, partnerId, weekStart, weekEnd)
+    ])
     const partnerName = await displayName(ctx.env, partnerId)
     return Response.json({ shared: true, weekStart, weekEnd, partnerName, mine, theirs })
   })
@@ -297,10 +309,78 @@ export function registerPartnerRoutes() {
     await batch(ctx.env, [
       notifyStatement(ctx.env, {
         userId: partnerId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner', targetId: ctx.userId,
+        targetType: 'partner_remind', targetId: ctx.userId,
         content: `${myName} 提醒你：该学习啦，一起加油～`
       })
     ])
     return Response.json({ ok: true })
   })
+}
+
+/** 上周区间（UTC+8，周一~周日）+ 去重 weekKey（上周一日期） */
+function lastWeekRange() {
+  const now = new Date(Date.now() + 8 * 3600_000)
+  const daysSinceMonday = (now.getUTCDay() + 6) % 7
+  const thisMonday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysSinceMonday))
+  const lastMonday = new Date(thisMonday.getTime() - 7 * 86400_000)
+  const lastSunday = new Date(lastMonday.getTime() + 6 * 86400_000)
+  const fmt = (d: Date) => d.toISOString().slice(0, 10)
+  return { weekStart: fmt(lastMonday), weekEnd: fmt(lastSunday), weekKey: fmt(lastMonday) }
+}
+
+/** 周报通知文案（带四项数据摘要） */
+function weeklyReportContent(name: string, s: WeeklyStats): string {
+  return `${name} 上周学习周报：学习 ${s.minutes} 分钟 · 连续打卡 ${s.streak} 天 · 刷题 ${s.problems} 道 · 番茄 ${s.pomodoroMinutes} 分钟`
+}
+
+/** 每周一 cron 触发：双向推送上周学习周报通知（去重 INSERT 与通知 INSERT 同批原子写入，避免标记与落库脱节） */
+export async function pushWeeklyReports(env: Env): Promise<void> {
+  const { weekStart, weekEnd, weekKey } = lastWeekRange()
+  const rels = await all<{ from_id: string; to_id: string }>(env,
+    `SELECT from_id, to_id FROM study_partners WHERE status = 'accepted'`)
+
+  const stmts: D1PreparedStatement[] = []
+  const pushLog = (fromId: string, toId: string) => env.DB.prepare(
+    `INSERT OR IGNORE INTO weekly_report_push_log (week_key, from_id, to_id, created_at) VALUES (?, ?, ?, ?)`
+  ).bind(weekKey, fromId, toId, nowSec())
+
+  for (const r of rels) {
+    // 我的周报 → 推给搭子
+    const pushedAB = await first(env,
+      `SELECT 1 AS x FROM weekly_report_push_log WHERE week_key = ? AND from_id = ? AND to_id = ?`,
+      weekKey, r.from_id, r.to_id)
+    if (!pushedAB) {
+      const [s, name] = await Promise.all([
+        weeklyStats(env, r.from_id, weekStart, weekEnd),
+        displayName(env, r.from_id)
+      ])
+      stmts.push(pushLog(r.from_id, r.to_id))
+      stmts.push(notifyStatement(env, {
+        userId: r.to_id, type: 'partner', actorId: r.from_id,
+        targetType: 'partner_weekly', targetId: r.from_id,
+        content: weeklyReportContent(name, s)
+      }))
+    }
+    // 搭子的周报 → 推给我
+    const pushedBA = await first(env,
+      `SELECT 1 AS x FROM weekly_report_push_log WHERE week_key = ? AND from_id = ? AND to_id = ?`,
+      weekKey, r.to_id, r.from_id)
+    if (!pushedBA) {
+      const [s, name] = await Promise.all([
+        weeklyStats(env, r.to_id, weekStart, weekEnd),
+        displayName(env, r.to_id)
+      ])
+      stmts.push(pushLog(r.to_id, r.from_id))
+      stmts.push(notifyStatement(env, {
+        userId: r.from_id, type: 'partner', actorId: r.to_id,
+        targetType: 'partner_weekly', targetId: r.to_id,
+        content: weeklyReportContent(name, s)
+      }))
+    }
+  }
+
+  // 分块写入（每批 ≤50，避免 D1 batch 语句数上限）
+  for (let i = 0; i < stmts.length; i += 50) {
+    await batch(env, stmts.slice(i, i + 50))
+  }
 }

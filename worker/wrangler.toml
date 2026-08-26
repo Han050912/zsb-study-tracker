@@ -34,3 +34,7 @@ bucket_name = "zsb-study-images"
 #   若需本地覆盖（例如本地调试），可在 .dev.vars 中写 CF_ACCOUNT_ID=xxx。
 #   注意：wrangler.toml 的 account_id 不会自动注入运行时 env，需在 .dev.vars 显式提供。
 CF_ACCOUNT_ID = "f56530b741377e91f44791c2aecd5855"
+
+# 每周一 08:00（UTC+8）＝ UTC 周一 00:00：双向推送上周学习周报
+[triggers]
+crons = ["0 0 * * 1"]
