@@ -761,6 +761,15 @@ CREATE INDEX IF NOT EXISTS idx_pscomments_share ON partner_share_comments(share_
 -- 已建库升级：番茄钟联动（时长字段 + idle 状态），执行一次：
 --   ALTER TABLE partner_study_sessions ADD COLUMN focus_minutes INTEGER NOT NULL DEFAULT 25;
 --   ALTER TABLE partner_study_sessions ADD COLUMN break_minutes INTEGER NOT NULL DEFAULT 5;
+-- 已建库升级：开黑监督（在线时长 + 结束时间），执行一次：
+--   ALTER TABLE partner_study_sessions ADD COLUMN ended_at INTEGER;
+--   ALTER TABLE partner_study_sessions ADD COLUMN from_online_seconds INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE partner_study_sessions ADD COLUMN to_online_seconds INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：番茄钟计时持久化（后台继续/暂停 + 刷新恢复），执行一次：
+--   ALTER TABLE partner_study_sessions ADD COLUMN from_elapsed_seconds INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE partner_study_sessions ADD COLUMN to_elapsed_seconds INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE partner_study_sessions ADD COLUMN from_running INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE partner_study_sessions ADD COLUMN to_running INTEGER NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS partner_study_sessions (
   id TEXT PRIMARY KEY,
   from_id TEXT NOT NULL REFERENCES users(id),    -- 发起人
@@ -772,6 +781,13 @@ CREATE TABLE IF NOT EXISTS partner_study_sessions (
   to_state TEXT NOT NULL DEFAULT 'idle',         -- 搭子状态
   from_minutes INTEGER NOT NULL DEFAULT 0,       -- 发起人累计专注分钟
   to_minutes INTEGER NOT NULL DEFAULT 0,         -- 搭子累计专注分钟
+  from_online_seconds INTEGER NOT NULL DEFAULT 0, -- 发起人累计在线秒数（墙钟，暂停不计）
+  to_online_seconds INTEGER NOT NULL DEFAULT 0,   -- 搭子累计在线秒数
+  ended_at INTEGER,                               -- 会话结束时间（status 置 done 时写入）
+  from_elapsed_seconds INTEGER NOT NULL DEFAULT 0, -- 发起人当前阶段已消耗秒数
+  to_elapsed_seconds INTEGER NOT NULL DEFAULT 0,   -- 搭子当前阶段已消耗秒数
+  from_running INTEGER NOT NULL DEFAULT 0,          -- 发起人是否在计时（1=计时中，0=暂停）
+  to_running INTEGER NOT NULL DEFAULT 0,            -- 搭子是否在计时
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

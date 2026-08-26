@@ -180,7 +180,8 @@ watch(
 
 const dndActive = computed(() => isDndActive(store.settings))
 
-const isPomodoro = computed(() => route.path === '/pomodoro')
+// 全屏沉浸页：番茄钟 + 开黑自习室（进入后隐藏全局导航，实现真正全屏）
+const isFullscreenPage = computed(() => route.path === '/pomodoro' || route.path === '/partners/study')
 const isAuthPage = computed(() => route.path === '/login')
 // 笔记页打开具体笔记时隐藏右上角头像浮层，把顶部右侧让给编辑工具栏
 const isNotesEditing = computed(() =>
@@ -240,7 +241,7 @@ function isNavActive(path: string) {
   if (path === '/') return route.path === '/'
   return route.path === path || route.path.startsWith(path + '/')
 }
-const hideNav = computed(() => isPomodoro.value || isAuthPage.value)
+const hideNav = computed(() => isFullscreenPage.value || isAuthPage.value)
 const showOnboarding = computed(() => isLoggedIn.value && !isAuthPage.value && !store.settings.onboarded)
 
 // Electron IPC: 托盘菜单触发页面导航

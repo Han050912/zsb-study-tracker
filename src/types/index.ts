@@ -773,6 +773,26 @@ export interface PartnerStudySession {
   myMinutes: number
   partnerState: 'idle' | 'focus' | 'break' | 'done'
   partnerMinutes: number
+  /** 我的累计在线秒数（墙钟，暂停不计入） */
+  myOnlineSeconds: number
+  /** 对方累计在线秒数 */
+  partnerOnlineSeconds: number
+  /** 我的当前阶段已消耗秒数（用于刷新/重进恢复剩余） */
+  myElapsedSeconds: number
+  /** 对方是否正在计时（true=计时中，false=暂停/未开始） */
+  partnerRunning: boolean
+}
+
+/** 历史开黑记录 */
+export interface PartnerStudyRecord {
+  id: string
+  partnerId: string
+  partnerName: string
+  partnerAvatar?: string
+  startedAt: number // Unix 秒
+  endedAt: number   // Unix 秒
+  myOnlineSeconds: number
+  partnerOnlineSeconds: number
 }
 
 /** 协作备考计划列表项 */

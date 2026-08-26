@@ -84,7 +84,7 @@ const KEEPALIVE_MAX_BYTES = 60_000
  * 页面卸载（beforeunload）时的兜底推送：keepalive 让请求在页面关闭后继续完成。
  * 仅用于全量同步保存，不读取响应。
  */
-export function requestKeepalive(path: string, body: unknown): void {
+export function requestKeepalive(path: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): void {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (isDesktop) {
     const token = getToken()
@@ -97,7 +97,7 @@ export function requestKeepalive(path: string, body: unknown): void {
     return
   }
   fetch(`${API_BASE}${path}`, {
-    method: 'POST', headers, body: payload, keepalive: true,
+    method, headers, body: payload, keepalive: true,
     ...(isDesktop ? {} : { credentials: 'include' })
   }).catch(() => { /* 卸载兜底，失败无法重试 */ })
 }

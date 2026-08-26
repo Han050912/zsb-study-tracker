@@ -1,7 +1,7 @@
 import { request, authFetch, API_BASE, handleUnauthorized } from './client'
 import { compressImage } from '../utils/imageCompress'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, NotificationType, PartnerItem, PartnerPlan, PartnerPlanDetail, PartnerReview, PartnerShareDetail, PartnerShareItem, PartnerStudySession, PartnerSuggestion, PartnerWeeklyReport, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserLookupResult, UserStudyStats, WeeklyReport
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, Note, NotificationType, PartnerItem, PartnerPlan, PartnerPlanDetail, PartnerReview, PartnerShareDetail, PartnerShareItem, PartnerStudyRecord, PartnerStudySession, PartnerSuggestion, PartnerWeeklyReport, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserLookupResult, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -333,10 +333,12 @@ export const communityApi = {
     request<{ session: PartnerStudySession | null }>('/api/partner-study/sessions/active'),
   studySession: (id: string) =>
     request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`),
-  updateStudySession: (id: string, state: 'idle' | 'focus' | 'break' | 'done', minutes: number) =>
-    request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`, { method: 'PUT', body: JSON.stringify({ state, minutes }) }),
+  updateStudySession: (id: string, state: 'idle' | 'focus' | 'break' | 'done', minutes: number, onlineSeconds: number, elapsedSeconds?: number, running?: boolean) =>
+    request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`, { method: 'PUT', body: JSON.stringify({ state, minutes, onlineSeconds, elapsedSeconds, running }) }),
   endStudySession: (id: string) =>
     request<{ ok: boolean }>(`/api/partner-study/sessions/${id}`, { method: 'DELETE' }),
+  /** 历史开黑记录（我参与且已结束的会话，按结束时间倒序） */
+  studyHistory: () => request<{ records: PartnerStudyRecord[] }>('/api/partner-study/sessions/history'),
 
   // ========== 协作备考计划 ==========
   createPartnerPlan: (partnerId: string, title: string) =>

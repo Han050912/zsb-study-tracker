@@ -14,6 +14,13 @@ function sideOf(row: { from_id: string; to_id: string }, userId: string): 'from'
   throw new HttpError(403, '无权访问')
 }
 
+/** 用户自定义头像相对 URL（未设置返回 undefined，前端回退首字母） */
+async function avatarOf(env: Env, userId: string): Promise<string | undefined> {
+  const r = await first<{ avatar: string | null }>(env,
+    `SELECT avatar FROM user_settings WHERE user_id = ?`, userId)
+  return r?.avatar ?? undefined
+}
+
 /** 番茄自习室会话行 */
 interface StudySessionRow {
   id: string
@@ -26,6 +33,13 @@ interface StudySessionRow {
   to_state: string
   from_minutes: number
   to_minutes: number
+  from_online_seconds: number
+  to_online_seconds: number
+  ended_at: number | null
+  from_elapsed_seconds: number
+  to_elapsed_seconds: number
+  from_running: number
+  to_running: number
 }
 
 // ============================================================
@@ -54,11 +68,11 @@ export function registerPartnerStudy() {
     const now = nowSec()
     await batch(ctx.env, [
       ctx.env.DB.prepare(
-        `INSERT INTO partner_study_sessions (id, from_id, to_id, status, focus_minutes, break_minutes, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, ?, ?)`
+        `INSERT INTO partner_study_sessions (id, from_id, to_id, status, focus_minutes, break_minutes, from_state, to_state, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, 'idle', 'idle', ?, ?)`
       ).bind(id, ctx.userId, partnerId, focusMinutes, breakMinutes, now, now),
       notifyStatement(ctx.env, {
         userId: partnerId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner', targetId: id,
+        targetType: 'partner_study', targetId: id,
         content: `${await displayName(ctx.env, ctx.userId)} 邀请你一起开黑学习（${focusMinutes}分钟专注）`
       })
     ])
@@ -74,6 +88,35 @@ export function registerPartnerStudy() {
     return Response.json({ session: await mapSession(ctx.env, s, ctx.userId) })
   })
 
+  // 历史开黑记录（我参与且已结束的会话，按结束时间倒序）
+  on('GET', '/api/partner-study/sessions/history', true, async (ctx) => {
+    const rows = await all<{
+      id: string; from_id: string; to_id: string; created_at: number; updated_at: number
+      ended_at: number | null; from_online_seconds: number; to_online_seconds: number
+    }>(ctx.env, `
+      SELECT id, from_id, to_id, created_at, updated_at, ended_at, from_online_seconds, to_online_seconds
+      FROM partner_study_sessions
+      WHERE status = 'done' AND (from_id = ? OR to_id = ?)
+      ORDER BY COALESCE(ended_at, updated_at) DESC LIMIT 50
+    `, ctx.userId, ctx.userId)
+
+    const records = await Promise.all(rows.map(async r => {
+      const side = r.from_id === ctx.userId ? 'from' : 'to'
+      const partnerId = side === 'from' ? r.to_id : r.from_id
+      return {
+        id: r.id,
+        partnerId,
+        partnerName: await displayName(ctx.env, partnerId),
+        partnerAvatar: await avatarOf(ctx.env, partnerId),
+        startedAt: r.created_at,
+        endedAt: r.ended_at ?? r.updated_at,
+        myOnlineSeconds: side === 'from' ? r.from_online_seconds : r.to_online_seconds,
+        partnerOnlineSeconds: side === 'from' ? r.to_online_seconds : r.from_online_seconds
+      }
+    }))
+    return Response.json({ records })
+  })
+
   // 获取会话详情（轮询同步对方状态）
   on('GET', '/api/partner-study/sessions/:id', true, async (ctx) => {
     const s = await getSession(ctx.env, ctx.params.id)
@@ -81,25 +124,28 @@ export function registerPartnerStudy() {
     return Response.json({ session: await mapSession(ctx.env, s, ctx.userId) })
   })
 
-  // 更新我的状态（idle/focus/break/done）与累计分钟；双方 done 时会话结束
+  // 更新我的状态（idle/focus/break/done）与累计分钟/在线秒数；双方 done 时会话结束
   on('PUT', '/api/partner-study/sessions/:id', true, async (ctx) => {
     const b = await body(ctx.request)
     const state = b?.state === 'idle' || b?.state === 'focus' || b?.state === 'break' || b?.state === 'done' ? b.state : null
     if (!state) throw new HttpError(400, 'state 需为 idle/focus/break/done')
     const minutes = Math.max(0, Math.floor(Number(b?.minutes) || 0))
+    const onlineSeconds = Math.max(0, Math.floor(Number(b?.onlineSeconds) || 0))
+    const elapsedSeconds = Math.max(0, Math.floor(Number(b?.elapsedSeconds) || 0))
+    const running = b?.running === true ? 1 : 0
 
     const s = await getSession(ctx.env, ctx.params.id)
     if (s.status !== 'active') throw new HttpError(400, '会话已结束')
     const side = sideOf(s, ctx.userId)
 
     await run(ctx.env,
-      `UPDATE partner_study_sessions SET ${side}_state = ?, ${side}_minutes = ?, updated_at = ? WHERE id = ?`,
-      state, minutes, nowSec(), s.id)
+      `UPDATE partner_study_sessions SET ${side}_state = ?, ${side}_minutes = ?, ${side}_online_seconds = ?, ${side}_elapsed_seconds = ?, ${side}_running = ?, updated_at = ? WHERE id = ?`,
+      state, minutes, onlineSeconds, elapsedSeconds, running, nowSec(), s.id)
 
     // 重新查询后判断双方均 done → 会话完成（避免并发下基于旧快照漏判）
     const updated = await getSession(ctx.env, s.id)
     if (updated.from_state === 'done' && updated.to_state === 'done' && updated.status === 'active') {
-      await run(ctx.env, `UPDATE partner_study_sessions SET status = 'done', updated_at = ? WHERE id = ?`, nowSec(), s.id)
+      await run(ctx.env, `UPDATE partner_study_sessions SET status = 'done', ended_at = ?, updated_at = ? WHERE id = ?`, nowSec(), nowSec(), s.id)
       updated.status = 'done'
     }
     return Response.json({ session: await mapSession(ctx.env, updated, ctx.userId) })
@@ -109,7 +155,7 @@ export function registerPartnerStudy() {
   on('DELETE', '/api/partner-study/sessions/:id', true, async (ctx) => {
     const s = await getSession(ctx.env, ctx.params.id)
     sideOf(s, ctx.userId)
-    await run(ctx.env, `UPDATE partner_study_sessions SET status = 'done', updated_at = ? WHERE id = ?`, nowSec(), s.id)
+    await run(ctx.env, `UPDATE partner_study_sessions SET status = 'done', ended_at = ?, updated_at = ? WHERE id = ?`, nowSec(), nowSec(), s.id)
     return Response.json({ ok: true })
   })
 }
@@ -124,17 +170,23 @@ async function mapSession(env: Env, s: StudySessionRow, userId: string) {
   const side = sideOf(s, userId)
   const partnerId = side === 'from' ? s.to_id : s.from_id
   const partnerName = await displayName(env, partnerId)
+  const partnerAvatar = await avatarOf(env, partnerId)
   return {
     id: s.id,
     status: s.status,
     partnerId,
     partnerName,
+    partnerAvatar,
     focusMinutes: s.focus_minutes,
     breakMinutes: s.break_minutes,
     myState: side === 'from' ? s.from_state : s.to_state,
     myMinutes: side === 'from' ? s.from_minutes : s.to_minutes,
     partnerState: side === 'from' ? s.to_state : s.from_state,
-    partnerMinutes: side === 'from' ? s.to_minutes : s.from_minutes
+    partnerMinutes: side === 'from' ? s.to_minutes : s.from_minutes,
+    myOnlineSeconds: side === 'from' ? s.from_online_seconds : s.to_online_seconds,
+    partnerOnlineSeconds: side === 'from' ? s.to_online_seconds : s.from_online_seconds,
+    myElapsedSeconds: side === 'from' ? s.from_elapsed_seconds : s.to_elapsed_seconds,
+    partnerRunning: !!(side === 'from' ? s.to_running : s.from_running)
   }
 }
 
@@ -160,7 +212,7 @@ export function registerPartnerPlans() {
       ).bind(id, ctx.userId, partnerId, title, now, now),
       notifyStatement(ctx.env, {
         userId: partnerId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner', targetId: id,
+        targetType: 'partner_plan', targetId: id,
         content: `${await displayName(ctx.env, ctx.userId)} 创建了协作备考计划「${title}」`
       })
     ])
@@ -320,7 +372,7 @@ export function registerPartnerReviews() {
       ).bind(id, ctx.userId, partnerId, scheduledAt, now, now),
       notifyStatement(ctx.env, {
         userId: partnerId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner', targetId: id,
+        targetType: 'partner_review', targetId: id,
         content: `${await displayName(ctx.env, ctx.userId)} 邀请你复盘学习`
       })
     ])
