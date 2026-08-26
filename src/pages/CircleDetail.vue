@@ -68,7 +68,7 @@ async function toggleJoin() {
   try {
     const res = await communityApi.joinCircle(circleId)
     const c = circle.value
-    if (res.status === 'active') { c.myStatus = 'member'; c.memberCount++; toast('已加入圈子 🎉') }
+    if (res.status === 'active') { c.myStatus = 'member'; c.memberCount++; toast('已加入圈子') }
     else if (res.status === 'pending') { c.myStatus = 'pending'; toast('已提交申请，等待圈主审批') }
     else {
       if (c.myStatus === 'member') c.memberCount = Math.max(0, c.memberCount - 1)
@@ -150,7 +150,7 @@ function openReport(postId: string) {
         </div>
         <p v-if="circle.description" class="text-sm text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{{ circle.description }}</p>
         <div class="flex items-center gap-3">
-          <span class="text-xs text-slate-400">👥 {{ circle.memberCount }} 位成员</span>
+          <span class="text-xs text-slate-400">{{ circle.memberCount }} 位成员</span>
           <div class="flex-1"></div>
           <button v-if="circle.myStatus !== 'owner'" class="btn-primary !text-xs"
             :class="{ '!bg-slate-200 dark:!bg-slate-700 !text-slate-500 dark:!text-slate-300': !!circle.myStatus }"

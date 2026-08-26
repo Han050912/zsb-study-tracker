@@ -142,8 +142,8 @@ const progressPercent = computed(() =>
 // ---- 分享打卡成果到社区广场 ----
 const showShare = ref(false)
 const shareContent = computed(() => [
-  '📖 今日背单词打卡',
-  `✅ 已校验 ${validatedCount.value}/${totalCount.value} · 答对 ${correctCount.value} 个（进度 ${progressPercent.value}%）`
+  '今日背单词打卡',
+  `已校验 ${validatedCount.value}/${totalCount.value} · 答对 ${correctCount.value} 个（进度 ${progressPercent.value}%）`
 ].join('\n'))
 
 // ---- 语义校验（英译汉） ----
@@ -272,7 +272,7 @@ function inputClass(w: AnswerState): string {
             v-if="totalCount"
             class="text-[11px] px-2.5 py-1 rounded-lg bg-white/80 dark:bg-slate-700 text-indigo-500 dark:text-indigo-300 border border-indigo-200 dark:border-slate-600 hover:bg-indigo-50 dark:hover:bg-slate-600 active:scale-95 transition-all duration-300"
             @click="showShare = true"
-          >📣 分享</button>
+          >分享</button>
           <!-- 拉取/刷新 -->
           <button
             class="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-500 text-white hover:bg-indigo-600 active:scale-95 transition-all duration-300 disabled:opacity-50"

@@ -145,7 +145,7 @@ async function removeHotTopic(id: string) {
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2.5" @click="goBack">← 返回</button>
-      <h1 class="page-title">🛡️ 审核中心</h1>
+      <h1 class="page-title">审核中心</h1>
       <span v-if="reports.length" class="text-xs px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-900/30 text-rose-500">
         {{ reports.length }} 条待处理
       </span>
@@ -165,7 +165,7 @@ async function removeHotTopic(id: string) {
     <div v-show="activeTab === 'reports'">
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
     <div v-else-if="!reports.length" class="card text-center py-10 text-slate-400 text-sm">
-      <div class="text-3xl mb-2">✨</div>
+      <div class="text-3xl mb-2"></div>
       <p>暂无待处理举报，社区一片祥和</p>
     </div>
 
@@ -199,8 +199,8 @@ async function removeHotTopic(id: string) {
         <div v-if="confirming?.id !== r.id" class="flex gap-2 pt-1">
           <template v-if="r.target">
             <!-- 私信不支持隐藏（仅会话双方可见），服务端会拒绝；只提供删除/驳回 -->
-            <button v-if="r.targetType !== 'message'" class="btn-ghost !text-xs" @click="ask(r.id, 'hide')">🙈 隐藏</button>
-            <button class="btn-ghost !text-xs !text-red-500" @click="ask(r.id, 'delete')">🗑️ 删除</button>
+            <button v-if="r.targetType !== 'message'" class="btn-ghost !text-xs" @click="ask(r.id, 'hide')">隐藏</button>
+            <button class="btn-ghost !text-xs !text-red-500" @click="ask(r.id, 'delete')">删除</button>
           </template>
           <button v-else class="btn-ghost !text-xs" @click="ask(r.id, 'delete')">✅ 结案</button>
           <button class="btn-ghost !text-xs ml-auto" @click="ask(r.id, 'reject')">驳回举报</button>
@@ -221,7 +221,7 @@ async function removeHotTopic(id: string) {
 
     <!-- 热门话题运营位管理 -->
     <div v-show="activeTab === 'topics'" class="card space-y-3">
-      <div class="section-title !mb-0">🔥 热门话题管理</div>
+      <div class="section-title !mb-0">热门话题管理</div>
       <div v-if="hotLoading" class="text-xs text-slate-400 text-center py-3">加载中…</div>
       <template v-else>
         <!-- 近 7 天自动统计 -->
@@ -283,7 +283,7 @@ async function removeHotTopic(id: string) {
 
       <div v-if="feedbackLoading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
       <div v-else-if="!feedbacks.length" class="card text-center py-10 text-slate-400 text-sm">
-        <div class="text-3xl mb-2">💡</div><p>暂无反馈</p>
+        <div class="text-3xl mb-2"></div><p>暂无反馈</p>
       </div>
       <template v-else>
         <div v-for="fb in feedbacks" :key="fb.id" class="card space-y-2">

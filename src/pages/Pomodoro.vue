@@ -100,7 +100,7 @@ function completePhase() {
   stopTimer()
   if (phase.value === 'focus') {
     store.recordPomodoro(focusMinutes.value)
-    toast(`🍅 完成一个番茄钟！+5 积分`)
+    toast(`完成一个番茄钟！+5 积分`)
     phase.value = 'break'
     seconds.value = 0
     pausedElapsed = 0
@@ -250,7 +250,7 @@ const totalFocusMin = computed(() => Object.values(store.pomodoro.daily).reduce(
 
     <!-- 配置 -->
     <div v-if="phase === 'idle'" class="relative z-10 w-full max-w-md space-y-4">
-      <h1 class="text-2xl font-bold text-center">🍅 番茄专注</h1>
+      <h1 class="text-2xl font-bold text-center">番茄专注</h1>
       <div class="card space-y-3">
         <div class="flex gap-2">
           <button class="flex-1 btn" :class="mode === 'countdown' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'" @click="mode = 'countdown'">倒计时</button>
@@ -286,7 +286,7 @@ const totalFocusMin = computed(() => Object.values(store.pomodoro.daily).reduce(
       </div>
 
       <div v-if="recentInterruptions.length" class="card">
-        <div class="section-title">⚠️ 最近中断（{{ store.todayPomodoro.interruptions }} 次/今日）</div>
+        <div class="section-title">最近中断（{{ store.todayPomodoro.interruptions }} 次/今日）</div>
         <div v-for="(it, i) in recentInterruptions" :key="i" class="text-xs py-1 flex gap-2 text-slate-500">
           <span class="opacity-60">{{ it.date }}</span><span>{{ it.reason }}</span>
         </div>
@@ -297,7 +297,7 @@ const totalFocusMin = computed(() => Object.values(store.pomodoro.daily).reduce(
     <div v-else class="absolute inset-0 z-10" :class="bgUrl || phase === 'focus' ? 'text-white' : 'text-slate-800 dark:text-slate-100'">
       <!-- 番茄钟（右上角弱化展示，减少干扰） -->
       <div class="absolute top-4 right-4 text-right opacity-75">
-        <div class="text-[11px] tracking-widest">{{ phase === 'focus' ? '🎯 专注中' : '☕ 休息中' }}</div>
+        <div class="text-[11px] tracking-widest">{{ phase === 'focus' ? '专注中' : '休息中' }}</div>
         <div class="text-2xl font-mono font-bold tabular-nums">{{ display }}</div>
       </div>
 
@@ -319,7 +319,7 @@ const totalFocusMin = computed(() => Object.values(store.pomodoro.daily).reduce(
       >
         <button v-if="running" class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="pause">⏸ 暂停</button>
         <button v-else class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="start">▶ 继续</button>
-        <button v-if="phase === 'focus'" class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="showInterrupt = true">⚠️ 被打断</button>
+        <button v-if="phase === 'focus'" class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="showInterrupt = true">被打断</button>
         <button class="btn bg-red-500/80 text-white px-6" @click="giveUp">结束</button>
       </div>
     </div>

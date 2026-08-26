@@ -62,7 +62,7 @@ function heatData(h: Habit) {
   return Array.from({ length: 30 }, (_, i) => {
     const d = dayjs().subtract(29 - i, 'day').format('YYYY-MM-DD')
     const v = h.records[d]
-    return { date: d, done: h.type === 'checkbox' ? !!v : Number(v) > 0 }
+    return { date: d, done: h.type === 'checkbox' || h.type === 'time' ? !!v : Number(v) > 0 }
   })
 }
 
@@ -103,7 +103,7 @@ function removeHabit(id: string) {
 <template>
   <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="page-title">✅ 习惯追踪</h1>
+      <h1 class="page-title">习惯追踪</h1>
       <button class="btn-primary" @click="showModal = true">+ 新习惯</button>
     </div>
 
@@ -148,11 +148,11 @@ function removeHabit(id: string) {
     </div>
 
     <div v-if="badHabits.length">
-      <h2 class="section-title !text-base mt-2">⚠️ 坏习惯监督</h2>
+      <h2 class="section-title !text-base mt-2">坏习惯监督</h2>
       <div class="grid md:grid-cols-2 gap-3">
         <div v-for="h in badHabits" :key="h.id" class="card border-red-100 dark:border-red-900/40">
           <div class="flex items-center justify-between mb-2">
-            <span class="font-medium text-sm">🚫 {{ h.name }}</span>
+            <span class="font-medium text-sm">{{ h.name }}</span>
             <button class="text-xs text-red-400" @click="removeHabit(h.id)">删除</button>
           </div>
           <!-- 每日克制打卡 -->

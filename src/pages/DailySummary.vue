@@ -169,7 +169,7 @@ function downloadShareImage() {
 }
 
 function copyShareText() {
-  const text = `我正在用「专升本学习助手」备考，今日学习 ${formatMinutes(dayData.value.minutes)}，完成 ${dayData.value.pTotal} 道题，连续学习 ${store.gamification.streak} 天！\n👉 https://github.com/Han050912/zsb-study-tracker`
+  const text = `我正在用「专升本学习助手」备考，今日学习 ${formatMinutes(dayData.value.minutes)}，完成 ${dayData.value.pTotal} 道题，连续学习 ${store.gamification.streak} 天！\nhttps://github.com/Han050912/zsb-study-tracker`
   navigator.clipboard.writeText(text).then(() => toast('分享文案已复制'))
 }
 
@@ -199,7 +199,7 @@ function openCommunityShare() {
 <template>
   <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="page-title">📝 每日总结</h1>
+      <h1 class="page-title">每日总结</h1>
       <div class="flex gap-2">
         <button class="btn-ghost" @click="openCommunityShare">分享到广场</button>
         <button class="btn-primary" @click="openShare">生成分享卡片</button>
@@ -303,13 +303,13 @@ function openCommunityShare() {
           <div class="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto shadow-2xl animate-pop"
             role="dialog" aria-modal="true" :aria-label="`${cardDate} 总结`">
             <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
-              <h3 class="font-bold">📅 {{ cardDate }} 总结</h3>
+              <h3 class="font-bold">{{ cardDate }} 总结</h3>
               <button class="text-slate-400 hover:text-slate-600 text-xl leading-none" @click="cardDate = ''" aria-label="关闭">×</button>
             </div>
             <div class="px-5 py-4 space-y-4">
               <!-- ① 当日全维度数据概览（必填） -->
               <div>
-                <div class="text-xs font-semibold text-slate-400 mb-2">📊 当日数据概览</div>
+                <div class="text-xs font-semibold text-slate-400 mb-2">当日数据概览</div>
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
                   <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
                     <div class="font-black text-primary-500">{{ formatMinutes(cardData.minutes) }}</div>
@@ -406,10 +406,10 @@ function openCommunityShare() {
             <div v-if="form.harvest" class="mt-2 text-xs bg-white/10 rounded-xl p-3 leading-relaxed">{{ form.harvest.slice(0, 100) }}</div>
             <div class="mt-4 text-[10px] opacity-70 text-center">github.com/Han050912/zsb-study-tracker</div>
           </div>
-          <p class="text-center text-white/70 text-xs mt-3">
+          <p class="text-center text-white/70 text-xs mt-12">
             {{ shareImgLoading ? '正在生成图片…' : shareImg ? '点击保存图片，分享到备考群，和朋友一起上岸！' : '图片生成失败，可截图保存' }}
           </p>
-          <div class="flex gap-2 mt-2">
+          <div class="flex gap-2 mt-5">
             <button class="btn-ghost flex-1" @click="copyShareText">复制文案</button>
             <button v-if="shareImg" class="btn-ghost flex-1" @click="downloadShareImage">保存图片</button>
             <button class="btn-ghost flex-1" @click="showShare = false">关闭</button>

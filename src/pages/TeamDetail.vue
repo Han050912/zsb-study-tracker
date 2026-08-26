@@ -188,7 +188,7 @@ async function handleJoin() {
   joinSubmitting.value = true
   try {
     await joinTeam(teamId)
-    toast('已加入小组 🎉')
+    toast('已加入小组')
     await loadDetail()
   } catch (e: any) { toast(e?.message || '加入失败') }
   finally { joinSubmitting.value = false }
@@ -282,7 +282,7 @@ async function syncChallenge(c: TeamChallenge) {
     const before = c.isCompleted
     await loadDetail()
     const after = detail.value?.challenges.find(x => x.id === c.id)
-    if (!before && after?.isCompleted) toast('🎉 全员达标')
+    if (!before && after?.isCompleted) toast('全员达标')
   } catch (e: any) {
     toast(e?.message || '同步失败')
   } finally {

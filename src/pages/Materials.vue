@@ -3,6 +3,7 @@ import { computed, inject, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
 import { normalizeUrl } from '../utils/url'
+import { subjectLabel } from '../utils/subject'
 import type { Material } from '../types'
 
 const store = useAppStore()
@@ -12,7 +13,7 @@ const filterType = ref('')
 const filterSubject = ref('')
 
 const TYPES = [
-  { k: 'book', l: '📕 书籍' }, { k: 'video', l: '🎬 视频' }, { k: 'link', l: '🔗 链接' }, { k: 'doc', l: '📄 文档' }
+  { k: 'book', l: '书籍' }, { k: 'video', l: '视频' }, { k: 'link', l: '链接' }, { k: 'doc', l: '文档' }
 ]
 
 const list = computed(() => {
@@ -128,7 +129,7 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
 <template>
   <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="page-title">📚 学习资料库</h1>
+      <h1 class="page-title">学习资料库</h1>
       <button class="btn-primary" @click="open()">+ 添加资料</button>
     </div>
 
@@ -139,7 +140,7 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
       </select>
       <select v-model="filterSubject" class="input !w-auto">
         <option value="">全部科目</option>
-        <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ s.icon }} {{ s.name }}</option>
+        <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
       </select>
     </div>
 
@@ -152,8 +153,8 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
           <span class="text-[10px] px-1.5 py-0.5 rounded shrink-0" :class="priorityColor[m.priority]">{{ m.priority }}</span>
         </div>
         <div class="text-xs text-slate-400 mt-1 space-x-2">
-          <span v-if="m.author">✍️ {{ m.author }}</span>
-          <span v-if="m.subjectId">{{ store.subjectMap[m.subjectId]?.icon }} {{ store.subjectMap[m.subjectId]?.name }}</span>
+          <span v-if="m.author">{{ m.author }}</span>
+          <span v-if="m.subjectId">{{ subjectLabel(store.subjectMap[m.subjectId]) }}</span>
         </div>
         <div v-if="progress(m) !== null" class="mt-3">
           <div class="flex justify-between text-[10px] text-slate-400 mb-1">
@@ -163,7 +164,7 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
             <div class="h-full bg-primary-400 rounded-full transition-all" :style="{ width: progress(m) + '%' }"></div>
           </div>
         </div>
-        <p v-if="m.notes" class="text-xs text-slate-400 mt-2 line-clamp-2">📓 {{ m.notes }}</p>
+        <p v-if="m.notes" class="text-xs text-slate-400 mt-2 line-clamp-2">{{ m.notes }}</p>
         <button v-if="m.url" type="button" class="text-xs text-primary-500 mt-2 inline-block hover:underline" @click.stop="openLink(m.url)">
           {{ m.fileName ? `打开文件「${m.fileName}」↗` : '打开链接 ↗' }}
         </button>
@@ -199,10 +200,10 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
           <div class="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1 w-fit mb-2">
             <button type="button" class="text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
               :class="linkMode === 'url' ? 'bg-white dark:bg-slate-600 shadow-sm' : 'text-slate-500'"
-              @click="linkMode = 'url'">🔗 URL 链接</button>
+              @click="linkMode = 'url'">URL 链接</button>
             <button type="button" class="text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
               :class="linkMode === 'file' ? 'bg-white dark:bg-slate-600 shadow-sm' : 'text-slate-500'"
-              @click="linkMode = 'file'">📎 文件上传</button>
+              @click="linkMode = 'file'">文件上传</button>
           </div>
 
           <input v-if="linkMode === 'url'" v-model="form.url" class="input" placeholder="链接 URL（可选），如 https://…" />
@@ -221,7 +222,7 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
               <p class="text-[10px] text-slate-400 mt-0.5">单个文件 ≤ 8MB（PDF / 图片 / 文档等）</p>
             </div>
             <div v-else class="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-600 px-3 py-2.5">
-              <span class="text-lg">📄</span>
+              <span class="text-lg"></span>
               <span class="flex-1 text-xs truncate">{{ form.fileName }}</span>
               <button type="button" class="text-[10px] text-primary-500 hover:underline shrink-0" @click="fileInput?.click()">更换</button>
               <button type="button" class="text-[10px] text-red-400 hover:underline shrink-0" @click="clearFile">移除</button>

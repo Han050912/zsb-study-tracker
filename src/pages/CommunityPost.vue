@@ -247,7 +247,7 @@ async function toggleResolve() {
     post.value.isResolved = isResolved
     const p = store.posts.find(x => x.id === postId)
     if (p) p.isResolved = isResolved
-    toast(isResolved ? '已标记为已解答 🎉' : '已重新开放为待解答')
+    toast(isResolved ? '已标记为已解答' : '已重新开放为待解答')
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
@@ -280,7 +280,7 @@ async function accept(c: CommunityComment) {
     post.value.isResolved = res.isResolved
     // 同步评论标记：旧采纳清除，新采纳置位（commentTree 为展开副本，必须改原始数组）
     for (const x of comments.value) x.isAccepted = x.id === res.acceptedAnswerId
-    toast(res.acceptedAnswerId ? '已采纳最佳答案 🎉' : '已取消采纳，帖子重新开放为待解答')
+    toast(res.acceptedAnswerId ? '已采纳最佳答案' : '已取消采纳，帖子重新开放为待解答')
   } catch (e: any) { toast(e?.message || '操作失败') }
   finally { accepting.value = false }
 }
@@ -319,7 +319,7 @@ async function toggleFeature() {
   try {
     const featured = await store.adminFeaturePost(postId)
     post.value.isFeatured = featured
-    toast(featured ? '已加精 🌟' : '已取消加精')
+    toast(featured ? '已加精' : '已取消加精')
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
@@ -351,7 +351,6 @@ async function toggleHideComment(c: CommunityComment) {
 
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
     <div v-else-if="notFound" class="card text-center py-10 text-slate-400 text-sm">
-      <div class="text-3xl mb-2">🫥</div>
       <p>帖子不存在或已被删除</p>
     </div>
 
@@ -369,7 +368,7 @@ async function toggleHideComment(c: CommunityComment) {
       <!-- 评论区 -->
       <div class="card space-y-4">
         <div class="flex items-center justify-between">
-          <div class="section-title !mb-0">💬 评论 {{ post.commentsCount || '' }}</div>
+          <div class="section-title !mb-0">评论 {{ post.commentsCount || '' }}</div>
           <div class="flex items-center gap-1 text-xs">
             <button class="px-2 py-1 rounded-md transition-colors"
               :class="commentSort === 'hot' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium' : 'text-slate-400 hover:text-slate-600'"

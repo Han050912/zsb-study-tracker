@@ -253,12 +253,12 @@ const { el: vocabEl } = useChart(() => {
 <template>
   <div class="p-4 md:p-6 max-w-5xl mx-auto">
     <div v-if="!subjectExists" class="card text-center py-16 text-slate-400">
-      <div class="text-4xl mb-2">📖</div>
+      <div class="text-4xl mb-2"></div>
       <p class="text-sm">「英语」科目已被删除，此页面已隐藏</p>
       <RouterLink to="/settings" class="text-primary-500 text-xs underline mt-2 inline-block">前往设置页管理科目 →</RouterLink>
     </div>
     <template v-else>
-    <h1 class="page-title mb-4">📖 英语</h1>
+    <h1 class="page-title mb-4">英语</h1>
 
     <div class="flex gap-1 overflow-x-auto bg-slate-100 dark:bg-slate-800 rounded-xl p-1 mb-4">
       <button v-for="t in [

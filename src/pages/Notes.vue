@@ -7,6 +7,7 @@ import PdfViewer from '../components/PdfViewer.vue'
 import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 import { uploadPdf, fetchPdf, PDF_MAX_BYTES, PDF_MAX_MB, PDF_REF_PREFIX, pdfRefOf } from '../api/pdfs'
 import { uid } from '../utils/date'
+import { subjectLabel } from '../utils/subject'
 import type { Note } from '../types'
 
 const store = useAppStore()
@@ -274,7 +275,7 @@ onUnmounted(() => {
         <!-- 元信息 -->
         <div class="flex flex-wrap items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700">
           <select v-model="draft.subjectId" class="input !w-auto !py-1 !text-xs" @change="dirty = true">
-            <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ s.icon }} {{ s.name }}</option>
+            <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
           </select>
           <input :value="draft.tags?.join(',')" class="input !flex-1 !py-1 !text-xs min-w-32" placeholder="标签，逗号分隔"
             @input="draft.tags = ($event.target as HTMLInputElement).value.split(',').map(s => s.trim()).filter(Boolean); dirty = true" />

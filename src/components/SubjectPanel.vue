@@ -8,6 +8,7 @@ import { problemTypesFor } from '../data/problemTypes'
 import StarRating from './StarRating.vue'
 import Modal from './Modal.vue'
 import PostComposer from './community/PostComposer.vue'
+import { subjectLabel } from '../utils/subject'
 import EnhancedRadarChart from './EnhancedRadarChart.vue'
 import type { Note, TopicImportance } from '../types'
 
@@ -140,9 +141,9 @@ function openProblemShare() {
   const { total, correct, acc } = todayProblemStats.value
   if (!total) { toast('今天还没有刷题记录，先刷几道题吧'); return }
   shareContent.value = [
-    '✏️ 今日刷题打卡',
-    `${subject.value?.icon || '📚'} ${subject.value?.name}：${total} 题，答对 ${correct}，正确率 ${acc}%`,
-    `🔥 连续打卡 ${store.gamification.streak} 天`
+    '今日刷题打卡',
+    `${subjectLabel(subject.value)}：${total} 题，答对 ${correct}，正确率 ${acc}%`,
+    `连续打卡 ${store.gamification.streak} 天`
   ].join('\n')
   shareTags.value = ['#每日打卡',
     ...(props.subjectId === 'math' ? ['#高等数学'] : props.subjectId === 'english' ? ['#英语'] : [])]

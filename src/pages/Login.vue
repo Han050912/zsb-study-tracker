@@ -162,7 +162,7 @@ async function submit() {
           <!-- Turnstile 加载失败（含手动重试） -->
           <div v-if="turnstileError" class="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2 space-y-1.5">
             <div class="flex items-center gap-2">
-              <span>⚠️</span>人机验证组件加载失败（Cloudflare CDN 在国内可能不稳定），请尝试刷新页面或使用代理/加速器后重试
+              <span></span>人机验证组件加载失败（Cloudflare CDN 在国内可能不稳定），请尝试刷新页面或使用代理/加速器后重试
             </div>
             <button type="button"
               class="text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 underline cursor-pointer"
@@ -171,7 +171,7 @@ async function submit() {
 
           <!-- 其他错误 -->
           <div v-if="errorMsg" class="flex items-center gap-2 text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2">
-            <span>⚠️</span>{{ errorMsg }}
+            <span></span>{{ errorMsg }}
           </div>
 
           <button type="submit" class="btn-primary w-full !py-2.5" :disabled="loading || (!isDesktop && !turnstileToken)">

@@ -200,7 +200,7 @@ provide('navCollapsed', navCollapsed)
 
 // ---- 右上角账号头像下拉菜单 ----
 const avatarOpen = ref(false)
-const avatarLetter = computed(() => sessionUser.value?.username?.slice(0, 1).toUpperCase() || '👤')
+const avatarLetter = computed(() => sessionUser.value?.username?.slice(0, 1).toUpperCase() || '')
 function goAccount() {
   avatarOpen.value = false
   router.push('/account')

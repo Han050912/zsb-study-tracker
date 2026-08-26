@@ -8,6 +8,7 @@ import PostComposer from '../components/community/PostComposer.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import { useBack } from '../composables/useBack'
+import { subjectLabel } from '../utils/subject'
 import type { CommunityPost } from '../types'
 
 /**
@@ -100,7 +101,7 @@ function openReport(postId: string) {
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
       <h2 class="text-lg font-bold flex-1 min-w-0 truncate">
-        {{ subject?.icon ?? '📘' }} {{ subject?.name ?? subjectId }} · {{ chapterName }}
+        {{ subjectLabel(subject, subjectId) }} · {{ chapterName }}
       </h2>
     </div>
     <p class="text-xs text-slate-400 -mt-2">本章节疑难讨论（仅本讨论区可见，不进公共广场）</p>

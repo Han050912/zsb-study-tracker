@@ -2,6 +2,7 @@
 import { computed, inject, onUnmounted, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
+import { subjectLabel } from '../utils/subject'
 import { DEFAULT_QUOTES } from '../data/defaults'
 import Heatmap from '../components/Heatmap.vue'
 import ProgressRing from '../components/ProgressRing.vue'
@@ -251,7 +252,7 @@ onUnmounted(() => {
     <!-- 倒计时 + 名言 -->
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <div class="card bg-gradient-to-br from-primary-500 to-indigo-600 !text-white border-0">
-        <div class="text-xs opacity-80">🎯 距离专升本考试</div>
+        <div class="text-xs opacity-80">距离专升本考试</div>
         <div v-if="store.examCountdown !== null" class="mt-1">
           <template v-if="store.examCountdown > 0">
             <span class="text-4xl font-black">{{ store.examCountdown }}</span><span class="ml-1">天</span>
@@ -262,7 +263,7 @@ onUnmounted(() => {
         <div class="text-xs opacity-80 mt-2">{{ store.examCountdown === 0 ? '沉着应考，你付出的每一分努力都算数！' : '坚持到底，就是胜利！' }}</div>
       </div>
       <div class="card flex flex-col justify-center">
-        <div class="text-xs text-slate-400 mb-1">📜 今日名言</div>
+        <div class="text-xs text-slate-400 mb-1">今日名言</div>
         <p class="text-sm font-medium leading-relaxed">{{ quote }}</p>
       </div>
     </div>
@@ -297,7 +298,7 @@ onUnmounted(() => {
     <!-- 待办 + 进度环 -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div class="card">
-        <div class="section-title">📋 今日待办</div>
+        <div class="section-title">今日待办</div>
         <div class="flex gap-2 mb-3">
           <input v-model="newTodo" class="input" placeholder="添加今日学习任务，回车确认" @keyup.enter="openAddSchedule" />
           <button class="btn-primary shrink-0" @click="openAddSchedule">添加</button>
@@ -366,7 +367,7 @@ onUnmounted(() => {
             :to="s.id === 'math' ? '/math' : s.id === 'english' ? '/english' : `/subject/${s.id}`"
             class="flex flex-col items-center gap-1">
             <ProgressRing :percent="subjectPercent(s.id)" :color="s.color" :size="76" :label="s.name" />
-            <span class="text-xs">{{ s.icon }} {{ s.name }}</span>
+            <span class="text-xs">{{ subjectLabel(s) }}</span>
           </RouterLink>
         </div>
       </div>
@@ -385,7 +386,7 @@ onUnmounted(() => {
         class="w-full flex items-center justify-center gap-1.5 py-2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
         :aria-expanded="showQuickLinks"
         @click="showQuickLinks = !showQuickLinks">
-        <span>⚡ 快捷入口</span>
+        <span>快捷入口</span>
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
           class="transition-transform duration-200" :class="showQuickLinks ? 'rotate-180' : ''">
@@ -435,7 +436,7 @@ onUnmounted(() => {
         <div v-else class="space-y-2">
           <div v-for="r in heatRecords" :key="r.id" class="flex items-center gap-2 text-sm border border-slate-100 dark:border-slate-700 rounded-xl px-3 py-2">
             <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: store.subjectMap[r.subjectId]?.color || '#94a3b8' }"></span>
-            <span class="font-medium">{{ store.subjectMap[r.subjectId]?.icon }} {{ store.subjectMap[r.subjectId]?.name || '已删除科目' }}</span>
+            <span class="font-medium">{{ subjectLabel(store.subjectMap[r.subjectId], '已删除科目') }}</span>
             <span class="flex-1 text-xs text-slate-400 truncate">{{ r.note || '—' }}</span>
             <span class="font-semibold shrink-0" :style="{ color: store.subjectMap[r.subjectId]?.color || '#94a3b8' }">{{ formatMinutes(r.minutes) }}</span>
           </div>
