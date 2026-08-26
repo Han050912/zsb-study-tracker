@@ -52,7 +52,7 @@ export interface ErrorQuestion {
   subjectId: string
   date: string
   chapter?: string
-  type: '选择' | '填空' | '计算' | '证明' | '其他'
+  type: string // 题型跟随科目动态变化：数学/英语/自定义科目各自独立题型列表
   content: string
   answer?: string
   image?: string // base64

@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
+import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { today } from '../utils/date'
+import { subjectLabel } from '../utils/subject'
+import { problemTypesFor } from '../data/problemTypes'
 import Modal from '../components/Modal.vue'
 import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 
@@ -22,7 +24,32 @@ const list = computed(() => {
 })
 
 const showModal = ref(false)
-const form = ref({ subjectId: 'math', chapter: '', type: '选择' as const, content: '', answer: '', image: '' })
+const form = ref({ subjectId: 'math', chapter: '', type: '选择', content: '', answer: '', image: '' })
+
+// ---- 题型 / 章节：跟随科目动态联动 ----
+const currentTypes = computed(() => problemTypesFor(form.value.subjectId))
+const currentSubject = computed(() => store.subjects.find(s => s.id === form.value.subjectId))
+const chapterPick = ref({ chapterName: '', topicName: '' })
+const currentChapterTopics = computed(() => {
+  const ch = currentSubject.value?.chapters.find(c => c.name === chapterPick.value.chapterName)
+  return ch?.topics ?? []
+})
+
+function onChapterNamePick() {
+  chapterPick.value.topicName = ''
+  form.value.chapter = chapterPick.value.chapterName
+}
+function onTopicPick() {
+  form.value.chapter = chapterPick.value.topicName
+}
+
+// 科目切换：题型置为当前科目首个题型，清空章节与两栏选中残留
+watch(() => form.value.subjectId, (newId) => {
+  const types = problemTypesFor(newId)
+  form.value.type = types[0]?.label ?? ''
+  form.value.chapter = ''
+  chapterPick.value = { chapterName: '', topicName: '' }
+})
 
 // 图片以 base64 存入 localStorage（约 5MB 上限）并同步云端，故需在客户端压缩。
 // 不限制原始拍照大小，统一压缩到最长边 1600px、JPEG 质量 0.85，通常可压到 200~400KB。
@@ -88,7 +115,7 @@ function removeError(id: string) {
 <template>
   <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="page-title">📕 错题本</h1>
+      <h1 class="page-title">错题本</h1>
       <button class="btn-primary" @click="showModal = true">+ 收录错题</button>
     </div>
 
@@ -101,7 +128,7 @@ function removeError(id: string) {
     <div class="flex gap-2 items-center flex-wrap">
       <select v-model="filterSubject" class="input !w-auto">
         <option value="">全部科目</option>
-        <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ s.icon }} {{ s.name }}</option>
+        <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
       </select>
       <label class="flex items-center gap-1.5 text-sm text-slate-500 cursor-pointer">
         <input type="checkbox" v-model="showOnlyUnmastered" class="accent-primary-500" /> 只看未攻克
@@ -113,7 +140,7 @@ function removeError(id: string) {
     <div class="space-y-3">
       <div v-for="q in list" :key="q.id" class="card" :class="q.mastered ? 'opacity-60' : ''">
         <div class="flex items-center gap-2 text-xs text-slate-400 mb-2 flex-wrap">
-          <span>{{ store.subjectMap[q.subjectId]?.icon }} {{ store.subjectMap[q.subjectId]?.name }}</span>
+          <span>{{ subjectLabel(store.subjectMap[q.subjectId]) }}</span>
           <span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">{{ q.type }}</span>
           <span v-if="q.chapter">{{ q.chapter }}</span>
           <span>{{ q.date }}</span>
@@ -130,7 +157,7 @@ function removeError(id: string) {
           <p v-if="expandedAnswer[q.id]" class="text-sm text-slate-500 mt-1 bg-slate-50 dark:bg-slate-700/50 rounded-lg p-2 whitespace-pre-wrap">{{ q.answer }}</p>
         </div>
         <div class="flex gap-2 mt-3 pt-2 border-t border-slate-100 dark:border-slate-700">
-          <button class="btn-ghost !py-1 !text-xs" @click="store.reviewError(q.id); toast('复习 +1，积分 +2')">🔄 复习({{ q.reviewCount }})</button>
+          <button class="btn-ghost !py-1 !text-xs" @click="store.reviewError(q.id); toast('复习 +1，积分 +2')">复习({{ q.reviewCount }})</button>
           <button class="btn-ghost !py-1 !text-xs" @click="store.toggleErrorMastered(q.id)">{{ q.mastered ? '↩ 取消攻克' : '✅ 标记攻克' }}</button>
           <button class="btn-ghost !py-1 !text-xs" @click="shareTarget = q.id">分享给搭子</button>
           <button class="btn-danger !py-1 !text-xs ml-auto" @click="removeError(q.id)">删除</button>
@@ -144,17 +171,30 @@ function removeError(id: string) {
           <div>
             <label class="label">科目</label>
             <select v-model="form.subjectId" class="input">
-              <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ s.icon }} {{ s.name }}</option>
+              <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
             </select>
           </div>
           <div>
             <label class="label">题型</label>
             <select v-model="form.type" class="input">
-              <option>选择</option><option>填空</option><option>计算</option><option>证明</option><option>其他</option>
+              <option v-for="t in currentTypes" :key="t.key" :value="t.label">{{ t.label }}</option>
             </select>
           </div>
         </div>
-        <div><label class="label">所属章节</label><input v-model="form.chapter" class="input" placeholder="如：第三章 微分中值定理" /></div>
+        <div>
+          <label class="label">所属章节</label>
+          <div class="grid grid-cols-2 gap-2">
+            <select v-model="chapterPick.chapterName" class="input" @change="onChapterNamePick">
+              <option value="">选择章节</option>
+              <option v-for="c in currentSubject?.chapters ?? []" :key="c.id" :value="c.name">{{ c.name }}</option>
+            </select>
+            <select v-model="chapterPick.topicName" class="input" @change="onTopicPick">
+              <option value="">选择知识点</option>
+              <option v-for="t in currentChapterTopics" :key="t" :value="t">{{ t }}</option>
+            </select>
+          </div>
+          <input v-model="form.chapter" class="input mt-2" placeholder="或手动输入章节内容…" />
+        </div>
         <div><label class="label">题目内容</label><textarea v-model="form.content" rows="3" class="input" placeholder="题干描述…"></textarea></div>
         <div><label class="label">解析/正确答案</label><textarea v-model="form.answer" rows="3" class="input" placeholder="正确解法、易错点…"></textarea></div>
         <div>

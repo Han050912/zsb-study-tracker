@@ -57,10 +57,22 @@ function aggregateDay(d: string) {
 // ---- 当日数据聚合 ----
 const dayData = computed(() => aggregateDay(editDate.value))
 
-/** 保存总结；心情/收获/反思为必填项，全部填写才允许保存（返回是否保存成功） */
+/** 保存总结；心情、收获、反思、计划均为必填，逐项校验，全部通过才保存（返回是否保存成功） */
 function save(): boolean {
-  if (!form.value.mood || !form.value.harvest.trim() || !form.value.improve.trim()) {
-    toast('请先填写当日心情、收获与反思')
+  if (!form.value.mood) {
+    toast('请选择今日心情')
+    return false
+  }
+  if (!form.value.harvest.trim()) {
+    toast('请填写今日收获')
+    return false
+  }
+  if (!form.value.improve.trim()) {
+    toast('请填写不足反思')
+    return false
+  }
+  if (!form.value.plan.trim()) {
+    toast('请填写明日计划')
     return false
   }
   const isNew = !store.summaries[editDate.value]

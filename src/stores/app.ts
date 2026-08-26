@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { createDefaultState, ACHIEVEMENTS, LEVELS, VOCAB_HABIT_ID, PROBLEM_HABIT_ID } from '../data/defaults'
+import { createDefaultState, ACHIEVEMENTS, LEVELS, VOCAB_HABIT_ID, PROBLEM_HABIT_ID, defaultSubjects } from '../data/defaults'
 import { today, yesterday, uid, daysBetween } from '../utils/date'
 import { syncApi } from '../api/sync'
 import { deletePdf, PDF_REF_PREFIX } from '../api/pdfs'
@@ -323,6 +323,19 @@ export const useAppStore = defineStore('app', {
       // 必须生成唯一 id，否则动态路由 /subject/:id 与导航将全部指向 /subject/undefined
       this.subjects.push({ ...s, id: uid(), builtin: false, chapters: [], mastery: {}, topicImportance: {} })
       this.save()
+    },
+    /** 恢复被删除的内置科目：仅补回缺失的，不覆盖已存在（含已改名）的内置科目，不影响自定义科目与错题数据。返回恢复数量 */
+    restoreDefaultSubjects(): number {
+      const existingIds = new Set(this.subjects.map(x => x.id))
+      let restored = 0
+      for (const d of defaultSubjects()) {
+        if (!existingIds.has(d.id)) {
+          this.subjects.push({ ...d })
+          restored++
+        }
+      }
+      if (restored > 0) this.save()
+      return restored
     },
     /** 修改任意科目的考核权重百分比 */
     updateSubjectWeight(id: string, weight: number) {
