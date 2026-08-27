@@ -319,7 +319,7 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
 
 <style scoped>
 .enhanced-radar-chart {
-  @apply w-full;
+  width: 100%;
 }
 
 /* 确保在小屏幕上也能良好显示 */

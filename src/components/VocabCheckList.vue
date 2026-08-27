@@ -410,10 +410,17 @@ function inputClass(w: AnswerState): string {
   background: transparent;
 }
 .vocab-scroll::-webkit-scrollbar-thumb {
-  @apply bg-indigo-200 dark:bg-slate-600 rounded-full;
+  background-color: #c7d2fe;
+  border-radius: 9999px;
+}
+::global(.dark) .vocab-scroll::-webkit-scrollbar-thumb {
+  background-color: #475569;
 }
 .vocab-scroll::-webkit-scrollbar-thumb:hover {
-  @apply bg-indigo-300 dark:bg-slate-500;
+  background-color: #a5b4fc;
+}
+::global(.dark) .vocab-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #64748b;
 }
 
 /* 释义展开/收起过渡 */
