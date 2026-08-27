@@ -20,7 +20,7 @@ import { useStudyTimerStore } from '../stores/studyTimer'
 import { formatMinutes } from '../utils/date'
 import type { PartnerItem, PartnerStudyRecord } from '../types'
 
-type Phase = 'idle' | 'focus' | 'break' | 'done'
+type Phase = 'idle' | 'focus' | 'done'
 
 const route = useRoute()
 const { goBack } = useBack()
@@ -30,11 +30,11 @@ const loading = ref(true)
 const partners = ref<PartnerItem[]>([])
 const selectedId = ref((route.query.partner as string) || '')
 const focusMinutes = ref(25)
-const breakMinutes = ref(5)
+const mode = ref<'countdown' | 'countup'>('countdown')
 const creating = ref(false)
 
 const timer = useStudyTimerStore()
-const { session, phase, running, myMinutes, onlineSeconds, display } = storeToRefs(timer)
+const { session, phase, running, myMinutes, onlineSeconds, display, pendingChoice } = storeToRefs(timer)
 
 // ---- 实时系统时钟 ----
 const now = ref(new Date())
@@ -77,12 +77,11 @@ let bgTimer: ReturnType<typeof setInterval> | null = null
 const controlsVisible = ref(true)
 let hideControlsTimer: ReturnType<typeof setTimeout> | null = null
 
-const PHASE_TEXT: Record<Phase, string> = { idle: '准备开始', focus: '专注中', break: '休息中', done: '已完成' }
-const STATE_TEXT: Record<Phase, string> = { idle: '未开始', focus: '专注中', break: '休息中', done: '已完成' }
+const PHASE_TEXT: Record<Phase, string> = { idle: '准备开始', focus: '专注中', done: '已完成' }
+const STATE_TEXT: Record<Phase, string> = { idle: '未开始', focus: '专注中', done: '已完成' }
 const STATE_CLS: Record<Phase, string> = {
   idle: 'opacity-70',
   focus: 'text-emerald-300',
-  break: 'text-amber-300',
   done: 'text-emerald-400'
 }
 
@@ -139,7 +138,7 @@ async function invite() {
   if (!selectedId.value || creating.value) return
   creating.value = true
   try {
-    const res = await communityApi.createStudySession(selectedId.value, focusMinutes.value, breakMinutes.value)
+    const res = await communityApi.createStudySession(selectedId.value, mode.value, mode.value === 'countdown' ? focusMinutes.value : undefined)
     const detail = await communityApi.studySession(res.id)
     if (!detail?.session) {
       toast('会话已创建，但获取详情失败，请返回后重试')
@@ -282,9 +281,16 @@ watch(() => timer.sessionCompleted, (v, old) => {
           <span class="font-medium">{{ p.userName }}</span>
           <span v-if="selectedId === p.userId" class="ml-auto text-primary-500">✓</span>
         </button>
-        <div class="grid grid-cols-2 gap-3 pt-1">
-          <div><label class="label">专注（分钟）</label><input v-model.number="focusMinutes" type="number" min="1" max="120" class="input !text-xs" /></div>
-          <div><label class="label">休息（分钟）</label><input v-model.number="breakMinutes" type="number" min="1" max="30" class="input !text-xs" /></div>
+        <div class="pt-1">
+          <div class="flex gap-1 mb-2">
+            <button class="flex-1 rounded-lg px-2 py-1.5 text-xs transition-colors"
+              :class="mode === 'countdown' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+              @click="mode = 'countdown'">倒计时</button>
+            <button class="flex-1 rounded-lg px-2 py-1.5 text-xs transition-colors"
+              :class="mode === 'countup' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+              @click="mode = 'countup'">正计时</button>
+          </div>
+          <div v-if="mode === 'countdown'"><label class="label">专注（分钟）</label><input v-model.number="focusMinutes" type="number" min="1" max="120" class="input !text-xs" /></div>
         </div>
         <button class="btn-primary w-full !text-xs" :disabled="!selectedId || creating" @click="invite">
           {{ creating ? '创建中…' : '邀请开黑' }}
@@ -317,7 +323,7 @@ watch(() => timer.sessionCompleted, (v, old) => {
   <!-- 自习室：沉浸式全屏 -->
   <div v-else
     class="min-h-screen relative flex flex-col items-center justify-center p-6 transition-colors duration-700 overflow-hidden"
-    :class="bgUrl ? 'text-white' : phase === 'focus' ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white' : phase === 'break' ? 'bg-gradient-to-br from-emerald-50 to-teal-100 dark:from-emerald-950 dark:to-teal-900' : 'bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-900 dark:to-slate-800 text-slate-800 dark:text-slate-100'">
+    :class="bgUrl ? 'text-white' : phase === 'focus' ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white' : 'bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-900 dark:to-slate-800 text-slate-800 dark:text-slate-100'">
 
     <!-- 壁纸 + 遮罩（加载失败时 bgUrl 为空，自动降级为上方渐变） -->
     <template v-if="bgUrl">
@@ -346,6 +352,15 @@ watch(() => timer.sessionCompleted, (v, old) => {
 
       <div class="mt-6 text-sm tracking-widest opacity-85" :class="bgUrl || phase === 'focus' ? '' : 'opacity-70'">{{ PHASE_TEXT[phase] }}</div>
       <div class="text-4xl md:text-5xl font-mono font-bold tabular-nums tracking-wider my-2">{{ display }}</div>
+
+      <!-- 等待态：展示对方状态/进度 -->
+      <div v-if="phase === 'done'" class="mt-4 text-sm">
+        <div v-if="session.partnerState === 'focus'" class="opacity-90">
+          <template v-if="session.mode === 'countup'">搭子专注中 · 已进行 {{ formatDuration(session.partnerElapsedSeconds) }}</template>
+          <template v-else>搭子专注中 · 剩余 {{ formatDuration(Math.max(0, session.focusMinutes * 60 - session.partnerElapsedSeconds)) }}</template>
+        </div>
+        <div v-else-if="session.partnerState === 'idle'" class="opacity-90">搭子未开始</div>
+      </div>
 
       <div class="mt-6 flex items-center justify-center gap-6 text-sm">
         <div class="opacity-90">
@@ -376,6 +391,7 @@ watch(() => timer.sessionCompleted, (v, old) => {
           </button>
         </template>
         <span v-else class="text-sm opacity-80 self-center">等待对方完成…</span>
+        <button v-if="phase === 'focus' && session.mode === 'countup'" class="btn bg-emerald-500/80 text-white px-6" @click="timer.finishFocus">完成专注</button>
         <button class="btn bg-red-500/80 text-white px-6" @click="handleEndBtn">结束自习</button>
       </div>
     </div>
@@ -396,6 +412,24 @@ watch(() => timer.sessionCompleted, (v, old) => {
     <template #footer>
       <button class="btn !px-4 text-sm" @click="choosePause">否，暂停计时</button>
       <button class="btn btn-primary !px-4 text-sm" @click="chooseContinue">是，后台继续计时</button>
+    </template>
+  </Modal>
+
+  <!-- 搭子未进入弹窗 -->
+  <Modal :show="pendingChoice === 'partner_idle'" title="搭子还未进入" @close="timer.waitForPartner()">
+    <p class="text-sm text-slate-600 dark:text-slate-300">你已完成专注，但搭子还未进入自习室。</p>
+    <template #footer>
+      <button class="btn btn-primary !px-4 text-sm" @click="timer.waitForPartner()">继续等待</button>
+      <button class="btn !px-4 text-sm" @click="timer.endSession()">结束本次自习</button>
+    </template>
+  </Modal>
+
+  <!-- 搭子仍专注弹窗 -->
+  <Modal :show="pendingChoice === 'partner_focus'" title="你已完成专注" @close="timer.waitForPartner()">
+    <p class="text-sm text-slate-600 dark:text-slate-300">搭子还在专注中，是否等待？</p>
+    <template #footer>
+      <button class="btn btn-primary !px-4 text-sm" @click="timer.waitForPartner()">等待对方完成</button>
+      <button class="btn !px-4 text-sm" @click="timer.leaveSession().finally(() => goBack())">先行离开</button>
     </template>
   </Modal>
   </div>

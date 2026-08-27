@@ -770,14 +770,18 @@ CREATE INDEX IF NOT EXISTS idx_pscomments_share ON partner_share_comments(share_
 --   ALTER TABLE partner_study_sessions ADD COLUMN to_elapsed_seconds INTEGER NOT NULL DEFAULT 0;
 --   ALTER TABLE partner_study_sessions ADD COLUMN from_running INTEGER NOT NULL DEFAULT 0;
 --   ALTER TABLE partner_study_sessions ADD COLUMN to_running INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：移除休息阶段（break_minutes 废弃），执行一次：
+--   ALTER TABLE partner_study_sessions DROP COLUMN break_minutes;
+-- 已建库升级：计时模式（正计时/倒计时），执行一次：
+--   ALTER TABLE partner_study_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'countdown';
 CREATE TABLE IF NOT EXISTS partner_study_sessions (
   id TEXT PRIMARY KEY,
   from_id TEXT NOT NULL REFERENCES users(id),    -- 发起人
   to_id TEXT NOT NULL REFERENCES users(id),      -- 搭子
   status TEXT NOT NULL DEFAULT 'active',         -- 'active' | 'done'
+  mode TEXT NOT NULL DEFAULT 'countdown',        -- 计时模式：'countdown' | 'countup'
   focus_minutes INTEGER NOT NULL DEFAULT 25,     -- 专注时长（分钟，双方一致，创建时设定）
-  break_minutes INTEGER NOT NULL DEFAULT 5,      -- 休息时长（分钟，双方一致）
-  from_state TEXT NOT NULL DEFAULT 'idle',       -- 发起人状态：'idle' | 'focus' | 'break' | 'done'
+  from_state TEXT NOT NULL DEFAULT 'idle',       -- 发起人状态：'idle' | 'focus' | 'done'
   to_state TEXT NOT NULL DEFAULT 'idle',         -- 搭子状态
   from_minutes INTEGER NOT NULL DEFAULT 0,       -- 发起人累计专注分钟
   to_minutes INTEGER NOT NULL DEFAULT 0,         -- 搭子累计专注分钟

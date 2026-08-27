@@ -788,11 +788,11 @@ export interface PartnerStudySession {
   partnerAvatar?: string
   /** 专注时长（分钟，双方一致） */
   focusMinutes: number
-  /** 休息时长（分钟，双方一致） */
-  breakMinutes: number
-  myState: 'idle' | 'focus' | 'break' | 'done'
+  /** 计时模式（双方一致）：countdown=倒计时（设定专注分钟走完自动完成），countup=正计时（从 0 递增，手动完成） */
+  mode: 'countdown' | 'countup'
+  myState: 'idle' | 'focus' | 'done'
   myMinutes: number
-  partnerState: 'idle' | 'focus' | 'break' | 'done'
+  partnerState: 'idle' | 'focus' | 'done'
   partnerMinutes: number
   /** 我的累计在线秒数（墙钟，暂停不计入） */
   myOnlineSeconds: number
@@ -800,6 +800,8 @@ export interface PartnerStudySession {
   partnerOnlineSeconds: number
   /** 我的当前阶段已消耗秒数（用于刷新/重进恢复剩余） */
   myElapsedSeconds: number
+  /** 对方当前阶段已消耗秒数（用于展示对方进度） */
+  partnerElapsedSeconds: number
   /** 对方是否正在计时（true=计时中，false=暂停/未开始） */
   partnerRunning: boolean
 }

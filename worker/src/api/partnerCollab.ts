@@ -21,14 +21,22 @@ async function avatarOf(env: Env, userId: string): Promise<string | undefined> {
   return r?.avatar ?? undefined
 }
 
+/** 解析专注/休息时长（分钟）：忠实用户输入（含 0 与小数），仅对未提供/非数字兜底默认值，clamp 到 [0, max] */
+function sanitizeMinutes(v: unknown, dflt: number, max: number): number {
+  if (v === undefined || v === null || v === '') return dflt
+  const n = Number(v)
+  if (!Number.isFinite(n)) return dflt
+  return Math.min(max, Math.max(0, n))
+}
+
 /** 番茄自习室会话行 */
 interface StudySessionRow {
   id: string
   from_id: string
   to_id: string
   status: string
+  mode: string
   focus_minutes: number
-  break_minutes: number
   from_state: string
   to_state: string
   from_minutes: number
@@ -55,9 +63,9 @@ export function registerPartnerStudy() {
     if (partnerId === ctx.userId) throw new HttpError(400, '不能与自己开黑')
     await assertPartner(ctx.env, ctx.userId, partnerId)
 
-    // 专注/休息时长（分钟，双方一致，默认 25/5）
-    const focusMinutes = Math.min(120, Math.max(1, Math.floor(Number(b?.focusMinutes) || 25)))
-    const breakMinutes = Math.min(30, Math.max(1, Math.floor(Number(b?.breakMinutes) || 5)))
+    // 专注/休息时长（分钟，双方一致）：忠实用户输入，仅对未提供/非数字兜底默认值，clamp 到 [0, 上限]
+    const focusMinutes = sanitizeMinutes(b?.focusMinutes, 25, 120)
+    const mode = b?.mode === 'countup' ? 'countup' : 'countdown'
 
     const busy = await first<{ id: string }>(ctx.env,
       `SELECT id FROM partner_study_sessions WHERE status = 'active' AND (from_id IN (?, ?) OR to_id IN (?, ?)) LIMIT 1`,
@@ -68,12 +76,12 @@ export function registerPartnerStudy() {
     const now = nowSec()
     await batch(ctx.env, [
       ctx.env.DB.prepare(
-        `INSERT INTO partner_study_sessions (id, from_id, to_id, status, focus_minutes, break_minutes, from_state, to_state, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, 'idle', 'idle', ?, ?)`
-      ).bind(id, ctx.userId, partnerId, focusMinutes, breakMinutes, now, now),
+        `INSERT INTO partner_study_sessions (id, from_id, to_id, status, mode, focus_minutes, from_state, to_state, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, 'idle', 'idle', ?, ?)`
+      ).bind(id, ctx.userId, partnerId, mode, focusMinutes, now, now),
       notifyStatement(ctx.env, {
         userId: partnerId, type: 'partner', actorId: ctx.userId,
         targetType: 'partner_study', targetId: id,
-        content: `${await displayName(ctx.env, ctx.userId)} 邀请你一起开黑学习（${focusMinutes}分钟专注）`
+        content: `${await displayName(ctx.env, ctx.userId)} 邀请你一起开黑学习（${mode === 'countup' ? '正计时' : `${focusMinutes}分钟专注`}）`
       })
     ])
     return Response.json({ id }, { status: 201 })
@@ -124,11 +132,11 @@ export function registerPartnerStudy() {
     return Response.json({ session: await mapSession(ctx.env, s, ctx.userId) })
   })
 
-  // 更新我的状态（idle/focus/break/done）与累计分钟/在线秒数；双方 done 时会话结束
+  // 更新我的状态（idle/focus/done）与累计分钟/在线秒数；双方 done 时会话结束
   on('PUT', '/api/partner-study/sessions/:id', true, async (ctx) => {
     const b = await body(ctx.request)
-    const state = b?.state === 'idle' || b?.state === 'focus' || b?.state === 'break' || b?.state === 'done' ? b.state : null
-    if (!state) throw new HttpError(400, 'state 需为 idle/focus/break/done')
+    const state = b?.state === 'idle' || b?.state === 'focus' || b?.state === 'done' ? b.state : null
+    if (!state) throw new HttpError(400, 'state 需为 idle/focus/done')
     const minutes = Math.max(0, Math.floor(Number(b?.minutes) || 0))
     const onlineSeconds = Math.max(0, Math.floor(Number(b?.onlineSeconds) || 0))
     const elapsedSeconds = Math.max(0, Math.floor(Number(b?.elapsedSeconds) || 0))
@@ -166,6 +174,11 @@ async function getSession(env: Env, id: string) {
   return s
 }
 
+/** 归一化会话状态：旧版 'break' 阶段已废弃，统一视为 'done' */
+function normalizeState(state: string): string {
+  return state === 'break' ? 'done' : state
+}
+
 async function mapSession(env: Env, s: StudySessionRow, userId: string) {
   const side = sideOf(s, userId)
   const partnerId = side === 'from' ? s.to_id : s.from_id
@@ -174,18 +187,19 @@ async function mapSession(env: Env, s: StudySessionRow, userId: string) {
   return {
     id: s.id,
     status: s.status,
+    mode: s.mode === 'countup' ? 'countup' : 'countdown',
     partnerId,
     partnerName,
     partnerAvatar,
     focusMinutes: s.focus_minutes,
-    breakMinutes: s.break_minutes,
-    myState: side === 'from' ? s.from_state : s.to_state,
+    myState: normalizeState(side === 'from' ? s.from_state : s.to_state),
     myMinutes: side === 'from' ? s.from_minutes : s.to_minutes,
-    partnerState: side === 'from' ? s.to_state : s.from_state,
+    partnerState: normalizeState(side === 'from' ? s.to_state : s.from_state),
     partnerMinutes: side === 'from' ? s.to_minutes : s.from_minutes,
     myOnlineSeconds: side === 'from' ? s.from_online_seconds : s.to_online_seconds,
     partnerOnlineSeconds: side === 'from' ? s.to_online_seconds : s.from_online_seconds,
     myElapsedSeconds: side === 'from' ? s.from_elapsed_seconds : s.to_elapsed_seconds,
+    partnerElapsedSeconds: side === 'from' ? s.to_elapsed_seconds : s.from_elapsed_seconds,
     partnerRunning: !!(side === 'from' ? s.to_running : s.from_running)
   }
 }

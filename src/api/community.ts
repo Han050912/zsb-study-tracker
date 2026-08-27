@@ -339,13 +339,13 @@ export const communityApi = {
     request<Note>(`/api/partner-shares/${id}/copy`, { method: 'POST', body: JSON.stringify({ subjectId }) }),
 
   // ========== 双人番茄自习室 ==========
-  createStudySession: (partnerId: string, focusMinutes?: number, breakMinutes?: number) =>
-    request<{ id: string }>('/api/partner-study/sessions', { method: 'POST', body: JSON.stringify({ partnerId, focusMinutes, breakMinutes }) }),
+  createStudySession: (partnerId: string, mode: 'countdown' | 'countup', focusMinutes?: number) =>
+    request<{ id: string }>('/api/partner-study/sessions', { method: 'POST', body: JSON.stringify({ partnerId, mode, focusMinutes }) }),
   activeStudySession: () =>
     request<{ session: PartnerStudySession | null }>('/api/partner-study/sessions/active'),
   studySession: (id: string) =>
     request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`),
-  updateStudySession: (id: string, state: 'idle' | 'focus' | 'break' | 'done', minutes: number, onlineSeconds: number, elapsedSeconds?: number, running?: boolean) =>
+  updateStudySession: (id: string, state: 'idle' | 'focus' | 'done', minutes: number, onlineSeconds: number, elapsedSeconds?: number, running?: boolean) =>
     request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`, { method: 'PUT', body: JSON.stringify({ state, minutes, onlineSeconds, elapsedSeconds, running }) }),
   endStudySession: (id: string) =>
     request<{ ok: boolean }>(`/api/partner-study/sessions/${id}`, { method: 'DELETE' }),
