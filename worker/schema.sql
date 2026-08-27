@@ -447,14 +447,6 @@ CREATE TABLE IF NOT EXISTS pomodoro_interruptions (
   time INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS pomodoro_partial_sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id TEXT NOT NULL REFERENCES users(id),
-  date TEXT NOT NULL,
-  minutes INTEGER NOT NULL,
-  time INTEGER NOT NULL
-);
-
 -- ========== 待办事项 ==========
 CREATE TABLE IF NOT EXISTS todos (
   id TEXT NOT NULL,

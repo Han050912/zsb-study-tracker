@@ -615,6 +615,7 @@ export const useAppStore = defineStore('app', {
     },
 
     recordPomodoro(minutes: number) {
+      if (minutes < 1) return
       const t = today()
       if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
       this.pomodoro.daily[t].count++
@@ -627,16 +628,6 @@ export const useAppStore = defineStore('app', {
       if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
       this.pomodoro.daily[t].interruptions++
       this.pomodoro.interruptions.push({ date: t, reason, time: Date.now() })
-      this.save()
-    },
-    /** 记录中断/提前结束的部分时长（不增加完成次数、不加积分，但计入今日专注） */
-    recordPartialSession(minutes: number) {
-      const t = today()
-      if (!this.pomodoro.partialSessions) this.pomodoro.partialSessions = []
-      this.pomodoro.partialSessions.push({ date: t, minutes, time: Date.now() })
-      // 提前结束的时长计入今日学习时长，但不算番茄数、不加积分
-      if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
-      this.pomodoro.daily[t].minutes += minutes
       this.save()
     },
 

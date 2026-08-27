@@ -122,10 +122,12 @@ function giveUp() {
   // 先计算已流逝秒数（stopTimer 会将当前段累加到 pausedElapsed）
   const elapsed = pausedElapsed + Math.floor((Date.now() - startTimestamp) / 1000)
   stopTimer()
-  if (phase.value === 'focus' && elapsed >= 60) {
+  if (phase.value === 'focus') {
     const minutes = Math.round(elapsed / 60)
-    store.recordPartialSession(minutes)
-    toast(`已记录 ${minutes} 分钟专注（未计入番茄数）`)
+    if (minutes >= 1) {
+      store.recordPomodoro(minutes)
+      toast(`完成一个番茄钟！+5 积分`)
+    }
   }
   phase.value = 'idle'
   seconds.value = 0
@@ -225,8 +227,6 @@ onUnmounted(() => {
 })
 
 const recentInterruptions = computed(() => store.pomodoro.interruptions.slice(-5).reverse())
-const totalSessions = computed(() => Object.values(store.pomodoro.daily).reduce((s, d) => s + d.count, 0))
-const totalFocusMin = computed(() => Object.values(store.pomodoro.daily).reduce((s, d) => s + d.minutes, 0))
 </script>
 
 <template>
@@ -280,7 +280,7 @@ const totalFocusMin = computed(() => Object.values(store.pomodoro.daily).reduce(
           <div class="text-[11px] text-slate-400">今日专注</div>
         </div>
         <div class="card !p-3 text-center">
-          <div class="text-xl font-black text-primary-500">{{ totalSessions ? Math.round(totalFocusMin / totalSessions) : 0 }}分</div>
+          <div class="text-xl font-black text-primary-500">{{ store.todayPomodoro.count ? (store.todayPomodoro.minutes / store.todayPomodoro.count).toFixed(1) : '0.0' }}分</div>
           <div class="text-[11px] text-slate-400">平均时长</div>
         </div>
       </div>
