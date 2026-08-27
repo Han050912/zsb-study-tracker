@@ -288,6 +288,7 @@ onUnmounted(() => {
       <div class="card !p-3 text-center">
         <div class="text-2xl font-black text-orange-500">{{ store.todayPomodoro.count }}</div>
         <div class="text-[11px] text-slate-400 mt-0.5">今日番茄钟</div>
+        <div class="text-[10px] text-slate-400">平均 {{ store.todayPomodoro.count ? (store.todayPomodoro.minutes / store.todayPomodoro.count).toFixed(1) : '0.0' }} 分/个</div>
       </div>
       <div class="card !p-3 text-center">
         <div class="text-2xl font-black text-purple-500">{{ store.gamification.streak }}</div>
