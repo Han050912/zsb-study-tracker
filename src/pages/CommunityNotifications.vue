@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { inject, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
-import { fromNow } from '../utils/date'
-import type { CommunityNotification, NotificationTargetType, NotificationType } from '../types'
+import type { CommunityNotification, NotificationType } from '../types'
+import NotificationCommentItem from '../components/community/NotificationCommentItem.vue'
+import NotificationLikeItem from '../components/community/NotificationLikeItem.vue'
+import NotificationFollowItem from '../components/community/NotificationFollowItem.vue'
+import NotificationPartnerItem from '../components/community/NotificationPartnerItem.vue'
+import NotificationGenericItem from '../components/community/NotificationGenericItem.vue'
 
 const store = useCommunityStore()
-const router = useRouter()
 const toast = inject<(m: string) => void>('toast', () => {})
 
 const FILTERS: { k: NotificationType | ''; l: string }[] = [
@@ -15,7 +17,7 @@ const FILTERS: { k: NotificationType | ''; l: string }[] = [
   { k: 'comment', l: '评论' },
   { k: 'follow', l: '关注' },
   { k: 'achievement', l: '成就' },
-  { k: 'message', l: '私信' },
+  { k: 'partner', l: '搭子' },
   { k: 'system', l: '系统' }
 ]
 function switchFilter(k: NotificationType | '') {
@@ -26,31 +28,8 @@ onMounted(() => {
   store.fetchNotifications(true).catch(e => toast(e?.message || '加载失败'))
 })
 
-/** 通知跳转目标 → 路由前缀 */
-const NOTIFY_TARGET_ROUTES: Record<NotificationTargetType, string> = {
-  post: '/community/post',
-  user: '/profile',
-  message: '/community/messages',
-  team: '/teams',
-  circle: '/community/circles',
-  partner: '/community/partners'
-}
-
-/** 固定路径目标：页面不接收 id 参数，跳转时无需拼接 targetId */
-const STATIC_TARGETS: NotificationTargetType[] = ['partner']
-
-/** 点击通知：标记已读并跳转到对应目标页面（无目标则不跳转） */
-async function open(n: CommunityNotification) {
+function markRead(n: CommunityNotification) {
   store.markRead(n).catch(() => {})
-  if (!n.targetType) return
-  const base = NOTIFY_TARGET_ROUTES[n.targetType]
-  if (!base) return
-  // 固定路径目标（如学习搭子页）直接跳转，不拼接 targetId
-  if (STATIC_TARGETS.includes(n.targetType)) { router.push(base); return }
-  if (!n.targetId) return
-  // 评论/回复/点赞评论类通知携带 commentId：帖子详情页据此滚动并高亮定位到该条评论
-  const query = n.commentId && n.targetType === 'post' ? { comment: n.commentId } : undefined
-  router.push({ path: `${base}/${n.targetId}`, query })
 }
 
 async function readAll() {
@@ -82,15 +61,13 @@ async function readAll() {
     </div>
 
     <div class="card !p-0 divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
-      <button v-for="n in store.notifications" :key="n.id"
-        class="w-full flex items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/40"
-        @click="open(n)">
-        <div class="flex-1 min-w-0">
-          <p class="text-sm leading-relaxed">{{ n.content }}</p>
-          <p class="text-[10px] text-slate-400 mt-0.5">{{ fromNow(n.createdAt) }}</p>
-        </div>
-        <span v-if="!n.isRead" class="w-2 h-2 rounded-full bg-rose-500 shrink-0 mt-2"></span>
-      </button>
+      <template v-for="n in store.notifications" :key="n.id">
+        <NotificationCommentItem v-if="n.type === 'comment'" :n="n" @read="markRead(n)" />
+        <NotificationLikeItem v-else-if="n.type === 'like'" :n="n" @read="markRead(n)" />
+        <NotificationFollowItem v-else-if="n.type === 'follow'" :n="n" @read="markRead(n)" />
+        <NotificationPartnerItem v-else-if="n.type === 'partner'" :n="n" @read="markRead(n)" />
+        <NotificationGenericItem v-else :n="n" @read="markRead(n)" />
+      </template>
     </div>
 
     <div v-if="store.hasMoreNotify && store.notifications.length" class="text-center">

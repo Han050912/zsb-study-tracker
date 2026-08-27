@@ -3,7 +3,7 @@ import { on, body } from '../router'
 import { all, first, run, batch, uid, utc8Today, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { deleteUploads, uploadIdsOf, IMAGE_MAX_PER_POST, IMAGE_MAX_PER_COMMENT, IMAGE_MAX_PER_MESSAGE } from './uploads'
-import { assertClean, moderate } from './sensitive'
+import { assertCleanAsync } from './sensitive'
 import { awardBadge, hasBadge } from './badges'
 import { parseMutedTypes } from './settings'
 
@@ -91,6 +91,7 @@ function mapComment(r: any) {
 }
 
 function mapNotification(r: any) {
+  const thumbs = r.image_urls ? parseStrArray(r.image_urls) : []
   return {
     id: r.id,
     type: r.type,
@@ -103,7 +104,12 @@ function mapNotification(r: any) {
     targetId: r.target_id ?? undefined,
     content: r.content,
     isRead: !!r.is_read,
-    createdAt: r.created_at
+    createdAt: r.created_at,
+    relation: r.relation ?? 'none',
+    postThumb: thumbs.length ? thumbs[0] + '?thumb=1' : undefined,
+    commentContent: r.comment_content ?? undefined,
+    commentLikedByMe: !!r.comment_liked_by_me,
+    commentLikesCount: r.comment_likes_count ?? 0
   }
 }
 
@@ -416,14 +422,13 @@ export function registerCommunityRoutes() {
     }
     const content = String(b?.content ?? '').trim()
     if (content.length > 5000) throw new HttpError(400, '帖子内容最多 5000 字')
-    if (content) assertClean(content)
-    // 软违规：先发布但标记待审（仅作者/管理员可见），由管理员复核
-    const flagged = content ? (moderate(content).soft ? 1 : 0) : 0
+    // 软违规（本地或 AI）：先发布但标记待审（仅作者/管理员可见），由管理员复核
+    const flagged = content ? ((await assertCleanAsync(content, ctx.env, { allowSoft: true })).flagged ? 1 : 0) : 0
     const type = POST_TYPES.includes(b?.type) ? b.type : 'share'
     const tags = (Array.isArray(b?.tags) ? b.tags : [])
       .filter((t: unknown) => typeof t === 'string').slice(0, 5)
       .map((t: string) => t.trim().slice(0, 20)).filter(Boolean)
-    for (const t of tags) assertClean(t) // 标签同样过敏感词，防止绕过内容过滤
+    for (const t of tags) await assertCleanAsync(t, ctx.env, { allowSoft: true }) // 标签同样过敏感词，防止绕过内容过滤
     if (type === 'question' && !tags.some((t: string) => QUESTION_SUBJECT_TAGS.includes(t))) {
       throw new HttpError(400, '提问帖请选择科目标签（#高等数学 或 #英语）')
     }
@@ -543,9 +548,8 @@ export function registerCommunityRoutes() {
     const b = await body(ctx.request)
     const content = String(b?.content ?? '').trim()
     if (content.length > 1000) throw new HttpError(400, '评论内容最多 1000 字')
-    if (content) assertClean(content)
-    // 软违规：先发布但标记待审（仅作者/管理员可见），由管理员复核
-    const flagged = content ? (moderate(content).soft ? 1 : 0) : 0
+    // 软违规（本地或 AI）：先发布但标记待审（仅作者/管理员可见），由管理员复核
+    const flagged = content ? ((await assertCleanAsync(content, ctx.env, { allowSoft: true })).flagged ? 1 : 0) : 0
 
     // 评论配图（最多 3 张）：与发帖同一口径——仅认本系统上传路径且必须属于当前用户
     const rawImageUrls: unknown[] = Array.isArray(b?.imageUrls) ? b.imageUrls : []
@@ -904,8 +908,8 @@ export function registerCommunityRoutes() {
     const rows = await all<any>(ctx.env,
       `SELECT * FROM community_messages WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ${limit + 1}`, ...params)
     const items = rows.slice(0, limit)
-    // 标为已读（对方发来的未读消息）
-    await run(ctx.env,
+    // 标为已读（对方发来的未读消息），返回本次标记数量供前端即时扣减全局未读计数
+    const markRes = await run(ctx.env,
       'UPDATE community_messages SET is_read = 1 WHERE from_id = ? AND to_id = ? AND is_read = 0', peerId, ctx.userId)
     return Response.json({
       messages: items.map(r => ({
@@ -914,7 +918,8 @@ export function registerCommunityRoutes() {
         // 打开记录即已读：对方发来的消息在本次返回中即视为已读（与上方 UPDATE 同步）
         isRead: r.from_id === peerId ? true : !!r.is_read, createdAt: r.created_at, fromMe: r.from_id === ctx.userId
       })),
-      nextCursor: rows.length > limit ? String(items[items.length - 1].created_at) : null
+      nextCursor: rows.length > limit ? String(items[items.length - 1].created_at) : null,
+      markedRead: markRes.meta.changes
     })
   })
 
@@ -928,7 +933,7 @@ export function registerCommunityRoutes() {
     const b = await body(ctx.request)
     const content = String(b?.content ?? '').trim()
     if (content.length > 500) throw new HttpError(400, '私信内容最多 500 字')
-    if (content) assertClean(content)
+    if (content) await assertCleanAsync(content, ctx.env) // 私信无待审语义，soft 也拒绝
 
     // 私信配图（最多 3 张）：与发帖/评论同一口径——仅认本系统上传路径且必须属于当前用户
     const rawImageUrls: unknown[] = Array.isArray(b?.imageUrls) ? b.imageUrls : []
@@ -949,15 +954,9 @@ export function registerCommunityRoutes() {
 
     const id = uid()
     const now = nowSec()
-    const myName = await displayName(ctx.env, ctx.userId)
-    const preview = content || (imageUrls.length ? '[图片]' : '')
     await batch(ctx.env, [
       ctx.env.DB.prepare('INSERT INTO community_messages (id, from_id, to_id, content, image_urls, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .bind(id, ctx.userId, peerId, content, JSON.stringify(imageUrls), now),
-      notifyStatement(ctx.env, {
-        userId: peerId, type: 'message', actorId: ctx.userId,
-        content: `${myName} 给你发来私信：${preview.slice(0, 40)}${preview.length > 40 ? '…' : ''}`
-      })
+        .bind(id, ctx.userId, peerId, content, JSON.stringify(imageUrls), now)
     ])
     return Response.json({ id, fromId: ctx.userId, toId: peerId, content, imageUrls, isRead: false, createdAt: now, fromMe: true }, { status: 201 })
   })
@@ -992,8 +991,8 @@ export function registerCommunityRoutes() {
     const name = String(b?.name ?? '').trim()
     const description = String(b?.description ?? '').trim().slice(0, 200)
     if (!name || name.length > 30) throw new HttpError(400, '圈子名称需为 1-30 字')
-    assertClean(name)
-    if (description) assertClean(description)
+    await assertCleanAsync(name, ctx.env)
+    if (description) await assertCleanAsync(description, ctx.env)
     const isPublic = b?.isPublic !== false // 默认公开
     const id = uid()
     const now = nowSec()
@@ -1130,10 +1129,61 @@ export function registerCommunityRoutes() {
     return Response.json({ ok: true })
   })
 
+  // 精确查找用户：仅按对外用户 ID（user_code）定位，返回用户卡片 + 当前关注状态。
+  // 用于「输入用户ID → 找到人 → 关注/加搭子」闭环；完整资料由 /profile 承载。
+  on('GET', '/api/community/users/lookup', true, async (ctx) => {
+    rateLimit(ctx.request, 'community:lookup', 30)
+    const key = (new URL(ctx.request.url).searchParams.get('key') || '').trim().toUpperCase()
+    if (!key) throw new HttpError(400, '请输入用户ID')
+    if (key.length > 8) throw new HttpError(404, '用户不存在')
+    const u = await first<any>(ctx.env, `
+      SELECT u.id, u.user_code, u.username, u.verified, u.expertise, u.created_at,
+        COALESCE(s.user_name, u.username) AS user_name, s.avatar, s.bio, s.profile_visibility
+      FROM users u
+      LEFT JOIN user_settings s ON s.user_id = u.id
+      WHERE u.user_code = ?`, key)
+    if (!u) throw new HttpError(404, '用户不存在')
+    const [followedByMe, followsMe] = await Promise.all([
+      first<{ follower_id: string }>(ctx.env,
+        'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', ctx.userId, u.id),
+      first<{ follower_id: string }>(ctx.env,
+        'SELECT follower_id FROM user_follows WHERE follower_id = ? AND followee_id = ?', u.id, ctx.userId)
+    ])
+    const partner = u.id === ctx.userId ? null : await first<{ status: string; to_id: string }>(ctx.env,
+      'SELECT status, to_id FROM study_partners WHERE pair_key = ?',
+      [ctx.userId, u.id].sort().join(':'))
+    const partnerStatus = u.id === ctx.userId ? 'self'
+      : !partner ? 'none'
+      : partner.status === 'accepted' ? 'accepted'
+      : partner.status === 'rejected' ? 'rejected'
+      : partner.to_id === ctx.userId ? 'pending_received' : 'pending_sent'
+    const card = {
+      userId: u.id,
+      userCode: u.user_code,
+      userName: u.user_name || '升本人',
+      avatar: u.avatar ?? undefined,
+      verified: !!u.verified,
+      expertise: u.expertise || '',
+      bio: u.bio || '',
+      followedByMe: !!followedByMe,
+      followsMe: !!followsMe,
+      relation: u.id === ctx.userId ? 'none'
+        : (followedByMe && followsMe) ? 'mutual'
+        : followedByMe ? 'following'
+        : followsMe ? 'follower' : 'none',
+      partnerStatus,
+    }
+    // 私密主页（非本人）：降级返回公开子集（与 profile 同口径）
+    if ((u.profile_visibility ?? 'login') === 'private' && u.id !== ctx.userId) {
+      return Response.json({ ...card, profilePrivate: true })
+    }
+    return Response.json(card)
+  })
+
   // 用户资料卡：社区公开荣誉信息（等级/连续打卡/徽章墙/专家认证），不含私有学习数据
   on('GET', '/api/community/users/:id/profile', false, async (ctx) => {
     const u = await first<any>(ctx.env, `
-      SELECT u.id, COALESCE(s.user_name, u.username) AS user_name, u.verified, u.expertise,
+      SELECT u.id, u.user_code, COALESCE(s.user_name, u.username) AS user_name, u.verified, u.expertise,
         COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak, s.profile_visibility, s.avatar,
         COALESCE(s.bio, '') AS bio
       FROM users u
@@ -1153,7 +1203,7 @@ export function registerCommunityRoutes() {
       ])
       return Response.json({
         profilePrivate: true,
-        userId: u.id, userName: u.user_name || '升本人',
+        userId: u.id, userCode: u.user_code, userName: u.user_name || '升本人',
         avatar: u.avatar ?? undefined, verified: !!u.verified, expertise: u.expertise || '',
         bio: u.bio, followedByMe: !!followedByMe, followsMe: !!followsMe
       })
@@ -1187,7 +1237,7 @@ export function registerCommunityRoutes() {
         ctx.params.id, ctx.params.id, ctx.params.id)
     ])
     return Response.json({
-      userId: u.id, userName: u.user_name || '升本人',
+      userId: u.id, userCode: u.user_code, userName: u.user_name || '升本人',
       avatar: u.avatar ?? undefined,
       points: u.points, streak: u.streak,
       verified: !!u.verified, expertise: u.expertise || '',
@@ -1301,10 +1351,10 @@ export function registerCommunityRoutes() {
 
   // 用户发布的帖子（公开广场帖口径：排除圈子帖/知识点讨论帖；游标分页，与 feed latest 同模式）
   on('GET', '/api/community/users/:id/posts', false, async (ctx) => {
-    const target = await first<{ id: string; profile_visibility: string | null }>(ctx.env,
-      'SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?', ctx.params.id)
+    // 帖子默认对外可见：仅校验目标用户存在，不按主页可见性过滤（主页可见性只控主页访问，不控帖子）
+    const target = await first<{ id: string }>(ctx.env,
+      'SELECT u.id FROM users u WHERE u.id = ?', ctx.params.id)
     if (!target) throw new HttpError(404, '用户不存在')
-    await assertProfileVisible(ctx, ctx.params.id, target.profile_visibility ?? 'login')
     const url = new URL(ctx.request.url)
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const c = parseCursor(url.searchParams.get('cursor') || '')
@@ -1780,12 +1830,17 @@ export function registerCommunityRoutes() {
     const type = url.searchParams.get('type') || ''
 
     let sql = `
-      SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name, s.avatar AS actor_avatar
+      SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name, s.avatar AS actor_avatar,
+        p.image_urls, c.content AS comment_content, c.likes_count AS comment_likes_count,
+        (cl.user_id IS NOT NULL) AS comment_liked_by_me
       FROM community_notifications n
       LEFT JOIN users u ON u.id = n.actor_id
       LEFT JOIN user_settings s ON s.user_id = n.actor_id
-      WHERE n.user_id = ?`
-    const params: unknown[] = [ctx.userId]
+      LEFT JOIN community_posts p ON p.id = n.post_id
+      LEFT JOIN community_comments c ON c.id = n.comment_id
+      LEFT JOIN community_likes cl ON cl.target_type = 'comment' AND cl.target_id = n.comment_id AND cl.user_id = ?
+      WHERE n.user_id = ? AND n.type != 'message'`
+    const params: unknown[] = [ctx.userId, ctx.userId]
     if (type) {
       sql += ' AND n.type = ?'
       params.push(type)
@@ -1798,9 +1853,31 @@ export function registerCommunityRoutes() {
     sql += ' ORDER BY n.created_at DESC, n.id DESC LIMIT ?'
     params.push(limit + 1)
 
-    const rows = await all(ctx.env, sql, ...params)
+    const rows = await all<any>(ctx.env, sql, ...params)
+
+    // 关系计算：按 actor_id 去重批量查询双向关注，复用三元表达式得 relation
+    const actorIds = [...new Set(rows.map((r: any) => r.actor_id).filter(Boolean))] as string[]
+    let myFollowing = new Set<string>(), myFollowers = new Set<string>()
+    if (actorIds.length) {
+      const ph = actorIds.map(() => '?').join(',')
+      const [a, b] = await Promise.all([
+        all<{ followee_id: string }>(ctx.env,
+          `SELECT followee_id FROM user_follows WHERE follower_id = ? AND followee_id IN (${ph})`, ctx.userId, ...actorIds),
+        all<{ follower_id: string }>(ctx.env,
+          `SELECT follower_id FROM user_follows WHERE followee_id = ? AND follower_id IN (${ph})`, ctx.userId, ...actorIds)
+      ])
+      myFollowing = new Set(a.map(r => r.followee_id))
+      myFollowers = new Set(b.map(r => r.follower_id))
+    }
+    for (const r of rows) {
+      if (!r.actor_id) { r.relation = 'none'; continue }
+      const followedByMe = myFollowing.has(r.actor_id)
+      const followsMe = myFollowers.has(r.actor_id)
+      r.relation = followedByMe && followsMe ? 'mutual' : followedByMe ? 'following' : followsMe ? 'follower' : 'none'
+    }
+    // 未读私信由「消息」模块单独承载（messages/unread-count），此处通知未读排除 message 避免重复计数
     const unread = await first<{ n: number }>(ctx.env,
-      'SELECT COUNT(*) AS n FROM community_notifications WHERE user_id = ? AND is_read = 0', ctx.userId)
+      "SELECT COUNT(*) AS n FROM community_notifications WHERE user_id = ? AND is_read = 0 AND type != 'message'", ctx.userId)
     // 排除被屏蔽类型的未读数（勿扰红点用；无条件计算，客户端按需取用）
     const settingsRow = await first<{ dnd_muted_types: string | null }>(ctx.env,
       'SELECT dnd_muted_types FROM user_settings WHERE user_id = ?', ctx.userId)
@@ -1809,7 +1886,7 @@ export function registerCommunityRoutes() {
     if (muted.length) {
       const ph = muted.map(() => '?').join(',')
       const r = await first<{ n: number }>(ctx.env,
-        `SELECT COUNT(*) AS n FROM community_notifications WHERE user_id = ? AND is_read = 0 AND type NOT IN (${ph})`,
+        `SELECT COUNT(*) AS n FROM community_notifications WHERE user_id = ? AND is_read = 0 AND type != 'message' AND type NOT IN (${ph})`,
         ctx.userId, ...muted)
       unreadExcludingMuted = r?.n ?? 0
     }

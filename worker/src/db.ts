@@ -13,6 +13,20 @@ export function uid(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16)
 }
 
+/** 对外用户 ID 字符集：大写字母 + 数字，去掉易混淆的 0/O/1/I，共 32 字符 */
+const USER_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+/**
+ * 生成对外用户 ID：8 位随机短码（32^8 ≈ 1.1 万亿空间，不可枚举）。
+ * 256 % 32 === 0，故 bytes[i] % 32 均匀无偏差。
+ */
+export function randomCode(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(8))
+  let code = ''
+  for (let i = 0; i < 8; i++) code += USER_CODE_ALPHABET[bytes[i] % 32]
+  return code
+}
+
 /** 业务日期（YYYY-MM-DD）一律按 UTC+8：用户群固定为国内考生，避免 UTC 零点至早八点跨日错位 */
 export function utc8Today(): string {
   return new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)

@@ -3,6 +3,7 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
 import { isDesktopNotify, notifyPermission, requestNotifyPermission } from '../services/notify'
+import { subjectLabel } from '../utils/subject'
 import type { NotificationType } from '../types'
 
 const store = useAppStore()
@@ -102,12 +103,12 @@ async function clearAll() {
 
 // ---- 自定义科目 ----
 const showSubject = ref(false)
-const subForm = ref({ name: '', icon: '📘', color: '#8b5cf6', weight: 20 })
+const subForm = ref({ name: '', icon: '', color: '#8b5cf6', weight: 20 })
 function addSubject() {
   if (!subForm.value.name.trim()) return
   store.addSubject({ ...subForm.value })
   showSubject.value = false
-  subForm.value = { name: '', icon: '📘', color: '#8b5cf6', weight: 20 }
+  subForm.value = { name: '', icon: '', color: '#8b5cf6', weight: 20 }
   toast('科目已添加，独立页面已生成')
 }
 /** 修改科目权重；无效/空输入恢复原值并提示 */
@@ -132,6 +133,14 @@ function removeSubject(id: string, name: string) {
   toast('科目已删除，关联数据与积分已同步清理')
 }
 
+// ---- 恢复默认科目 ----
+const showRestoreConfirm = ref(false)
+function restoreDefaults() {
+  const restored = store.restoreDefaultSubjects()
+  showRestoreConfirm.value = false
+  toast(restored > 0 ? `已恢复 ${restored} 个内置科目` : '内置科目均已存在，无需恢复')
+}
+
 // ---- 名言管理 ----
 const newQuote = ref('')
 function addQuote() {
@@ -147,7 +156,7 @@ const notifTypeOptions: { k: NotificationType; l: string }[] = [
   { k: 'comment', l: '评论' },
   { k: 'follow', l: '关注' },
   { k: 'achievement', l: '成就' },
-  { k: 'message', l: '私信' },
+  { k: 'partner', l: '搭子' },
   { k: 'system', l: '系统' }
 ]
 function toggleMutedType(t: NotificationType) {
@@ -161,11 +170,11 @@ function toggleMutedType(t: NotificationType) {
 
 <template>
   <div class="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
-    <h1 class="page-title">⚙️ 设置</h1>
+    <h1 class="page-title">设置</h1>
 
     <!-- 基本信息 -->
     <div class="card space-y-3">
-      <div class="section-title">👤 基本信息</div>
+      <div class="section-title">基本信息</div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="label">昵称</label><input :value="s.userName" class="input" @change="update('userName', ($event.target as HTMLInputElement).value)" /></div>
         <div><label class="label">专升本考试日期</label><input type="date" :value="s.examDate" class="input" @change="update('examDate', ($event.target as HTMLInputElement).value)" /></div>
@@ -174,7 +183,7 @@ function toggleMutedType(t: NotificationType) {
 
     <!-- 每日目标 -->
     <div class="card space-y-3">
-      <div class="section-title">🎯 每日目标</div>
+      <div class="section-title">每日目标</div>
       <div class="grid grid-cols-3 gap-3">
         <div><label class="label">学习时长（分钟）</label><input type="number" :value="s.dailyGoalMinutes" class="input" @change="update('dailyGoalMinutes', Number(($event.target as HTMLInputElement).value))" /></div>
         <div><label class="label">单词量</label><input type="number" :value="s.wordGoal" class="input" @change="update('wordGoal', Number(($event.target as HTMLInputElement).value))" /></div>
@@ -184,14 +193,17 @@ function toggleMutedType(t: NotificationType) {
 
     <!-- 科目管理 -->
     <div class="card space-y-3">
-      <div class="flex items-center justify-between">
-        <div class="section-title !mb-0">📚 科目管理</div>
-        <button class="btn-primary !py-1.5 !text-xs" @click="showSubject = true">+ 扩展科目</button>
+      <div class="flex items-center justify-between gap-2">
+        <div class="section-title !mb-0">科目管理</div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button class="btn-ghost !py-1.5 !text-xs" @click="showRestoreConfirm = true">恢复默认</button>
+          <button class="btn-primary !py-1.5 !text-xs" @click="showSubject = true">+ 扩展科目</button>
+        </div>
       </div>
       <div class="space-y-2">
         <div v-for="sub in store.subjects" :key="sub.id" class="flex items-center gap-2 text-sm flex-wrap">
           <span class="w-3 h-3 rounded-full shrink-0" :style="{ background: sub.color }"></span>
-          <span>{{ sub.icon }} {{ sub.name }}</span>
+          <span>{{ subjectLabel(sub) }}</span>
           <span v-if="sub.builtin" class="text-[10px] text-slate-400">（内置）</span>
           <span class="ml-auto flex items-center gap-1 text-xs text-slate-400">
             权重
@@ -208,9 +220,9 @@ function toggleMutedType(t: NotificationType) {
 
     <!-- 外观 -->
     <div class="card space-y-3">
-      <div class="section-title">🎨 外观与提醒</div>
+      <div class="section-title">外观与提醒</div>
       <div class="flex gap-2">
-        <button v-for="t in [{ k: 'light', l: '☀️ 浅色' }, { k: 'dark', l: '🌙 深色' }, { k: 'auto', l: '🖥 跟随系统' }]"
+        <button v-for="t in [{ k: 'light', l: '浅色' }, { k: 'dark', l: '深色' }, { k: 'auto', l: '跟随系统' }]"
           :key="t.k" class="btn flex-1" :class="s.theme === t.k ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
           @click="applyTheme(t.k)">{{ t.l }}</button>
       </div>
@@ -242,6 +254,22 @@ function toggleMutedType(t: NotificationType) {
           <option value="private">仅自己可见</option>
         </select>
       </div>
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm">允许搭子查看我的学习数据</span>
+          <p class="text-[10px] text-slate-400 mt-0.5">开启后搭子可查看你的周报对比与定向分享内容，默认关闭</p>
+        </div>
+        <button class="btn !text-xs" :class="s.partnerShareEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="update('partnerShareEnabled', !s.partnerShareEnabled)">{{ s.partnerShareEnabled ? '已开启' : '已关闭' }}</button>
+      </div>
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm">允许搭子向我发送学习提醒</span>
+          <p class="text-[10px] text-slate-400 mt-0.5">关闭后搭子将无法向你发送学习鼓励提醒，默认开启</p>
+        </div>
+        <button class="btn !text-xs" :class="s.partnerRemindEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="update('partnerRemindEnabled', !s.partnerRemindEnabled)">{{ s.partnerRemindEnabled ? '已开启' : '已关闭' }}</button>
+      </div>
       <div class="pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3">
         <div class="flex items-center justify-between">
           <div>
@@ -257,11 +285,14 @@ function toggleMutedType(t: NotificationType) {
             <div><label class="label">结束时间（留空=全天）</label><input type="time" :value="s.dndEndTime" class="input" @change="update('dndEndTime', ($event.target as HTMLInputElement).value)" /></div>
           </div>
           <div>
-            <label class="label">屏蔽的通知类型（勿扰期间不提示）</label>
+            <label class="label">屏蔽的提醒类型（勿扰期间不提示）</label>
             <div class="flex flex-wrap gap-2 mt-1">
               <button v-for="t in notifTypeOptions" :key="t.k" class="btn !text-xs !py-1 !px-2.5"
                 :class="s.dndMutedTypes.includes(t.k) ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
                 @click="toggleMutedType(t.k)">{{ t.l }}</button>
+              <button class="btn !text-xs !py-1 !px-2.5"
+                :class="s.dndMuteMessage ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+                @click="update('dndMuteMessage', !s.dndMuteMessage)">消息</button>
             </div>
           </div>
         </div>
@@ -276,7 +307,7 @@ function toggleMutedType(t: NotificationType) {
 
     <!-- 名言 -->
     <div class="card space-y-3">
-      <div class="section-title">📜 自定义励志名言</div>
+      <div class="section-title">自定义励志名言</div>
       <div class="flex gap-2">
         <input v-model="newQuote" class="input" placeholder="写一句激励自己的话…" @keyup.enter="addQuote" />
         <button class="btn-ghost shrink-0" @click="addQuote">添加</button>
@@ -291,16 +322,25 @@ function toggleMutedType(t: NotificationType) {
 
     <!-- 数据管理 -->
     <div class="card space-y-3">
-      <div class="section-title">💾 数据管理</div>
+      <div class="section-title">数据管理</div>
       <div class="text-xs text-slate-400">云端数据大小：{{ storageUsage }}</div>
       <div class="flex gap-2 flex-wrap">
-        <button class="btn-primary" @click="exportData">📤 导出 JSON 备份</button>
-        <button class="btn-ghost" @click="importFile?.click()">📥 导入数据</button>
+        <button class="btn-primary" @click="exportData">导出 JSON 备份</button>
+        <button class="btn-ghost" @click="importFile?.click()">导入数据</button>
         <input ref="importFile" type="file" accept=".json" class="hidden" @change="onImport" />
-        <button class="btn-danger" @click="showClearConfirm = true; clearText = ''">🗑 清除全部数据</button>
-        <button v-if="updater" class="btn-ghost" @click="checkUpdate">🔄 检查更新</button>
+        <button class="btn-danger" @click="showClearConfirm = true; clearText = ''">清除全部数据</button>
+        <button v-if="updater" class="btn-ghost" @click="checkUpdate">检查更新</button>
       </div>
     </div>
+
+    <!-- 恢复默认科目确认 -->
+    <Modal title="恢复默认科目" :show="showRestoreConfirm" @close="showRestoreConfirm = false">
+      <p class="text-sm text-slate-600 dark:text-slate-300">确定恢复默认科目列表？自定义新增的科目不会被删除，已删除的系统内置科目将会全部恢复。</p>
+      <template #footer>
+        <button class="btn-ghost" @click="showRestoreConfirm = false">取消</button>
+        <button class="btn-primary" @click="restoreDefaults">确认恢复</button>
+      </template>
+    </Modal>
 
     <!-- 扩展科目弹窗 -->
     <Modal title="添加扩展科目" :show="showSubject" @close="showSubject = false">
@@ -319,7 +359,7 @@ function toggleMutedType(t: NotificationType) {
     </Modal>
 
     <!-- 清除确认 -->
-    <Modal title="⚠️ 危险操作" :show="showClearConfirm" @close="showClearConfirm = false">
+    <Modal title="危险操作" :show="showClearConfirm" @close="showClearConfirm = false">
       <p class="text-sm text-slate-500">此操作将永久删除所有学习记录、笔记、错题、习惯数据，<b class="text-red-500">不可恢复</b>！建议先导出备份。</p>
       <p class="text-sm mt-3">请输入「<b>确认清除</b>」以继续：</p>
       <input v-model="clearText" class="input mt-2" placeholder="确认清除" />

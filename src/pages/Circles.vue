@@ -2,11 +2,13 @@
 import { inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
+import { useBack } from '../composables/useBack'
 import Modal from '../components/Modal.vue'
 import type { CommunityCircle } from '../types'
 
 /** 话题圈子列表：全部圈子（按成员数倒序）+ 建圈入口 */
 const router = useRouter()
+const { goBack } = useBack()
 const toast = inject<(m: string) => void>('toast', () => {})
 
 const circles = ref<CommunityCircle[]>([])
@@ -41,7 +43,7 @@ async function submitCreate() {
     createName.value = createDesc.value = ''
     createPublic.value = true
     circles.value.unshift({ ...c, memberCount: 1 })
-    toast('圈子已创建 🎉')
+    toast('圈子已创建')
     router.push(`/community/circles/${c.id}`)
   } catch (e: any) {
     toast(e?.message || '创建失败')
@@ -57,7 +59,7 @@ const statusLabel = (c: CommunityCircle) =>
 <template>
   <div class="space-y-4 max-w-3xl mx-auto">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2" @click="router.push('/community')">← 广场</button>
+      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
       <h2 class="text-lg font-bold flex-1">话题圈子</h2>
       <button class="btn-primary !text-xs" @click="showCreate = true">＋ 创建圈子</button>
     </div>
@@ -80,7 +82,7 @@ const statusLabel = (c: CommunityCircle) =>
           </span>
         </div>
         <p class="text-xs text-slate-400 line-clamp-2 mt-1.5 min-h-[2rem]">{{ c.description || '这个圈子还没有简介' }}</p>
-        <div class="text-[10px] text-slate-400 mt-2">👥 {{ c.memberCount }} 位成员</div>
+        <div class="text-[10px] text-slate-400 mt-2">{{ c.memberCount }} 位成员</div>
       </button>
     </div>
 
@@ -100,10 +102,10 @@ const statusLabel = (c: CommunityCircle) =>
           <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit">
             <button class="px-3 py-1.5 rounded-md transition-colors"
               :class="createPublic ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-              @click="createPublic = true">🌐 公开（直接加入）</button>
+              @click="createPublic = true">公开（直接加入）</button>
             <button class="px-3 py-1.5 rounded-md transition-colors"
               :class="!createPublic ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-              @click="createPublic = false">🔒 审核（圈主批准）</button>
+              @click="createPublic = false">审核（圈主批准）</button>
           </div>
         </div>
       </div>

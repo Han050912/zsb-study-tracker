@@ -1,5 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { isLoggedIn, isAdmin } from '../services/auth'
+import { isLoggedIn, isAdmin, isGuestMode } from '../services/auth'
 
 
 const routes = [
@@ -19,9 +19,14 @@ const routes = [
   { path: '/community/circles/:id', name: 'circle-detail', component: () => import('../pages/CircleDetail.vue'), meta: { title: '圈子详情' } },
   { path: '/community/topic/:subjectId', name: 'topic-discussion', component: () => import('../pages/TopicDiscussion.vue'), meta: { title: '知识点讨论' } },
   { path: '/community/post/:id', name: 'community-post', component: () => import('../pages/CommunityPost.vue'), meta: { title: '帖子详情' } },
-  { path: '/community/messages', name: 'messages', component: () => import('../pages/Messages.vue'), meta: { title: '私信' } },
+  { path: '/messages', name: 'messages', component: () => import('../pages/Messages.vue'), meta: { title: '消息' } },
   { path: '/community/partners', name: 'partners', component: () => import('../pages/Partners.vue'), meta: { title: '学习搭子' } },
-  { path: '/community/messages/:peerId', name: 'message-chat', component: () => import('../pages/MessageChat.vue'), meta: { title: '私信对话' } },
+  { path: '/partners/study', name: 'partner-study', component: () => import('../pages/PartnerStudy.vue'), meta: { title: '开黑自习室' } },
+  { path: '/partners/plans', name: 'partner-plans', component: () => import('../pages/PartnerPlans.vue'), meta: { title: '协作备考计划' } },
+  { path: '/partners/reviews', name: 'partner-reviews', component: () => import('../pages/PartnerReviews.vue'), meta: { title: '复盘邀约' } },
+  { path: '/partners/shares', name: 'partner-shares', component: () => import('../pages/PartnerShares.vue'), meta: { title: '搭子分享' } },
+  { path: '/partners/shares/preview/:id', name: 'partner-share-preview', component: () => import('../pages/PartnerSharePreview.vue'), meta: { title: '分享预览' } },
+  { path: '/messages/:peerId', name: 'message-chat', component: () => import('../pages/MessageChat.vue'), meta: { title: '消息' } },
   { path: '/community/notifications', name: 'community-notifications', component: () => import('../pages/CommunityNotifications.vue'), meta: { title: '通知中心' } },
   { path: '/admin', name: 'admin', component: () => import('../pages/AdminReports.vue'), meta: { title: '审核中心' } },
   { path: '/notes', name: 'notes', component: () => import('../pages/Notes.vue'), meta: { title: '笔记' } },
@@ -41,12 +46,20 @@ export const router = createRouter({
   routes
 })
 
-// 登录守卫：未登录访问任意页面统一落地社区广场（访客浏览模式）；已登录访问登录页跳转首页（按路由名判断，避免路径硬编码）
+// 登录守卫（访问控制）：
+// 1. 已登录访问登录/注册页 → 首页
+// 2. 未登录仅可访问两类页面：登录页；或已通过「先随便看看」开启访客模式后的公开页（社区广场/帖子详情/组队）。
+//    其余路径（含直接输入 URL 进入公开页、未开启访客模式即访问公开页）一律回登录页
+// 3. 审核中心仅管理员可见（未登录已在上一步拦截，此处仅约束已登录的非管理员）
 router.beforeEach((to) => {
-  const guestAllowed = to.name === 'community' || to.name === 'community-post' || to.name === 'teams'
-  if (!isLoggedIn.value && !guestAllowed && to.name !== 'login') return { name: 'community' }
   if (isLoggedIn.value && to.name === 'login') return { name: 'dashboard' }
-  // 管理员守卫：审核中心仅管理员可见
+
+  if (!isLoggedIn.value) {
+    const guestAllowed = to.name === 'community' || to.name === 'community-post' || to.name === 'teams'
+    const canBrowse = isGuestMode.value && guestAllowed
+    if (to.name !== 'login' && !canBrowse) return { name: 'login' }
+  }
+
   if (to.name === 'admin' && !isAdmin.value) return { name: 'community' }
 })
 

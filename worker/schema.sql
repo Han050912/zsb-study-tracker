@@ -1,3 +1,18 @@
+-- 已建库升级：用户对外 ID 改为随机短码 user_code（替代自增 user_no），执行一次：
+--   ALTER TABLE users ADD COLUMN user_code TEXT;
+--   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_user_code ON users(user_code);
+--   -- 存量用户回填 8 位随机码（字符集去掉 0/O/1/I）：
+--   UPDATE users SET user_code = (
+--     WITH RECURSIVE seq(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM seq WHERE x < 8)
+--     SELECT group_concat(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', (abs(random()) % 32) + 1, 1), '')
+--     FROM seq
+--     WHERE users.id IS NOT NULL   -- 相关子查询：强制逐行求值，否则所有行会得到同一随机码导致 UNIQUE 冲突
+--   ) WHERE user_code IS NULL;
+--   -- 验证无 NULL、无重复（均应无结果）后，废弃旧自增号（最后一步）：
+--   --   SELECT COUNT(*) FROM users WHERE user_code IS NULL;
+--   --   SELECT user_code, COUNT(*) c FROM users GROUP BY user_code HAVING c > 1;
+--   DROP INDEX IF EXISTS idx_users_user_no;
+--   ALTER TABLE users DROP COLUMN user_no;
 -- 已建库升级：notes 表新增 type 列（PDF 笔记），执行一次：
 --   ALTER TABLE notes ADD COLUMN type TEXT;
 -- 已建库升级：pdf_chunks 分片表（替代 R2），执行一次：
@@ -155,6 +170,8 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 --   ALTER TABLE user_settings ADD COLUMN dnd_start_time TEXT NOT NULL DEFAULT '';
 --   ALTER TABLE user_settings ADD COLUMN dnd_end_time TEXT NOT NULL DEFAULT '';
 --   ALTER TABLE user_settings ADD COLUMN dnd_muted_types TEXT NOT NULL DEFAULT '';
+-- 已建库升级：勿扰屏蔽消息（#18），执行一次：
+--   ALTER TABLE user_settings ADD COLUMN dnd_mute_message INTEGER NOT NULL DEFAULT 0;
 -- 已建库升级：通知精准跳转目标（#11），执行一次：
 --   ALTER TABLE community_notifications ADD COLUMN target_type TEXT;
 --   ALTER TABLE community_notifications ADD COLUMN target_id TEXT;
@@ -163,6 +180,7 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 -- ========== 用户认证 ==========
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
+  user_code TEXT,                        -- 对外唯一用户 ID（8 位随机短码，去掉 0/O/1/I）
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'user',   -- 'user' | 'admin'
@@ -170,6 +188,7 @@ CREATE TABLE IF NOT EXISTS users (
   expertise TEXT NOT NULL DEFAULT '',  -- 专长领域（如 "高等数学,英语"）
   created_at INTEGER NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_user_code ON users(user_code);
 
 -- ========== 用户设置（一行一用户） ==========
 CREATE TABLE IF NOT EXISTS user_settings (
@@ -192,7 +211,10 @@ CREATE TABLE IF NOT EXISTS user_settings (
   do_not_disturb INTEGER NOT NULL DEFAULT 0,  -- 勿扰模式总开关
   dnd_start_time TEXT NOT NULL DEFAULT '',    -- 勿扰开始 'HH:mm'（空=全天）
   dnd_end_time TEXT NOT NULL DEFAULT '',      -- 勿扰结束 'HH:mm'（空=全天）
-  dnd_muted_types TEXT NOT NULL DEFAULT ''    -- 勿扰屏蔽通知类型（JSON 数组）
+  dnd_muted_types TEXT NOT NULL DEFAULT '',   -- 勿扰屏蔽通知类型（JSON 数组）
+  dnd_mute_message INTEGER NOT NULL DEFAULT 0, -- 勿扰屏蔽消息（1=屏蔽）
+  partner_share_enabled INTEGER NOT NULL DEFAULT 0, -- 允许搭子查看学习数据（周报对比/定向分享；默认关闭）
+  partner_remind_enabled INTEGER NOT NULL DEFAULT 1  -- 允许搭子发送学习鼓励提醒（默认开启）
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========
@@ -422,14 +444,6 @@ CREATE TABLE IF NOT EXISTS pomodoro_interruptions (
   user_id TEXT NOT NULL REFERENCES users(id),
   date TEXT NOT NULL,
   reason TEXT NOT NULL,
-  time INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS pomodoro_partial_sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id TEXT NOT NULL REFERENCES users(id),
-  date TEXT NOT NULL,
-  minutes INTEGER NOT NULL,
   time INTEGER NOT NULL
 );
 
@@ -685,3 +699,141 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);
+
+-- ========== 认证吊销 ==========
+-- JWT 登出吊销黑名单：jti 为主键，expires_at 记录令牌过期时间（登出时顺带惰性清理）
+CREATE TABLE IF NOT EXISTS jwt_blacklist (
+  jti TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL
+);
+
+-- ========== 学习搭子协作（轻量化双向学习协作关系） ==========
+-- 已建库升级：学习搭子功能体系，执行一次：
+--   ALTER TABLE user_settings ADD COLUMN partner_share_enabled INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE user_settings ADD COLUMN partner_remind_enabled INTEGER NOT NULL DEFAULT 1;
+--   CREATE TABLE IF NOT EXISTS partner_shares ( id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), partner_id TEXT NOT NULL REFERENCES users(id), item_type TEXT NOT NULL, item_id TEXT NOT NULL, created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_pshares_partner ON partner_shares(partner_id, created_at);
+--   CREATE INDEX IF NOT EXISTS idx_pshares_owner ON partner_shares(owner_id, created_at);
+--   CREATE TABLE IF NOT EXISTS partner_share_comments ( id TEXT PRIMARY KEY, share_id TEXT NOT NULL REFERENCES partner_shares(id), user_id TEXT NOT NULL REFERENCES users(id), content TEXT NOT NULL, created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_pscomments_share ON partner_share_comments(share_id, created_at);
+--   CREATE TABLE IF NOT EXISTS partner_study_sessions ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES users(id), to_id TEXT NOT NULL REFERENCES users(id), status TEXT NOT NULL DEFAULT 'active', from_state TEXT NOT NULL DEFAULT 'focus', to_state TEXT NOT NULL DEFAULT 'focus', from_minutes INTEGER NOT NULL DEFAULT 0, to_minutes INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_pss_from ON partner_study_sessions(from_id, status);
+--   CREATE INDEX IF NOT EXISTS idx_pss_to ON partner_study_sessions(to_id, status);
+--   CREATE TABLE IF NOT EXISTS partner_plans ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES users(id), to_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_pp_pair ON partner_plans(from_id, to_id);
+--   CREATE TABLE IF NOT EXISTS partner_plan_tasks ( id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES partner_plans(id), title TEXT NOT NULL, phase TEXT NOT NULL DEFAULT '', done_by_from INTEGER NOT NULL DEFAULT 0, done_by_to INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_ppt_plan ON partner_plan_tasks(plan_id);
+--   CREATE TABLE IF NOT EXISTS partner_reviews ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES users(id), to_id TEXT NOT NULL REFERENCES users(id), scheduled_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', note TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL );
+--   CREATE INDEX IF NOT EXISTS idx_pr_from ON partner_reviews(from_id, status);
+--   CREATE INDEX IF NOT EXISTS idx_pr_to ON partner_reviews(to_id, status);
+
+-- 错题/笔记定向分享（单向分享给搭子，双方可批注交流，与公开社区帖子隔离）
+CREATE TABLE IF NOT EXISTS partner_shares (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES users(id),   -- 分享者
+  partner_id TEXT NOT NULL REFERENCES users(id), -- 接收的搭子
+  item_type TEXT NOT NULL,                       -- 'error' | 'note'
+  item_id TEXT NOT NULL,                         -- 错题/笔记 id
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pshares_partner ON partner_shares(partner_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_pshares_owner ON partner_shares(owner_id, created_at);
+
+-- 分享批注（双人私密交流）
+CREATE TABLE IF NOT EXISTS partner_share_comments (
+  id TEXT PRIMARY KEY,
+  share_id TEXT NOT NULL REFERENCES partner_shares(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  content TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pscomments_share ON partner_share_comments(share_id, created_at);
+
+-- 双人同步番茄「开黑学习」自习室（仅展示对方状态，不做闲聊）
+-- 已建库升级：番茄钟联动（时长字段 + idle 状态），执行一次：
+--   ALTER TABLE partner_study_sessions ADD COLUMN focus_minutes INTEGER NOT NULL DEFAULT 25;
+--   ALTER TABLE partner_study_sessions ADD COLUMN break_minutes INTEGER NOT NULL DEFAULT 5;
+-- 已建库升级：开黑监督（在线时长 + 结束时间），执行一次：
+--   ALTER TABLE partner_study_sessions ADD COLUMN ended_at INTEGER;
+--   ALTER TABLE partner_study_sessions ADD COLUMN from_online_seconds INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE partner_study_sessions ADD COLUMN to_online_seconds INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：番茄钟计时持久化（后台继续/暂停 + 刷新恢复），执行一次：
+--   ALTER TABLE partner_study_sessions ADD COLUMN from_elapsed_seconds INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE partner_study_sessions ADD COLUMN to_elapsed_seconds INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE partner_study_sessions ADD COLUMN from_running INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE partner_study_sessions ADD COLUMN to_running INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：移除休息阶段（break_minutes 废弃），执行一次：
+--   ALTER TABLE partner_study_sessions DROP COLUMN break_minutes;
+-- 已建库升级：计时模式（正计时/倒计时），执行一次：
+--   ALTER TABLE partner_study_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'countdown';
+CREATE TABLE IF NOT EXISTS partner_study_sessions (
+  id TEXT PRIMARY KEY,
+  from_id TEXT NOT NULL REFERENCES users(id),    -- 发起人
+  to_id TEXT NOT NULL REFERENCES users(id),      -- 搭子
+  status TEXT NOT NULL DEFAULT 'active',         -- 'active' | 'done'
+  mode TEXT NOT NULL DEFAULT 'countdown',        -- 计时模式：'countdown' | 'countup'
+  focus_minutes INTEGER NOT NULL DEFAULT 25,     -- 专注时长（分钟，双方一致，创建时设定）
+  from_state TEXT NOT NULL DEFAULT 'idle',       -- 发起人状态：'idle' | 'focus' | 'done'
+  to_state TEXT NOT NULL DEFAULT 'idle',         -- 搭子状态
+  from_minutes INTEGER NOT NULL DEFAULT 0,       -- 发起人累计专注分钟
+  to_minutes INTEGER NOT NULL DEFAULT 0,         -- 搭子累计专注分钟
+  from_online_seconds INTEGER NOT NULL DEFAULT 0, -- 发起人累计在线秒数（墙钟，暂停不计）
+  to_online_seconds INTEGER NOT NULL DEFAULT 0,   -- 搭子累计在线秒数
+  ended_at INTEGER,                               -- 会话结束时间（status 置 done 时写入）
+  from_elapsed_seconds INTEGER NOT NULL DEFAULT 0, -- 发起人当前阶段已消耗秒数
+  to_elapsed_seconds INTEGER NOT NULL DEFAULT 0,   -- 搭子当前阶段已消耗秒数
+  from_running INTEGER NOT NULL DEFAULT 0,          -- 发起人是否在计时（1=计时中，0=暂停）
+  to_running INTEGER NOT NULL DEFAULT 0,            -- 搭子是否在计时
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pss_from ON partner_study_sessions(from_id, status);
+CREATE INDEX IF NOT EXISTS idx_pss_to ON partner_study_sessions(to_id, status);
+
+-- 搭子协作备考计划（双方共同编辑一份计划）
+CREATE TABLE IF NOT EXISTS partner_plans (
+  id TEXT PRIMARY KEY,
+  from_id TEXT NOT NULL REFERENCES users(id),
+  to_id TEXT NOT NULL REFERENCES users(id),
+  title TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pp_pair ON partner_plans(from_id, to_id);
+
+-- 备考计划任务（各自完成任务，进度双向同步）
+CREATE TABLE IF NOT EXISTS partner_plan_tasks (
+  id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL REFERENCES partner_plans(id),
+  title TEXT NOT NULL,
+  phase TEXT NOT NULL DEFAULT '',                -- 复习阶段（如一轮复习/真题冲刺）
+  done_by_from INTEGER NOT NULL DEFAULT 0,       -- 发起人是否完成
+  done_by_to INTEGER NOT NULL DEFAULT 0,         -- 搭子是否完成
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ppt_plan ON partner_plan_tasks(plan_id);
+
+-- 双向复盘邀约（预约 + 记录，不做视频语音）
+CREATE TABLE IF NOT EXISTS partner_reviews (
+  id TEXT PRIMARY KEY,
+  from_id TEXT NOT NULL REFERENCES users(id),    -- 发起邀约方
+  to_id TEXT NOT NULL REFERENCES users(id),      -- 搭子
+  scheduled_at INTEGER NOT NULL,                 -- 预约时间（unix 秒）
+  status TEXT NOT NULL DEFAULT 'pending',        -- 'pending' | 'accepted' | 'done'
+  note TEXT NOT NULL DEFAULT '',                 -- 复盘记录
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pr_from ON partner_reviews(from_id, status);
+CREATE INDEX IF NOT EXISTS idx_pr_to ON partner_reviews(to_id, status);
+
+-- ========== 周报推送去重（cron 重试防重复推送） ==========
+-- 已建库升级：周报推送去重表（cron 重试防重复推送），执行一次：
+--   CREATE TABLE IF NOT EXISTS weekly_report_push_log ( week_key TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (week_key, from_id, to_id) );
+CREATE TABLE IF NOT EXISTS weekly_report_push_log (
+  week_key TEXT NOT NULL,          -- 上周一日期 YYYY-MM-DD（UTC+8）
+  from_id TEXT NOT NULL,           -- 周报数据主人
+  to_id TEXT NOT NULL,             -- 接收者
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (week_key, from_id, to_id)
+);

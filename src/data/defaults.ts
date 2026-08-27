@@ -124,7 +124,7 @@ export function createDefaultState(): AppState {
     ],
     materials: [],
     gamification: { points: 0, streak: 0, lastCheckin: '', achievements: [], pointsLog: [] },
-    pomodoro: { daily: {}, interruptions: [], partialSessions: [] },
+    pomodoro: { daily: {}, interruptions: [] },
     todos: [],
     settings: {
       userName: '升本人',
@@ -145,6 +145,9 @@ export function createDefaultState(): AppState {
       dndStartTime: '',
       dndEndTime: '',
       dndMutedTypes: [],
+      dndMuteMessage: false,
+      partnerShareEnabled: false,
+      partnerRemindEnabled: true,
     }
   }
 }

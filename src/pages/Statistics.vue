@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor } from '../composables/useChart'
 import { formatMinutes } from '../utils/date'
+import { subjectLabel } from '../utils/subject'
 import { MOODS } from '../data/defaults'
 import { PROBLEM_TYPE_LABELS } from '../data/problemTypes'
 import Modal from '../components/Modal.vue'
@@ -66,7 +67,7 @@ const { el: timeEl } = useChart(() => ({
       const list = Array.isArray(ps) ? ps : [ps]
       const d = days.value[list[0]?.dataIndex ?? 0]
       if (!d) return ''
-      const lines = [`📅 ${d}`]
+      const lines = [`${d}`]
       const map = subjectMinutesOn(d)
       const entries = Object.entries(map)
       if (!entries.length) {
@@ -76,7 +77,7 @@ const { el: timeEl } = useChart(() => ({
         for (const [sid, minutes] of entries) {
           total += minutes
           const s = store.subjectMap[sid]
-          lines.push(`${s?.icon || ''} ${s?.name || '已删除科目'}：${formatMinutes(minutes)}`)
+          lines.push(`${subjectLabel(s, '已删除科目')}：${formatMinutes(minutes)}`)
         }
         lines.push(`合计：${formatMinutes(total)}`)
       }
@@ -205,7 +206,7 @@ const report = computed(() => {
 <template>
   <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="page-title">📊 数据统计中心</h1>
+      <h1 class="page-title">数据统计中心</h1>
       <div class="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
         <button class="btn !py-1 !text-xs" :class="range === 7 ? 'bg-white dark:bg-slate-700 shadow-sm' : ''" @click="range = 7">近7天</button>
         <button class="btn !py-1 !text-xs" :class="range === 30 ? 'bg-white dark:bg-slate-700 shadow-sm' : ''" @click="range = 30">近30天</button>
@@ -267,7 +268,7 @@ const report = computed(() => {
         <div v-for="item in barDetail" :key="item.sid" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3">
           <div class="flex items-center gap-2 text-sm">
             <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ background: store.subjectMap[item.sid]?.color || '#94a3b8' }"></span>
-            <span class="flex-1 font-semibold">{{ store.subjectMap[item.sid]?.icon }} {{ store.subjectMap[item.sid]?.name || '已删除科目' }}</span>
+            <span class="flex-1 font-semibold">{{ subjectLabel(store.subjectMap[item.sid], '已删除科目') }}</span>
             <span class="font-bold" :style="{ color: store.subjectMap[item.sid]?.color || '#94a3b8' }">{{ formatMinutes(item.total) }}</span>
           </div>
           <div class="mt-2 space-y-1">

@@ -4,11 +4,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import UserRelationItem from '../components/profile/UserRelationItem.vue'
+import { useBack } from '../composables/useBack'
 import { sessionUser } from '../services/auth'
 import type { FollowListItem } from '../types'
 
 const route = useRoute()
 const router = useRouter()
+const { goBack } = useBack()
 const userId = route.params.id as string
 const isSelf = computed(() => userId === sessionUser.value?.id)
 const tab = ref<'fans' | 'following' | 'mutual'>(
@@ -78,7 +80,7 @@ function onFollowChange(uid: string, following: boolean) {
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
     <!-- 顶部导航行 -->
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2" @click="router.back()">←</button>
+      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
       <h2 class="text-lg font-bold">{{ isSelf ? '我的' : (ownerName || 'TA 的') }}{{ TITLES[tab] }}</h2>
     </div>
 

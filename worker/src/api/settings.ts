@@ -1,7 +1,8 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
 import { first, batch, HttpError } from '../db'
-import { assertClean } from './sensitive'
+import { assertCleanAsync } from './sensitive'
+import { encryptSecret } from '../crypto'
 
 /** 用户设置（user_settings 单行 + default_quotes ↔ 前端 Settings） */
 
@@ -15,7 +16,10 @@ export interface SettingsFull {
   reminderEnabled: boolean
   reminderTime: string
   quotes?: string[]
+  /** 仅写入时携带（明文，由后端加密存储）；读取永不回传明文 */
   maimemoToken?: string
+  /** 是否已配置墨墨开放 API Token（读取用，不回传明文） */
+  maimemoConnected: boolean
   onboarded: boolean
   joinProgressBoard: boolean
   profileVisibility: 'public' | 'login' | 'private'
@@ -25,6 +29,11 @@ export interface SettingsFull {
   dndStartTime: string
   dndEndTime: string
   dndMutedTypes: string[]
+  dndMuteMessage: boolean
+  /** 允许搭子查看我的学习数据（周报对比/定向分享；默认关闭） */
+  partnerShareEnabled: boolean
+  /** 允许搭子向我发送学习鼓励提醒（默认开启） */
+  partnerRemindEnabled: boolean
 }
 
 /** 容错解析 quotes JSON：数据损坏时降级为 undefined（用默认值），不拖垮整个设置接口 */
@@ -39,7 +48,7 @@ function parseQuotes(raw: unknown): string[] | undefined {
 }
 
 /** 通知类型白名单（勿扰屏蔽类型的合法取值） */
-export const NOTIF_TYPES = ['like', 'comment', 'follow', 'achievement', 'message', 'system'] as const
+export const NOTIF_TYPES = ['like', 'comment', 'follow', 'achievement', 'message', 'system', 'partner'] as const
 
 /** 容错解析勿扰屏蔽类型 JSON：非法/损坏时回退空数组 */
 export function parseMutedTypes(raw: unknown): string[] {
@@ -67,7 +76,7 @@ export async function getSettings(env: Env, userId: string): Promise<SettingsFul
     reminderEnabled: !!row?.reminder_enabled,
     reminderTime: row?.reminder_time ?? '08:00',
     quotes: quotesRow ? parseQuotes((quotesRow as any).quotes) : undefined,
-    maimemoToken: row?.maimemo_token ?? undefined,
+    maimemoConnected: !!row?.maimemo_token,
     onboarded: !!row?.onboarded,
     joinProgressBoard: !!row?.join_progress_board,
     profileVisibility: (row?.profile_visibility as 'public' | 'login' | 'private') ?? 'login',
@@ -77,16 +86,20 @@ export async function getSettings(env: Env, userId: string): Promise<SettingsFul
     dndStartTime: row?.dnd_start_time ?? '',
     dndEndTime: row?.dnd_end_time ?? '',
     dndMutedTypes: parseMutedTypes(row?.dnd_muted_types),
+    dndMuteMessage: !!row?.dnd_mute_message,
+    partnerShareEnabled: !!row?.partner_share_enabled,
+    partnerRemindEnabled: row?.partner_remind_enabled !== 0,
   }
 }
 
 /** 生成设置数据的写入语句（upsert user_settings + default_quotes）。
- *  maimemoToken 为 undefined 时跳过该列，避免未持有 Token 的设备把云端 Token 覆盖为 NULL。 */
-export function settingsReplaceStatements(env: Env, userId: string, s: SettingsFull): D1PreparedStatement[] {
+ *  maimemoToken 仅在传入明文时加密存储；undefined 跳过该列，避免未持有 Token 的设备把云端凭证覆盖掉。 */
+export async function settingsReplaceStatements(env: Env, userId: string, s: SettingsFull): Promise<D1PreparedStatement[]> {
   const commonCols = 'user_name = excluded.user_name, daily_goal_minutes = excluded.daily_goal_minutes, word_goal = excluded.word_goal, ' +
     'problem_goal = excluded.problem_goal, exam_date = excluded.exam_date, theme = excluded.theme, reminder_enabled = excluded.reminder_enabled, ' +
     'reminder_time = excluded.reminder_time, onboarded = excluded.onboarded, join_progress_board = excluded.join_progress_board, profile_visibility = excluded.profile_visibility, bio = excluded.bio, ' +
-    'do_not_disturb = excluded.do_not_disturb, dnd_start_time = excluded.dnd_start_time, dnd_end_time = excluded.dnd_end_time, dnd_muted_types = excluded.dnd_muted_types'
+    'do_not_disturb = excluded.do_not_disturb, dnd_start_time = excluded.dnd_start_time, dnd_end_time = excluded.dnd_end_time, dnd_muted_types = excluded.dnd_muted_types, dnd_mute_message = excluded.dnd_mute_message, ' +
+    'partner_share_enabled = excluded.partner_share_enabled, partner_remind_enabled = excluded.partner_remind_enabled'
   // 昵称缺失或为空（含纯空白）时写入 NULL：展示端统一回退登录用户名（COALESCE 口径），
   // 避免前端误传空字符串导致社区/团队等处出现空白作者名
   const userName = typeof s.userName === 'string' && s.userName.trim() ? s.userName.trim() : null
@@ -95,25 +108,32 @@ export function settingsReplaceStatements(env: Env, userId: string, s: SettingsF
     userId, userName, s.dailyGoalMinutes ?? 240, s.wordGoal ?? 50, s.problemGoal ?? 30,
     s.examDate ?? '', s.theme ?? 'light', s.reminderEnabled ? 1 : 0, s.reminderTime ?? '08:00', s.onboarded ? 1 : 0,
     s.joinProgressBoard ? 1 : 0, s.profileVisibility ?? 'login', s.bio ?? '',
-    s.doNotDisturb ? 1 : 0, s.dndStartTime ?? '', s.dndEndTime ?? '', mutedJson
+    s.doNotDisturb ? 1 : 0, s.dndStartTime ?? '', s.dndEndTime ?? '', mutedJson, s.dndMuteMessage ? 1 : 0,
+    s.partnerShareEnabled ? 1 : 0, s.partnerRemindEnabled ? 1 : 0
   ]
   const stmts: D1PreparedStatement[] = []
-  const newCols = ', do_not_disturb, dnd_start_time, dnd_end_time, dnd_muted_types'
-  if (s.maimemoToken === undefined) {
+  const newCols = ', do_not_disturb, dnd_start_time, dnd_end_time, dnd_muted_types, dnd_mute_message, partner_share_enabled, partner_remind_enabled'
+
+  // 墨墨 Token 仅写入时加密存储（AES-256-GCM，密钥派生自 JWT_SECRET）
+  const tokenCipher = typeof s.maimemoToken === 'string' && s.maimemoToken.trim()
+    ? await encryptSecret(env, s.maimemoToken)
+    : undefined
+
+  if (tokenCipher === undefined) {
     stmts.push(
       env.DB.prepare(
         'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' + newCols + ') ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
         `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}`
       ).bind(...baseParams)
     )
   } else {
     stmts.push(
       env.DB.prepare(
-        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio, maimemo_token' + newCols + ') ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' + newCols + ', maimemo_token) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
         `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}, maimemo_token = excluded.maimemo_token`
-      ).bind(...baseParams, s.maimemoToken)
+      ).bind(...baseParams, tokenCipher)
     )
   }
   if (Array.isArray(s.quotes)) {
@@ -138,17 +158,17 @@ export function registerSettingsRoutes() {
     if (typeof b?.userName === 'string' && b.userName.trim()) {
       const name = b.userName.trim()
       if (name.length > 30) throw new HttpError(400, '昵称最多 30 个字符')
-      assertClean(name)
+      await assertCleanAsync(name, ctx.env)
       b.userName = name
     }
     // 简介在我的页/访客主页公开可见，与昵称同口径过敏感词 + 长度限制；纯空白归一为 ''
     if (typeof b?.bio === 'string') {
       const bio = b.bio.trim()
       if (bio.length > 100) throw new HttpError(400, '简介最多 100 个字符')
-      if (bio) assertClean(bio)
+      if (bio) await assertCleanAsync(bio, ctx.env)
       b.bio = bio
     }
-    await batch(ctx.env, settingsReplaceStatements(ctx.env, ctx.userId, b))
+    await batch(ctx.env, await settingsReplaceStatements(ctx.env, ctx.userId, b))
     return Response.json(await getSettings(ctx.env, ctx.userId))
   })
 }

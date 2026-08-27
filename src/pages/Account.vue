@@ -104,13 +104,13 @@ function exportBackup() {
     <!-- 数据中心（折叠，独立于 profile 加载状态，始终可用） -->
     <div class="card">
       <button class="w-full flex items-center justify-between" @click="showDataCenter = !showDataCenter">
-        <span class="font-semibold text-sm">🗄️ 数据中心</span>
+        <span class="font-semibold text-sm">数据中心</span>
         <ChevronDown :size="16" class="transition-transform text-slate-400" :class="showDataCenter ? 'rotate-180' : ''" />
       </button>
       <div v-if="showDataCenter" class="mt-3 space-y-4">
         <!-- 账号与云端数据信息 -->
         <div class="space-y-2.5">
-          <h2 class="font-semibold text-sm">☁️ 云端数据（Cloudflare D1）</h2>
+          <h2 class="font-semibold text-sm">云端数据（Cloudflare D1）</h2>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
             <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
               <span class="text-slate-500 dark:text-slate-400">注册时间</span>
@@ -126,7 +126,7 @@ function exportBackup() {
 
         <!-- 数据统计 -->
         <div>
-          <h2 class="font-semibold text-sm mb-3">📊 我的数据概览</h2>
+          <h2 class="font-semibold text-sm mb-3">我的数据概览</h2>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <div v-for="s in stats" :key="s.label" class="bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2.5 text-center">
               <div class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ s.value }}<span class="text-xs font-normal text-slate-400 ml-0.5">{{ s.unit }}</span></div>
@@ -138,7 +138,7 @@ function exportBackup() {
         <!-- 数据操作 -->
         <div class="flex items-center justify-between">
           <div>
-            <h2 class="font-semibold text-sm">💾 数据备份</h2>
+            <h2 class="font-semibold text-sm">数据备份</h2>
             <p class="text-xs text-slate-400 mt-0.5">导出当前账号全部数据为 JSON 文件，可在设置页导入恢复</p>
           </div>
           <button class="btn-primary !text-xs shrink-0" @click="exportBackup">导出备份</button>

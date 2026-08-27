@@ -54,7 +54,7 @@ export function checkTodoReminders() {
     deliver(
       '待办已到开始时间',
       started.length === 1
-        ? `${joinNames(started)}该开始啦，现在就动手 💪`
+        ? `${joinNames(started)}该开始啦，现在就动手`
         : `${started.length} 个待办已到开始时间：${joinNames(started)}`
     )
     hooks.onNotified(started.map(t => t.id), 'start')

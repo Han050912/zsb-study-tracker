@@ -71,7 +71,7 @@ const sections = computed<NoteSection[]>(() => {
     if (li) {
       const text = li[1].replace(/[*_`]/g, '').trim()
       if (!current) {
-        current = { icon: '📋', title: '更新内容', items: [] }
+        current = { icon: '', title: '更新内容', items: [] }
         result.push(current)
       }
       current.items.push(text)
@@ -161,7 +161,7 @@ onBeforeUnmount(() => { show.value = false })
             <template v-if="sections.length">
               <div v-for="sec in sections" :key="sec.title" class="mb-4">
                 <div class="flex items-center gap-2 font-bold text-slate-800 dark:text-slate-100 mb-2">
-                  <span>{{ sec.icon }}</span><span>{{ sec.title }}</span>
+                  <span v-if="sec.icon">{{ sec.icon }}</span><span>{{ sec.title }}</span>
                 </div>
                 <ul class="space-y-2">
                   <li v-for="(item, idx) in sec.items" :key="idx"

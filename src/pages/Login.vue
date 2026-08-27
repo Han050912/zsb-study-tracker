@@ -2,8 +2,9 @@
 import { ref, defineAsyncComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Eye, EyeOff } from '@lucide/vue'
-import { login, register } from '../services/auth'
+import { login, register, enterGuestMode } from '../services/auth'
 import { useAppStore } from '../stores/app'
+import { sanitizeInternalPath } from '../utils/path'
 
 const router = useRouter()
 const route = useRoute()
@@ -34,6 +35,12 @@ function retryTurnstile() {
   turnstileError.value = false
   turnstileToken.value = ''
   turnstileKey.value++
+}
+
+/** 访客入口：唯一进入访客浏览模式的路径（开启后路由守卫才放行公开页） */
+function enterGuest() {
+  enterGuestMode()
+  router.replace('/community')
 }
 
 function switchMode(m: 'login' | 'register') {
@@ -79,8 +86,8 @@ async function submit() {
     // 登录/注册成功后从云端载入该用户的历史数据
     await withTimeout(store.hydrate(), 20000, '数据同步')
     // 回跳：登录前从某页面触发（携带 redirect）则返回原页面；否则回首页。仅允许站内路径，防 open redirect
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
-    router.replace(redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/')
+    const redirect = sanitizeInternalPath(route.query.redirect) ?? '/'
+    router.replace(redirect)
   } catch (e: any) {
     errorMsg.value = e?.message || '操作失败，请重试'
     turnstileWidget.value?.reset()
@@ -155,7 +162,7 @@ async function submit() {
           <!-- Turnstile 加载失败（含手动重试） -->
           <div v-if="turnstileError" class="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2 space-y-1.5">
             <div class="flex items-center gap-2">
-              <span>⚠️</span>人机验证组件加载失败（Cloudflare CDN 在国内可能不稳定），请尝试刷新页面或使用代理/加速器后重试
+              <span></span>人机验证组件加载失败（Cloudflare CDN 在国内可能不稳定），请尝试刷新页面或使用代理/加速器后重试
             </div>
             <button type="button"
               class="text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 underline cursor-pointer"
@@ -164,7 +171,7 @@ async function submit() {
 
           <!-- 其他错误 -->
           <div v-if="errorMsg" class="flex items-center gap-2 text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2">
-            <span>⚠️</span>{{ errorMsg }}
+            <span></span>{{ errorMsg }}
           </div>
 
           <button type="submit" class="btn-primary w-full !py-2.5" :disabled="loading || (!isDesktop && !turnstileToken)">
@@ -172,10 +179,10 @@ async function submit() {
           </button>
         </form>
 
-        <!-- 访客入口：社区广场内容公开，可先浏览再决定注册 -->
+        <!-- 访客入口：唯一进入访客浏览模式的路径 -->
         <div class="text-center mt-4">
           <button type="button" class="text-xs text-slate-400 hover:text-primary-500 transition-colors"
-            @click="router.replace('/community')">先随便看看 →</button>
+            @click="enterGuest">先随便看看 →</button>
         </div>
       </div>
 

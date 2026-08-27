@@ -4,8 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { renderMarkdown } from '../utils/markdown'
 import PdfViewer from '../components/PdfViewer.vue'
+import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 import { uploadPdf, fetchPdf, PDF_MAX_BYTES, PDF_MAX_MB, PDF_REF_PREFIX, pdfRefOf } from '../api/pdfs'
 import { uid } from '../utils/date'
+import { subjectLabel } from '../utils/subject'
 import type { Note } from '../types'
 
 const store = useAppStore()
@@ -197,6 +199,13 @@ watch(selectedId, (id) => {
   })
 }, { immediate: true })
 
+// ---- 分享给搭子（仅已保存的笔记可分享，草稿需先保存） ----
+const shareNoteId = ref('')
+function shareNote() {
+  if (!draft.value?.id) { toast('请先保存笔记再分享'); return }
+  shareNoteId.value = draft.value.id
+}
+
 // ---- 移动端：列表/编辑 视图切换 ----
 const isEditing = computed(() => !!draft.value)
 
@@ -259,13 +268,14 @@ onUnmounted(() => {
               {{ previewMode === 'preview' ? '编辑' : '预览' }}
             </button>
           </template>
+          <button class="btn-ghost !py-1.5 !text-xs shrink-0" @click="shareNote">分享给搭子</button>
           <button class="btn-danger !py-1.5 shrink-0" @click="removeNote">删除</button>
           <button class="btn-primary !py-1.5 shrink-0" @click="doSave()">保存</button>
         </div>
         <!-- 元信息 -->
         <div class="flex flex-wrap items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700">
           <select v-model="draft.subjectId" class="input !w-auto !py-1 !text-xs" @change="dirty = true">
-            <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ s.icon }} {{ s.name }}</option>
+            <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
           </select>
           <input :value="draft.tags?.join(',')" class="input !flex-1 !py-1 !text-xs min-w-32" placeholder="标签，逗号分隔"
             @input="draft.tags = ($event.target as HTMLInputElement).value.split(',').map(s => s.trim()).filter(Boolean); dirty = true" />
@@ -294,5 +304,8 @@ onUnmounted(() => {
         <button class="btn-primary" @click="newNote">＋ 新建笔记</button>
       </div>
     </section>
+
+    <!-- 分享给搭子弹窗 -->
+    <PartnerShareModal v-if="shareNoteId" item-type="note" :item-id="shareNoteId" @close="shareNoteId = ''" />
   </div>
 </template>

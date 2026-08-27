@@ -1,11 +1,15 @@
 name = "zsb-study-api"
 main = "src/index.ts"
 compatibility_date = "2026-08-04"
-account_id = "f56530b741377e91f44791c2aecd5855" 
+account_id = "f56530b741377e91f44791c2aecd5855"
+
+# 自定义域名路由：与 Cloudflare Dashboard 远程配置保持一致，避免 deploy 覆盖时丢失
+routes = [
+  { pattern = "cn.zsbservice.de5.net/*", zone_name = "zsbservice.de5.net" }
+]
 
 [observability]
 enabled = true
-invocation_logs = true
 
 [[d1_databases]]
 binding = "DB"
@@ -21,3 +25,16 @@ bucket_name = "zsb-study-images"
 # 非敏感配置（JWT_SECRET 通过 Cloudflare 控制台设置加密变量，不写入此文件）
 # GITHUB_TOKEN 也需通过 Cloudflare Dashboard > Workers > Settings > Secrets 配置
 # 用于 /api/latest-release 携带 PAT 请求 GitHub API，绕过匿名限流
+
+# ---------- 内容安全 AI 复审（双层校验第二层）----------
+# CF_API_TOKEN：Workers AI 调用令牌，属敏感密钥，禁止写入本文件或前端。
+#   生产：npx wrangler secret put CF_API_TOKEN
+#   本地：在 worker/.dev.vars 中写 CF_API_TOKEN=xxx（该文件已被 .gitignore 忽略）
+# CF_ACCOUNT_ID：账户 ID 非敏感，直接复用本文件顶部的 account_id。
+#   若需本地覆盖（例如本地调试），可在 .dev.vars 中写 CF_ACCOUNT_ID=xxx。
+#   注意：wrangler.toml 的 account_id 不会自动注入运行时 env，需在 .dev.vars 显式提供。
+CF_ACCOUNT_ID = "f56530b741377e91f44791c2aecd5855"
+
+# 每周一 08:00（UTC+8）＝ UTC 周一 00:00：双向推送上周学习周报
+[triggers]
+crons = ["0 0 * * 1"]

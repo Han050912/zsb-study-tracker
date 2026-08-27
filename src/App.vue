@@ -6,11 +6,12 @@ import { useCommunityStore } from './stores/community'
 import { sessionUser, logout, isLoggedIn, isAdmin, goLogin } from './services/auth'
 import { restartReminder } from './services/reminder'
 import { startTodoReminder, checkTodoReminders } from './services/todoReminder'
+import { startPartnerReminder, stopPartnerReminder } from './services/partnerReminder'
 import Toast from './components/Toast.vue'
 import AchievementModal from './components/AchievementModal.vue'
 import Onboarding from './components/Onboarding.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
-import { imageUrl } from './api/community'
+import { imageUrl, communityApi } from './api/community'
 import { isDndActive } from './utils/dnd'
 
 const store = useAppStore()
@@ -18,10 +19,13 @@ const community = useCommunityStore()
 const route = useRoute()
 const router = useRouter()
 
-// 登录后定时拉取社区未读通知数（实时红点）；切后台暂停、回前台立即补拉；退出/过期时停止轮询
+// 登录后定时拉取社区未读通知数 + 消息未读数（实时红点）；切后台暂停、回前台立即补拉；退出/过期时停止轮询
 let unreadTimer: ReturnType<typeof setInterval> | null = null
+/** 消息未读数（私信模块独立，不与通知未读混算） */
+const messageUnread = ref(0)
 function fetchUnread() {
   community.fetchUnreadCount().catch(() => {})
+  communityApi.messageUnreadCount().then(r => { messageUnread.value = r.count }).catch(() => {})
 }
 function startUnreadTimer() {
   if (unreadTimer) clearInterval(unreadTimer)
@@ -43,13 +47,20 @@ function startUnreadPolling() {
   fetchUnread()
   startUnreadTimer()
   document.addEventListener('visibilitychange', onUnreadVisibilityChange)
+  window.addEventListener('message:read', onMessageRead)
 }
 function stopUnreadPolling() {
   stopUnreadTimer()
   document.removeEventListener('visibilitychange', onUnreadVisibilityChange)
+  window.removeEventListener('message:read', onMessageRead)
+}
+/** 打开聊天页标记已读后即时扣减消息未读数，无需等下一轮轮询 */
+function onMessageRead(e: Event) {
+  const n = (e as CustomEvent<number>).detail || 0
+  if (n > 0) messageUnread.value = Math.max(0, messageUnread.value - n)
 }
 watch(isLoggedIn, v => { if (v) startUnreadPolling(); else stopUnreadPolling() }, { immediate: true })
-onBeforeUnmount(stopUnreadPolling)
+onBeforeUnmount(() => { stopUnreadPolling(); stopPartnerReminder() })
 
 // 导航动态生成：科目项随科目列表实时增减（删除科目自动隐藏，新增科目自动出现）
 // 侧边栏展示科目全名；移动端由 CSS truncate 截断
@@ -92,7 +103,7 @@ const mobileNav = computed(() => {
     return [
       { path: '/community', icon: '💬', label: '社区', subject: false },
       { path: '/teams', icon: '👥', label: '组队', subject: false },
-      { path: `/login?redirect=${encodeURIComponent(route.path || '/community')}`, icon: '🔑', label: '登录', subject: false }
+      { path: `/login?redirect=${encodeURIComponent(route.path || '/community')}`, label: '登录', subject: false }
     ]
   }
   const subjectPaths = NAV.value.filter(n => n.subject).slice(0, 1).map(n => n.path)
@@ -128,7 +139,7 @@ watch(
   () => {
     restartReminder(
       () => ({ enabled: store.settings.reminderEnabled, time: store.settings.reminderTime, suppressed: isDndActive(store.settings) }),
-      (shown) => { if (!shown) toastRef.value?.show('提醒时间到！该开始学习啦 💪') }
+      (shown) => { if (!shown) toastRef.value?.show('提醒时间到！该开始学习啦') }
     )
   },
   { immediate: true }
@@ -150,9 +161,27 @@ watch(
   () => checkTodoReminders()
 )
 
+// ---- 学习搭子提醒推送（见 src/services/partnerReminder.ts）----
+// 登录后轮询未读的搭子通知并推系统通知（与每日学习提醒同机制），退出/过期时停止
+watch(
+  isLoggedIn,
+  v => {
+    if (v) {
+      startPartnerReminder({
+        onFallback: msg => toastRef.value?.show(msg),
+        isSuppressed: () => isDndActive(store.settings)
+      })
+    } else {
+      stopPartnerReminder()
+    }
+  },
+  { immediate: true }
+)
+
 const dndActive = computed(() => isDndActive(store.settings))
 
-const isPomodoro = computed(() => route.path === '/pomodoro')
+// 全屏沉浸页：番茄钟 + 开黑自习室（进入后隐藏全局导航，实现真正全屏）
+const isFullscreenPage = computed(() => route.path === '/pomodoro' || route.path === '/partners/study')
 const isAuthPage = computed(() => route.path === '/login')
 // 笔记页打开具体笔记时隐藏右上角头像浮层，把顶部右侧让给编辑工具栏
 const isNotesEditing = computed(() =>
@@ -171,7 +200,7 @@ provide('navCollapsed', navCollapsed)
 
 // ---- 右上角账号头像下拉菜单 ----
 const avatarOpen = ref(false)
-const avatarLetter = computed(() => sessionUser.value?.username?.slice(0, 1).toUpperCase() || '👤')
+const avatarLetter = computed(() => sessionUser.value?.username?.slice(0, 1).toUpperCase() || '')
 function goAccount() {
   avatarOpen.value = false
   router.push('/account')
@@ -183,6 +212,10 @@ function goFeedback() {
 function goNotifications() {
   avatarOpen.value = false
   router.push('/community/notifications')
+}
+function goMessages() {
+  avatarOpen.value = false
+  router.push('/messages')
 }
 /** 切换账号 / 退出登录：立即退出，数据保存不阻塞 UI */
 async function accountLogout(switchAccount: boolean) {
@@ -199,8 +232,8 @@ async function accountLogout(switchAccount: boolean) {
   logout()
   store.resetState()
   community.resetState()
-  // 退出后即访客：落地社区广场（与新守卫的访客默认落地一致）
-  router.replace('/community')
+  // 退出后回登录页；访客浏览模式仅能由登录页「先随便看看」入口进入
+  router.replace('/login')
 }
 
 /** 导航激活判断：精确匹配或子路径匹配（避免 '/materials' 误激活 '/math' 这类前缀碰撞） */
@@ -208,7 +241,7 @@ function isNavActive(path: string) {
   if (path === '/') return route.path === '/'
   return route.path === path || route.path.startsWith(path + '/')
 }
-const hideNav = computed(() => isPomodoro.value || isAuthPage.value)
+const hideNav = computed(() => isFullscreenPage.value || isAuthPage.value)
 const showOnboarding = computed(() => isLoggedIn.value && !isAuthPage.value && !store.settings.onboarded)
 
 // Electron IPC: 托盘菜单触发页面导航
@@ -256,7 +289,16 @@ if (window.nav) {
         :title="navCollapsed ? '展开导航' : '收起导航'" @click="toggleNav">
         <span>{{ navCollapsed ? '»' : '«' }}</span><span v-if="!navCollapsed">收起导航</span>
       </button>
-      <div v-if="isLoggedIn && !navCollapsed" class="px-5 py-3 text-[10px] text-slate-400">积分 {{ store.gamification.points }} · 🔥{{ store.gamification.streak }}天</div>
+      <div v-if="isLoggedIn && !navCollapsed" class="mx-3 mb-3 grid grid-cols-2 gap-2">
+        <div class="rounded-xl bg-amber-50 dark:bg-amber-500/10 px-3 py-2 flex flex-col items-center justify-center text-center">
+          <div class="text-[15px] font-bold leading-none text-amber-600 dark:text-amber-400">{{ store.gamification.points }}</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">积分</div>
+        </div>
+        <div class="rounded-xl bg-purple-50 dark:bg-purple-500/10 px-3 py-2 flex flex-col items-center justify-center text-center">
+          <div class="text-[15px] font-bold leading-none text-purple-600 dark:text-purple-400">{{ store.gamification.streak }}</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">连续学习天数</div>
+        </div>
+      </div>
     </aside>
 
     <!-- 右上角：登录态显示账号头像入口（含未读通知角标，通知中心已并入头像下拉菜单）；访客态显示登录按钮 -->
@@ -266,16 +308,20 @@ if (window.nav) {
           title="账号菜单" @click.stop="avatarOpen = !avatarOpen">
           <img v-if="store.settings.avatar" :src="imageUrl(store.settings.avatar)" class="w-full h-full object-cover rounded-full" alt="我的头像">
           <template v-else>{{ avatarLetter }}</template>
-          <!-- 未读通知角标：勿扰仅红点（无数字）；普通数字角标 -->
-          <span v-if="dndActive && community.unreadExcludingMuted"
+          <!-- 未读角标（通知未读 + 消息未读）：勿扰仅红点（无数字）；普通数字角标 -->
+          <span v-if="dndActive && (community.unreadExcludingMuted || (messageUnread && !store.settings.dndMuteMessage))"
             class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 ring-2 ring-white dark:ring-slate-800"></span>
-          <span v-else-if="!dndActive && community.unreadCount"
+          <span v-else-if="!dndActive && (community.unreadCount + messageUnread)"
             class="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center ring-2 ring-white dark:ring-slate-800">
-            {{ community.unreadCount > 99 ? '99+' : community.unreadCount }}
+            {{ (community.unreadCount + messageUnread) > 99 ? '99+' : (community.unreadCount + messageUnread) }}
           </span>
         </button>
         <div v-if="avatarOpen" class="fixed inset-0 z-40" @click="avatarOpen = false"></div>
         <div v-if="avatarOpen" class="absolute right-0 top-11 z-50 w-40 rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-lg py-1.5">
+          <button class="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goMessages">
+            <span>消息</span>
+            <span v-if="messageUnread" class="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">{{ messageUnread > 99 ? '99+' : messageUnread }}</span>
+          </button>
           <button class="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700" @click="goNotifications">
             <span>通知中心</span>
             <span v-if="community.unreadCount" class="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">{{ community.unreadCount > 99 ? '99+' : community.unreadCount }}</span>

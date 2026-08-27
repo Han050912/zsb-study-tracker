@@ -5,7 +5,7 @@
  * - 保证 crypto.subtle（安全上下文）等 Web 能力可用；数据经 Cloudflare Worker 云端存储
  * - 开发环境直接加载 Vite Dev Server
  */
-const { app, BrowserWindow, Tray, Menu, nativeImage, protocol, net, ipcMain, Notification } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, protocol, net, ipcMain, Notification, session } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
@@ -14,6 +14,45 @@ const APP_NAME = '专升本学习助手'
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
 const isDev = !app.isPackaged
 const DIST_ROOT = path.join(__dirname, '..', 'dist')
+
+/**
+ * Content-Security-Policy：开发 / 生产两套策略，由 isDev 环境自动切换，无需人工改代码。
+ *
+ * 背景：Electron 对含 'unsafe-eval' 的 CSP 抛出「Insecure Content-Security-Policy」安全警告。
+ * Vite 开发热更新（HMR）依赖 'unsafe-eval'，但生产环境绝不允许保留。
+ * 因此：开发保留 'unsafe-eval' + script 'unsafe-inline'；生产移除二者，输出严格 CSP。
+ *
+ * 注入方式（均为渲染进程入口动态注入，index.html 已移除静态 meta CSP）：
+ * - 开发（isDev，走 http://localhost:*）：由 session.webRequest.onHeadersReceived 注入（setupDevCSP）。
+ * - 生产（打包，走 app:// 自定义协议）：由 protocol.handle 对 HTML 文档注入响应头（registerAppProtocol）。
+ *   原因：webRequest 仅对 http/https 生效，对 app:// 协议不生效，故生产必须走协议处理器注入。
+ */
+
+/** 开发 CSP：保留 'unsafe-eval'（Vite HMR 依赖）与 script 'unsafe-inline' */
+const DEV_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
+  "worker-src 'self'",
+  "manifest-src 'self'",
+  "frame-src https://challenges.cloudflare.com",
+  "style-src 'self' 'unsafe-inline'",
+  "connect-src 'self' http://localhost:* https://zsb-study-tracker.sryze.cc https://cn.zsbservice.de5.net https://challenges.cloudflare.com",
+  "img-src 'self' data: blob: http://localhost:* https://cn.zsbservice.de5.net",
+  "font-src 'self' data:"
+].join('; ')
+
+/** 生产 CSP：移除 'unsafe-eval' 与 script 'unsafe-inline'，输出严格安全策略 */
+const PROD_CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://challenges.cloudflare.com",
+  "worker-src 'self'",
+  "manifest-src 'self'",
+  "frame-src https://challenges.cloudflare.com",
+  "style-src 'self' 'unsafe-inline'",
+  "connect-src 'self' http://localhost:* https://zsb-study-tracker.sryze.cc https://cn.zsbservice.de5.net https://challenges.cloudflare.com",
+  "img-src 'self' data: blob: http://localhost:* https://cn.zsbservice.de5.net",
+  "font-src 'self' data:"
+].join('; ')
 
 // 必须在 app ready 之前注册特权协议（standard + secure 使 origin 成为安全上下文）
 protocol.registerSchemesAsPrivileged([
@@ -167,14 +206,41 @@ function setupAutoUpdater() {
  * 桌面原生通知（学习提醒等），与浏览器端共用 src/services/notify.ts 一套逻辑。
  * 模块顶层注册：不依赖 autoUpdater，开发模式下桌面端同样可弹提醒。
  */
-ipcMain.on('notify:show', (_e, payload) => {
+ipcMain.on('notify:show', async (_e, payload) => {
   if (!Notification.isSupported()) return
-  const { title, body } = payload || {}
+  const { title, body, icon } = payload || {}
   if (!title) return
+  // 头像图标：data URL 直接解析；http(s) URL 由主进程 net.fetch 下载（不受渲染进程 CORS 限制）；失败降级默认图标
+  let iconImage
+  if (icon) {
+    const s = String(icon)
+    if (s.startsWith('data:')) {
+      try {
+        const img = nativeImage.createFromDataURL(s)
+        if (!img.isEmpty()) iconImage = img
+      } catch (e) {
+        console.error('[notify] createFromDataURL 失败:', e)
+      }
+    } else if (/^https?:\/\//.test(s)) {
+      try {
+        const res = await net.fetch(s)
+        if (res.ok) {
+          const buf = Buffer.from(await res.arrayBuffer())
+          const img = nativeImage.createFromBuffer(buf)
+          if (!img.isEmpty()) iconImage = img
+        } else {
+          console.error('[notify] net.fetch 头像失败, HTTP:', res.status)
+        }
+      } catch (e) {
+        console.error('[notify] net.fetch 下载头像异常:', e)
+      }
+    }
+  }
   const n = new Notification({
     title: String(title),
     body: String(body || ''),
-    silent: false
+    silent: false,
+    ...(iconImage ? { icon: iconImage } : {})
   })
   // 点击通知时唤起主窗口，便于用户直接进入学习
   n.on('click', () => {
@@ -210,7 +276,30 @@ function registerAppProtocol() {
     if ((!filePath.startsWith(DIST_ROOT + path.sep) && filePath !== DIST_ROOT) || !fs.existsSync(filePath)) {
       return new Response('Not Found', { status: 404 })
     }
+    // 生产 CSP：仅对 HTML 文档注入严格 CSP 响应头（index.html 已移除 meta CSP，由主进程按环境注入）
+    if (pathname.endsWith('.html')) {
+      return new Response(fs.readFileSync(filePath), {
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PROD_CSP }
+      })
+    }
     return net.fetch(pathToFileURL(filePath).toString())
+  })
+}
+
+/** 开发环境：通过 session.webRequest 注入含 'unsafe-eval' 的 CSP，保障 Vite HMR 热更新 */
+function setupDevCSP() {
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // 仅对本地开发服务器的主文档响应注入，避免影响第三方（Turnstile 等）与静态资源
+    if (details.resourceType === 'mainFrame' && details.url.startsWith(DEV_URL)) {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [DEV_CSP]
+        }
+      })
+    } else {
+      callback({ responseHeaders: details.responseHeaders })
+    }
   })
 }
 
@@ -310,7 +399,10 @@ function createTray() {
 
 function init() {
   app.setName(APP_NAME)
+  // Windows 通知（含图标）依赖稳定的 AppUserModelID；dev 环境未打包时默认值会导致通知图标不显示
+  app.setAppUserModelId('com.zsb.study.helper')
   if (!isDev) registerAppProtocol()
+  else setupDevCSP() // 开发环境注入含 'unsafe-eval' 的 CSP（保障 HMR）
   createSplash()
   createMainWindow()
   createTray()

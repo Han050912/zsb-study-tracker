@@ -15,10 +15,12 @@ import ProfileHeader from '../components/profile/ProfileHeader.vue'
 import SocialStatsBar from '../components/profile/SocialStatsBar.vue'
 import UserWorksTabs from '../components/profile/UserWorksTabs.vue'
 import EditProfileModal from '../components/profile/EditProfileModal.vue'
+import { useBack } from '../composables/useBack'
 import type { CommunityUserProfile, UserStudyStats } from '../types'
 
 const route = useRoute()
 const router = useRouter()
+const { goBack } = useBack()
 
 const userId = route.params.id as string
 
@@ -88,12 +90,6 @@ function onFollowChange(following: boolean) {
     : p.followedByMe ? 'following' : p.followsMe ? 'follower' : 'none'
 }
 
-/** 返回上一级路由；直接打开（无站内历史）时回退到广场 */
-function goBack() {
-  if (history.state?.back) router.back()
-  else router.push('/community')
-}
-
 onMounted(loadAll)
 </script>
 
@@ -132,7 +128,7 @@ onMounted(loadAll)
 
       <!-- 学习概览：总学习时长 / 总做题数 / 本月学习 -->
       <div class="card">
-        <h3 class="text-sm font-bold mb-3">📊 学习概览</h3>
+        <h3 class="text-sm font-bold mb-3">学习概览</h3>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
             <div class="text-lg font-bold text-blue-600">
@@ -164,7 +160,7 @@ onMounted(loadAll)
 
       <!-- 科目分布 -->
       <div class="card" v-if="stats?.subjects?.length">
-        <h3 class="text-sm font-bold mb-3">📚 科目学习分布</h3>
+        <h3 class="text-sm font-bold mb-3">科目学习分布</h3>
         <div class="space-y-2">
           <div v-for="s in stats.subjects" :key="s.id" class="flex items-center gap-2">
             <span class="text-sm w-20 truncate">{{ s.name }}</span>
@@ -179,7 +175,7 @@ onMounted(loadAll)
 
       <!-- 徽章墙 -->
       <div class="card">
-        <h3 class="text-sm font-bold mb-3">🏅 徽章墙</h3>
+        <h3 class="text-sm font-bold mb-3">徽章墙</h3>
         <div v-if="!profile.badges?.length" class="text-xs text-slate-400 py-2">
           还没有获得徽章。多发帖、多提问、坚持打卡来解锁吧！
         </div>

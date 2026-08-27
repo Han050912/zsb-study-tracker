@@ -3,13 +3,15 @@ import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getTeamDetail, joinTeam, leaveTeam, transferLeader, disbandTeam, removeTeamMember, applyTeam, getTeamRequests, approveRequest, rejectRequest, withdrawRequest, resetInviteCode, updateTeam, createChallenge, syncChallengeProgress, updateChallenge, deleteChallenge, cancelChallenge, resumeChallenge } from '../api/teams'
 import type { ChallengeType, TeamChallenge, TeamDetail, TeamMember, TeamJoinRequest } from '../types'
-import { Crown, UserMinus } from '@lucide/vue'
+import { Crown, UserMinus, Flame, Timer, BookOpen } from '@lucide/vue'
 import Modal from '../components/Modal.vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
+import { useBack } from '../composables/useBack'
 
 const route = useRoute()
 const router = useRouter()
+const { goBack } = useBack()
 const toast = inject<(m: string) => void>('toast', () => {})
 const teamId = route.params.id as string
 
@@ -186,7 +188,7 @@ async function handleJoin() {
   joinSubmitting.value = true
   try {
     await joinTeam(teamId)
-    toast('已加入小组 🎉')
+    toast('已加入小组')
     await loadDetail()
   } catch (e: any) { toast(e?.message || '加入失败') }
   finally { joinSubmitting.value = false }
@@ -241,6 +243,19 @@ function formatDate(timestamp: number): string {
 // ---- 挑战 ----
 const TYPE_LABEL: Record<ChallengeType, string> = { streak: '连续打卡', minutes: '学习时长', problems: '刷题数' }
 const TYPE_UNIT: Record<ChallengeType, string> = { streak: '天', minutes: '分钟', problems: '题' }
+/** 各挑战类型的图标 / 说明 / 快捷预设 / 占位提示，让目标值与单位一一对应，避免三种类型混用同一输入框 */
+const TYPE_META: Record<ChallengeType, { icon: any; desc: string; presets: number[]; placeholder: string }> = {
+  streak: { icon: Flame, desc: '坚持每日打卡', presets: [7, 14, 21, 30], placeholder: '如 7' },
+  minutes: { icon: Timer, desc: '累计专注时长', presets: [60, 120, 300, 600], placeholder: '如 120' },
+  problems: { icon: BookOpen, desc: '累计刷题数量', presets: [50, 100, 200, 500], placeholder: '如 100' }
+}
+/** 分钟数人性化显示：不足 1 小时直接显示分钟，否则换算为「X 小时 Y 分」 */
+function formatMinutes(m: number): string {
+  if (!m || m < 60) return `${m} 分钟`
+  const h = Math.floor(m / 60)
+  const min = m % 60
+  return min ? `${h} 小时 ${min} 分` : `${h} 小时`
+}
 const STATUS_LABEL = { upcoming: '未开始', active: '进行中', cancelled: '已取消', completed: '全员达标', ended: '已结束' } as const
 type ChallengeStatus = keyof typeof STATUS_LABEL
 
@@ -267,7 +282,7 @@ async function syncChallenge(c: TeamChallenge) {
     const before = c.isCompleted
     await loadDetail()
     const after = detail.value?.challenges.find(x => x.id === c.id)
-    if (!before && after?.isCompleted) toast('🎉 全员达标')
+    if (!before && after?.isCompleted) toast('全员达标')
   } catch (e: any) {
     toast(e?.message || '同步失败')
   } finally {
@@ -301,12 +316,14 @@ async function handleCreate() {
 
 // ---- 挑战管理（仅队长） ----
 const editingId = ref<string | null>(null)
+const editingType = ref<ChallengeType>('streak')
 const editForm = ref({ target: 7, durationDays: 7, startDate: '' })
 const editSubmitting = ref(false)
 const manageSubmitting = ref<Record<string, boolean>>({})
 
 function openEdit(c: TeamChallenge) {
   editingId.value = c.id
+  editingType.value = c.type
   editForm.value = { target: c.target, durationDays: c.durationDays, startDate: c.startDate }
 }
 
@@ -363,7 +380,7 @@ async function handleResume(c: TeamChallenge) {
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
 
     <template v-else-if="team">
-      <button class="btn-ghost !px-2" @click="router.push('/teams')">← 组队挑战列表</button>
+      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
 
       <div class="card space-y-3">
         <div class="flex items-center gap-2 flex-wrap">
@@ -476,7 +493,7 @@ async function handleResume(c: TeamChallenge) {
               </span>
             </div>
             <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              目标 {{ c.target }} {{ TYPE_UNIT[c.type] }} · {{ c.startDate }} ~ {{ c.endDate }}
+              目标 {{ c.target }} {{ TYPE_UNIT[c.type] }}<template v-if="c.type === 'minutes' && c.target >= 60">（{{ formatMinutes(c.target) }}）</template> · {{ c.startDate }} ~ {{ c.endDate }}
             </div>
             <div class="mt-2">
               <div class="flex items-center justify-between text-[10px] text-slate-400 mb-1">
@@ -511,16 +528,39 @@ async function handleResume(c: TeamChallenge) {
     <div class="space-y-3">
       <div>
         <div class="label">挑战类型</div>
-        <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit">
+        <div class="grid grid-cols-3 gap-2">
           <button v-for="t in (['streak', 'minutes', 'problems'] as ChallengeType[])" :key="t"
-            class="px-3 py-1.5 rounded-md transition-colors"
-            :class="createForm.type === t ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-            @click="createForm.type = t">{{ TYPE_LABEL[t] }}</button>
+            class="flex flex-col items-center gap-1 rounded-xl border px-2 py-3 transition-colors"
+            :class="createForm.type === t
+              ? 'border-primary-400 dark:border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400'
+              : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'"
+            @click="createForm.type = t">
+            <component :is="TYPE_META[t].icon" class="w-5 h-5" />
+            <span class="text-xs font-semibold">{{ TYPE_LABEL[t] }}</span>
+            <span class="text-[10px] opacity-70">{{ TYPE_META[t].desc }}</span>
+          </button>
         </div>
       </div>
       <div>
-        <div class="label">目标值（1-10000）</div>
-        <input v-model.number="createForm.target" type="number" min="1" max="10000" class="input" />
+        <div class="label">{{ TYPE_LABEL[createForm.type] }}目标（{{ TYPE_UNIT[createForm.type] }}）</div>
+        <div class="flex items-center gap-2">
+          <input v-model.number="createForm.target" type="number" min="1" max="10000" class="input flex-1"
+            :placeholder="TYPE_META[createForm.type].placeholder" />
+          <span class="text-sm text-slate-500 dark:text-slate-400 shrink-0">{{ TYPE_UNIT[createForm.type] }}</span>
+        </div>
+        <p v-if="createForm.type === 'minutes' && createForm.target >= 60" class="text-xs text-slate-400 mt-1">
+          约 {{ formatMinutes(createForm.target) }}
+        </p>
+        <div class="flex flex-wrap gap-1.5 mt-2">
+          <button v-for="p in TYPE_META[createForm.type].presets" :key="p"
+            class="px-2.5 py-1 rounded-full text-xs border transition-colors"
+            :class="createForm.target === p
+              ? 'border-primary-400 dark:border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400'
+              : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'"
+            @click="createForm.target = p">
+            {{ p }}{{ TYPE_UNIT[createForm.type] }}
+          </button>
+        </div>
       </div>
       <div>
         <div class="label">挑战天数（1-90）</div>
@@ -540,8 +580,14 @@ async function handleResume(c: TeamChallenge) {
   <Modal :show="!!editingId" title="编辑挑战" @close="editingId = null">
     <div class="space-y-3">
       <div>
-        <div class="label">目标值（1-10000）</div>
-        <input v-model.number="editForm.target" type="number" min="1" max="10000" class="input" />
+        <div class="label">{{ TYPE_LABEL[editingType] }}目标（{{ TYPE_UNIT[editingType] }}）</div>
+        <div class="flex items-center gap-2">
+          <input v-model.number="editForm.target" type="number" min="1" max="10000" class="input flex-1" />
+          <span class="text-sm text-slate-500 dark:text-slate-400 shrink-0">{{ TYPE_UNIT[editingType] }}</span>
+        </div>
+        <p v-if="editingType === 'minutes' && editForm.target >= 60" class="text-xs text-slate-400 mt-1">
+          约 {{ formatMinutes(editForm.target) }}
+        </p>
       </div>
       <div>
         <div class="label">挑战天数（1-90）</div>

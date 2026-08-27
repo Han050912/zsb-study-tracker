@@ -17,6 +17,10 @@ npm run dev
 
 本地 JWT_SECRET 放在 `.dev.vars`（已 gitignore，勿提交）。
 
+AI 语义复审（内容安全第二层）依赖 `CF_API_TOKEN` / `CF_ACCOUNT_ID`：
+- 本地调试：在 `.dev.vars` 写入 `CF_API_TOKEN=xxx`（`CF_ACCOUNT_ID` 已由 wrangler.toml 的 [vars] 注入，无需重复）。
+- 未配置时自动降级为「仅本地词库过滤」，不影响功能与发布。
+
 ## 冒烟测试
 
 先按上面步骤启动 `npm run dev`，再另开终端：
@@ -32,6 +36,8 @@ npm run smoke
 ```bash
 # 1. 在 Cloudflare 控制台为 Worker 设置加密变量 JWT_SECRET
 #    （Workers & Pages → zsb-study-api → Settings → Variables → Encrypt）
+# 1b. 配置 AI 复审令牌（内容安全第二层，可选但建议）：
+npx wrangler secret put CF_API_TOKEN
 # 2. 创建社区图片 R2 bucket（社区增强 P0 新增，仅需一次）
 npx wrangler r2 bucket create zsb-study-images
 # 3. 初始化线上 D1 表结构

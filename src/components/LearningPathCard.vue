@@ -6,6 +6,7 @@
 import { computed, inject, onMounted, ref } from 'vue'
 import { learningPathApi } from '../api/learningPath'
 import { formatMinutes } from '../utils/date'
+import { subjectLabel } from '../utils/subject'
 import PostComposer from './community/PostComposer.vue'
 import type { LearningPath } from '../types'
 
@@ -28,7 +29,7 @@ const countdownText = computed(() => {
   const d = data.value?.daysLeft
   if (d == null) return '设置考试日期，开启倒计时'
   if (d > 0) return `距离考试还有 ${d} 天`
-  if (d === 0) return '就是今天，加油！💪'
+  if (d === 0) return '就是今天，加油！'
   return '考试已结束，静待佳音'
 })
 
@@ -41,7 +42,7 @@ function openShare() {
   if (!data.value) return
   const lines = data.value.subjects
     .filter(s => s.dailyMinutes > 0)
-    .map(s => `${s.icon} ${s.name} ${formatMinutes(s.dailyMinutes)}/天`)
+    .map(s => `${subjectLabel(s)} ${formatMinutes(s.dailyMinutes)}/天`)
   composerContent.value = [
     '我的周学习计划',
     data.value.daysLeft != null && data.value.daysLeft > 0 ? `距离考试还有 ${data.value.daysLeft} 天` : '',
@@ -56,13 +57,12 @@ function openShare() {
 <template>
   <div v-if="!loading && data" class="card">
     <div class="flex items-center justify-between mb-3">
-      <div class="section-title !mb-0">🗓️ 周学习计划</div>
+      <div class="section-title !mb-0">周学习计划</div>
       <button class="btn-ghost !text-xs !px-2 !py-1" @click="openShare">分享求监督</button>
     </div>
 
     <!-- 倒计时 -->
     <div class="flex items-center gap-2 text-sm mb-3">
-      <span class="text-lg">🎯</span>
       <span class="font-semibold" :class="{ 'text-primary-500': (data.daysLeft ?? -1) > 0 }">{{ countdownText }}</span>
     </div>
 
@@ -70,7 +70,7 @@ function openShare() {
     <div v-if="hasPlan" class="space-y-2">
       <div v-for="s in data.subjects.filter(x => x.dailyMinutes > 0)" :key="s.id"
         class="flex items-center gap-2 text-sm">
-        <span class="w-5 text-center">{{ s.icon }}</span>
+        <span v-if="s.icon" class="w-5 text-center">{{ s.icon }}</span>
         <span class="flex-1 truncate">{{ s.name }}</span>
         <span class="font-semibold text-primary-500 shrink-0">{{ formatMinutes(s.dailyMinutes) }}/天</span>
       </div>

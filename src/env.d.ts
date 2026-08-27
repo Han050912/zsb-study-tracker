@@ -26,7 +26,8 @@ interface Window {
   }
   desktopNotify?: {
     available: boolean
-    show: (title: string, body: string) => void
+    /** icon 为 data URL（渲染进程已下载），主进程用 nativeImage.createFromDataURL 解析 */
+    show: (title: string, body: string, icon?: string) => void
   }
   /** 托盘菜单导航桥接：主进程 IPC 触发页面跳转 */
   nav?: {

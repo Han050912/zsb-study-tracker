@@ -5,7 +5,7 @@ import Modal from '../Modal.vue'
 import UserAvatar from './UserAvatar.vue'
 import { communityApi } from '../../api/community'
 import { COMMUNITY_BADGES, levelOf } from '../../data/defaults'
-import { isAdmin, sessionUser, goLogin } from '../../services/auth'
+import { isAdmin, sessionUser, goLogin, requireLogin } from '../../services/auth'
 import { fromNow } from '../../utils/date'
 import type { CommunityUserProfile } from '../../types'
 
@@ -58,6 +58,7 @@ watch(() => props.show, async v => {
 const followSubmitting = ref(false)
 
 async function toggleFollow() {
+  if (requireLogin(router)) return
   if (!profile.value || followSubmitting.value) return
   followSubmitting.value = true
   try {
@@ -68,6 +69,13 @@ async function toggleFollow() {
     toast(res.following ? '已关注，对方的帖子会出现在「关注」Tab' : '已取消关注')
   } catch (e: any) { toast(e?.message || '操作失败') }
   finally { followSubmitting.value = false }
+}
+
+/** 发起私聊：访客先引导登录 */
+function goMessage() {
+  emit('update:show', false)
+  if (requireLogin(router)) return
+  router.push(`/messages/${props.userId}`)
 }
 
 // ---- 管理员：专家认证 ----
@@ -108,7 +116,7 @@ async function revokeVerify() {
     <div v-if="loading" class="text-center text-xs text-slate-400 py-8">加载中…</div>
     <div v-else-if="needLogin" class="text-center py-8 space-y-3">
       <div class="text-xs text-slate-400">该用户仅对登录用户公开主页</div>
-      <button class="btn-primary !py-1.5 !text-xs" @click="emit('update:show', false); goLogin(router)">🔑 登录查看</button>
+      <button class="btn-primary !py-1.5 !text-xs" @click="emit('update:show', false); goLogin(router)">登录查看</button>
     </div>
     <div v-else-if="notFound" class="text-center text-xs text-slate-400 py-8">用户不存在</div>
     <div v-else-if="loadError" class="text-center text-xs text-slate-400 py-8">加载失败</div>
@@ -133,9 +141,9 @@ async function revokeVerify() {
         <div v-if="!isSelf" class="shrink-0 flex items-center gap-1.5">
           <!-- 主页已隐私，私密降级视图下无需再跳转主页，仅保留私信/关注 -->
           <button v-if="!profile.profilePrivate" class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
-            @click="emit('update:show', false); router.push(`/profile/${userId}`)">📊 主页</button>
+            @click="emit('update:show', false); router.push(`/profile/${userId}`)">主页</button>
           <button class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
-            @click="emit('update:show', false); router.push(`/community/messages/${userId}`)">✉️ 私信</button>
+            @click="goMessage">消息</button>
           <button class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors"
             :class="profile.followedByMe
               ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-red-500'
@@ -189,7 +197,7 @@ async function revokeVerify() {
 
       <!-- 管理员：专家认证操作 -->
       <div v-if="canVerify && !profile.profilePrivate" class="mt-4 rounded-lg border border-sky-100 dark:border-sky-900/50 p-3 space-y-2">
-        <div class="text-xs font-semibold text-sky-600 dark:text-sky-400">🛡️ 管理员 · 专家认证</div>
+        <div class="text-xs font-semibold text-sky-600 dark:text-sky-400">管理员 · 专家认证</div>
         <input v-model="expertiseInput" maxlength="50" class="input !py-1.5 text-xs"
           placeholder="专长领域，如：高等数学 / 英语" />
         <div class="flex gap-2 justify-end">

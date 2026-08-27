@@ -1,11 +1,12 @@
 <script setup lang="ts">
-/** 编辑资料弹窗：头像 / 昵称 / 简介；保存走全量同步（saveAsync 立即推送以感知后端校验失败） */
+/** 编辑资料弹窗：头像 / 昵称 / 简介；昵称/简介走 PUT /api/settings（后端敏感词过滤），头像走独立上传接口 */
 import { computed, inject, ref, watch } from 'vue'
 import Modal from '../Modal.vue'
 import AvatarEditor from '../AvatarEditor.vue'
 import { useAppStore } from '../../stores/app'
 import { sessionUser } from '../../services/auth'
 import { imageUrl } from '../../api/community'
+import { settingsApi } from '../../api/settings'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ 'update:show': [boolean]; saved: [] }>()
@@ -32,14 +33,16 @@ function onAvatarUploaded(url: string) {
 const saving = ref(false)
 async function save() {
   const name = userName.value.trim()
+  const bioText = bio.value.trim()
   if (!name) { toast('昵称不能为空'); return }
   if (saving.value) return
   saving.value = true
-  store.updateSettings({ userName: name, bio: bio.value.trim() })
   try {
-    // 立即推送以便感知后端校验失败（敏感词 400 时 saveAsync 返回 false 而非抛错）
-    const ok = await store.saveAsync()
-    if (!ok) throw new Error('保存失败，请重试')
+    // 走 PUT /api/settings：后端对 userName/bio 做敏感词过滤（命中 400 时抛错，message 透传）
+    await settingsApi.update({ ...store.settings, userName: name, bio: bioText })
+    // 已通过后端过滤并写库，直接更新本地（不走 updateSettings，避免触发冗余的全量 sync）
+    store.settings.userName = name
+    store.settings.bio = bioText
     toast('资料已保存')
     emit('saved')
     emit('update:show', false)

@@ -14,6 +14,7 @@ import ProgressBoard from '../components/community/ProgressBoard.vue'
 import WeeklyReportCard from '../components/community/WeeklyReportCard.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
+import UserSearchModal from '../components/community/UserSearchModal.vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 
 const store = useCommunityStore()
@@ -132,6 +133,13 @@ function openProfile(userId: string) {
   showProfile.value = true
 }
 
+// ---- 找用户搜索 ----
+const showSearch = ref(false)
+function openSearch() {
+  if (requireLogin(router)) return
+  showSearch.value = true
+}
+
 // ---- 管理员操作 ----
 async function togglePin(id: string) {
   try {
@@ -143,7 +151,7 @@ async function togglePin(id: string) {
 async function toggleFeature(id: string) {
   try {
     const featured = await store.adminFeaturePost(id)
-    toast(featured ? '已加精 🌟' : '已取消加精')
+    toast(featured ? '已加精' : '已取消加精')
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
@@ -151,7 +159,7 @@ async function toggleDaily(id: string) {
   try {
     const daily = await store.adminDailyPost(id)
     await loadDaily() // 顶部卡片同步刷新
-    toast(daily ? '已设为每日一题 📅' : '已取消每日一题')
+    toast(daily ? '已设为每日一题' : '已取消每日一题')
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
@@ -174,9 +182,9 @@ async function removePost(id: string) {
 <template>
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="page-title">💬 社区广场</h1>
+      <h1 class="page-title">社区广场</h1>
       <div class="flex items-center gap-2">
-        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/messages')">私信</button>
+        <button class="btn-ghost !text-xs" @click="openSearch">找用户</button>
         <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/partners')">搭子</button>
         <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/circles')">圈子</button>
         <button class="btn-primary" @click="openComposer">{{ isLoggedIn ? '发帖' : '登录后发帖' }}</button>
@@ -216,7 +224,7 @@ async function removePost(id: string) {
     <!-- 每日一题：管理员设置的最新一题，点击进入详情参与解答 -->
     <button v-if="dailyPost" class="card !p-4 text-left w-full flex items-center gap-3 border-l-4 !border-l-primary-400"
       @click="router.push(`/community/post/${dailyPost.id}`)">
-      <span class="text-xl shrink-0">📅</span>
+      <span class="text-xl shrink-0"></span>
       <div class="flex-1 min-w-0">
         <div class="text-xs font-semibold text-primary-500">每日一题</div>
         <div class="text-sm truncate mt-0.5">{{ dailyPost.content }}</div>
@@ -333,6 +341,7 @@ async function removePost(id: string) {
     <PostComposer v-model:show="showComposer" type="share" allow-type-switch allow-template />
     <ReportDialog v-model:show="showReport" target-type="post" :target-id="reportPostId" />
     <UserProfileModal v-model:show="showProfile" :user-id="profileUserId" />
+    <UserSearchModal v-model:show="showSearch" />
   </div>
 </template>
 

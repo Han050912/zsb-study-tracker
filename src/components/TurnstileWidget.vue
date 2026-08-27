@@ -11,7 +11,12 @@ import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 const token = defineModel<string>('token', { default: '' })
 const emit = defineEmits<{ (e: 'load-error'): void }>()
 
-const TURNSTILE_SITEKEY = '0x4AAAAAAEGLRGric6eUYnOv'
+// 本地开发（vite dev）使用 Turnstile 官方测试 sitekey（始终通过），
+// 与 worker/.dev.vars 中的测试 secret（1x0000000000000000000000000000000AA）配套，避免本地环境被真实校验卡住。
+// 生产构建（vite build）自动使用真实 sitekey，不受影响。
+const TURNSTILE_SITEKEY = import.meta.env.DEV
+  ? '1x00000000000000000000AA'
+  : '0x4AAAAAAEGLRGric6eUYnOv'
 const LOAD_TIMEOUT_MS = 10_000
 const MAX_RETRIES = 2
 

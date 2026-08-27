@@ -20,7 +20,9 @@ import { registerMaimemoRoutes } from './proxy/maimemo'
 import { registerWallpaperRoutes } from './proxy/wallpaper'
 import { registerReleaseRoutes } from './api/release'
 import { registerCommunityRoutes } from './api/community'
-import { registerPartnerRoutes } from './api/partners'
+import { registerPartnerRoutes, pushWeeklyReports } from './api/partners'
+import { registerPartnerShareRoutes } from './api/partnerShares'
+import { registerPartnerCollabRoutes } from './api/partnerCollab'
 import { registerAdminRoutes } from './api/admin'
 import { registerLearningPathRoutes } from './api/learningPath'
 import { registerPdfRoutes } from './api/pdfs'
@@ -29,6 +31,7 @@ import { registerFeedbackRoutes } from './api/feedback'
 import './api/teams'
 import { HttpError } from './db'
 import { canCache, getCached, putCache } from './middleware/cache'
+import { corsHeaders } from './cors'
 
 export interface Env {
   DB: D1Database
@@ -36,34 +39,13 @@ export interface Env {
   JWT_SECRET: string
   TURNSTILE_SECRET: string
   GITHUB_TOKEN?: string
-}
-
-/** CORS 允许的来源：本地开发、生产站点、Electron 自定义协议 */
-const ALLOWED_ORIGINS = new Set([
-  'https://zsb-study-tracker.sryze.cc',
-  'https://zsb-study-tracker.pages.dev',
-  'https://han050912.github.io',
-  'app://localhost'
-])
-
-function isAllowedOrigin(origin: string | null): boolean {
-  if (!origin) return false
-  if (ALLOWED_ORIGINS.has(origin)) return true
-  // 本地开发任意端口（vite dev / preview / wrangler pages dev）
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
-}
-
-function corsHeaders(origin: string | null): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-CF-Turnstile-Response, X-Desktop-Token',
-    'Access-Control-Max-Age': '86400',
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-    'Referrer-Policy': 'strict-origin-when-cross-origin'
-  }
-  if (isAllowedOrigin(origin)) headers['Access-Control-Allow-Origin'] = origin!
-  return headers
+  /** Workers AI 调用令牌（Cloudflare Secrets / .dev.vars，不落地仓库） */
+  CF_API_TOKEN?: string
+  /** Cloudflare 账户 ID（非敏感，见 wrangler.toml 顶部 account_id） */
+  CF_ACCOUNT_ID?: string
+  /** 桌面端共享令牌（Cloudflare Secrets / .dev.vars，不落地仓库）：
+   *  与桌面端构建时注入的 DESKTOP_TOKEN 一致，用于识别可信桌面客户端跳过 Turnstile */
+  DESKTOP_TOKEN?: string
 }
 
 export default {
@@ -81,8 +63,10 @@ export default {
       if (canCache(request)) {
         const cached = await getCached(request)
         if (cached) {
-          for (const [k, v] of Object.entries(cors)) cached.headers.set(k, v)
-          return cached
+          // Cache API 返回的 Response headers 不可变，需先复制一份再写 CORS 头
+          const res = new Response(cached.body, cached)
+          for (const [k, v] of Object.entries(cors)) res.headers.set(k, v)
+          return res
         }
       }
 
@@ -102,6 +86,11 @@ export default {
       if (status === 500) console.error(e)
       return Response.json({ message }, { status, headers: cors })
     }
+  },
+
+  /** 每周一 08:00（UTC+8）触发：双向推送上周学习周报通知 */
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    await pushWeeklyReports(env)
   }
 }
 
@@ -127,6 +116,8 @@ registerWallpaperRoutes()
 registerReleaseRoutes()
 registerCommunityRoutes()
 registerPartnerRoutes()
+registerPartnerShareRoutes()
+registerPartnerCollabRoutes()
 registerAdminRoutes()
 registerLearningPathRoutes()
 registerPdfRoutes()

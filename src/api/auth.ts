@@ -20,5 +20,6 @@ export const authApi = {
       method: 'POST', body: JSON.stringify({ username, password }),
       ...(cfTurnstileToken ? { headers: { 'X-CF-Turnstile-Response': cfTurnstileToken } } : {})
     }),
-  me: () => request<{ user: AuthUser }>('/api/auth/me')
+  me: () => request<{ user: AuthUser }>('/api/auth/me'),
+  logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
 }

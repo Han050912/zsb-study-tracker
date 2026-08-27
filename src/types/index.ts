@@ -52,7 +52,7 @@ export interface ErrorQuestion {
   subjectId: string
   date: string
   chapter?: string
-  type: '选择' | '填空' | '计算' | '证明' | '其他'
+  type: string // 题型跟随科目动态变化：数学/英语/自定义科目各自独立题型列表
   content: string
   answer?: string
   image?: string // base64
@@ -161,8 +161,6 @@ export interface Gamification {
 export interface PomodoroStat {
   daily: Record<string, { count: number; minutes: number; interruptions: number }>
   interruptions: { date: string; reason: string; time: number }[]
-  /** 中断/提前结束的部分时长记录（不计入完成次数和总时长） */
-  partialSessions: { date: string; minutes: number; time: number }[]
 }
 
 /** 待办 */
@@ -185,10 +183,10 @@ export interface Todo {
 }
 
 /** 社区通知类型 */
-export type NotificationType = 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system'
+export type NotificationType = 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system' | 'partner'
 
 /** 通知点击跳转目标类型 */
-export type NotificationTargetType = 'post' | 'user' | 'message' | 'team' | 'circle' | 'partner'
+export type NotificationTargetType = 'post' | 'user' | 'message' | 'team' | 'circle' | 'partner' | 'partner_share' | 'partner_comment' | 'partner_study' | 'partner_plan' | 'partner_review' | 'partner_remind' | 'partner_unbind' | 'partner_weekly'
 
 /** 设置 */
 export interface Settings {
@@ -201,8 +199,10 @@ export interface Settings {
   reminderEnabled: boolean
   reminderTime: string
   quotes: string[]
-  /** 墨墨背单词开放 API Token（可选，App 内 我的→更多设置→实验功能→开放 API 获取） */
+  /** 墨墨背单词开放 API Token（仅写入时传明文；读取永不回传） */
   maimemoToken?: string
+  /** 是否已配置墨墨开放 API Token（读取用，不回传明文） */
+  maimemoConnected?: boolean
   onboarded: boolean
   /** 参与学习进步榜（社区展示昵称与学习时长/刷题数排名；默认关闭） */
   joinProgressBoard: boolean
@@ -220,6 +220,12 @@ export interface Settings {
   dndEndTime: string
   /** 勿扰期间屏蔽的通知类型 */
   dndMutedTypes: NotificationType[]
+  /** 勿扰期间是否屏蔽消息 */
+  dndMuteMessage: boolean
+  /** 允许搭子查看我的学习数据（周报对比/定向分享；默认关闭） */
+  partnerShareEnabled: boolean
+  /** 允许搭子向我发送学习鼓励提醒（默认开启） */
+  partnerRemindEnabled: boolean
 }
 
 export interface AppState {
@@ -335,6 +341,16 @@ export interface CommunityNotification {
   content: string
   isRead: boolean
   createdAt: number // Unix 秒
+  /** 触发者与我的关系（无 actor_id 时为 none） */
+  relation?: RelationStatus
+  /** 帖子缩略图路径（对应 imageUrls 首图加 ?thumb=1，无图帖为 undefined） */
+  postThumb?: string
+  /** 评论文字（type='comment' 时） */
+  commentContent?: string
+  /** 当前用户是否已赞该评论 */
+  commentLikedByMe?: boolean
+  /** 评论点赞数 */
+  commentLikesCount?: number
 }
 
 /** 今日打卡榜条目 */
@@ -453,6 +469,8 @@ export interface FollowListResult {
 /** 社区用户资料卡（公开荣誉信息，不含私有学习数据） */
 export interface CommunityUserProfile {
   userId: string
+  /** 对外唯一用户 ID（8 位随机短码） */
+  userCode?: string
   userName: string
   /** 自定义头像相对 URL（未设置 = undefined） */
   avatar?: string
@@ -484,6 +502,25 @@ export interface CommunityUserProfile {
   /** 我与该用户的关系 */
   relation: RelationStatus
 }
+
+/** 精确查找用户（lookup）返回的用户卡片 */
+export interface UserLookupResult {
+  userId: string
+  userCode: string
+  userName: string
+  avatar?: string
+  verified: boolean
+  expertise: string
+  bio: string
+  followedByMe: boolean
+  followsMe: boolean
+  relation: RelationStatus
+  partnerStatus: PartnerStatus
+  profilePrivate?: boolean
+}
+
+/** 学习搭子关系状态（lookup 视角：当前用户 vs 目标用户） */
+export type PartnerStatus = 'self' | 'none' | 'accepted' | 'pending_sent' | 'pending_received' | 'rejected'
 
 /** 个人主页学习统计（热力图 + 总览 + 科目分布） */
 export interface UserStudyStats {
@@ -664,6 +701,161 @@ export interface PartnerItem {
   /** 自定义头像相对 URL（未设置 = undefined） */
   userAvatar?: string
   totalPoints: number
+}
+
+// ========== 学习搭子协作 ==========
+
+/** 搭子周报对比数据 */
+export interface PartnerWeeklyStats {
+  minutes: number          // 本周学习时长（分钟）
+  problems: number         // 本周刷题数
+  pomodoroMinutes: number  // 本周番茄专注时长（分钟）
+  streak: number           // 连续打卡天数
+}
+export interface PartnerWeeklyReport {
+  shared: boolean
+  weekStart?: string
+  weekEnd?: string
+  partnerName?: string
+  mine?: PartnerWeeklyStats
+  theirs?: PartnerWeeklyStats
+}
+
+/** 错题/笔记分享列表项 */
+export interface PartnerShareItem {
+  id: string
+  ownerId: string
+  ownerName: string
+  partnerId: string
+  partnerName: string
+  itemType: 'error' | 'note'
+  itemId: string
+  commentCount: number
+  createdAt: number
+}
+
+/** 分享批注 */
+export interface PartnerShareComment {
+  id: string
+  userId: string
+  userName: string
+  content: string
+  createdAt: number
+}
+
+/** 分享详情 */
+export interface PartnerShareDetail {
+  id: string
+  ownerId: string
+  ownerName: string
+  partnerId: string
+  partnerName: string
+  itemType: 'error' | 'note'
+  itemId: string
+  item: unknown
+  createdAt: number
+  comments: PartnerShareComment[]
+}
+
+/** 分享详情中的笔记条目 */
+export interface PartnerShareNoteItem {
+  id: string
+  title: string
+  content: string
+  subjectId: string
+  tags: string[]
+  type?: 'pdf'
+}
+
+/** 分享详情中的错题条目（后端 SQL 别名直出，snake_case；error_questions 无 note 列） */
+export interface PartnerShareErrorItem {
+  id: string
+  question: string
+  answer?: string | null
+  image?: string | null
+  wrong_count?: number
+}
+
+/** 双人番茄自习室会话 */
+export interface PartnerStudySession {
+  id: string
+  status: 'active' | 'done'
+  partnerId: string
+  partnerName: string
+  /** 对方自定义头像相对 URL（未设置 = undefined，前端回退首字母） */
+  partnerAvatar?: string
+  /** 专注时长（分钟，双方一致） */
+  focusMinutes: number
+  /** 计时模式（双方一致）：countdown=倒计时（设定专注分钟走完自动完成），countup=正计时（从 0 递增，手动完成） */
+  mode: 'countdown' | 'countup'
+  myState: 'idle' | 'focus' | 'done'
+  myMinutes: number
+  partnerState: 'idle' | 'focus' | 'done'
+  partnerMinutes: number
+  /** 我的累计在线秒数（墙钟，暂停不计入） */
+  myOnlineSeconds: number
+  /** 对方累计在线秒数 */
+  partnerOnlineSeconds: number
+  /** 我的当前阶段已消耗秒数（用于刷新/重进恢复剩余） */
+  myElapsedSeconds: number
+  /** 对方当前阶段已消耗秒数（用于展示对方进度） */
+  partnerElapsedSeconds: number
+  /** 对方是否正在计时（true=计时中，false=暂停/未开始） */
+  partnerRunning: boolean
+}
+
+/** 历史开黑记录 */
+export interface PartnerStudyRecord {
+  id: string
+  partnerId: string
+  partnerName: string
+  partnerAvatar?: string
+  startedAt: number // Unix 秒
+  endedAt: number   // Unix 秒
+  myOnlineSeconds: number
+  partnerOnlineSeconds: number
+}
+
+/** 协作备考计划列表项 */
+export interface PartnerPlan {
+  id: string
+  title: string
+  partnerId: string
+  partnerName: string
+  taskTotal: number
+  myDone: number
+  createdAt: number
+}
+
+/** 计划任务 */
+export interface PartnerPlanTask {
+  id: string
+  title: string
+  phase: string
+  myDone: boolean
+  partnerDone: boolean
+  createdAt: number
+}
+
+/** 计划详情 */
+export interface PartnerPlanDetail {
+  id: string
+  title: string
+  partnerId: string
+  partnerName: string
+  tasks: PartnerPlanTask[]
+}
+
+/** 复盘邀约 */
+export interface PartnerReview {
+  id: string
+  partnerId: string
+  partnerName: string
+  scheduledAt: number
+  status: 'pending' | 'accepted' | 'done'
+  note: string
+  isFrom: boolean
+  createdAt: number
 }
 
 /** 推荐关注用户条目 */

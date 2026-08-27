@@ -11,9 +11,11 @@ import CommentInput from '../components/community/CommentInput.vue'
 import Lightbox from '../components/community/Lightbox.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
+import { useBack } from '../composables/useBack'
 
 const route = useRoute()
 const router = useRouter()
+const { goBack } = useBack()
 const store = useCommunityStore()
 const toast = inject<(m: string) => void>('toast', () => {})
 /** 侧边栏是否折叠（App.vue 注入），用于底部回复框与主内容区同列对齐 */
@@ -41,7 +43,7 @@ onMounted(async () => {
   }
 })
 
-/** 滚动定位并高亮指定评论（通知跳转锚定；二级回复先展开其一级评论再定位） */
+/** 滚动定位并高亮指定评论（通知跳转锚定；二级回复先展开其一级评论再定位；query reply=1 时自动进入回复态） */
 async function anchorToComment(id: string) {
   const c = findComment(id)
   if (!c) return
@@ -49,6 +51,7 @@ async function anchorToComment(id: string) {
   highlightCommentId.value = id
   await nextTick()
   document.getElementById(`comment-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  if (route.query.reply === '1') reply(c)
 }
 
 const isMine = computed(() => post.value?.userId === sessionUser.value?.id)
@@ -142,7 +145,7 @@ async function dislikeComment(c: CommunityComment) {
 const replyTarget = ref<CommunityComment | null>(null)
 /** 用户实际点击的评论（用于高亮锚定与「正在回复 @xxx」提示） */
 const replySource = ref<CommunityComment | null>(null)
-const commentInputRef = ref<{ focus: () => void } | null>(null)
+const commentInputRef = ref<{ focus: () => void; reset: () => void } | null>(null)
 
 function reply(c: CommunityComment) {
   if (requireLogin(router)) return
@@ -159,8 +162,13 @@ function cancelReply() {
   replySource.value = null
 }
 
+/** 评论提交中：承载 AI 复审约 1-3s 延迟，禁用发送按钮防重复提交 */
+const commentSubmitting = ref(false)
+
 async function send(text: string, imageUrls: string[]) {
   if (requireLogin(router)) return
+  if (commentSubmitting.value) return
+  commentSubmitting.value = true
   try {
     const c = await store.postComment(postId, text, replyTarget.value?.id, imageUrls)
     comments.value.push(c)
@@ -168,8 +176,12 @@ async function send(text: string, imageUrls: string[]) {
     if (post.value && !store.posts.some(p => p.id === postId)) post.value.commentsCount++
     replyTarget.value = null
     replySource.value = null
+    // 发送成功后清空输入框（失败时保留用户输入，避免重打内容）
+    commentInputRef.value?.reset()
   } catch (e: any) {
     toast(e?.message || '评论失败')
+  } finally {
+    commentSubmitting.value = false
   }
 }
 
@@ -235,7 +247,7 @@ async function toggleResolve() {
     post.value.isResolved = isResolved
     const p = store.posts.find(x => x.id === postId)
     if (p) p.isResolved = isResolved
-    toast(isResolved ? '已标记为已解答 🎉' : '已重新开放为待解答')
+    toast(isResolved ? '已标记为已解答' : '已重新开放为待解答')
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
@@ -268,7 +280,7 @@ async function accept(c: CommunityComment) {
     post.value.isResolved = res.isResolved
     // 同步评论标记：旧采纳清除，新采纳置位（commentTree 为展开副本，必须改原始数组）
     for (const x of comments.value) x.isAccepted = x.id === res.acceptedAnswerId
-    toast(res.acceptedAnswerId ? '已采纳最佳答案 🎉' : '已取消采纳，帖子重新开放为待解答')
+    toast(res.acceptedAnswerId ? '已采纳最佳答案' : '已取消采纳，帖子重新开放为待解答')
   } catch (e: any) { toast(e?.message || '操作失败') }
   finally { accepting.value = false }
 }
@@ -307,7 +319,7 @@ async function toggleFeature() {
   try {
     const featured = await store.adminFeaturePost(postId)
     post.value.isFeatured = featured
-    toast(featured ? '已加精 🌟' : '已取消加精')
+    toast(featured ? '已加精' : '已取消加精')
   } catch (e: any) { toast(e?.message || '操作失败') }
 }
 
@@ -333,13 +345,12 @@ async function toggleHideComment(c: CommunityComment) {
 <template>
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4 pb-36 md:pb-32">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2.5" @click="router.back()">←</button>
+      <button class="btn-ghost !px-2.5" @click="goBack">← 返回</button>
       <h1 class="page-title">帖子详情</h1>
     </div>
 
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
     <div v-else-if="notFound" class="card text-center py-10 text-slate-400 text-sm">
-      <div class="text-3xl mb-2">🫥</div>
       <p>帖子不存在或已被删除</p>
     </div>
 
@@ -357,7 +368,7 @@ async function toggleHideComment(c: CommunityComment) {
       <!-- 评论区 -->
       <div class="card space-y-4">
         <div class="flex items-center justify-between">
-          <div class="section-title !mb-0">💬 评论 {{ post.commentsCount || '' }}</div>
+          <div class="section-title !mb-0">评论 {{ post.commentsCount || '' }}</div>
           <div class="flex items-center gap-1 text-xs">
             <button class="px-2 py-1 rounded-md transition-colors"
               :class="commentSort === 'hot' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium' : 'text-slate-400 hover:text-slate-600'"
@@ -406,6 +417,7 @@ async function toggleHideComment(c: CommunityComment) {
             </div>
             <CommentInput ref="commentInputRef"
               :placeholder="replySource ? '写下你的回复…' : '写下你的评论…'"
+              :submitting="commentSubmitting"
               @send="send" />
           </div>
         </div>

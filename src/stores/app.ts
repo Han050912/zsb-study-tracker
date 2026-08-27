@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { createDefaultState, ACHIEVEMENTS, LEVELS, VOCAB_HABIT_ID, PROBLEM_HABIT_ID } from '../data/defaults'
+import { createDefaultState, ACHIEVEMENTS, LEVELS, VOCAB_HABIT_ID, PROBLEM_HABIT_ID, defaultSubjects } from '../data/defaults'
 import { today, yesterday, uid, daysBetween } from '../utils/date'
 import { syncApi } from '../api/sync'
 import { deletePdf, PDF_REF_PREFIX } from '../api/pdfs'
@@ -324,6 +324,19 @@ export const useAppStore = defineStore('app', {
       this.subjects.push({ ...s, id: uid(), builtin: false, chapters: [], mastery: {}, topicImportance: {} })
       this.save()
     },
+    /** 恢复被删除的内置科目：仅补回缺失的，不覆盖已存在（含已改名）的内置科目，不影响自定义科目与错题数据。返回恢复数量 */
+    restoreDefaultSubjects(): number {
+      const existingIds = new Set(this.subjects.map(x => x.id))
+      let restored = 0
+      for (const d of defaultSubjects()) {
+        if (!existingIds.has(d.id)) {
+          this.subjects.push({ ...d })
+          restored++
+        }
+      }
+      if (restored > 0) this.save()
+      return restored
+    },
     /** 修改任意科目的考核权重百分比 */
     updateSubjectWeight(id: string, weight: number) {
       const s = this.subjects.find(x => x.id === id)
@@ -602,6 +615,7 @@ export const useAppStore = defineStore('app', {
     },
 
     recordPomodoro(minutes: number) {
+      if (minutes < 1) return
       const t = today()
       if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
       this.pomodoro.daily[t].count++
@@ -614,16 +628,6 @@ export const useAppStore = defineStore('app', {
       if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
       this.pomodoro.daily[t].interruptions++
       this.pomodoro.interruptions.push({ date: t, reason, time: Date.now() })
-      this.save()
-    },
-    /** 记录中断/提前结束的部分时长（不增加完成次数、不加积分，但计入今日专注） */
-    recordPartialSession(minutes: number) {
-      const t = today()
-      if (!this.pomodoro.partialSessions) this.pomodoro.partialSessions = []
-      this.pomodoro.partialSessions.push({ date: t, minutes, time: Date.now() })
-      // 提前结束的时长计入今日学习时长，但不算番茄数、不加积分
-      if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
-      this.pomodoro.daily[t].minutes += minutes
       this.save()
     },
 

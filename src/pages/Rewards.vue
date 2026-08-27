@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { BookOpenCheck, Clock3, Flame, Pencil } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import { ACHIEVEMENTS, LEVELS } from '../data/defaults'
 import { useChart, chartTextColor } from '../composables/useChart'
@@ -70,7 +71,7 @@ const { el: pointsEl } = useChart(() => {
         if (!d) return ''
         const idx = list[0].dataIndex
         return [
-          `📅 ${d}`,
+          `${d}`,
           `每日新增：+${daily[idx] ?? 0} 分`,
           `累计积分：${cumulative[idx] ?? 0} 分`
         ].join('<br>')
@@ -80,16 +81,16 @@ const { el: pointsEl } = useChart(() => {
 }, [rankDays, pointsTrend])
 
 const stats = computed(() => [
-  { label: '累计学习', value: formatMinutes(store.totalMinutes), icon: '⏱' },
-  { label: '累计刷题', value: store.totalProblems, icon: '✏️' },
-  { label: '错题复习', value: store.errorQuestions.reduce((s, e) => s + e.reviewCount, 0), icon: '📕' },
-  { label: '连续天数', value: store.gamification.streak, icon: '🔥' }
+  { label: '累计学习', value: formatMinutes(store.totalMinutes), icon: Clock3 },
+  { label: '累计刷题', value: store.totalProblems, icon: Pencil },
+  { label: '错题复习', value: store.errorQuestions.reduce((s, e) => s + e.reviewCount, 0), icon: BookOpenCheck },
+  { label: '连续天数', value: store.gamification.streak, icon: Flame }
 ])
 </script>
 
 <template>
   <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
-    <h1 class="page-title">🏆 成就激励</h1>
+    <h1 class="page-title">成就激励</h1>
 
     <!-- 等级卡 -->
     <div class="card bg-gradient-to-r from-slate-800 to-slate-900 dark:from-slate-700 dark:to-slate-800 !text-white border-0">
@@ -107,7 +108,7 @@ const stats = computed(() => [
             <div class="h-full rounded-full transition-all duration-700" :style="{ width: levelProgress + '%', background: store.level.color }"></div>
           </div>
           <div class="text-[11px] opacity-60 mt-1">
-            {{ store.level.next ? `距「${store.level.next.name}」还需 ${store.level.next.min - store.gamification.points} 积分` : '已达最高等级，王者无敌！👑' }}
+            {{ store.level.next ? `距「${store.level.next.name}」还需 ${store.level.next.min - store.gamification.points} 积分` : '已达最高等级，王者无敌！' }}
           </div>
         </div>
       </div>
@@ -123,7 +124,7 @@ const stats = computed(() => [
     <!-- 数据一览 -->
     <div class="grid grid-cols-4 gap-3">
       <div v-for="s in stats" :key="s.label" class="card !p-3 text-center">
-        <div class="text-lg">{{ s.icon }}</div>
+        <div class="flex justify-center text-slate-400"><component :is="s.icon" class="w-5 h-5" /></div>
         <div class="text-lg font-black">{{ s.value }}</div>
         <div class="text-[10px] text-slate-400">{{ s.label }}</div>
       </div>
@@ -131,7 +132,7 @@ const stats = computed(() => [
 
     <!-- 徽章墙 -->
     <div class="card">
-      <div class="section-title">🎖 成就徽章墙（{{ unlocked.size }}/{{ ACHIEVEMENTS.length }}）</div>
+      <div class="section-title">成就徽章墙（{{ unlocked.size }}/{{ ACHIEVEMENTS.length }}）</div>
       <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <div v-for="a in ACHIEVEMENTS" :key="a.id"
           class="rounded-2xl p-3 text-center border transition-all"

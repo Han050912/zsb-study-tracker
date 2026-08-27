@@ -27,8 +27,8 @@ contextBridge.exposeInMainWorld('updater', {
 contextBridge.exposeInMainWorld('desktopNotify', {
   /** 是否存在桌面原生通知能力（Electron 端为 true，浏览器端 undefined） */
   available: true,
-  /** 弹出系统原生通知 */
-  show: (title, body) => ipcRenderer.send('notify:show', { title, body })
+  /** 弹出系统原生通知（icon 为 data URL，缺省用默认图标） */
+  show: (title, body, icon) => ipcRenderer.send('notify:show', { title, body, icon })
 })
 
 // 托盘菜单导航桥接：主进程通过 IPC 触发渲染进程页面跳转

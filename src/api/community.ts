@@ -1,7 +1,7 @@
 import { request, authFetch, API_BASE, handleUnauthorized } from './client'
 import { compressImage } from '../utils/imageCompress'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, NotificationType, PartnerItem, PartnerSuggestion, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserStudyStats, WeeklyReport
+  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, Note, NotificationType, PartnerItem, PartnerPlan, PartnerPlanDetail, PartnerReview, PartnerShareDetail, PartnerShareItem, PartnerStudyRecord, PartnerStudySession, PartnerSuggestion, PartnerWeeklyReport, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserLookupResult, UserStudyStats, WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -88,8 +88,14 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
     const postBlob = (url: string, blob: Blob, onDone: (data: any) => void) => {
       const xhr = new XMLHttpRequest()
       xhr.open('POST', url)
-      const token = localStorage.getItem('jwt_token')
-      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      // Web 端会话在 HttpOnly Cookie（withCredentials），桌面端走 Authorization Bearer + 桌面令牌
+      if (__DESKTOP_BUILD__) {
+        const token = localStorage.getItem('jwt_token')
+        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+        xhr.setRequestHeader('X-Desktop-Token', __DESKTOP_TOKEN__)
+      } else {
+        xhr.withCredentials = true
+      }
       xhr.setRequestHeader('Content-Type', blob.type || 'application/octet-stream')
       xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress?.(Math.min(1, e.loaded / e.total)) }
       xhr.onload = () => {
@@ -119,6 +125,9 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
       if (!res?.id) { reject(new Error('上传返回异常')); return }
       // 2. 上传缩略图，关联到原图 id
       postBlob(`${API_BASE}/api/community/upload?variant=thumb&id=${encodeURIComponent(res.id)}`, thumb, () => {
+        // 两段上传各自的 onprogress 未必以 1 收尾（小缩略图可能不派发 100% 事件），完成时显式归 1，
+        // 保证调用方按 progress >= 1 判定「上传完成」的响应式状态能正确解除
+        onProgress?.(1)
         resolve(res as UploadResult)
       })
     })
@@ -178,6 +187,8 @@ export const communityApi = {
   hotTopics: () => request<{ topics: HotTopic[] }>('/api/community/hot-topics'),
   /** 用户资料卡（等级/徽章墙/认证状态等公开荣誉信息） */
   profile: (userId: string) => request<CommunityUserProfile>(`/api/community/users/${userId}/profile`),
+  /** 精确查找用户（按对外用户 ID） */
+  lookup: (key: string) => request<UserLookupResult>(`/api/community/users/lookup?key=${encodeURIComponent(key)}`),
   /** 个人主页学习统计（热力图 + 总览 + 科目分布） */
   stats: (userId: string) => request<UserStudyStats>(`/api/community/users/${userId}/stats`),
   /** 关注/取关（toggle） */
@@ -230,7 +241,7 @@ export const communityApi = {
     const params = new URLSearchParams()
     if (cursor) params.set('cursor', cursor)
     const qs = params.toString()
-    return request<{ messages: CommunityMessage[]; nextCursor: string | null }>(
+    return request<{ messages: CommunityMessage[]; nextCursor: string | null; markedRead: number }>(
       `/api/community/messages/with/${peerId}${qs ? `?${qs}` : ''}`)
   },
   /** 发送私信 */
@@ -293,5 +304,76 @@ export const communityApi = {
     request<{ accepted: boolean }>(`/api/community/partners/${userId}`, { method: 'POST' }),
   /** 接受/拒绝请求 */
   respondPartner: (requestId: string, action: 'accept' | 'reject') =>
-    request<{ ok: boolean }>(`/api/community/partners/${requestId}`, { method: 'PUT', body: JSON.stringify({ action }) })
+    request<{ ok: boolean }>(`/api/community/partners/${requestId}`, { method: 'PUT', body: JSON.stringify({ action }) }),
+  /** 一键解绑搭子（无需对方同意） */
+  unbindPartner: (userId: string) =>
+    request<{ ok: boolean }>(`/api/community/partners/${userId}`, { method: 'DELETE' }),
+  /** 搭子周报对比（受对方隐私开关管控） */
+  partnerWeeklyReport: (userId: string) =>
+    request<PartnerWeeklyReport>(`/api/community/partners/${userId}/weekly-report`),
+  /** 发送学习鼓励提醒 */
+  partnerRemind: (userId: string) =>
+    request<{ ok: boolean }>(`/api/community/partners/${userId}/remind`, { method: 'POST' }),
+
+  // ========== 错题/笔记定向分享 ==========
+  createPartnerShare: (partnerId: string, itemType: 'error' | 'note', itemId: string, force = false) =>
+    request<{ id: string; duplicate?: boolean }>('/api/partner-shares', { method: 'POST', body: JSON.stringify({ partnerId, itemType, itemId, force }) }),
+  partnerShares: () =>
+    request<{ received: PartnerShareItem[]; sent: PartnerShareItem[] }>('/api/partner-shares'),
+  partnerShare: (id: string) => request<PartnerShareDetail>(`/api/partner-shares/${id}`),
+  addShareComment: (shareId: string, content: string) =>
+    request<{ id: string }>(`/api/partner-shares/${shareId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
+  deleteShare: (id: string) =>
+    request<{ ok: boolean }>(`/api/partner-shares/${id}`, { method: 'DELETE' }),
+  /** 分享 PDF 原文（受分享权限保护，供预览渲染） */
+  partnerSharePdf: async (id: string): Promise<Uint8Array> => {
+    const res = await authFetch(`/api/partner-shares/${id}/pdf`)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: '加载 PDF 失败' }))
+      throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })
+    }
+    return new Uint8Array(await res.arrayBuffer())
+  },
+  /** 复制分享的笔记到我的笔记，返回新笔记 */
+  copyPartnerShare: (id: string, subjectId: string) =>
+    request<Note>(`/api/partner-shares/${id}/copy`, { method: 'POST', body: JSON.stringify({ subjectId }) }),
+
+  // ========== 双人番茄自习室 ==========
+  createStudySession: (partnerId: string, mode: 'countdown' | 'countup', focusMinutes?: number) =>
+    request<{ id: string }>('/api/partner-study/sessions', { method: 'POST', body: JSON.stringify({ partnerId, mode, focusMinutes }) }),
+  activeStudySession: () =>
+    request<{ session: PartnerStudySession | null }>('/api/partner-study/sessions/active'),
+  studySession: (id: string) =>
+    request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`),
+  updateStudySession: (id: string, state: 'idle' | 'focus' | 'done', minutes: number, onlineSeconds: number, elapsedSeconds?: number, running?: boolean) =>
+    request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`, { method: 'PUT', body: JSON.stringify({ state, minutes, onlineSeconds, elapsedSeconds, running }) }),
+  endStudySession: (id: string) =>
+    request<{ ok: boolean }>(`/api/partner-study/sessions/${id}`, { method: 'DELETE' }),
+  /** 历史开黑记录（我参与且已结束的会话，按结束时间倒序） */
+  studyHistory: () => request<{ records: PartnerStudyRecord[] }>('/api/partner-study/sessions/history'),
+
+  // ========== 协作备考计划 ==========
+  createPartnerPlan: (partnerId: string, title: string) =>
+    request<{ id: string }>('/api/partner-plans', { method: 'POST', body: JSON.stringify({ partnerId, title }) }),
+  partnerPlans: () => request<{ items: PartnerPlan[] }>('/api/partner-plans'),
+  partnerPlan: (id: string) => request<PartnerPlanDetail>(`/api/partner-plans/${id}`),
+  updatePartnerPlan: (id: string, title: string) =>
+    request<{ ok: boolean }>(`/api/partner-plans/${id}`, { method: 'PUT', body: JSON.stringify({ title }) }),
+  deletePartnerPlan: (id: string) =>
+    request<{ ok: boolean }>(`/api/partner-plans/${id}`, { method: 'DELETE' }),
+  addPlanTask: (planId: string, title: string, phase: string) =>
+    request<{ id: string }>(`/api/partner-plans/${planId}/tasks`, { method: 'POST', body: JSON.stringify({ title, phase }) }),
+  updatePlanTask: (planId: string, taskId: string, done: boolean) =>
+    request<{ ok: boolean }>(`/api/partner-plans/${planId}/tasks/${taskId}`, { method: 'PUT', body: JSON.stringify({ done }) }),
+  deletePlanTask: (planId: string, taskId: string) =>
+    request<{ ok: boolean }>(`/api/partner-plans/${planId}/tasks/${taskId}`, { method: 'DELETE' }),
+
+  // ========== 双向复盘邀约 ==========
+  createPartnerReview: (partnerId: string, scheduledAt: number) =>
+    request<{ id: string }>('/api/partner-reviews', { method: 'POST', body: JSON.stringify({ partnerId, scheduledAt }) }),
+  partnerReviews: () => request<{ items: PartnerReview[] }>('/api/partner-reviews'),
+  updatePartnerReview: (id: string, action: 'accept' | 'done', note?: string) =>
+    request<{ ok: boolean }>(`/api/partner-reviews/${id}`, { method: 'PUT', body: JSON.stringify({ action, note }) }),
+  deletePartnerReview: (id: string) =>
+    request<{ ok: boolean }>(`/api/partner-reviews/${id}`, { method: 'DELETE' })
 }

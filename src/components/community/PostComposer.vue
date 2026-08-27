@@ -124,7 +124,7 @@ const mdActions = [
   { icon: 'B', title: '粗体', run: () => insertMd('**', '**', '粗体') },
   { icon: '< >', title: '行内代码', run: () => insertMd('`', '`', 'code') },
   { icon: '{ }', title: '代码块', run: () => insertMd('\n```\n', '\n```\n', '代码') },
-  { icon: '❝', title: '引用', run: () => insertMd('\n> ', '\n', '引用内容') },
+  { icon: '>', title: '引用', run: () => insertMd('\n> ', '\n', '引用内容') },
   { icon: '•', title: '无序列表', run: () => insertMd('\n- ', '', '列表项') },
   { icon: 'Σ', title: '行内公式', run: () => insertMd('$', '$', 'E=mc^2') },
   { icon: 'ΣΣ', title: '块级公式', run: () => insertMd('\n$$\n', '\n$$\n', 'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}') }
@@ -132,10 +132,10 @@ const mdActions = [
 
 /** 经验帖结构化模板文案（科目/方法/心得/建议四段） */
 const EXPERIENCE_TEMPLATE = [
-  '📚 科目：',
-  '💡 学习方法：',
-  '🎯 心得体会：',
-  '📮 给后来人的建议：'
+  '科目：',
+  '学习方法：',
+  '心得体会：',
+  '给后来人的建议：'
 ].join('\n')
 
 function applyExperienceTemplate() {
@@ -257,10 +257,10 @@ async function submit() {
     <div v-if="allowTypeSwitch" class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs mb-3 w-fit">
       <button class="px-3 py-1.5 rounded-md transition-colors"
         :class="!isQuestion ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-        @click="switchType('share')">📝 分享</button>
+        @click="switchType('share')">分享</button>
       <button class="px-3 py-1.5 rounded-md transition-colors"
         :class="isQuestion ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-        @click="switchType('question')">❓ 提问</button>
+        @click="switchType('question')">提问</button>
     </div>
 
     <!-- Markdown 工具栏 + 预览切换 -->
@@ -270,7 +270,7 @@ async function submit() {
         :title="a.title" :disabled="preview" @click="a.run">{{ a.icon }}</button>
       <button v-if="allowTemplate && !isQuestion" type="button"
         class="px-1.5 py-1 rounded text-[11px] font-medium text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 hover:text-emerald-600 transition-colors"
-        title="填入经验帖结构化模板" @click="applyExperienceTemplate">📝 经验帖</button>
+        title="填入经验帖结构化模板" @click="applyExperienceTemplate">经验帖</button>
       <div class="flex-1"></div>
       <div class="flex bg-slate-100 dark:bg-slate-700 rounded-md p-0.5 text-[10px]">
         <button class="px-2 py-1 rounded transition-colors"
@@ -296,7 +296,7 @@ async function submit() {
     <!-- 图片区 -->
     <div class="mt-2">
       <div class="flex items-center gap-2">
-        <button class="btn-ghost !text-xs" @click="pickImages">🖼️ 添加图片</button>
+        <button class="btn-ghost !text-xs" @click="pickImages">添加图片</button>
         <span class="text-[10px] text-slate-400">点击 / 拖拽 / Ctrl+V 粘贴，最多 {{ IMAGE_MAX_PER_POST }} 张，单张 ≤5MB</span>
       </div>
       <input ref="fileInput" type="file" :accept="IMAGE_ACCEPT" multiple class="hidden" @change="onFileChange" />

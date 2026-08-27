@@ -28,7 +28,7 @@ function goProfile(userId: string) {
   <div v-if="data && (data.today.length || data.streak.length)" class="space-y-3">
     <!-- 今日打卡榜 -->
     <div v-if="data.today.length">
-      <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">🔥 今日打卡榜</div>
+      <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">今日打卡榜</div>
       <div class="space-y-1.5">
         <div v-for="(e, i) in data.today" :key="i" class="flex items-center gap-2 text-xs">
           <span class="w-6 text-center shrink-0">{{ medal(i) }}</span>
