@@ -157,10 +157,25 @@ export interface Gamification {
   pointsLog: { date: string; points: number; reason: string; refId?: string }[]
 }
 
+/** 单次番茄完成记录（最近完成板块明细） */
+export interface PomodoroRecord {
+  id: string
+  date: string
+  /** 完成时刻时间戳 */
+  time: number
+  minutes: number
+  description: string
+  /** 'solo' 单人 | 'party' 双人开黑 */
+  source: 'solo' | 'party'
+  /** 开黑搭子昵称快照（source='party' 时有值） */
+  partnerName?: string
+}
+
 /** 番茄钟统计 */
 export interface PomodoroStat {
   daily: Record<string, { count: number; minutes: number; interruptions: number }>
   interruptions: { date: string; reason: string; time: number }[]
+  records: PomodoroRecord[]
 }
 
 /** 待办 */
