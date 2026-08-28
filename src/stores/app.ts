@@ -614,14 +614,25 @@ export const useAppStore = defineStore('app', {
       this.save()
     },
 
-    recordPomodoro(minutes: number) {
+    recordPomodoro(minutes: number, description = '', source: 'solo' | 'party' = 'solo', partnerName?: string) {
       if (minutes < 1) return
       const t = today()
       if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
       this.pomodoro.daily[t].count++
       this.pomodoro.daily[t].minutes += minutes
+      // 旧账号云端数据可能缺 records 字段，兜底初始化
+      if (!Array.isArray(this.pomodoro.records)) this.pomodoro.records = []
+      this.pomodoro.records.push({ id: uid(), date: t, time: Date.now(), minutes, description, source, partnerName })
       this.addPoints(5, '完成番茄钟')
       this.save()
+    },
+    /** 双击编辑今日番茄记录的任务描述（清空存空串，展示层回退「未命名」） */
+    updatePomodoroRecordDescription(id: string, text: string) {
+      const r = this.pomodoro.records?.find(x => x.id === id)
+      if (r && r.date === today()) {
+        r.description = text.trim().slice(0, 50)
+        this.save()
+      }
     },
     recordInterruption(reason: string) {
       const t = today()
