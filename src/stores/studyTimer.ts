@@ -36,6 +36,14 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   const sessionCompleted = ref(0)
   /** 我方专注完成时按对方状态弹出的选择项 */
   const pendingChoice = ref<PendingChoice>(null)
+  /** 开黑番茄任务描述（选填）；会话进入即自动开始计时、无开始前填写窗口，
+   *  故结算时读取当前输入框内容（单人模式才是开始时锁定） */
+  const taskDescription = ref('')
+
+  /** 结算时从输入框取当前描述（trim + 50 字截断，与 maxlength 一致） */
+  function currentDescription(): string {
+    return taskDescription.value.trim().slice(0, 50)
+  }
 
   let handle: ReturnType<typeof setInterval> | null = null
   let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -110,7 +118,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
       const minutes = session.value.mode === 'countup' ? Math.round(seconds.value / 60) : session.value.focusMinutes
       myMinutes.value += minutes
       if (minutes >= 1) {
-        appStore.recordPomodoro(minutes)
+        appStore.recordPomodoro(minutes, currentDescription(), 'party', session.value.partnerName)
         pomodoroCompleted.value++
       }
       phase.value = 'done'
@@ -142,7 +150,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
       session.value.partnerElapsedSeconds = res.session.partnerElapsedSeconds
       session.value.partnerRunning = res.session.partnerRunning
       if (res.session.status === 'done') {
-        if (phase.value === 'focus') appStore.recordPomodoro(Math.round(seconds.value / 60))
+        if (phase.value === 'focus') appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', session.value.partnerName)
         sessionCompleted.value++
         finishSession()
       }
@@ -193,7 +201,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     if (!s) return
     stopTimer()
     if (phase.value === 'focus') {
-      appStore.recordPomodoro(Math.round(seconds.value / 60))
+      appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', s.partnerName)
       phase.value = 'done' // 结算后置结束态，阻断 await 间隙内 poll 对 focus 的重复结算
     }
     try {
@@ -216,6 +224,8 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
 
   function finishSession() {
     stopTimer()
+    // 开黑输入框在鼠标移开底部后隐藏，用户可能全程未看到：会话结束必须清空，避免残留描述写入下次开黑记录
+    taskDescription.value = ''
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('pagehide', onPageHide)
@@ -241,7 +251,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
       session.value.partnerElapsedSeconds = res.session.partnerElapsedSeconds
       session.value.partnerRunning = res.session.partnerRunning
       if (res.session.status === 'done') {
-        if (phase.value === 'focus') appStore.recordPomodoro(Math.round(seconds.value / 60))
+        if (phase.value === 'focus') appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', session.value.partnerName)
         sessionCompleted.value++
         finishSession()
       }
@@ -265,7 +275,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
 
   return {
     session, phase, seconds, running, myMinutes, onlineSeconds,
-    display, pomodoroCompleted, sessionCompleted, pendingChoice,
+    display, pomodoroCompleted, sessionCompleted, pendingChoice, taskDescription,
     start, pause, endSession, enterSession, finishSession, waitForPartner, leaveSession, finishFocus
   }
 })

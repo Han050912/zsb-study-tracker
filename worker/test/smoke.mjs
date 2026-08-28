@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url'
 const BASE = process.argv[2] || 'http://localhost:8787'
 const ORIGIN = 'http://localhost:5173'
 const WORKER_DIR = fileURLToPath(new URL('..', import.meta.url))
+// 桌面端共享令牌：默认仅适配历史 .dev.vars，实际值可经 SMOKE_DESKTOP_TOKEN 注入，全文件统一引用
+const DESKTOP_TOKEN = process.env.SMOKE_DESKTOP_TOKEN || 'zsb-desktop-v2'
 
 /** 直接操作本地 D1（管理员提升/留痕校验），与线上运营方式一致 */
 function d1(sql) {
@@ -26,7 +28,7 @@ function check(name, cond, extra = '') {
 
 async function api(path, { method = 'GET', token, body } = {}) {
   // 本地冒烟无人机验证环节，与桌面端一样通过共享令牌跳过 Turnstile
-  const headers = { 'Content-Type': 'application/json', Origin: ORIGIN, 'X-Desktop-Token': 'zsb-desktop-v2' }
+  const headers = { 'Content-Type': 'application/json', Origin: ORIGIN, 'X-Desktop-Token': DESKTOP_TOKEN }
   if (token) headers.Authorization = `Bearer ${token}`
   const res = await fetch(`${BASE}${path}`, {
     method, headers, body: body === undefined ? undefined : JSON.stringify(body)
@@ -37,8 +39,9 @@ async function api(path, { method = 'GET', token, body } = {}) {
 }
 
 const uniq = Date.now().toString(36)
-const userA = { username: `smoke_a_${uniq}`, password: 'password123' }
-const userB = { username: `smoke_b_${uniq}`, password: 'password123' }
+// 前缀避免 smoke 字样：AI 语义复审会将其联想为违规词，导致注册被 400 拦截
+const userA = { username: `studya_${uniq}`, password: 'password123' }
+const userB = { username: `studyb_${uniq}`, password: 'password123' }
 
 // 测试用户积分基线：黄金档（≥1500）无发帖冷却，避免快速连发帖触发「分级发帖冷却」429
 const POINTS_BASE = 1500
@@ -77,7 +80,8 @@ function sampleState() {
     },
     pomodoro: {
       daily: { '2026-08-04': { count: 3, minutes: 75, interruptions: 1 } },
-      interruptions: [{ date: '2026-08-04', reason: '手机', time: 1754300000000 }]
+      interruptions: [{ date: '2026-08-04', reason: '手机', time: 1754300000000 }],
+      records: [{ id: 'rec_test_1', date: '2026-08-04', time: 1700000000000, minutes: 25, description: 'review math', source: 'party', partnerName: 'Blane' }]
     },
     todos: [{ id: 'td1', date: '2026-08-04', text: '复习极限', done: true, order: 1, completedAt: 1754300000000 }],
     settings: {
@@ -201,14 +205,24 @@ async function main() {
   check('gamification + pointsLog 还原', d.gamification?.points === POINTS_BASE && d.gamification?.pointsLog?.[0]?.refId === 'r1' &&
     d.gamification?.achievements?.[0] === 'first_checkin')
   check('pomodoro 还原', d.pomodoro?.daily?.['2026-08-04']?.count === 3 && d.pomodoro?.interruptions?.[0]?.reason === '手机')
+  check('pomodoro.records 单次明细往返还原',
+    d.pomodoro?.records?.length === 1 && d.pomodoro.records[0].id === 'rec_test_1' &&
+    d.pomodoro.records[0].description === 'review math' && d.pomodoro.records[0].source === 'party' &&
+    d.pomodoro.records[0].partnerName === 'Blane' && d.pomodoro.records[0].minutes === 25 &&
+    // date 用于当日列表过滤、time 用于列表排序，两者必须与快照一致
+    d.pomodoro.records[0].date === '2026-08-04' && d.pomodoro.records[0].time === 1700000000000,
+    JSON.stringify(d.pomodoro?.records?.[0]))
   check('todos 还原（done/order/completedAt）', d.todos?.[0]?.done === true && d.todos[0].order === 1 && d.todos[0].completedAt === 1754300000000)
   check('settings + quotes 还原', d.settings?.userName === '测试员' && d.settings?.quotes?.[0] === '自定义引言' &&
     d.settings?.reminderEnabled === true && d.settings?.onboarded === true)
 
-  // 二次推送（覆盖语义）：清空 records 后应同步为空
+  // 二次推送（覆盖语义）：清空 records / pomodoro.records 后应同步为空
   snapshot.records = []
+  snapshot.pomodoro.records = []
   await api('/api/data/sync', { method: 'POST', token: tokenA, body: snapshot })
-  check('二次推送为整体替换语义', (await api('/api/data/sync', { token: tokenA })).data?.records?.length === 0)
+  const replacePull = await api('/api/data/sync', { token: tokenA })
+  check('二次推送为整体替换语义', replacePull.data?.records?.length === 0)
+  check('二次推送清空 pomodoro.records（DELETE 后零 INSERT）', replacePull.data?.pomodoro?.records?.length === 0)
 
   // ---- 跨用户数据隔离 ----
   console.log('[数据隔离]')
@@ -331,7 +345,7 @@ async function main() {
   const uploadRaw = async (token, bytes, contentType) => {
     const res = await fetch(`${BASE}/api/community/upload`, {
       method: 'POST',
-      headers: { 'Content-Type': contentType, Origin: ORIGIN, 'X-Desktop-Token': 'zsb-desktop-v2', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { 'Content-Type': contentType, Origin: ORIGIN, 'X-Desktop-Token': DESKTOP_TOKEN, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: bytes
     })
     let data = null
@@ -904,7 +918,7 @@ async function main() {
   const pdfFetch = async (token, pdfId, { method = 'GET', bytes } = {}) => {
     const res = await fetch(`${BASE}/api/pdfs/${pdfId}`, {
       method,
-      headers: { Origin: ORIGIN, 'X-Desktop-Token': 'zsb-desktop-v2', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { Origin: ORIGIN, 'X-Desktop-Token': DESKTOP_TOKEN, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       ...(bytes !== undefined ? { body: bytes } : {})
     })
     if (method === 'GET' && res.status === 200) {
