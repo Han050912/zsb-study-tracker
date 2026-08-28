@@ -447,6 +447,18 @@ CREATE TABLE IF NOT EXISTS pomodoro_interruptions (
   time INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pomodoro_records (
+  id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  date TEXT NOT NULL,
+  time INTEGER NOT NULL,
+  minutes INTEGER NOT NULL,
+  description TEXT DEFAULT '',
+  source TEXT DEFAULT 'solo',
+  partner_name TEXT,
+  PRIMARY KEY (user_id, id)
+);
+
 -- ========== 待办事项 ==========
 CREATE TABLE IF NOT EXISTS todos (
   id TEXT NOT NULL,
