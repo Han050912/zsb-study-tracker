@@ -381,6 +381,10 @@ watch(() => timer.sessionCompleted, (v, old) => {
     <div
       class="absolute bottom-8 inset-x-0 flex flex-col items-center gap-3 px-6 z-10 transition-all duration-500 ease-out"
       :class="controlsVisible ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'">
+      <input v-model="timer.taskDescription" maxlength="50"
+        class="input w-full max-w-md text-center backdrop-blur"
+        :class="bgUrl || phase === 'focus' ? '!bg-white/10 !border-white/20 !text-white placeholder:!text-white/40' : ''"
+        placeholder="本次专注的任务（选填）" />
       <div class="flex gap-3 justify-center">
         <template v-if="phase !== 'done'">
           <button v-if="running" class="btn backdrop-blur px-6"
