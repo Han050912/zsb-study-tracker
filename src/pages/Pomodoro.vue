@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
+import dayjs from 'dayjs'
 import { useAppStore } from '../stores/app'
 import { formatMinutes } from '../utils/date'
 import { API_BASE } from '../api/client'
+import type { PomodoroRecord } from '../types'
 
 const store = useAppStore()
 const toast = inject<(m: string) => void>('toast', () => {})
@@ -19,6 +21,10 @@ let handle: ReturnType<typeof setInterval> | null = null
 let startTimestamp = 0
 /** 暂停前已累计的秒数，恢复计时后与新的时间差累加 */
 let pausedElapsed = 0
+/** 本次专注的任务描述（选填，maxlength 50）；开始番茄时捕获锁定 */
+const taskDescription = ref('')
+/** 当前番茄锁定后的描述快照（开始后修改输入框不影响本番茄） */
+let activeDescription = ''
 
 // ---- 控制按钮自动隐藏 ----
 const controlsVisible = ref(true)
@@ -74,6 +80,7 @@ function handleVisibilityChange() {
 function start() {
   if (phase.value === 'idle') {
     phase.value = 'focus'
+    activeDescription = taskDescription.value.trim().slice(0, 50)
     seconds.value = 0
     pausedElapsed = 0
     document.documentElement.requestFullscreen?.().catch(() => {})
@@ -99,7 +106,7 @@ function pause() {
 function completePhase() {
   stopTimer()
   if (phase.value === 'focus') {
-    store.recordPomodoro(focusMinutes.value)
+    store.recordPomodoro(focusMinutes.value, activeDescription)
     toast(`完成一个番茄钟！+5 积分`)
     phase.value = 'break'
     seconds.value = 0
@@ -125,7 +132,7 @@ function giveUp() {
   if (phase.value === 'focus') {
     const minutes = Math.round(elapsed / 60)
     if (minutes >= 1) {
-      store.recordPomodoro(minutes)
+      store.recordPomodoro(minutes, activeDescription)
       toast(`完成一个番茄钟！+5 积分`)
     }
   }
@@ -227,6 +234,38 @@ onUnmounted(() => {
 })
 
 const recentInterruptions = computed(() => store.pomodoro.interruptions.slice(-5).reverse())
+
+// ---- 最近完成：今日番茄明细 ----
+/** 响应式今日键：随实时时钟每秒更新，跨 00:00 后列表与编辑守卫自动切换到新的一天 */
+const todayKey = computed(() => dayjs(now.value).format('YYYY-MM-DD'))
+const todayRecordsSorted = computed(() =>
+  (store.pomodoro.records || []).filter(r => r.date === todayKey.value).sort((a, b) => b.time - a.time)
+)
+const editingId = ref('')
+const editingText = ref('')
+
+function fmtClock(t: number) { return dayjs(t).format('HH:mm') }
+
+/** 编辑输入框挂载后自动聚焦并全选（与 SubjectPanel 行内改名一致，避免 autofocus 失效导致行卡在编辑态） */
+const vFocus = { mounted: (el: HTMLInputElement) => { el.focus(); el.select() } }
+
+function startEdit(r: PomodoroRecord) {
+  if (editingId.value === r.id) return
+  if (r.date !== todayKey.value) return
+  editingId.value = r.id
+  editingText.value = r.description
+}
+
+/** 中文输入法回车选词不结束编辑：isComposing / keyCode 229 时直接忽略 */
+function onEditEnter(e: KeyboardEvent) {
+  if (e.isComposing || e.keyCode === 229) return
+  saveEdit()
+}
+function saveEdit() {
+  if (editingId.value) store.updatePomodoroRecordDescription(editingId.value, editingText.value)
+  editingId.value = ''
+}
+function cancelEdit() { editingId.value = '' }
 </script>
 
 <template>
@@ -260,6 +299,10 @@ const recentInterruptions = computed(() => store.pomodoro.interruptions.slice(-5
           <div><label class="label">专注（分钟）</label><input v-model.number="focusMinutes" type="number" min="1" max="120" class="input" /></div>
           <div><label class="label">休息（分钟）</label><input v-model.number="breakMinutes" type="number" min="1" max="30" class="input" /></div>
         </div>
+        <div>
+          <label class="label">任务描述（选填）</label>
+          <input v-model="taskDescription" maxlength="50" class="input" placeholder="本次专注的任务，如：复习高数第三章" />
+        </div>
         <button class="btn-primary w-full !py-3 text-base" @click="start">开始专注 </button>
       </div>
 
@@ -282,6 +325,28 @@ const recentInterruptions = computed(() => store.pomodoro.interruptions.slice(-5
         <div class="card !p-3 text-center">
           <div class="text-xl font-black text-primary-500">{{ store.todayPomodoro.count ? (store.todayPomodoro.minutes / store.todayPomodoro.count).toFixed(1) : '0.0' }}分</div>
           <div class="text-[11px] text-slate-400">平均时长</div>
+        </div>
+      </div>
+
+      <!-- 最近完成：今日番茄明细（独立板块，位于最近中断上方） -->
+      <div class="card">
+        <div class="section-title">最近完成（{{ todayRecordsSorted.length }} 个/今日）</div>
+        <div v-if="!todayRecordsSorted.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-3">今日还没有完成的番茄</div>
+        <div v-else class="max-h-48 overflow-y-auto">
+          <div v-for="r in todayRecordsSorted" :key="r.id"
+            class="text-xs py-1.5 flex items-center gap-2 text-slate-500 border-t border-slate-100 dark:border-slate-700 first:border-t-0 cursor-default"
+            @dblclick="startEdit(r)">
+            <template v-if="editingId === r.id">
+              <input v-model="editingText" v-focus maxlength="50" class="input !py-1 !text-xs flex-1"
+                @dblclick.stop @keydown.enter="onEditEnter" @keyup.esc="cancelEdit" @blur="saveEdit" />
+            </template>
+            <template v-else>
+              <span class="opacity-60 whitespace-nowrap">{{ fmtClock(r.time) }}</span>
+              <span class="flex-1 truncate" :class="r.description ? '' : 'italic opacity-50'">{{ r.description || '未命名' }}</span>
+              <span v-if="r.source === 'party'" class="px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/40 text-primary-500 text-[10px] whitespace-nowrap">开黑·{{ r.partnerName }}</span>
+              <span class="whitespace-nowrap">{{ r.minutes }} 分钟</span>
+            </template>
+          </div>
         </div>
       </div>
 
