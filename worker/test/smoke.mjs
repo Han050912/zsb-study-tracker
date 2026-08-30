@@ -11,6 +11,7 @@ const BASE = process.argv[2] || 'http://localhost:8787'
 const ORIGIN = 'http://localhost:5173'
 const WORKER_DIR = fileURLToPath(new URL('..', import.meta.url))
 // 桌面端共享令牌：默认仅适配历史 .dev.vars，实际值可经 SMOKE_DESKTOP_TOKEN 注入，全文件统一引用
+// SMOKE_DESKTOP_TOKEN 必须与 worker/.dev.vars 的 DESKTOP_TOKEN 一致，否则注册/登录用例将因 Turnstile 校验全量失败
 const DESKTOP_TOKEN = process.env.SMOKE_DESKTOP_TOKEN || 'zsb-desktop-v2'
 
 /** 直接操作本地 D1（管理员提升/留痕校验），与线上运营方式一致 */
@@ -128,6 +129,24 @@ async function main() {
 
   const regB = await api('/api/auth/register', { method: 'POST', body: userB })
   const tokenB = regB.data?.token
+
+  // ---- 密码策略（8-14 位 + 字母和数字）----
+  // 注册限流 3 次/分，regA/regDup/regB 已用满窗口：先等窗口滑动，3 个非法密码打满本窗口额度
+  console.log('  … 等待 61s 让注册限流窗口滑动')
+  await new Promise(r => setTimeout(r, 61_000))
+  const pwdDigits = await api('/api/auth/register', { method: 'POST', body: { username: `studyp1_${uniq}`, password: '12345678' } })
+  check('注册密码 8 位纯数字被拒绝（400 含字母和数字提示）',
+    pwdDigits.status === 400 && (pwdDigits.data?.message || '').includes('字母和数字'), JSON.stringify(pwdDigits.data))
+  const pwdLetters = await api('/api/auth/register', { method: 'POST', body: { username: `studyp2_${uniq}`, password: 'abcdefgh' } })
+  check('注册密码 8 位纯字母被拒绝（400）', pwdLetters.status === 400, JSON.stringify(pwdLetters.data))
+  const pwdLong = await api('/api/auth/register', { method: 'POST', body: { username: `studyp3_${uniq}`, password: 'a1b2c3d4e5f6g7h' } })
+  check('注册密码 15 位被拒绝（400 密码最多 14 位）',
+    pwdLong.status === 400 && pwdLong.data?.message === '密码最多 14 位', JSON.stringify(pwdLong.data))
+  // 等待后进入新限流窗口，合法密码用例是新窗口第 1 次注册
+  console.log('  … 等待 61s 让注册限流窗口滑动')
+  await new Promise(r => setTimeout(r, 61_000))
+  const pwdValid = await api('/api/auth/register', { method: 'POST', body: { username: `studyp4_${uniq}`, password: 'abcd1234' } })
+  check('注册密码 8 位字母数字成功（201）', pwdValid.status === 201 && !!pwdValid.data?.token, JSON.stringify(pwdValid.data))
 
   // ---- 未认证拦截 ----
   console.log('[未认证]')
@@ -640,7 +659,7 @@ async function main() {
   // ---- 话题圈子 ----
   console.log('[话题圈子]')
   // 用户 C 在此注册：auth 限流 5 次/分，认证段已用满，等到此段时窗口已滑动
-  const userC = { username: `smoke_c_${uniq}`, password: 'password123' }
+  const userC = { username: `studyc_${uniq}`, password: 'password123' }
   const regC = await api('/api/auth/register', { method: 'POST', body: userC })
   const tokenC = regC.data?.token
   const userIdC = regC.data?.user?.id

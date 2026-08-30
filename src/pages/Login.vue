@@ -72,6 +72,12 @@ async function submit() {
     errorMsg.value = '两次输入的密码不一致'
     return
   }
+  // 注册密码策略与服务端 registerSchema 对齐：8-14 位且同时包含字母和数字
+  if (mode.value === 'register'
+    && !(password.value.length >= 8 && password.value.length <= 14 && /[A-Za-z]/.test(password.value) && /\d/.test(password.value))) {
+    errorMsg.value = '密码需为 8-14 位且包含字母和数字'
+    return
+  }
   if (!isDesktop && !turnstileToken.value) {
     errorMsg.value = '请先完成人机验证'
     return
@@ -126,8 +132,8 @@ async function submit() {
           <div>
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">密码</label>
             <div class="relative">
-              <input v-model="password" name="password" :type="showPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
-                :placeholder="mode === 'register' ? '至少 6 位' : '请输入密码'"
+              <input v-model="password" name="password" :type="showPassword ? 'text' : 'password'" class="input pr-10" :maxlength="mode === 'register' ? 14 : 128"
+                :placeholder="mode === 'register' ? '8-14 位' : '请输入密码'"
                 :autocomplete="mode === 'register' ? 'new-password' : 'current-password'" />
               <button type="button"
                 class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
@@ -138,11 +144,12 @@ async function submit() {
                 <EyeOff v-else :size="16" aria-hidden="true" />
               </button>
             </div>
+            <p v-if="mode === 'register'" class="text-xs text-slate-400 dark:text-slate-500 mt-1">8-14 位，需包含字母和数字</p>
           </div>
           <div v-if="mode === 'register'">
             <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">确认密码</label>
             <div class="relative">
-              <input v-model="confirmPassword" name="confirm-password" :type="showConfirmPassword ? 'text' : 'password'" class="input pr-10" maxlength="128"
+              <input v-model="confirmPassword" name="confirm-password" :type="showConfirmPassword ? 'text' : 'password'" class="input pr-10" maxlength="14"
                 placeholder="再次输入密码" autocomplete="new-password" />
               <button type="button"
                 class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"

@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
-    "jose": "^6.0.10"
+    "jose": "^6.0.10",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260730.1",

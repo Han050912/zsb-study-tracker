@@ -1,6 +1,8 @@
 import type { Env } from '../index'
+import { z } from 'zod'
 import { on, body } from '../router'
 import { all, first, run, batch, uid, HttpError } from '../db'
+import { parseBody } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
 import { assertCleanAsync } from './sensitive'
 import { displayName, notifyStatement } from './community'
@@ -113,20 +115,22 @@ export function registerFeedbackRoutes() {
   // 提交反馈（登录用户）
   on('POST', '/api/feedback', true, async (ctx) => {
     rateLimit(ctx.request, 'feedback', 20)
-    const b = await body<{ type?: unknown; content?: unknown; contact?: unknown; imageUrls?: unknown }>(ctx.request)
+    const b = await parseBody(ctx.request, z.object({
+      type: z.enum(FEEDBACK_TYPES, { message: '问题类型无效' }),
+      // 缺键 / 非字符串一律归空串，由后续 min(1) 统一返回业务文案「请填写反馈内容」；字符串静默 trim
+      content: z.unknown().transform(v => typeof v === 'string' ? v.trim() : '')
+        .pipe(z.string().min(1, '请填写反馈内容').max(CONTENT_MAX, `反馈内容最多 ${CONTENT_MAX} 字`)),
+      // 复刻原行为：非字符串一律归空（避免数字/对象被 String() 成 '123' / '[object Object]' 落库）；字符串静默截断 CONTACT_MAX
+      contact: z.unknown().transform(v => typeof v === 'string' ? v.trim().slice(0, CONTACT_MAX) : '').default(''),
+      // 复刻原行为：过滤非字符串 → 去重；数量上限在此校验
+      imageUrls: z.array(z.unknown())
+        .transform(arr => [...new Set(arr.filter((u): u is string => typeof u === 'string'))])
+        .pipe(z.array(z.string()).max(IMAGE_MAX, `截图最多 ${IMAGE_MAX} 张`))
+        .default([])
+    }))
+    const { type, content, contact, imageUrls } = b
 
-    const type = b?.type as FeedbackType
-    if (!FEEDBACK_TYPES.includes(type)) throw new HttpError(400, '问题类型无效')
-
-    const content = String(b?.content ?? '').trim()
-    if (!content) throw new HttpError(400, '请填写反馈内容')
-    if (content.length > CONTENT_MAX) throw new HttpError(400, `反馈内容最多 ${CONTENT_MAX} 字`)
-
-    const contact = String(b?.contact ?? '').trim().slice(0, CONTACT_MAX)
-    // 截图：仅接受本系统上传路径，去重，且必须属于当前用户（防串用他人图片），与社区发帖同一口径
-    const rawImageUrls: unknown[] = Array.isArray(b?.imageUrls) ? b.imageUrls : []
-    const imageUrls = [...new Set(rawImageUrls.filter((u): u is string => typeof u === 'string'))]
-    if (imageUrls.length > IMAGE_MAX) throw new HttpError(400, `截图最多 ${IMAGE_MAX} 张`)
+    // 截图：仅接受本系统上传路径，且必须属于当前用户（防串用他人图片），与社区发帖同一口径（去重与数量上限由 schema 完成）
     if (imageUrls.length) {
       if (imageUrls.some(u => !isImagePath(u))) throw new HttpError(400, '截图路径无效')
       const ids = imageUrls.map(u => u.split('/').pop()!)

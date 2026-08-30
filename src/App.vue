@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import { useCommunityStore } from './stores/community'
@@ -8,11 +8,13 @@ import { restartReminder } from './services/reminder'
 import { startTodoReminder, checkTodoReminders } from './services/todoReminder'
 import { startPartnerReminder, stopPartnerReminder } from './services/partnerReminder'
 import Toast from './components/Toast.vue'
-import AchievementModal from './components/AchievementModal.vue'
 import Onboarding from './components/Onboarding.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import { imageUrl, communityApi } from './api/community'
 import { isDndActive } from './utils/dnd'
+
+// 成就分享弹窗按需异步加载：切断入口对 markdown-it/katex 依赖链（AchievementModal → PostComposer → utils/markdown）的静态引用
+const AchievementModal = defineAsyncComponent(() => import('./components/AchievementModal.vue'))
 
 const store = useAppStore()
 const community = useCommunityStore()

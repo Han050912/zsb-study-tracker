@@ -53,7 +53,7 @@ const barDetail = computed(() => {
 
 // ---- 学习时长 ----
 const { el: timeEl } = useChart(() => ({
-  grid: { left: 44, right: 16, top: 20, bottom: 24 },
+  grid: { left: 44, right: 16, top: 28, bottom: 24 },
   xAxis: { type: 'category', data: days.value.map(d => d.slice(5)), axisLabel: { color: chartTextColor(), fontSize: 10 } },
   yAxis: { type: 'value', name: '分钟', axisLabel: { color: chartTextColor() } },
   series: [

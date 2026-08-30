@@ -1,17 +1,40 @@
 import { onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
-import * as echarts from 'echarts'
+import type { EChartsOption } from 'echarts'
+// ECharts / ECElementEvent 实例与事件类型须与 echartsModule（echarts/core）
+// 声明链同源：'echarts' 主入口的 ECharts、ECElementEvent 与 core 侧是两条
+// 独立声明链（private 成员 nominal 不兼容），故单独从 echarts/core 导入；
+// 均为 type-only，零运行时
+import type { ECharts, ECElementEvent } from 'echarts/core'
+
+type EchartsModule = (typeof import('../lib/echarts'))['default']
+let modulePromise: Promise<EchartsModule> | null = null
+let echartsModule: EchartsModule | null = null
+
+/** 模块级单例：首次图表挂载触发 echarts 加载，多个图表实例共享同一次网络往返 */
+function ensureEcharts(): Promise<EchartsModule> {
+  modulePromise ??= import('../lib/echarts').then(m => {
+    echartsModule = m.default
+    return m.default
+  }).catch(e => {
+    // 加载失败置空缓存，避免永久缓存 rejected promise，后续挂载可重试
+    modulePromise = null
+    throw e
+  })
+  return modulePromise
+}
 
 /** ECharts 封装：自动初始化、响应式 resize、主题感知；onClick 可选，绑定图表点击事件 */
-export function useChart(optionFn: () => echarts.EChartsOption | null | undefined, deps: Ref<any>[] = [], onClick?: (params: echarts.ECElementEvent) => void) {
+export function useChart(optionFn: () => EChartsOption | null | undefined, deps: Ref<any>[] = [], onClick?: (params: ECElementEvent) => void) {
   const el = ref<HTMLElement>()
-  let chart: echarts.ECharts | null = null
+  let chart: ECharts | null = null
+  let ready = false
 
   const isDark = () => document.documentElement.classList.contains('dark')
 
   function render() {
-    if (!el.value) return
+    if (!el.value || !ready || !echartsModule) return
     if (!chart) {
-      chart = echarts.init(el.value)
+      chart = echartsModule.init(el.value)
       if (onClick) chart.on('click', onClick)
     }
     const option = optionFn()
@@ -50,6 +73,11 @@ export function useChart(optionFn: () => echarts.EChartsOption | null | undefine
       })
       ro.observe(el.value)
     }
+    void ensureEcharts().then(() => {
+      if (!el.value) return    // 加载期间组件已卸载则放弃
+      ready = true
+      render()
+    }).catch(e => console.error('[useChart] echarts 加载失败', e))
   })
   onUnmounted(() => {
     window.removeEventListener('resize', onResize)

@@ -4,7 +4,7 @@
  * 上传成功 emit('uploaded', url)，由调用方更新本地状态（store.settings.avatar）。
  */
 import { inject, nextTick, onUnmounted, ref, watch } from 'vue'
-import Cropper from 'cropperjs'
+import type Cropper from 'cropperjs'
 import 'cropperjs/dist/cropper.css'
 import Modal from './Modal.vue'
 import { IMAGE_MAX_BYTES, uploadAvatar } from '../api/community'
@@ -48,16 +48,22 @@ function onFile(e: Event) {
   }
   objectUrl = URL.createObjectURL(f)
   imgUrl.value = objectUrl
-  nextTick(() => {
+  nextTick(async () => {
     if (!imgRef.value) return
-    destroyCropper()
-    cropper = new Cropper(imgRef.value, {
-      aspectRatio: 1,
-      viewMode: 1,
-      autoCropArea: 1,
-      background: false,
-      responsive: false
-    })
+    try {
+      const { default: CropperCtor } = await import('cropperjs')
+      if (!imgRef.value) return
+      destroyCropper()
+      cropper = new CropperCtor(imgRef.value, {
+        aspectRatio: 1,
+        viewMode: 1,
+        autoCropArea: 1,
+        background: false,
+        responsive: false
+      })
+    } catch {
+      toast('图片编辑器加载失败，请重试')
+    }
   })
 }
 

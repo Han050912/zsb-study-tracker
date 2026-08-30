@@ -142,25 +142,26 @@ export async function deleteUploads(env: Env, ids: string[]): Promise<void> {
   await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...ids)
 }
 
-/** 惰性清理：删除 30 天前且未被任何帖子/评论引用的孤图（上传时顺带调用，无 cron） */
+/** 惰性清理：删除 30 天前且未被帖子/评论/反馈引用的孤图。由每周 cron 调用（已从上传路径移除）。 */
 export async function cleanupOrphanUploads(env: Env): Promise<void> {
   const cutoff = nowSec() - 30 * 86400
-  const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null }>(env,
-    'SELECT id, r2_key, thumb_r2_key FROM community_uploads WHERE created_at < ? LIMIT 50', cutoff)
-  for (const r of rows) {
-    const refPost = await first(env,
-      `SELECT 1 AS x FROM community_posts WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
-    const refComment = refPost ? null : await first(env,
-      `SELECT 1 AS x FROM community_comments WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
-    // 反馈截图也引用 community_uploads，需纳入引用检查，避免 30 天后被误清
-    const refFeedback = (refPost || refComment) ? null : await first(env,
-      `SELECT 1 AS x FROM feedback WHERE image_urls LIKE '%/api/community/images/' || ? || '%' LIMIT 1`, r.id)
-    if (!refPost && !refComment && !refFeedback) {
-      await env.IMAGES.delete(r.r2_key).catch(() => {})
-      if (r.thumb_r2_key) await env.IMAGES.delete(r.thumb_r2_key).catch(() => {})
-      await run(env, 'DELETE FROM community_uploads WHERE id = ?', r.id)
-    }
-  }
+  // 单条查询带引用标记：三个 EXISTS 子查询逐字保留原 LIKE 口径（16 位 hex ID 无子串误匹配）
+  const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null; ref_post: number | null; ref_comment: number | null; ref_feedback: number | null }>(env,
+    `SELECT cu.id, cu.r2_key, cu.thumb_r2_key,
+       (SELECT 1 FROM community_posts   WHERE image_urls LIKE '%/api/community/images/' || cu.id || '%' LIMIT 1) AS ref_post,
+       (SELECT 1 FROM community_comments WHERE image_urls LIKE '%/api/community/images/' || cu.id || '%' LIMIT 1) AS ref_comment,
+       (SELECT 1 FROM feedback          WHERE image_urls LIKE '%/api/community/images/' || cu.id || '%' LIMIT 1) AS ref_feedback
+     FROM community_uploads cu
+     WHERE cu.created_at < ? LIMIT 200`, cutoff)
+  const orphans = rows.filter(r => !r.ref_post && !r.ref_comment && !r.ref_feedback)
+  if (!orphans.length) return
+  await Promise.all(orphans.flatMap(r => {
+    const dels: Promise<void>[] = [env.IMAGES.delete(r.r2_key).catch(e => console.error('R2 删除失败', r.r2_key, e))]
+    if (r.thumb_r2_key) dels.push(env.IMAGES.delete(r.thumb_r2_key).catch(e => console.error('R2 删除失败', r.thumb_r2_key, e)))
+    return dels
+  }))
+  const ph = orphans.map(() => '?').join(',')
+  await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...orphans.map(r => r.id))
 }
 
 // ---------- 路由 ----------
@@ -241,8 +242,6 @@ export function registerUploadRoutes() {
         'SELECT COUNT(*) AS n FROM community_uploads WHERE user_id = ?', ctx.userId)
       if ((cnt?.n ?? 0) >= 50) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'image_50'))
     }
-    // 惰性清理孤图失败不应阻断上传（如 feedback 表尚未迁移时）
-    await cleanupOrphanUploads(ctx.env).catch(e => console.error('[upload] 孤图清理失败', e))
     return Response.json({ id, url, size: data.byteLength, contentType: kind.mime }, { status: 201 })
   })
 
