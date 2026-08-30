@@ -26,7 +26,7 @@ import { registerPartnerCollabRoutes } from './api/partnerCollab'
 import { registerAdminRoutes } from './api/admin'
 import { registerLearningPathRoutes } from './api/learningPath'
 import { registerPdfRoutes } from './api/pdfs'
-import { registerUploadRoutes } from './api/uploads'
+import { registerUploadRoutes, cleanupOrphanUploads } from './api/uploads'
 import { registerFeedbackRoutes } from './api/feedback'
 import './api/teams'
 import { HttpError } from './db'
@@ -88,9 +88,13 @@ export default {
     }
   },
 
-  /** 每周一 08:00（UTC+8）触发：双向推送上周学习周报通知 */
+  /** 每周一 08:00（UTC+8）触发：周报推送与孤图清理 */
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    await pushWeeklyReports(env)
+    // 周报推送与孤图清理彼此独立：任一失败不影响另一个（各自 catch 留日志，避免 allSettled 静默吞掉错误）
+    await Promise.allSettled([
+      pushWeeklyReports(env).catch(e => console.error('[cron] 周报推送失败', e)),
+      cleanupOrphanUploads(env).catch(e => console.error('[cron] 孤图清理失败', e))
+    ])
   }
 }
 
