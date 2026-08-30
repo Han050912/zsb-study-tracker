@@ -1,6 +1,8 @@
 import type { Env } from '../index'
+import { z } from 'zod'
 import { on, body } from '../router'
 import { all, first, run, batch, uid, utc8Today, HttpError } from '../db'
+import { parseBody } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
 import { notifyStatement } from './community'
 import { awardBadge } from './badges'
@@ -97,15 +99,25 @@ function mapChallenge(r: ChallengeRow & { my_progress?: number; my_completed?: n
   }
 }
 
-/** 校验小组名称/描述/人数，返回规范化后的字段值（创建与编辑共用） */
-async function validateTeamFields(env: Env, nameRaw: unknown, descRaw: unknown, maxRaw: unknown): Promise<{ name: string; description: string; max: number }> {
-  const name = typeof nameRaw === 'string' ? nameRaw.trim() : ''
-  if (name.length < 1 || name.length > 30) throw new HttpError(400, '小组名称长度为 1-30 字')
+/** 小组名称/描述/人数的形状校验（创建与编辑共用；敏感词与 DB 依赖校验留在 validateTeamFields / handler 内） */
+const teamFieldsSchema = z.object({
+  name: z.string().transform(s => s.trim())
+    .pipe(z.string().min(1, '小组名称长度为 1-30 字').max(30, '小组名称长度为 1-30 字')),
+  // 复刻原行为：非字符串一律归空（避免数字/对象被 String() 成 '123' / '[object Object]' 落库）；字符串静默截断 200
+  description: z.unknown().transform(v => typeof v === 'string' ? v.trim().slice(0, 200) : '').default(''),
+  // 复刻原行为：undefined/null 均兜底默认 10，其余四舍五入，2-50
+  maxMembers: z.unknown().transform(v => v == null ? 10 : Math.round(Number(v)))
+    .pipe(z.number().refine(n => Number.isFinite(n) && n >= 2 && n <= 50, '小组人数范围为 2-50 人'))
+})
+
+/** 创建端点专用：仅此处需要 isPublic（缺省视为私密组）；提为模块级常量，避免每次请求重建 schema */
+const createTeamSchema = teamFieldsSchema.extend({ isPublic: z.boolean().optional() })
+
+/** 校验小组名称/描述的敏感词（形状校验已由 teamFieldsSchema 完成），返回规范化后的字段值（创建与编辑共用） */
+async function validateTeamFields(env: Env, parsed: { name: string; description: string; maxMembers: number }): Promise<{ name: string; description: string; max: number }> {
+  const { name, description, maxMembers: max } = parsed
   await assertCleanAsync(name, env)
-  const description = typeof descRaw === 'string' ? descRaw.trim().slice(0, 200) : ''
   if (description) await assertCleanAsync(description, env)
-  const max = Math.round(Number(maxRaw ?? 10))
-  if (!Number.isFinite(max) || max < 2 || max > 50) throw new HttpError(400, '小组人数范围为 2-50 人')
   return { name, description, max }
 }
 
@@ -181,14 +193,10 @@ on('GET', '/api/teams', false, async ctx => {
 on('POST', '/api/teams', true, async ctx => {
   await rateLimit(ctx.request, 'create_team', 10, 60_000)
   
-  const { name: nameRaw, description: descRaw, maxMembers, isPublic } = await body<{
-    name: unknown
-    description?: unknown
-    maxMembers?: unknown
-    isPublic?: boolean
-  }>(ctx.request)
-
-  const fields = await validateTeamFields(ctx.env, nameRaw, descRaw, maxMembers)
+  // isPublic 仅创建端点需要，在共享 schema 上扩展：仅接受布尔，缺省视为私密组
+  const parsed = await parseBody(ctx.request, createTeamSchema)
+  const fields = await validateTeamFields(ctx.env, parsed)
+  const isPublic = parsed.isPublic ?? false
 
   const teamId = uid()
   const now = nowSec()
@@ -495,8 +503,7 @@ on('PUT', '/api/teams/:id', true, async ctx => {
     'SELECT member_count FROM study_teams WHERE id = ?', teamId)
   if (!team) throw new HttpError(404, '小组不存在')
 
-  const { name, description, maxMembers } = await body<{ name: unknown; description?: unknown; maxMembers?: unknown }>(ctx.request)
-  const fields = await validateTeamFields(ctx.env, name, description, maxMembers)
+  const fields = await validateTeamFields(ctx.env, await parseBody(ctx.request, teamFieldsSchema))
 
   if (fields.max < team.member_count) {
     throw new HttpError(400, `人数上限不能低于当前成员数（${team.member_count} 人）`)
