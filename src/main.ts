@@ -6,7 +6,6 @@ import { router } from './router'
 import { restoreSession } from './services/auth'
 import { useAppStore } from './stores/app'
 import './style.css'
-import 'katex/dist/katex.min.css'
 
 // PWA：注册 Service Worker（autoUpdate 模式，新版本发布后台自动更新）
 registerSW({ immediate: true })

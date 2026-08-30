@@ -42,8 +42,10 @@ async function load() {
   if (!props.bytes) return
   try {
     // slice() 拷贝一份：pdf.js 默认将 data 转移给 worker，原缓冲区会被 neuter
-    loadingTask = getDocument({ data: props.bytes.slice() })
-    doc = await loadingTask.promise
+    const task = await getDocument({ data: props.bytes.slice() })
+    if (seq !== renderSeq) { task.destroy().catch(() => {}); return }   // 挂起期间已被新一轮 load 取代
+    loadingTask = task
+    doc = await task.promise
     if (seq !== renderSeq) return
     pageCount.value = doc.numPages
     // 以第 1 页纵横比作为所有页占位（绝大多数 PDF 页面尺寸一致，渲染时再逐页校正）

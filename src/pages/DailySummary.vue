@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue'
-import html2canvas from 'html2canvas'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
 import { MOODS } from '../data/defaults'
@@ -149,6 +148,7 @@ watch(showShare, async v => {
   // 等待弹窗 DOM 渲染完成后再截图
   await nextTick()
   try {
+    const html2canvas = (await import('html2canvas')).default
     const canvas = await html2canvas(shareCardRef.value!, { scale: 2, useCORS: true })
     shareImg.value = canvas.toDataURL('image/png')
   } catch {

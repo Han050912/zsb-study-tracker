@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import katex from 'katex'
+import 'katex/dist/katex.min.css'
 
 /**
  * Markdown 渲染引擎（markdown-it，对齐 Typora 解析标准）：

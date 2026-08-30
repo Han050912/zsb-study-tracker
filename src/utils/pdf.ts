@@ -1,13 +1,26 @@
-import { getDocument as _getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import type { PDFDocumentLoadingTask } from 'pdfjs-dist/types/src/display/api'
+import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
-// pdf.js Worker 走 Vite 静态资源，兼容子路径部署与 Electron app:// 协议
-GlobalWorkerOptions.workerSrc = workerUrl
+type PdfjsModule = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
-/** 兼容性包装：关闭流式/自动抓取，强制全缓冲解析，提高对不同 PDF 生成器的兼容性 */
-export function getDocument(src: Parameters<typeof _getDocument>[0]): PDFDocumentLoadingTask {
-  return _getDocument({ ...src, disableAutoFetch: true, disableStream: true })
+let pdfjsPromise: Promise<PdfjsModule> | null = null
+
+/** 模块级单例：首次查看 PDF 时加载 pdf.js；worker 走 Vite 静态资源 URL（app:// 协议兼容不变） */
+function ensurePdfjs(): Promise<PdfjsModule> {
+  pdfjsPromise ??= import('pdfjs-dist/legacy/build/pdf.mjs').then(m => {
+    m.GlobalWorkerOptions.workerSrc = workerUrl
+    return m
+  }).catch(e => {
+    pdfjsPromise = null   // 失败不缓存，下次可重试（与 useChart 的 echarts 处理同口径）
+    throw e
+  })
+  return pdfjsPromise
+}
+
+/** 兼容性包装：关闭流式/自动抓取，强制全缓冲解析（异步版——pdf.js 按需加载） */
+export async function getDocument(src: { data: Uint8Array }): Promise<PDFDocumentLoadingTask> {
+  const pdfjs = await ensurePdfjs()
+  return pdfjs.getDocument({ ...src, disableAutoFetch: true, disableStream: true })
 }
 
 /**
