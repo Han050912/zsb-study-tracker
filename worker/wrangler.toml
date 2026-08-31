@@ -3,13 +3,23 @@ main = "src/index.ts"
 compatibility_date = "2026-08-04"
 account_id = "f56530b741377e91f44791c2aecd5855"
 
+# 与 Cloudflare Dashboard 远程配置保持一致，避免 deploy 覆盖时丢失
+workers_dev = false
+preview_urls = false
+
 # 自定义域名路由：与 Cloudflare Dashboard 远程配置保持一致，避免 deploy 覆盖时丢失
 routes = [
   { pattern = "cn.zsbservice.de5.net/*", zone_name = "zsbservice.de5.net" }
 ]
 
+# Smart Placement：与远程 Dashboard 设置一致（靠近数据源执行）
+[placement]
+mode = "smart"
+
 [observability]
 enabled = true
+# 注：redact_query_string（远程 Dashboard 配置，默认 false）不被当前 wrangler 4.118 识别，
+# 且默认值即 false，故不在此声明；升级 wrangler 后如需可补充
 
 [[d1_databases]]
 binding = "DB"

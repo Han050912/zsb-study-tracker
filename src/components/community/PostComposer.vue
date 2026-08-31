@@ -260,7 +260,7 @@ async function submit() {
         @click="switchType('share')">分享</button>
       <button class="px-3 py-1.5 rounded-md transition-colors"
         :class="isQuestion ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-        @click="switchType('question')">提问</button>
+        @click="switchType('question')">❓ 提问</button>
     </div>
 
     <!-- Markdown 工具栏 + 预览切换 -->
