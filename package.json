@@ -29,6 +29,7 @@
       "!dist/screenshots/**"
     ],
     "asar": true,
+    "compression": "maximum",
     "publish": {
       "provider": "github",
       "owner": "Han050912",
@@ -42,8 +43,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "专升本学习助手",
-      "compression": "maximum"
+      "shortcutName": "专升本学习助手"
     },
     "mac": {
       "target": "dmg",
