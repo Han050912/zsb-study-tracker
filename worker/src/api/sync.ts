@@ -16,6 +16,69 @@ import { vocabMapping } from './vocab'
 import { readingMapping, listeningMapping, templatesMapping } from './english'
 import { materialsMapping } from './materials'
 import { todosMapping } from './todos'
+import { rateLimit } from '../middleware/rateLimit'
+
+/**
+ * 快照防护上限：
+ * - 大小：正常快照在数 MB 内（错题图片为 base64 存储），10MB 远超合理范围，仅恶意/异常客户端可达
+ * - 条数：防止单用户制造超大 batch（语句数超出 D1 上限时按 db.ts 约定整体失败，这里提前给出明确错误）
+ * - 单字段：D1 绑定参数上限为 1MB，超限的字符串（如超大 base64）提前拦截并给出可读错误
+ */
+export const SYNC_MAX_BYTES = 10 * 1024 * 1024
+const MAX_ITEMS_PER_COLLECTION = 10_000
+const MAX_TOTAL_ITEMS = 50_000
+const MAX_FIELD_CHARS = 1_000_000
+
+/** 校验快照中的数组集合：存在则必须为数组、每项为非空对象、不含超长字段，并统计总条数 */
+function assertCollection(container: Record<string, unknown>, key: string, total: { n: number }): void {
+  const v = container[key]
+  if (v === undefined || v === null) return
+  if (!Array.isArray(v)) throw new HttpError(400, `快照字段 ${key} 应为数组`)
+  if (v.length > MAX_ITEMS_PER_COLLECTION) throw new HttpError(413, `快照字段 ${key} 超过 ${MAX_ITEMS_PER_COLLECTION} 条上限`)
+  for (const item of v) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new HttpError(400, `快照字段 ${key} 含非法条目`)
+    for (const value of Object.values(item as Record<string, unknown>)) {
+      if (typeof value === 'string' && value.length > MAX_FIELD_CHARS) {
+        throw new HttpError(413, `快照字段 ${key} 存在超过 1MB 的单条内容`)
+      }
+    }
+  }
+  total.n += v.length
+}
+
+/** 校验快照整体结构：不合法直接 400/413，避免畸形数据进入替换流程后以 500 形式失败 */
+function validateSnapshot(state: unknown): asserts state is Record<string, any> {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) throw new HttpError(400, '快照格式错误')
+  const s = state as Record<string, any>
+  const total = { n: 0 }
+
+  assertCollection(s, 'subjects', total)
+  assertCollection(s, 'habits', total)
+  for (const t of SIMPLE_TABLES) assertCollection(s, t.key, total)
+
+  if (s.english !== undefined && s.english !== null) {
+    if (typeof s.english !== 'object' || Array.isArray(s.english)) throw new HttpError(400, '快照字段 english 应为对象')
+    for (const t of ENGLISH_TABLES) assertCollection(s.english as Record<string, unknown>, t.key, total)
+  }
+
+  if (s.summaries !== undefined && s.summaries !== null) {
+    if (typeof s.summaries !== 'object' || Array.isArray(s.summaries)) throw new HttpError(400, '快照字段 summaries 应为对象')
+    for (const v of Object.values(s.summaries)) {
+      if (!v || typeof v !== 'object' || Array.isArray(v)) throw new HttpError(400, '快照字段 summaries 含非法条目')
+      if (typeof (v as Record<string, unknown>).date !== 'string') throw new HttpError(400, '每日总结缺少日期')
+    }
+    total.n += Object.keys(s.summaries).length
+  }
+
+  for (const key of ['gamification', 'pomodoro', 'settings'] as const) {
+    const v = s[key]
+    if (v !== undefined && v !== null && (typeof v !== 'object' || Array.isArray(v))) {
+      throw new HttpError(400, `快照字段 ${key} 应为对象`)
+    }
+  }
+
+  if (total.n > MAX_TOTAL_ITEMS) throw new HttpError(413, `快照超过 ${MAX_TOTAL_ITEMS} 条记录上限`)
+}
 
 /**
  * 全量数据同步：
@@ -145,8 +208,9 @@ export function registerSyncRoutes() {
   })
 
   on('POST', '/api/data/sync', true, async (ctx) => {
-    const state = await body(ctx.request)
-    if (!state || typeof state !== 'object') throw new HttpError(400, '快照格式错误')
+    rateLimit(ctx.request, 'data:sync', 60)
+    const state = await body(ctx.request, SYNC_MAX_BYTES)
+    validateSnapshot(state)
 
 
     // 服务端积分规则（基于推送快照检测，refId 去重保证每日/每档仅发放一次）。

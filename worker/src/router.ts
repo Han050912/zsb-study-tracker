@@ -70,10 +70,26 @@ export async function route(request: Request, env: Env): Promise<Response> {
   throw new HttpError(404, '接口不存在')
 }
 
-/** 解析 JSON 请求体；非法 JSON 抛出 400。 */
-export async function body<T = any>(request: Request): Promise<T> {
+/**
+ * 解析 JSON 请求体；非法 JSON 抛出 400。
+ * maxBytes：请求体大小上限（字节），超限抛 413。先按 Content-Length 预检快速失败，
+ * 再在读取后按实际长度复核（防止分块传输/谎报长度的客户端绕过预检）。
+ */
+export async function body<T = any>(request: Request, maxBytes?: number): Promise<T> {
+  if (maxBytes !== undefined) {
+    const declared = Number(request.headers.get('Content-Length') || 0)
+    if (declared > maxBytes) throw new HttpError(413, '请求体超过大小上限')
+  }
+  let text: string
   try {
-    return (await request.json()) as T
+    text = await request.text()
+  } catch {
+    throw new HttpError(400, '请求体读取失败')
+  }
+  // text.length 按字符计，对多字节字符最多低估约 3 倍，作为上限复核足够
+  if (maxBytes !== undefined && text.length > maxBytes) throw new HttpError(413, '请求体超过大小上限')
+  try {
+    return JSON.parse(text) as T
   } catch {
     throw new HttpError(400, '请求体不是合法 JSON')
   }
