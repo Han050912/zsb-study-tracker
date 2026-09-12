@@ -5,8 +5,10 @@ import { registerSubjectRoutes } from './api/subjects'
 import { registerRecordRoutes } from './api/records'
 import { registerProblemRoutes } from './api/problems'
 import { registerErrorRoutes } from './api/errors'
+import { registerErrorImageRoutes } from './api/errorImages'
 import { registerExamRoutes } from './api/exams'
 import { registerNoteRoutes } from './api/notes'
+import { registerNoteBodyRoutes } from './api/noteBodies'
 import { registerVocabRoutes } from './api/vocab'
 import { registerEnglishRoutes } from './api/english'
 import { registerSummaryRoutes } from './api/summaries'
@@ -30,7 +32,7 @@ import { registerUploadRoutes, cleanupOrphanUploads } from './api/uploads'
 import { registerFeedbackRoutes } from './api/feedback'
 import './api/teams'
 import { HttpError } from './db'
-import { canCache, getCached, putCache } from './middleware/cache'
+import { canCache, getCached, purgeUserCache, putCache } from './middleware/cache'
 import { corsHeaders } from './cors'
 
 export interface Env {
@@ -77,6 +79,10 @@ export default {
       if (canCache(request) && res.status === 200) {
         putCache(request, res.clone(), ctx)
       }
+      // 写操作成功后失效该用户的读缓存，避免写入后 TTL 内读到旧数据
+      if (request.method !== 'GET' && res.status < 400) {
+        purgeUserCache(request, ctx)
+      }
 
       return res
     } catch (e) {
@@ -89,11 +95,11 @@ export default {
   },
 
   /** 每周一 08:00（UTC+8）触发：周报推送与孤图清理 */
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
     // 周报推送与孤图清理彼此独立：任一失败不影响另一个（各自 catch 留日志，避免 allSettled 静默吞掉错误）
     await Promise.allSettled([
-      pushWeeklyReports(env).catch(e => console.error('[cron] 周报推送失败', e)),
-      cleanupOrphanUploads(env).catch(e => console.error('[cron] 孤图清理失败', e))
+      pushWeeklyReports(env).catch((e) => console.error('[cron] 周报推送失败', e)),
+      cleanupOrphanUploads(env).catch((e) => console.error('[cron] 孤图清理失败', e))
     ])
   }
 }
@@ -104,8 +110,10 @@ registerSubjectRoutes()
 registerRecordRoutes()
 registerProblemRoutes()
 registerErrorRoutes()
+registerErrorImageRoutes()
 registerExamRoutes()
 registerNoteRoutes()
+registerNoteBodyRoutes()
 registerVocabRoutes()
 registerEnglishRoutes()
 registerSummaryRoutes()

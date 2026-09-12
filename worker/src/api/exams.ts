@@ -29,7 +29,4 @@ export const examsMapping = crudHandlers({
 
 export function registerExamRoutes() {
   on('GET', '/api/exams', true, examsMapping.list)
-  on('POST', '/api/exams', true, examsMapping.create)
-  on('PUT', '/api/exams/:id', true, examsMapping.update)
-  on('DELETE', '/api/exams/:id', true, examsMapping.remove)
 }

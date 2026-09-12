@@ -45,8 +45,7 @@ function match(segments: string[], path: string[]): Record<string, string> | nul
         // 畸形百分号编码（如 %zz）视为不匹配，交由上层返回 404，而非 500
         return null
       }
-    }
-    else if (seg !== path[i]) return null
+    } else if (seg !== path[i]) return null
   }
   return params
 }

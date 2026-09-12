@@ -39,13 +39,15 @@ export async function timingSafeEqual(a: string, b: string): Promise<boolean> {
 }
 
 // ---------- 密码策略（唯一新增规则：8-14 位 + 必须同时含字母和数字；仅注册生效） ----------
-export const passwordSchema = z.string()
+export const passwordSchema = z
+  .string()
   .min(8, '密码至少 8 位')
   .max(14, '密码最多 14 位')
-  .refine(v => /[A-Za-z]/.test(v) && /\d/.test(v), '密码必须同时包含字母和数字')
+  .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), '密码必须同时包含字母和数字')
 
-export const usernameSchema = z.string()
-  .transform(s => s.trim())
+export const usernameSchema = z
+  .string()
+  .transform((s) => s.trim())
   .pipe(z.string().min(2, '用户名至少 2 个字符').max(20, '用户名最多 20 个字符'))
 
 export const registerSchema = z.object({
@@ -69,12 +71,16 @@ export const IMAGE_URL_PATTERN = /^\/api\/community\/images\/[a-f0-9]{16}$/
 
 /** trim 后校验最大长度（复刻原 `String(x ?? '').trim()` + 长度上限语义） */
 export function trimMax(max: number, msg: string) {
-  return z.string().transform(s => s.trim()).pipe(z.string().max(max, msg))
+  return z
+    .string()
+    .transform((s) => s.trim())
+    .pipe(z.string().max(max, msg))
 }
 
 /** 图片 URL 数组：仅保留字符串 → 去重 → 截断到 max → 逐项校验路径格式（复刻原 handler 语义） */
 export function imageUrlsSchema(max: number) {
-  return z.array(z.unknown())
-    .transform(arr => [...new Set(arr.filter((u): u is string => typeof u === 'string'))].slice(0, max))
+  return z
+    .array(z.unknown())
+    .transform((arr) => [...new Set(arr.filter((u): u is string => typeof u === 'string'))].slice(0, max))
     .pipe(z.array(z.string().regex(IMAGE_URL_PATTERN, '图片地址无效')))
 }

@@ -33,7 +33,4 @@ export const todosMapping = crudHandlers({
 
 export function registerTodoRoutes() {
   on('GET', '/api/todos', true, todosMapping.list)
-  on('POST', '/api/todos', true, todosMapping.create)
-  on('PUT', '/api/todos/:id', true, todosMapping.update)
-  on('DELETE', '/api/todos/:id', true, todosMapping.remove)
 }

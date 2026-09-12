@@ -25,7 +25,4 @@ export const problemsMapping = crudHandlers({
 
 export function registerProblemRoutes() {
   on('GET', '/api/problems', true, problemsMapping.list)
-  on('POST', '/api/problems', true, problemsMapping.create)
-  on('PUT', '/api/problems/:id', true, problemsMapping.update)
-  on('DELETE', '/api/problems/:id', true, problemsMapping.remove)
 }

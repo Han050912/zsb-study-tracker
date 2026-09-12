@@ -29,7 +29,4 @@ export const recordsMapping = crudHandlers({
 
 export function registerRecordRoutes() {
   on('GET', '/api/records', true, recordsMapping.list)
-  on('POST', '/api/records', true, recordsMapping.create)
-  on('PUT', '/api/records/:id', true, recordsMapping.update)
-  on('DELETE', '/api/records/:id', true, recordsMapping.remove)
 }

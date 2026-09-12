@@ -175,6 +175,64 @@ CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id
 -- 已建库升级：通知精准跳转目标（#11），执行一次：
 --   ALTER TABLE community_notifications ADD COLUMN target_type TEXT;
 --   ALTER TABLE community_notifications ADD COLUMN target_id TEXT;
+-- 已建库升级：记录级增量同步（Phase 3）——删除墓碑表 + 各业务表的 LWW 时间戳/拉取序号，执行一次：
+--   CREATE TABLE IF NOT EXISTS sync_deletions ( user_id TEXT NOT NULL REFERENCES users(id), domain TEXT NOT NULL, record_key TEXT NOT NULL, deleted_at INTEGER NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (user_id, domain, record_key) );
+--   CREATE INDEX IF NOT EXISTS idx_sync_deletions_seq ON sync_deletions(user_id, seq);
+--   ALTER TABLE subjects ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE subjects ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE chapters ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE chapters ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE topics ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE topics ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE study_records ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE study_records ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE problem_sessions ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE problem_sessions ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE error_questions ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE error_questions ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE exam_records ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE exam_records ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   -- notes 表已存在 updated_at（语义即客户端编辑时刻，直接复用），仅需补 server_seq：
+--   ALTER TABLE notes ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE materials ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE materials ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE todos ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE todos ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE habits ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE habits ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE habit_records ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE habit_records ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE daily_summaries ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE daily_summaries ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE gamification ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE gamification ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE points_log ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE points_log ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE pomodoro_daily ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE pomodoro_daily ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE pomodoro_interruptions ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE pomodoro_interruptions ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE pomodoro_records ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE pomodoro_records ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE user_settings ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE user_settings ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE default_quotes ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE default_quotes ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE vocab_records ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE vocab_records ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE reading_records ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE reading_records ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE listening_records ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE listening_records ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE essay_templates ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+--   ALTER TABLE essay_templates ADD COLUMN server_seq INTEGER NOT NULL DEFAULT 0;
+-- 已建库升级：笔记正文外置 + 本地搜索索引，执行一次：
+--   ALTER TABLE notes ADD COLUMN body_updated_at INTEGER NOT NULL DEFAULT 0;
+--   CREATE TABLE IF NOT EXISTS note_body_chunks ( user_id TEXT NOT NULL REFERENCES users(id), note_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, data BLOB NOT NULL, updated_at INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, note_id, chunk_index) );
+--   CREATE INDEX IF NOT EXISTS idx_note_body_chunks_user ON note_body_chunks(user_id, note_id);
+--   INSERT OR IGNORE INTO note_body_chunks (user_id, note_id, chunk_index, data, updated_at, created_at) SELECT user_id, id, 0, CAST(content AS BLOB), COALESCE(updated_at, 0), CAST(strftime('%s','now') AS INTEGER) FROM notes WHERE type IS NULL AND content <> '';
+--   UPDATE notes SET body_updated_at = COALESCE(updated_at, 0) WHERE type IS NULL AND content <> '';
+--   UPDATE notes SET content = '';
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -214,7 +272,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   dnd_muted_types TEXT NOT NULL DEFAULT '',   -- 勿扰屏蔽通知类型（JSON 数组）
   dnd_mute_message INTEGER NOT NULL DEFAULT 0, -- 勿扰屏蔽消息（1=屏蔽）
   partner_share_enabled INTEGER NOT NULL DEFAULT 0, -- 允许搭子查看学习数据（周报对比/定向分享；默认关闭）
-  partner_remind_enabled INTEGER NOT NULL DEFAULT 1  -- 允许搭子发送学习鼓励提醒（默认开启）
+  partner_remind_enabled INTEGER NOT NULL DEFAULT 1, -- 允许搭子发送学习鼓励提醒（默认开启）
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========
@@ -228,6 +288,8 @@ CREATE TABLE IF NOT EXISTS subjects (
   color TEXT NOT NULL,
   weight INTEGER DEFAULT 0,
   builtin INTEGER DEFAULT 0,    -- 0=用户自定义, 1=系统预设（如语文/数学/英语/计算机）
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -236,6 +298,8 @@ CREATE TABLE IF NOT EXISTS chapters (
   user_id TEXT NOT NULL REFERENCES users(id),
   subject_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -246,6 +310,8 @@ CREATE TABLE IF NOT EXISTS topics (
   name TEXT NOT NULL,
   mastery INTEGER DEFAULT 0,    -- 0-100 掌握程度
   importance TEXT DEFAULT 'normal',
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -260,6 +326,8 @@ CREATE TABLE IF NOT EXISTS study_records (
   topic TEXT,
   note TEXT,
   created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -272,6 +340,8 @@ CREATE TABLE IF NOT EXISTS problem_sessions (
   total INTEGER NOT NULL,
   correct INTEGER NOT NULL,
   types TEXT NOT NULL,          -- JSON 字符串：题型分布
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -285,9 +355,23 @@ CREATE TABLE IF NOT EXISTS error_questions (
   type TEXT NOT NULL,           -- 题型（选择题/填空题/简答题等）
   content TEXT NOT NULL,        -- 题目内容
   answer TEXT,                  -- 正确答案
-  image TEXT,                   -- base64 dataURL（题目配图）
+  image TEXT,                   -- 'r2:<sha256>' 引用（字节存 R2，归属见 error_images）
   review_count INTEGER DEFAULT 0,
   mastered INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  PRIMARY KEY (user_id, id)
+);
+
+-- ========== 错题图片（R2 对象归属与孤儿清理） ==========
+-- id 为图片字节 sha256 十六进制（内容寻址）：同一张图恒定同一 id，重复上传幂等
+CREATE TABLE IF NOT EXISTS error_images (
+  id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  r2_key TEXT NOT NULL,                      -- R2 对象键：errors/<user_id>/<sha256>.<ext>
+  size INTEGER NOT NULL,
+  content_type TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, id)
 );
@@ -303,6 +387,8 @@ CREATE TABLE IF NOT EXISTS exam_records (
   total_score INTEGER NOT NULL,
   minutes INTEGER NOT NULL,
   parts TEXT,                   -- JSON：各部分得分明细
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -312,10 +398,12 @@ CREATE TABLE IF NOT EXISTS notes (
   user_id TEXT NOT NULL REFERENCES users(id),
   subject_id TEXT NOT NULL,
   title TEXT NOT NULL,
-  content TEXT NOT NULL,        -- Markdown 正文 / PDF 的 D1 引用（'d1:<id>'，原文分片存 pdf_chunks）
+  content TEXT NOT NULL DEFAULT '', -- 历史兼容占位；正文已外置，不再读写业务内容
   tags TEXT,                    -- JSON 数组：标签列表
   type TEXT,                    -- NULL 为 Markdown 笔记；'pdf' 为 PDF 原文笔记
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,  -- 客户端编辑时刻(ms)，LWW 比较键（既有列，记录级同步复用）
+  body_updated_at INTEGER NOT NULL DEFAULT 0, -- Markdown 正文版本；PDF 恒为 0
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -327,6 +415,8 @@ CREATE TABLE IF NOT EXISTS vocab_records (
   new_words INTEGER NOT NULL,
   review_words INTEGER NOT NULL,
   points INTEGER DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -337,6 +427,8 @@ CREATE TABLE IF NOT EXISTS reading_records (
   date TEXT NOT NULL,
   wpm INTEGER NOT NULL,        -- 阅读速度（词/分钟）
   accuracy REAL NOT NULL,      -- 正确率（0-1）
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -348,6 +440,8 @@ CREATE TABLE IF NOT EXISTS listening_records (
   minutes INTEGER NOT NULL,
   material TEXT NOT NULL,      -- 听力材料名称
   mode TEXT NOT NULL,          -- 精听/泛听/听写
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -359,6 +453,8 @@ CREATE TABLE IF NOT EXISTS essay_templates (
   content TEXT NOT NULL,
   level INTEGER DEFAULT 1,
   category TEXT,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -370,6 +466,8 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
   harvest TEXT NOT NULL,        -- 今日收获
   improve TEXT NOT NULL,        -- 不足之处
   plan TEXT NOT NULL,           -- 明日计划
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, date)
 );
 
@@ -381,6 +479,8 @@ CREATE TABLE IF NOT EXISTS habits (
   type TEXT NOT NULL,           -- 'checkbox' | 'minutes' | 'count'
   target INTEGER,
   bad INTEGER DEFAULT 0,        -- 0=好习惯, 1=坏习惯
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -390,6 +490,8 @@ CREATE TABLE IF NOT EXISTS habit_records (
   date TEXT NOT NULL,
   value TEXT,
   checkin INTEGER DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, habit_id, date)
 );
 
@@ -408,6 +510,8 @@ CREATE TABLE IF NOT EXISTS materials (
   read_pages INTEGER,
   notes TEXT,
   created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -417,7 +521,9 @@ CREATE TABLE IF NOT EXISTS gamification (
   points INTEGER DEFAULT 0,
   streak INTEGER DEFAULT 0,     -- 连续打卡天数
   last_checkin TEXT DEFAULT '',
-  achievements TEXT DEFAULT '[]' -- JSON 数组
+  achievements TEXT DEFAULT '[]', -- JSON 数组
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
 
 CREATE TABLE IF NOT EXISTS points_log (
@@ -426,7 +532,9 @@ CREATE TABLE IF NOT EXISTS points_log (
   date TEXT NOT NULL,
   points INTEGER NOT NULL,
   reason TEXT NOT NULL,
-  ref_id TEXT
+  ref_id TEXT,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
 
 -- ========== 番茄钟统计 ==========
@@ -436,6 +544,8 @@ CREATE TABLE IF NOT EXISTS pomodoro_daily (
   count INTEGER DEFAULT 0,
   minutes INTEGER DEFAULT 0,
   interruptions INTEGER DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, date)
 );
 
@@ -444,7 +554,9 @@ CREATE TABLE IF NOT EXISTS pomodoro_interruptions (
   user_id TEXT NOT NULL REFERENCES users(id),
   date TEXT NOT NULL,
   reason TEXT NOT NULL,
-  time INTEGER NOT NULL
+  time INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
 
 CREATE TABLE IF NOT EXISTS pomodoro_records (
@@ -456,6 +568,8 @@ CREATE TABLE IF NOT EXISTS pomodoro_records (
   description TEXT DEFAULT '',
   source TEXT DEFAULT 'solo',
   partner_name TEXT,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -472,13 +586,17 @@ CREATE TABLE IF NOT EXISTS todos (
   due_at INTEGER,                  -- 最晚截止时间（时间戳），到点未完成则提醒
   start_notified_at INTEGER,       -- 开始提醒已发出时间（去重）
   due_notified_at INTEGER,         -- 截止提醒已发出时间（去重）
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
 -- ========== 自定义引言 ==========
 CREATE TABLE IF NOT EXISTS default_quotes (
   user_id TEXT PRIMARY KEY REFERENCES users(id),
-  quotes TEXT NOT NULL           -- JSON 数组
+  quotes TEXT NOT NULL,          -- JSON 数组
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
 
 -- ========== 社区广场 ==========
@@ -569,6 +687,18 @@ CREATE TABLE IF NOT EXISTS pdf_chunks (
   PRIMARY KEY (user_id, pdf_id, chunk_index)
 );
 
+-- ========== Markdown 笔记正文分片（不进入 Pinia / 记录同步载荷） ==========
+CREATE TABLE IF NOT EXISTS note_body_chunks (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  note_id TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  updated_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, note_id, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_note_body_chunks_user ON note_body_chunks(user_id, note_id);
+
 -- ========== 社区增强：图片上传 / 举报 / 审核留痕 ==========
 -- 图片上传记录：二进制存 R2（绑定 IMAGES），本表仅存元数据；读取走 /api/community/images/:id 代理路由
 CREATE TABLE IF NOT EXISTS community_uploads (
@@ -628,7 +758,7 @@ CREATE TABLE IF NOT EXISTS circle_members (
 );
 CREATE INDEX IF NOT EXISTS idx_cmembers_user ON circle_members(user_id);
 
--- 私信：一对一消息（单向模式，无需互关；发送即通知对方，举报复用 community_reports target_type='message'）
+-- 私信：一对一消息（单向模式，无需互关；不经通知中心，由「消息」模块承载；举报复用 community_reports target_type='message'）
 CREATE TABLE IF NOT EXISTS community_messages (
   id TEXT PRIMARY KEY,
   from_id TEXT NOT NULL REFERENCES users(id),
@@ -849,3 +979,25 @@ CREATE TABLE IF NOT EXISTS weekly_report_push_log (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (week_key, from_id, to_id)
 );
+
+-- ========== 按域同步版本（域级 LWW 的依据） ==========
+CREATE TABLE IF NOT EXISTS sync_domain_versions (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  domain TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, domain)
+);
+
+-- ========== 记录级增量同步：删除墓碑 ==========
+-- 墓碑永久保留（不清理）：单行约 60 字节，量级相对记录本身可忽略；保留可彻底避免「旧设备把已删记录复活」
+-- 同 key 再次删除 = INSERT OR REPLACE 更新 deleted_at/seq
+CREATE TABLE IF NOT EXISTS sync_deletions (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  domain TEXT NOT NULL,
+  record_key TEXT NOT NULL,    -- 记录键，见设计 3.3 键空间
+  deleted_at INTEGER NOT NULL, -- 客户端删除时刻（ms），参与 LWW
+  seq INTEGER NOT NULL,        -- 服务端单调序号，参与拉取游标
+  PRIMARY KEY (user_id, domain, record_key)
+);
+CREATE INDEX IF NOT EXISTS idx_sync_deletions_seq ON sync_deletions(user_id, seq);

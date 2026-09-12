@@ -4,7 +4,7 @@ import { run, all, batch, HttpError } from '../db'
 /**
  * PDF 原文 D1 分片存储：
  * - PDF 二进制拆分为 ~95KB 分片存入 pdf_chunks 表
- * - notes.content 存 'd1:<id>' 引用，阅读时按引用反查分片拼装
+ * - PDF 直接以 note.id 作为 pdf_id，阅读时按该 id 反查分片拼装
  * - key 按 (user_id, pdf_id) 隔离，删除笔记时由同步接口清理孤儿分片
  */
 
@@ -52,9 +52,12 @@ export function registerPdfRoutes() {
         for (let i = start; i < end; i++) {
           const chunk = buf.slice(i * CHUNK_SIZE, Math.min((i + 1) * CHUNK_SIZE, buf.byteLength))
           stmts.push(
-            ctx.env.DB.prepare(
-              'INSERT INTO pdf_chunks (user_id, pdf_id, chunk_index, data) VALUES (?, ?, ?, ?)'
-            ).bind(ctx.userId, tmpId, i, chunk)
+            ctx.env.DB.prepare('INSERT INTO pdf_chunks (user_id, pdf_id, chunk_index, data) VALUES (?, ?, ?, ?)').bind(
+              ctx.userId,
+              tmpId,
+              i,
+              chunk
+            )
           )
         }
         await batch(ctx.env, stmts)
@@ -62,7 +65,11 @@ export function registerPdfRoutes() {
       // 全部写入成功：删旧正式分片 + 临时分片原子改名
       await batch(ctx.env, [
         ctx.env.DB.prepare('DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?').bind(ctx.userId, pdfId),
-        ctx.env.DB.prepare('UPDATE pdf_chunks SET pdf_id = ? WHERE user_id = ? AND pdf_id = ?').bind(pdfId, ctx.userId, tmpId)
+        ctx.env.DB.prepare('UPDATE pdf_chunks SET pdf_id = ? WHERE user_id = ? AND pdf_id = ?').bind(
+          pdfId,
+          ctx.userId,
+          tmpId
+        )
       ])
     } catch (e) {
       // 清理半成品临时分片
@@ -75,9 +82,11 @@ export function registerPdfRoutes() {
 
   on('GET', '/api/pdfs/:id', true, async (ctx) => {
     const pdfId = validId(ctx.params.id)
-    const rows = await all(ctx.env,
+    const rows = await all(
+      ctx.env,
       'SELECT data FROM pdf_chunks WHERE user_id = ? AND pdf_id = ? ORDER BY chunk_index',
-      ctx.userId, pdfId
+      ctx.userId,
+      pdfId
     )
     if (!rows.length) throw new HttpError(404, '文件不存在或已被删除')
 

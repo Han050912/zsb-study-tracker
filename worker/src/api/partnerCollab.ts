@@ -16,8 +16,7 @@ function sideOf(row: { from_id: string; to_id: string }, userId: string): 'from'
 
 /** 用户自定义头像相对 URL（未设置返回 undefined，前端回退首字母） */
 async function avatarOf(env: Env, userId: string): Promise<string | undefined> {
-  const r = await first<{ avatar: string | null }>(env,
-    `SELECT avatar FROM user_settings WHERE user_id = ?`, userId)
+  const r = await first<{ avatar: string | null }>(env, `SELECT avatar FROM user_settings WHERE user_id = ?`, userId)
   return r?.avatar ?? undefined
 }
 
@@ -67,9 +66,14 @@ export function registerPartnerStudy() {
     const focusMinutes = sanitizeMinutes(b?.focusMinutes, 25, 120)
     const mode = b?.mode === 'countup' ? 'countup' : 'countdown'
 
-    const busy = await first<{ id: string }>(ctx.env,
+    const busy = await first<{ id: string }>(
+      ctx.env,
       `SELECT id FROM partner_study_sessions WHERE status = 'active' AND (from_id IN (?, ?) OR to_id IN (?, ?)) LIMIT 1`,
-      ctx.userId, partnerId, ctx.userId, partnerId)
+      ctx.userId,
+      partnerId,
+      ctx.userId,
+      partnerId
+    )
     if (busy) throw new HttpError(400, '有一方正在专注中，稍后再试')
 
     const id = uid()
@@ -79,8 +83,11 @@ export function registerPartnerStudy() {
         `INSERT INTO partner_study_sessions (id, from_id, to_id, status, mode, focus_minutes, from_state, to_state, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, 'idle', 'idle', ?, ?)`
       ).bind(id, ctx.userId, partnerId, mode, focusMinutes, now, now),
       notifyStatement(ctx.env, {
-        userId: partnerId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner_study', targetId: id,
+        userId: partnerId,
+        type: 'partner',
+        actorId: ctx.userId,
+        targetType: 'partner_study',
+        targetId: id,
         content: `${await displayName(ctx.env, ctx.userId)} 邀请你一起开黑学习（${mode === 'countup' ? '正计时' : `${focusMinutes}分钟专注`}）`
       })
     ])
@@ -89,9 +96,12 @@ export function registerPartnerStudy() {
 
   // 获取我当前进行中的会话（无则返回 null）
   on('GET', '/api/partner-study/sessions/active', true, async (ctx) => {
-    const s = await first<StudySessionRow>(ctx.env,
+    const s = await first<StudySessionRow>(
+      ctx.env,
       `SELECT * FROM partner_study_sessions WHERE status = 'active' AND (from_id = ? OR to_id = ?) LIMIT 1`,
-      ctx.userId, ctx.userId)
+      ctx.userId,
+      ctx.userId
+    )
     if (!s) return Response.json({ session: null })
     return Response.json({ session: await mapSession(ctx.env, s, ctx.userId) })
   })
@@ -99,29 +109,42 @@ export function registerPartnerStudy() {
   // 历史开黑记录（我参与且已结束的会话，按结束时间倒序）
   on('GET', '/api/partner-study/sessions/history', true, async (ctx) => {
     const rows = await all<{
-      id: string; from_id: string; to_id: string; created_at: number; updated_at: number
-      ended_at: number | null; from_online_seconds: number; to_online_seconds: number
-    }>(ctx.env, `
+      id: string
+      from_id: string
+      to_id: string
+      created_at: number
+      updated_at: number
+      ended_at: number | null
+      from_online_seconds: number
+      to_online_seconds: number
+    }>(
+      ctx.env,
+      `
       SELECT id, from_id, to_id, created_at, updated_at, ended_at, from_online_seconds, to_online_seconds
       FROM partner_study_sessions
       WHERE status = 'done' AND (from_id = ? OR to_id = ?)
       ORDER BY COALESCE(ended_at, updated_at) DESC LIMIT 50
-    `, ctx.userId, ctx.userId)
+    `,
+      ctx.userId,
+      ctx.userId
+    )
 
-    const records = await Promise.all(rows.map(async r => {
-      const side = r.from_id === ctx.userId ? 'from' : 'to'
-      const partnerId = side === 'from' ? r.to_id : r.from_id
-      return {
-        id: r.id,
-        partnerId,
-        partnerName: await displayName(ctx.env, partnerId),
-        partnerAvatar: await avatarOf(ctx.env, partnerId),
-        startedAt: r.created_at,
-        endedAt: r.ended_at ?? r.updated_at,
-        myOnlineSeconds: side === 'from' ? r.from_online_seconds : r.to_online_seconds,
-        partnerOnlineSeconds: side === 'from' ? r.to_online_seconds : r.from_online_seconds
-      }
-    }))
+    const records = await Promise.all(
+      rows.map(async (r) => {
+        const side = r.from_id === ctx.userId ? 'from' : 'to'
+        const partnerId = side === 'from' ? r.to_id : r.from_id
+        return {
+          id: r.id,
+          partnerId,
+          partnerName: await displayName(ctx.env, partnerId),
+          partnerAvatar: await avatarOf(ctx.env, partnerId),
+          startedAt: r.created_at,
+          endedAt: r.ended_at ?? r.updated_at,
+          myOnlineSeconds: side === 'from' ? r.from_online_seconds : r.to_online_seconds,
+          partnerOnlineSeconds: side === 'from' ? r.to_online_seconds : r.from_online_seconds
+        }
+      })
+    )
     return Response.json({ records })
   })
 
@@ -146,14 +169,28 @@ export function registerPartnerStudy() {
     if (s.status !== 'active') throw new HttpError(400, '会话已结束')
     const side = sideOf(s, ctx.userId)
 
-    await run(ctx.env,
+    await run(
+      ctx.env,
       `UPDATE partner_study_sessions SET ${side}_state = ?, ${side}_minutes = ?, ${side}_online_seconds = ?, ${side}_elapsed_seconds = ?, ${side}_running = ?, updated_at = ? WHERE id = ?`,
-      state, minutes, onlineSeconds, elapsedSeconds, running, nowSec(), s.id)
+      state,
+      minutes,
+      onlineSeconds,
+      elapsedSeconds,
+      running,
+      nowSec(),
+      s.id
+    )
 
     // 重新查询后判断双方均 done → 会话完成（避免并发下基于旧快照漏判）
     const updated = await getSession(ctx.env, s.id)
     if (updated.from_state === 'done' && updated.to_state === 'done' && updated.status === 'active') {
-      await run(ctx.env, `UPDATE partner_study_sessions SET status = 'done', ended_at = ?, updated_at = ? WHERE id = ?`, nowSec(), nowSec(), s.id)
+      await run(
+        ctx.env,
+        `UPDATE partner_study_sessions SET status = 'done', ended_at = ?, updated_at = ? WHERE id = ?`,
+        nowSec(),
+        nowSec(),
+        s.id
+      )
       updated.status = 'done'
     }
     return Response.json({ session: await mapSession(ctx.env, updated, ctx.userId) })
@@ -163,7 +200,13 @@ export function registerPartnerStudy() {
   on('DELETE', '/api/partner-study/sessions/:id', true, async (ctx) => {
     const s = await getSession(ctx.env, ctx.params.id)
     sideOf(s, ctx.userId)
-    await run(ctx.env, `UPDATE partner_study_sessions SET status = 'done', ended_at = ?, updated_at = ? WHERE id = ?`, nowSec(), nowSec(), s.id)
+    await run(
+      ctx.env,
+      `UPDATE partner_study_sessions SET status = 'done', ended_at = ?, updated_at = ? WHERE id = ?`,
+      nowSec(),
+      nowSec(),
+      s.id
+    )
     return Response.json({ ok: true })
   })
 }
@@ -225,8 +268,11 @@ export function registerPartnerPlans() {
         `INSERT INTO partner_plans (id, from_id, to_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
       ).bind(id, ctx.userId, partnerId, title, now, now),
       notifyStatement(ctx.env, {
-        userId: partnerId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner_plan', targetId: id,
+        userId: partnerId,
+        type: 'partner',
+        actorId: ctx.userId,
+        targetType: 'partner_plan',
+        targetId: id,
         content: `${await displayName(ctx.env, ctx.userId)} 创建了协作备考计划「${title}」`
       })
     ])
@@ -236,9 +282,16 @@ export function registerPartnerPlans() {
   // 我的计划列表
   on('GET', '/api/partner-plans', true, async (ctx) => {
     const rows = await all<{
-      id: string; from_id: string; to_id: string; title: string; created_at: number
-      total: number; my_done: number
-    }>(ctx.env, `
+      id: string
+      from_id: string
+      to_id: string
+      title: string
+      created_at: number
+      total: number
+      my_done: number
+    }>(
+      ctx.env,
+      `
       SELECT p.*,
         (SELECT COUNT(*) FROM partner_plan_tasks t WHERE t.plan_id = p.id) AS total,
         (SELECT COUNT(*) FROM partner_plan_tasks t WHERE t.plan_id = p.id
@@ -246,20 +299,26 @@ export function registerPartnerPlans() {
       FROM partner_plans p
       WHERE p.from_id = ? OR p.to_id = ?
       ORDER BY p.created_at DESC LIMIT 50
-    `, ctx.userId, ctx.userId, ctx.userId)
+    `,
+      ctx.userId,
+      ctx.userId,
+      ctx.userId
+    )
 
-    const items = await Promise.all(rows.map(async r => {
-      const partnerId = r.from_id === ctx.userId ? r.to_id : r.from_id
-      return {
-        id: r.id,
-        title: r.title,
-        partnerId,
-        partnerName: await displayName(ctx.env, partnerId),
-        taskTotal: r.total,
-        myDone: r.my_done,
-        createdAt: r.created_at
-      }
-    }))
+    const items = await Promise.all(
+      rows.map(async (r) => {
+        const partnerId = r.from_id === ctx.userId ? r.to_id : r.from_id
+        return {
+          id: r.id,
+          title: r.title,
+          partnerId,
+          partnerName: await displayName(ctx.env, partnerId),
+          taskTotal: r.total,
+          myDone: r.my_done,
+          createdAt: r.created_at
+        }
+      })
+    )
     return Response.json({ items })
   })
 
@@ -270,7 +329,12 @@ export function registerPartnerPlans() {
     const partnerId = side === 'from' ? plan.to_id : plan.from_id
 
     const tasks = await all<{
-      id: string; title: string; phase: string; done_by_from: number; done_by_to: number; created_at: number
+      id: string
+      title: string
+      phase: string
+      done_by_from: number
+      done_by_to: number
+      created_at: number
     }>(ctx.env, `SELECT * FROM partner_plan_tasks WHERE plan_id = ? ORDER BY created_at ASC`, plan.id)
 
     return Response.json({
@@ -278,7 +342,7 @@ export function registerPartnerPlans() {
       title: plan.title,
       partnerId,
       partnerName: await displayName(ctx.env, partnerId),
-      tasks: tasks.map(t => ({
+      tasks: tasks.map((t) => ({
         id: t.id,
         title: t.title,
         phase: t.phase,
@@ -339,9 +403,13 @@ export function registerPartnerPlans() {
     const done = b?.done ? 1 : 0
     const plan = await getPlan(ctx.env, ctx.params.id)
     const side = sideOf(plan, ctx.userId)
-    const res = await run(ctx.env,
+    const res = await run(
+      ctx.env,
       `UPDATE partner_plan_tasks SET done_by_${side} = ? WHERE id = ? AND plan_id = ?`,
-      done, ctx.params.taskId, plan.id)
+      done,
+      ctx.params.taskId,
+      plan.id
+    )
     if (!res.meta.changes) throw new HttpError(404, '任务不存在')
     return Response.json({ ok: true })
   })
@@ -350,16 +418,23 @@ export function registerPartnerPlans() {
   on('DELETE', '/api/partner-plans/:id/tasks/:taskId', true, async (ctx) => {
     const plan = await getPlan(ctx.env, ctx.params.id)
     sideOf(plan, ctx.userId)
-    const res = await run(ctx.env,
-      `DELETE FROM partner_plan_tasks WHERE id = ? AND plan_id = ?`, ctx.params.taskId, plan.id)
+    const res = await run(
+      ctx.env,
+      `DELETE FROM partner_plan_tasks WHERE id = ? AND plan_id = ?`,
+      ctx.params.taskId,
+      plan.id
+    )
     if (!res.meta.changes) throw new HttpError(404, '任务不存在')
     return Response.json({ ok: true })
   })
 }
 
 async function getPlan(env: Env, id: string) {
-  const p = await first<{ id: string; from_id: string; to_id: string; title: string }>(env,
-    `SELECT * FROM partner_plans WHERE id = ?`, id)
+  const p = await first<{ id: string; from_id: string; to_id: string; title: string }>(
+    env,
+    `SELECT * FROM partner_plans WHERE id = ?`,
+    id
+  )
   if (!p) throw new HttpError(404, '计划不存在')
   return p
 }
@@ -385,8 +460,11 @@ export function registerPartnerReviews() {
         `INSERT INTO partner_reviews (id, from_id, to_id, scheduled_at, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)`
       ).bind(id, ctx.userId, partnerId, scheduledAt, now, now),
       notifyStatement(ctx.env, {
-        userId: partnerId, type: 'partner', actorId: ctx.userId,
-        targetType: 'partner_review', targetId: id,
+        userId: partnerId,
+        type: 'partner',
+        actorId: ctx.userId,
+        targetType: 'partner_review',
+        targetId: id,
         content: `${await displayName(ctx.env, ctx.userId)} 邀请你复盘学习`
       })
     ])
@@ -396,25 +474,36 @@ export function registerPartnerReviews() {
   // 邀约列表（我发起的 + 我收到的）
   on('GET', '/api/partner-reviews', true, async (ctx) => {
     const rows = await all<{
-      id: string; from_id: string; to_id: string; scheduled_at: number; status: string; note: string; created_at: number
-    }>(ctx.env,
+      id: string
+      from_id: string
+      to_id: string
+      scheduled_at: number
+      status: string
+      note: string
+      created_at: number
+    }>(
+      ctx.env,
       `SELECT * FROM partner_reviews WHERE from_id = ? OR to_id = ? ORDER BY scheduled_at DESC LIMIT 50`,
-      ctx.userId, ctx.userId)
+      ctx.userId,
+      ctx.userId
+    )
 
-    const items = await Promise.all(rows.map(async r => {
-      const isFrom = r.from_id === ctx.userId
-      const partnerId = isFrom ? r.to_id : r.from_id
-      return {
-        id: r.id,
-        partnerId,
-        partnerName: await displayName(ctx.env, partnerId),
-        scheduledAt: r.scheduled_at,
-        status: r.status,
-        note: r.note,
-        isFrom,
-        createdAt: r.created_at
-      }
-    }))
+    const items = await Promise.all(
+      rows.map(async (r) => {
+        const isFrom = r.from_id === ctx.userId
+        const partnerId = isFrom ? r.to_id : r.from_id
+        return {
+          id: r.id,
+          partnerId,
+          partnerName: await displayName(ctx.env, partnerId),
+          scheduledAt: r.scheduled_at,
+          status: r.status,
+          note: r.note,
+          isFrom,
+          createdAt: r.created_at
+        }
+      })
+    )
     return Response.json({ items })
   })
 
@@ -425,8 +514,11 @@ export function registerPartnerReviews() {
     if (!action) throw new HttpError(400, 'action 需为 accept 或 done')
     const note = typeof b?.note === 'string' ? b.note.trim().slice(0, 500) : ''
 
-    const r = await first<{ id: string; from_id: string; to_id: string; status: string }>(ctx.env,
-      `SELECT * FROM partner_reviews WHERE id = ?`, ctx.params.id)
+    const r = await first<{ id: string; from_id: string; to_id: string; status: string }>(
+      ctx.env,
+      `SELECT * FROM partner_reviews WHERE id = ?`,
+      ctx.params.id
+    )
     if (!r) throw new HttpError(404, '邀约不存在')
 
     if (action === 'accept') {
@@ -436,15 +528,24 @@ export function registerPartnerReviews() {
     } else {
       sideOf(r, ctx.userId)
       if (r.status === 'pending') throw new HttpError(400, '邀约尚未接受')
-      await run(ctx.env, `UPDATE partner_reviews SET status = 'done', note = ?, updated_at = ? WHERE id = ?`, note, nowSec(), r.id)
+      await run(
+        ctx.env,
+        `UPDATE partner_reviews SET status = 'done', note = ?, updated_at = ? WHERE id = ?`,
+        note,
+        nowSec(),
+        r.id
+      )
     }
     return Response.json({ ok: true })
   })
 
   // 取消邀约（双方均可）
   on('DELETE', '/api/partner-reviews/:id', true, async (ctx) => {
-    const r = await first<{ id: string; from_id: string; to_id: string }>(ctx.env,
-      `SELECT * FROM partner_reviews WHERE id = ?`, ctx.params.id)
+    const r = await first<{ id: string; from_id: string; to_id: string }>(
+      ctx.env,
+      `SELECT * FROM partner_reviews WHERE id = ?`,
+      ctx.params.id
+    )
     if (!r) throw new HttpError(404, '邀约不存在')
     sideOf(r, ctx.userId)
     await run(ctx.env, `DELETE FROM partner_reviews WHERE id = ?`, r.id)

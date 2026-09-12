@@ -32,8 +32,10 @@ export function registerReleaseRoutes() {
       return Response.json({ success: true, data: cached.data })
     }
 
-    const result = await githubFetch<Record<string, unknown>>(ctx.env,
-      '/repos/Han050912/zsb-study-tracker/releases/latest')
+    const result = await githubFetch<Record<string, unknown>>(
+      ctx.env,
+      '/repos/Han050912/zsb-study-tracker/releases/latest'
+    )
     if (result.tokenMissing) {
       console.error('[latest-release] GITHUB_TOKEN 环境变量未配置')
       return Response.json({ success: false }, { status: 500 })

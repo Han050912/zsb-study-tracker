@@ -18,7 +18,11 @@ async function verifyTurnstile(token: string, secret: string): Promise<boolean> 
   const res = await fetch(TURNSTILE_VERIFY_URL, { method: 'POST', body: form })
   const data = (await res.json()) as { success: boolean; 'error-codes'?: string[] }
   if (!data.success) {
-    console.error('[Turnstile] 验证失败', { 'error-codes': data['error-codes'], tokenPrefix: token.slice(0, 8) + '...', hasSecret: !!secret })
+    console.error('[Turnstile] 验证失败', {
+      'error-codes': data['error-codes'],
+      tokenPrefix: token.slice(0, 8) + '...',
+      hasSecret: !!secret
+    })
   }
   return data.success === true
 }
@@ -28,7 +32,7 @@ async function requireTurnstile(request: Request, env: Env): Promise<void> {
   // 令牌不写死源码，由 Worker Secrets 与桌面端构建环境变量共同注入；未配置时 fail-closed 走人机验证。
   // 令牌比较采用恒定时间比较（SHA-256 后逐字节比对），防止时序侧信道逐字节猜测共享令牌。
   const desktopToken = request.headers.get('X-Desktop-Token')
-  if (env.DESKTOP_TOKEN && desktopToken && await timingSafeEqual(desktopToken, env.DESKTOP_TOKEN)) return
+  if (env.DESKTOP_TOKEN && desktopToken && (await timingSafeEqual(desktopToken, env.DESKTOP_TOKEN))) return
   const token = request.headers.get('X-CF-Turnstile-Response')
   if (!token) throw new HttpError(400, '缺少人机验证令牌，请完成验证后重试')
   if (!env.TURNSTILE_SECRET) {
@@ -49,7 +53,13 @@ interface UserRow {
 }
 
 function toUser(row: UserRow) {
-  return { id: row.id, userCode: row.user_code, username: row.username, role: row.role || 'user', createdAt: row.created_at }
+  return {
+    id: row.id,
+    userCode: row.user_code,
+    username: row.username,
+    role: row.role || 'user',
+    createdAt: row.created_at
+  }
 }
 
 /** 生成唯一对外用户 ID：随机 8 位短码（32^8 空间，不可枚举），查重冲突重试，唯一性由 UNIQUE 索引兜底 */
@@ -71,14 +81,31 @@ export function registerAuthRoutes() {
       throw new HttpError(409, '该用户名已被注册')
     }
     const userCode = await nextUserCode(ctx.env)
-    const row: UserRow = { id: uid(), user_code: userCode, username, password_hash: hashPassword(password), role: 'user', created_at: Date.now() }
-    await run(ctx.env, 'INSERT INTO users (id, user_code, username, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
-      row.id, row.user_code, row.username, row.password_hash, row.created_at)
+    const row: UserRow = {
+      id: uid(),
+      user_code: userCode,
+      username,
+      password_hash: hashPassword(password),
+      role: 'user',
+      created_at: Date.now()
+    }
+    await run(
+      ctx.env,
+      'INSERT INTO users (id, user_code, username, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
+      row.id,
+      row.user_code,
+      row.username,
+      row.password_hash,
+      row.created_at
+    )
     // 初始化用户设置与游戏化数据（昵称取登录用户名，其余默认值由表结构兜底）
     await run(ctx.env, 'INSERT INTO user_settings (user_id, user_name) VALUES (?, ?)', row.id, row.username)
     await run(ctx.env, 'INSERT INTO gamification (user_id) VALUES (?)', row.id)
     const token = await signToken(row.id, ctx.env.JWT_SECRET)
-    return Response.json({ token, user: toUser(row) }, { status: 201, headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } })
+    return Response.json(
+      { token, user: toUser(row) },
+      { status: 201, headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } }
+    )
   })
 
   on('POST', '/api/auth/login', false, async (ctx) => {
@@ -91,7 +118,10 @@ export function registerAuthRoutes() {
       throw new HttpError(401, '用户名或密码错误')
     }
     const token = await signToken(row.id, ctx.env.JWT_SECRET)
-    return Response.json({ token, user: toUser(row) }, { headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } })
+    return Response.json(
+      { token, user: toUser(row) },
+      { headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } }
+    )
   })
 
   on('GET', '/api/auth/me', true, async (ctx) => {
@@ -108,7 +138,12 @@ export function registerAuthRoutes() {
       if (payload?.jti) {
         // 顺带清理过期条目，避免黑名单无限增长
         await run(ctx.env, 'DELETE FROM jwt_blacklist WHERE expires_at < ?', Math.floor(Date.now() / 1000))
-        await run(ctx.env, 'INSERT OR IGNORE INTO jwt_blacklist (jti, expires_at) VALUES (?, ?)', payload.jti, payload.exp)
+        await run(
+          ctx.env,
+          'INSERT OR IGNORE INTO jwt_blacklist (jti, expires_at) VALUES (?, ?)',
+          payload.jti,
+          payload.exp
+        )
       }
     }
     return Response.json({ ok: true }, { headers: { 'Set-Cookie': clearAuthCookieHeader(ctx.request) } })

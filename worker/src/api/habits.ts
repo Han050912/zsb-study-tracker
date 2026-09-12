@@ -1,6 +1,6 @@
 import type { Env } from '../index'
-import { on, body } from '../router'
-import { all, first, run, batch, uid, HttpError } from '../db'
+import { on } from '../router'
+import { all, uid } from '../db'
 
 /**
  * 习惯追踪：
@@ -42,9 +42,13 @@ export async function getHabits(env: Env, userId: string): Promise<HabitFull[]> 
       }
     }
     return {
-      id: h.id, name: h.name, type: h.type,
-      target: h.target ?? undefined, bad: !!h.bad,
-      records: recs, checkins
+      id: h.id,
+      name: h.name,
+      type: h.type,
+      target: h.target ?? undefined,
+      bad: !!h.bad,
+      records: recs,
+      checkins
     }
   })
 }
@@ -58,59 +62,78 @@ export function habitReplaceStatements(env: Env, userId: string, habits: HabitFu
   for (const h of habits) {
     const id = h.id || uid()
     stmts.push(
-      env.DB.prepare('INSERT INTO habits (id, user_id, name, type, target, bad) VALUES (?, ?, ?, ?, ?, ?)')
-        .bind(id, userId, h.name, h.type, h.target ?? null, h.bad ? 1 : 0)
+      env.DB.prepare('INSERT INTO habits (id, user_id, name, type, target, bad) VALUES (?, ?, ?, ?, ?, ?)').bind(
+        id,
+        userId,
+        h.name,
+        h.type,
+        h.target ?? null,
+        h.bad ? 1 : 0
+      )
     )
     for (const [date, value] of Object.entries(h.records ?? {})) {
       stmts.push(
-        env.DB.prepare('INSERT OR REPLACE INTO habit_records (user_id, habit_id, date, value, checkin) VALUES (?, ?, ?, ?, 0)')
-          .bind(userId, id, date, String(value))
+        env.DB.prepare(
+          'INSERT OR REPLACE INTO habit_records (user_id, habit_id, date, value, checkin) VALUES (?, ?, ?, ?, 0)'
+        ).bind(userId, id, date, String(value))
       )
     }
     for (const date of Object.keys(h.checkins ?? {})) {
       stmts.push(
-        env.DB.prepare('INSERT OR REPLACE INTO habit_records (user_id, habit_id, date, value, checkin) VALUES (?, ?, ?, NULL, 1)')
-          .bind(userId, id, date)
+        env.DB.prepare(
+          'INSERT OR REPLACE INTO habit_records (user_id, habit_id, date, value, checkin) VALUES (?, ?, ?, NULL, 1)'
+        ).bind(userId, id, date)
       )
     }
   }
   return stmts
 }
 
+/**
+ * 单个习惯的记录级写入（键 = habitId）：先重建该习惯的打卡表，再 upsert habits 行。
+ * 记录级同步下 habits 行与 habit_records 行写入同一份 `updated_at/server_seq`（子表行继承习惯记录的值）。
+ */
+export function habitUpsertStatements(
+  env: Env,
+  userId: string,
+  h: HabitFull,
+  stamp: { updatedAt: number; seq: number }
+): D1PreparedStatement[] {
+  const id = h.id
+  const stmts: D1PreparedStatement[] = [
+    env.DB.prepare('DELETE FROM habit_records WHERE user_id = ? AND habit_id = ?').bind(userId, id),
+    env.DB.prepare(
+      'INSERT INTO habits (id, user_id, name, type, target, bad, updated_at, server_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT(user_id, id) DO UPDATE SET name = excluded.name, type = excluded.type, target = excluded.target, bad = excluded.bad, updated_at = excluded.updated_at, server_seq = excluded.server_seq'
+    ).bind(id, userId, h.name, h.type, h.target ?? null, h.bad ? 1 : 0, stamp.updatedAt, stamp.seq)
+  ]
+  for (const [date, value] of Object.entries(h.records ?? {})) {
+    stmts.push(
+      env.DB.prepare(
+        'INSERT OR REPLACE INTO habit_records (user_id, habit_id, date, value, checkin, updated_at, server_seq) VALUES (?, ?, ?, ?, 0, ?, ?)'
+      ).bind(userId, id, date, String(value), stamp.updatedAt, stamp.seq)
+    )
+  }
+  for (const date of Object.keys(h.checkins ?? {})) {
+    stmts.push(
+      env.DB.prepare(
+        'INSERT OR REPLACE INTO habit_records (user_id, habit_id, date, value, checkin, updated_at, server_seq) VALUES (?, ?, ?, NULL, 1, ?, ?)'
+      ).bind(userId, id, date, stamp.updatedAt, stamp.seq)
+    )
+  }
+  return stmts
+}
+
+/** 删除单个习惯：打卡表 + 习惯本体 */
+export function habitDeleteStatements(env: Env, userId: string, habitId: string): D1PreparedStatement[] {
+  return [
+    env.DB.prepare('DELETE FROM habit_records WHERE user_id = ? AND habit_id = ?').bind(userId, habitId),
+    env.DB.prepare('DELETE FROM habits WHERE user_id = ? AND id = ?').bind(userId, habitId)
+  ]
+}
+
 export function registerHabitRoutes() {
   on('GET', '/api/habits', true, async (ctx) => {
     return Response.json(await getHabits(ctx.env, ctx.userId))
-  })
-
-  on('POST', '/api/habits', true, async (ctx) => {
-    const b = await body<HabitFull>(ctx.request)
-    if (!b?.name) throw new HttpError(400, '习惯名称不能为空')
-    const id = b.id || uid()
-    const stmts = habitReplaceStatements(ctx.env, ctx.userId, [{ ...b, id }]).slice(2)
-    await batch(ctx.env, stmts)
-    const created = (await getHabits(ctx.env, ctx.userId)).find(h => h.id === id)
-    return Response.json(created, { status: 201 })
-  })
-
-  on('PUT', '/api/habits/:id', true, async (ctx) => {
-    const id = ctx.params.id
-    const exists = await first(ctx.env, 'SELECT id FROM habits WHERE id = ? AND user_id = ?', id, ctx.userId)
-    if (!exists) throw new HttpError(404, '习惯不存在')
-    const b = await body<HabitFull>(ctx.request)
-    await batch(ctx.env, [
-      ctx.env.DB.prepare('DELETE FROM habit_records WHERE habit_id = ? AND user_id = ?').bind(id, ctx.userId),
-      ctx.env.DB.prepare('DELETE FROM habits WHERE id = ? AND user_id = ?').bind(id, ctx.userId),
-      ...habitReplaceStatements(ctx.env, ctx.userId, [{ ...b, id }]).slice(2)
-    ])
-    const updated = (await getHabits(ctx.env, ctx.userId)).find(h => h.id === id)
-    return Response.json(updated)
-  })
-
-  on('DELETE', '/api/habits/:id', true, async (ctx) => {
-    const id = ctx.params.id
-    const res = await run(ctx.env, 'DELETE FROM habits WHERE id = ? AND user_id = ?', id, ctx.userId)
-    if (!res.meta.changes) throw new HttpError(404, '习惯不存在')
-    await run(ctx.env, 'DELETE FROM habit_records WHERE habit_id = ? AND user_id = ?', id, ctx.userId)
-    return Response.json({ ok: true })
   })
 }

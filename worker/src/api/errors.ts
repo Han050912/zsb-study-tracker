@@ -1,7 +1,7 @@
 import { on } from '../router'
 import { crudHandlers } from '../db'
 
-/** 错题（error_questions 表 ↔ 前端 ErrorQuestion，image 存 base64 dataURL） */
+/** 错题（error_questions 表 ↔ 前端 ErrorQuestion，image 存 'r2:<sha256>' 引用，字节在 R2） */
 export const errorsMapping = crudHandlers({
   table: 'error_questions',
   toRow: (userId, b, id) => ({
@@ -35,7 +35,4 @@ export const errorsMapping = crudHandlers({
 
 export function registerErrorRoutes() {
   on('GET', '/api/errors', true, errorsMapping.list)
-  on('POST', '/api/errors', true, errorsMapping.create)
-  on('PUT', '/api/errors/:id', true, errorsMapping.update)
-  on('DELETE', '/api/errors/:id', true, errorsMapping.remove)
 }

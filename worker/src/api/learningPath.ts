@@ -1,4 +1,3 @@
-import type { Env } from '../index'
 import { on } from '../router'
 import { all } from '../db'
 import { getSettings } from './settings'
@@ -17,9 +16,11 @@ function utc8Today(): string {
 export function registerLearningPathRoutes() {
   on('GET', '/api/learning-path', true, async (ctx) => {
     const settings = await getSettings(ctx.env, ctx.userId)
-    const subjects = await all<{ id: string; name: string; icon: string; weight: number }>(ctx.env,
+    const subjects = await all<{ id: string; name: string; icon: string; weight: number }>(
+      ctx.env,
       'SELECT id, name, icon, weight FROM subjects WHERE user_id = ? ORDER BY weight DESC, id ASC',
-      ctx.userId)
+      ctx.userId
+    )
 
     // 距离考试天数：未设置返回 null；已过期可为负（前端据此提示「考试已结束/临近冲刺」）
     let daysLeft: number | null = null
@@ -32,7 +33,7 @@ export function registerLearningPathRoutes() {
     // 按科目权重占比分配每日目标时长（无权重科目按 0 处理；全部为 0 时均分兜底）
     const totalWeight = subjects.reduce((s, x) => s + (x.weight || 0), 0)
     const dailyGoal = settings.dailyGoalMinutes || 240
-    const plan = subjects.map(s => {
+    const plan = subjects.map((s) => {
       const ratio = totalWeight > 0 ? (s.weight || 0) / totalWeight : 1 / Math.max(subjects.length, 1)
       return {
         id: s.id,

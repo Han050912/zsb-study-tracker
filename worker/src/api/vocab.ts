@@ -23,7 +23,4 @@ export const vocabMapping = crudHandlers({
 
 export function registerVocabRoutes() {
   on('GET', '/api/vocab', true, vocabMapping.list)
-  on('POST', '/api/vocab', true, vocabMapping.create)
-  on('PUT', '/api/vocab/:id', true, vocabMapping.update)
-  on('DELETE', '/api/vocab/:id', true, vocabMapping.remove)
 }

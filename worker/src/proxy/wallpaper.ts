@@ -36,27 +36,32 @@ async function encryptText(text: string): Promise<string> {
 }
 
 async function decryptText(b64: string): Promise<string> {
-  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
   const pt = await crypto.subtle.decrypt({ name: 'AES-CBC', iv: IV_BYTES }, await getKey(), bytes)
   // 站点明文尾部可能带 \0 填充
   return decoder.decode(pt).replace(/\0.*$/g, '')
 }
 
-interface ListItem { fileId?: string; type?: number; rw?: string; rh?: string }
+interface ListItem {
+  fileId?: string
+  type?: number
+  rw?: string
+  rh?: string
+}
 
 /** 拉取一页静态壁纸列表，优先返回高清横图（原图宽 ≥1920 的 fileId 数组） */
 async function fetchFileIds(page: number): Promise<string[]> {
   const data = await encryptText(JSON.stringify({ page, sortType: 3, rows: 12, isFavorites: false, wpType: 1 }))
   const res = await fetch(`${LIST_API}?data=${encodeURIComponent(data)}`, { headers: { 'User-Agent': UA } })
   if (!res.ok) throw new HttpError(502, `壁纸列表请求失败（HTTP ${res.status}）`)
-  const json = await res.json() as { data?: string }
+  const json = (await res.json()) as { data?: string }
   if (!json.data) return []
   const plain = JSON.parse(await decryptText(json.data)) as { list?: ListItem[] }
   // 只保留静态图片类型（type=1）
-  const statics = (plain.list || []).filter(i => i.type === 1 && i.fileId)
+  const statics = (plain.list || []).filter((i) => i.type === 1 && i.fileId)
   // 优先高清横图（适配桌面全屏背景；预览图由原图缩放生成，原图越清晰预览越好）
-  const hd = statics.filter(i => Number(i.rw) >= 1920 && Number(i.rw) > Number(i.rh))
-  return (hd.length ? hd : statics).map(i => i.fileId!)
+  const hd = statics.filter((i) => Number(i.rw) >= 1920 && Number(i.rw) > Number(i.rh))
+  return (hd.length ? hd : statics).map((i) => i.fileId!)
 }
 
 /** 服务端取图并转发。该站对跨域 Referer 防盗链（浏览器直连返回 403），必须经 Worker 取图。 */
@@ -68,10 +73,19 @@ async function fetchImage(fileId: string): Promise<Response> {
   const buf = await res.arrayBuffer()
   // Worker fetch 已透明解压 gzip；内容实为 WebP（RIFF....WEBP 魔数），按魔数修正 Content-Type
   const b = new Uint8Array(buf)
-  const isWebP = b.length > 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  const isWebP =
+    b.length > 12 &&
+    b[0] === 0x52 &&
+    b[1] === 0x49 &&
+    b[2] === 0x46 &&
+    b[3] === 0x46 &&
+    b[8] === 0x57 &&
+    b[9] === 0x45 &&
+    b[10] === 0x42 &&
+    b[11] === 0x50
   return new Response(buf, {
     headers: {
-      'Content-Type': isWebP ? 'image/webp' : (res.headers.get('Content-Type') || 'image/jpeg'),
+      'Content-Type': isWebP ? 'image/webp' : res.headers.get('Content-Type') || 'image/jpeg',
       'Cache-Control': 'public, max-age=300'
     }
   })

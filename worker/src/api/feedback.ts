@@ -21,7 +21,10 @@ const FEEDBACK_TYPES = ['feature', 'bug', 'experience', 'other'] as const
 type FeedbackType = (typeof FEEDBACK_TYPES)[number]
 
 const TYPE_LABEL: Record<FeedbackType, string> = {
-  feature: '功能建议', bug: 'Bug报告', experience: '体验评价', other: '其他'
+  feature: '功能建议',
+  bug: 'Bug报告',
+  experience: '体验评价',
+  other: '其他'
 }
 
 const CONTENT_MAX = 2000
@@ -74,7 +77,12 @@ function toFeedback(r: FeedbackRow) {
  * 联系方式不进入 issue（公开仓库，仅存 D1）。
  */
 async function createGitHubIssue(
-  env: Env, type: FeedbackType, content: string, imageUrls: string[], userName: string, origin: string
+  env: Env,
+  type: FeedbackType,
+  content: string,
+  imageUrls: string[],
+  userName: string,
+  origin: string
 ): Promise<string | null> {
   const lines = [
     `**类型**：${TYPE_LABEL[type]}`,
@@ -115,28 +123,40 @@ export function registerFeedbackRoutes() {
   // 提交反馈（登录用户）
   on('POST', '/api/feedback', true, async (ctx) => {
     rateLimit(ctx.request, 'feedback', 20)
-    const b = await parseBody(ctx.request, z.object({
-      type: z.enum(FEEDBACK_TYPES, { message: '问题类型无效' }),
-      // 缺键 / 非字符串一律归空串，由后续 min(1) 统一返回业务文案「请填写反馈内容」；字符串静默 trim
-      content: z.unknown().transform(v => typeof v === 'string' ? v.trim() : '')
-        .pipe(z.string().min(1, '请填写反馈内容').max(CONTENT_MAX, `反馈内容最多 ${CONTENT_MAX} 字`)),
-      // 复刻原行为：非字符串一律归空（避免数字/对象被 String() 成 '123' / '[object Object]' 落库）；字符串静默截断 CONTACT_MAX
-      contact: z.unknown().transform(v => typeof v === 'string' ? v.trim().slice(0, CONTACT_MAX) : '').default(''),
-      // 复刻原行为：过滤非字符串 → 去重；数量上限在此校验
-      imageUrls: z.array(z.unknown())
-        .transform(arr => [...new Set(arr.filter((u): u is string => typeof u === 'string'))])
-        .pipe(z.array(z.string()).max(IMAGE_MAX, `截图最多 ${IMAGE_MAX} 张`))
-        .default([])
-    }))
+    const b = await parseBody(
+      ctx.request,
+      z.object({
+        type: z.enum(FEEDBACK_TYPES, { message: '问题类型无效' }),
+        // 缺键 / 非字符串一律归空串，由后续 min(1) 统一返回业务文案「请填写反馈内容」；字符串静默 trim
+        content: z
+          .unknown()
+          .transform((v) => (typeof v === 'string' ? v.trim() : ''))
+          .pipe(z.string().min(1, '请填写反馈内容').max(CONTENT_MAX, `反馈内容最多 ${CONTENT_MAX} 字`)),
+        // 复刻原行为：非字符串一律归空（避免数字/对象被 String() 成 '123' / '[object Object]' 落库）；字符串静默截断 CONTACT_MAX
+        contact: z
+          .unknown()
+          .transform((v) => (typeof v === 'string' ? v.trim().slice(0, CONTACT_MAX) : ''))
+          .default(''),
+        // 复刻原行为：过滤非字符串 → 去重；数量上限在此校验
+        imageUrls: z
+          .array(z.unknown())
+          .transform((arr) => [...new Set(arr.filter((u): u is string => typeof u === 'string'))])
+          .pipe(z.array(z.string()).max(IMAGE_MAX, `截图最多 ${IMAGE_MAX} 张`))
+          .default([])
+      })
+    )
     const { type, content, contact, imageUrls } = b
 
     // 截图：仅接受本系统上传路径，且必须属于当前用户（防串用他人图片），与社区发帖同一口径（去重与数量上限由 schema 完成）
     if (imageUrls.length) {
-      if (imageUrls.some(u => !isImagePath(u))) throw new HttpError(400, '截图路径无效')
-      const ids = imageUrls.map(u => u.split('/').pop()!)
-      const owned = await all<{ id: string }>(ctx.env,
+      if (imageUrls.some((u) => !isImagePath(u))) throw new HttpError(400, '截图路径无效')
+      const ids = imageUrls.map((u) => u.split('/').pop()!)
+      const owned = await all<{ id: string }>(
+        ctx.env,
         `SELECT id FROM community_uploads WHERE user_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
-        ctx.userId, ...ids)
+        ctx.userId,
+        ...ids
+      )
       if (owned.length !== new Set(ids).size) throw new HttpError(400, '截图不存在或已失效，请重新上传')
     }
 
@@ -144,13 +164,29 @@ export function registerFeedbackRoutes() {
     if (contact) await assertCleanAsync(contact, ctx.env)
 
     const id = uid()
-    await run(ctx.env,
+    await run(
+      ctx.env,
       'INSERT INTO feedback (id, user_id, type, content, contact, image_urls, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      id, ctx.userId, type, content, contact, JSON.stringify(imageUrls), 'pending', nowSec())
+      id,
+      ctx.userId,
+      type,
+      content,
+      contact,
+      JSON.stringify(imageUrls),
+      'pending',
+      nowSec()
+    )
 
     // GitHub issue：尽力而为，失败不影响已落库的反馈（联系方式不进 issue）
     const userName = await displayName(ctx.env, ctx.userId)
-    const issueUrl = await createGitHubIssue(ctx.env, type, content, imageUrls, userName, new URL(ctx.request.url).origin)
+    const issueUrl = await createGitHubIssue(
+      ctx.env,
+      type,
+      content,
+      imageUrls,
+      userName,
+      new URL(ctx.request.url).origin
+    )
     if (issueUrl) await run(ctx.env, 'UPDATE feedback SET github_issue_url = ? WHERE id = ?', issueUrl, id)
 
     return Response.json({ id }, { status: 201 })
@@ -163,14 +199,18 @@ export function registerFeedbackRoutes() {
     const status = new URL(ctx.request.url).searchParams.get('status')
     const filtered = status === 'pending' || status === 'resolved'
     const where = filtered ? 'WHERE f.status = ?' : ''
-    const rows = await all<FeedbackRow>(ctx.env, `
+    const rows = await all<FeedbackRow>(
+      ctx.env,
+      `
       SELECT f.*, COALESCE(rs.user_name, u.username) AS user_name
       FROM feedback f
       JOIN users u ON u.id = f.user_id
       LEFT JOIN user_settings rs ON rs.user_id = f.user_id
       ${where}
       ORDER BY f.created_at DESC
-      LIMIT 100`, ...(filtered ? [status] : []))
+      LIMIT 100`,
+      ...(filtered ? [status] : [])
+    )
     return Response.json({ feedbacks: rows.map(toFeedback) })
   })
 
@@ -181,15 +221,21 @@ export function registerFeedbackRoutes() {
     const b = await body<{ status?: unknown }>(ctx.request)
     const status = b?.status
     if (status !== 'pending' && status !== 'resolved') throw new HttpError(400, '状态无效')
-    const fb = await first<{ id: string; user_id: string; type: FeedbackType }>(ctx.env,
-      'SELECT id, user_id, type FROM feedback WHERE id = ?', ctx.params.id)
+    const fb = await first<{ id: string; user_id: string; type: FeedbackType }>(
+      ctx.env,
+      'SELECT id, user_id, type FROM feedback WHERE id = ?',
+      ctx.params.id
+    )
     if (!fb) throw new HttpError(404, '反馈不存在')
     await run(ctx.env, 'UPDATE feedback SET status = ? WHERE id = ?', status, ctx.params.id)
     if (status === 'resolved') {
-      await batch(ctx.env, [notifyStatement(ctx.env, {
-        userId: fb.user_id, type: 'system',
-        content: `你的「${TYPE_LABEL[fb.type]}」反馈已处理，感谢你的反馈`
-      })])
+      await batch(ctx.env, [
+        notifyStatement(ctx.env, {
+          userId: fb.user_id,
+          type: 'system',
+          content: `你的「${TYPE_LABEL[fb.type]}」反馈已处理，感谢你的反馈`
+        })
+      ])
     }
     return Response.json({ ok: true })
   })

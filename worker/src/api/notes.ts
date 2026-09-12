@@ -1,8 +1,7 @@
 import { on } from '../router'
 import { crudHandlers } from '../db'
 
-/** Markdown 笔记（notes 表 ↔ 前端 Note，tags 为 JSON 数组字符串）。
- *  PDF 笔记的 content 为 'd1:<id>' 引用，原文二进制分片存 pdf_chunks 表 */
+/** 笔记元数据（正文走 /api/note-bodies；PDF 原文以 note.id 为 pdf_id 走 /api/pdfs）。 */
 export const notesMapping = crudHandlers({
   table: 'notes',
   toRow: (userId, b, id) => ({
@@ -10,13 +9,16 @@ export const notesMapping = crudHandlers({
     user_id: userId,
     subject_id: b.subjectId,
     title: b.title,
-    content: b.content,
+    content: '',
     tags: JSON.stringify(b.tags ?? []),
     type: b.type ?? null,
-    updated_at: b.updatedAt ?? Date.now()
+    // updated_at 是 LWW 比较键，必须由 push 协议显式给出（客户端编辑时刻）。
+    // 不能兜底成 Date.now()：那会把「服务器写入时刻」当成「编辑时刻」，掩盖并污染 LWW 判定。
+    updated_at: b.updatedAt,
+    body_updated_at: b.type === 'pdf' ? 0 : (b.bodyUpdatedAt ?? 0)
   }),
   fromRow: (r) => {
-    let tags: string[] = []
+    let tags: string[]
     try {
       tags = JSON.parse(r.tags || '[]')
       if (!Array.isArray(tags)) tags = []
@@ -28,9 +30,9 @@ export const notesMapping = crudHandlers({
       id: r.id,
       subjectId: r.subject_id,
       title: r.title,
-      content: r.content,
       tags,
       updatedAt: r.updated_at,
+      bodyUpdatedAt: r.type === 'pdf' ? 0 : Number(r.body_updated_at ?? 0),
       type: r.type === 'pdf' ? 'pdf' : undefined
     }
   }
@@ -38,7 +40,4 @@ export const notesMapping = crudHandlers({
 
 export function registerNoteRoutes() {
   on('GET', '/api/notes', true, notesMapping.list)
-  on('POST', '/api/notes', true, notesMapping.create)
-  on('PUT', '/api/notes/:id', true, notesMapping.update)
-  on('DELETE', '/api/notes/:id', true, notesMapping.remove)
 }

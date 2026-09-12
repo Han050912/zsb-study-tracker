@@ -50,17 +50,8 @@ export const templatesMapping = crudHandlers({
 
 export function registerEnglishRoutes() {
   on('GET', '/api/reading', true, readingMapping.list)
-  on('POST', '/api/reading', true, readingMapping.create)
-  on('PUT', '/api/reading/:id', true, readingMapping.update)
-  on('DELETE', '/api/reading/:id', true, readingMapping.remove)
 
   on('GET', '/api/listening', true, listeningMapping.list)
-  on('POST', '/api/listening', true, listeningMapping.create)
-  on('PUT', '/api/listening/:id', true, listeningMapping.update)
-  on('DELETE', '/api/listening/:id', true, listeningMapping.remove)
 
   on('GET', '/api/templates', true, templatesMapping.list)
-  on('POST', '/api/templates', true, templatesMapping.create)
-  on('PUT', '/api/templates/:id', true, templatesMapping.update)
-  on('DELETE', '/api/templates/:id', true, templatesMapping.remove)
 }

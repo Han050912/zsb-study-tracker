@@ -29,21 +29,42 @@ function toHalfWidth(s: string): string {
 
 /** 常见谐音/拆字/变体映射：把绕过写法归一为规范词，供词表命中 */
 const HOMOPHONE_MAP: Record<string, string> = {
-  '威信': '微信', '薇信': '微信', 'v信': '微信', 'vx': '微信',
-  '企鹅': 'qq', '扣扣': 'qq',
-  '煞笔': '傻逼', '傻毕': '傻逼', '沙比': '傻逼', '傻比': '傻逼', '煞比': '傻逼', 'sb': '傻逼',
-  '草泥马': '操你妈', '草你妈': '操你妈', '草拟吗': '操你妈', '艹泥马': '操你妈', '草你马': '操你妈',
-  '妈卖批': '妈逼',
-  '制杖': '智障', '智帐': '智障',
-  '脑惨': '脑残', 'nc': '脑残',
-  '代kao': '代考', '代k': '代考',
-  '卖da案': '卖答案', '卖da': '卖答案',
+  威信: '微信',
+  薇信: '微信',
+  v信: '微信',
+  vx: '微信',
+  企鹅: 'qq',
+  扣扣: 'qq',
+  煞笔: '傻逼',
+  傻毕: '傻逼',
+  沙比: '傻逼',
+  傻比: '傻逼',
+  煞比: '傻逼',
+  sb: '傻逼',
+  草泥马: '操你妈',
+  草你妈: '操你妈',
+  草拟吗: '操你妈',
+  艹泥马: '操你妈',
+  草你马: '操你妈',
+  妈卖批: '妈逼',
+  制杖: '智障',
+  智帐: '智障',
+  脑惨: '脑残',
+  nc: '脑残',
+  代kao: '代考',
+  代k: '代考',
+  卖da案: '卖答案',
+  卖da: '卖答案'
 }
 
 function normalize(s: string): string {
   let t = toHalfWidth(s).toLowerCase()
   // 去除空白、间隔符、零宽字符、变体选择符与常见标点/括号
-  t = t.replace(/[\s\-_.*#@!?,，。！？~·、（）()【】[\]<>《》"'“”‘’:：;；|\\/+=￥$&^%\u200b-\u200f\ufeff\ufe0e\ufe0f]+/g, '')
+  t = t.replace(
+    // eslint-disable-next-line no-misleading-character-class -- 变体选择符(U+FE0E/FE0F)与零宽字符在此按字面量逐个匹配，属有意为之
+    /[\s\-_.*#@!?,，。！？~·、（）()【】[\]<>《》"'“”‘’:：;；|\\/+=￥$&^%\u200b-\u200f\ufeff\ufe0e\ufe0f]+/g,
+    ''
+  )
   // 谐音归一：按 key 长度降序替换，避免短 key 提前吞掉长 key（如「vx」先于「v」）
   const keys = Object.keys(HOMOPHONE_MAP).sort((a, b) => b.length - a.length)
   for (const k of keys) {
@@ -73,7 +94,7 @@ export function moderate(text: string): ModerationResult {
   const t = normalize(text)
   return {
     hard: hardAc.containsAny(t),
-    soft: softAc.containsAny(t),
+    soft: softAc.containsAny(t)
   }
 }
 

@@ -3,7 +3,10 @@ import type { Ctx } from './router'
 
 /** 业务错误：message 会原样返回给前端 */
 export class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(
+    public status: number,
+    message: string
+  ) {
     super(message)
   }
 }
@@ -44,16 +47,22 @@ async function parseBody(request: Request): Promise<any> {
 // ---------- D1 参数化查询封装（禁止字符串拼接 SQL） ----------
 
 export async function all<T = any>(env: Env, sql: string, ...params: unknown[]): Promise<T[]> {
-  const res = await env.DB.prepare(sql).bind(...params).all<T>()
+  const res = await env.DB.prepare(sql)
+    .bind(...params)
+    .all<T>()
   return res.results ?? []
 }
 
 export async function first<T = any>(env: Env, sql: string, ...params: unknown[]): Promise<T | null> {
-  return env.DB.prepare(sql).bind(...params).first<T>()
+  return env.DB.prepare(sql)
+    .bind(...params)
+    .first<T>()
 }
 
 export async function run(env: Env, sql: string, ...params: unknown[]) {
-  return env.DB.prepare(sql).bind(...params).run()
+  return env.DB.prepare(sql)
+    .bind(...params)
+    .run()
 }
 
 // ---------- 通用单表 CRUD handler 工厂 ----------
@@ -73,9 +82,9 @@ function quoteCol(name: string): string {
 }
 
 function insertStatement(table: string, row: Record<string, unknown>) {
-  const keys = Object.keys(row).filter(k => row[k] !== undefined)
+  const keys = Object.keys(row).filter((k) => row[k] !== undefined)
   const sql = `INSERT INTO ${table} (${keys.map(quoteCol).join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`
-  return { sql, params: keys.map(k => row[k]) }
+  return { sql, params: keys.map((k) => row[k]) }
 }
 
 /**
@@ -93,7 +102,7 @@ export function crudHandlers<Body = any>(m: CrudMapping<Body>) {
     },
 
     async create(ctx: Ctx): Promise<Response> {
-      const b = await parseBody(ctx.request) as Body & { id?: string }
+      const b = (await parseBody(ctx.request)) as Body & { id?: string }
       const id = typeof b?.id === 'string' && b.id ? b.id : uid()
       const row = m.toRow(ctx.userId, b, id)
       const { sql, params } = insertStatement(m.table, row)
@@ -106,15 +115,15 @@ export function crudHandlers<Body = any>(m: CrudMapping<Body>) {
       const id = ctx.params.id
       const exists = await first(ctx.env, `SELECT id FROM ${m.table} WHERE id = ? AND user_id = ?`, id, ctx.userId)
       if (!exists) throw new HttpError(404, '记录不存在')
-      const b = await parseBody(ctx.request) as Body
+      const b = (await parseBody(ctx.request)) as Body
       const row = m.toRow(ctx.userId, b, id)
       delete row.id
       delete row.user_id
       // 过滤 undefined：D1 bind 不接受 undefined（抛 TypeError → 500），Partial 更新时缺失字段跳过即可
-      const setKeys = Object.keys(row).filter(k => row[k] !== undefined)
+      const setKeys = Object.keys(row).filter((k) => row[k] !== undefined)
       if (setKeys.length) {
-        const sql = `UPDATE ${m.table} SET ${setKeys.map(k => `${quoteCol(k)} = ?`).join(', ')} WHERE id = ? AND user_id = ?`
-        await run(ctx.env, sql, ...setKeys.map(k => row[k]), id, ctx.userId)
+        const sql = `UPDATE ${m.table} SET ${setKeys.map((k) => `${quoteCol(k)} = ?`).join(', ')} WHERE id = ? AND user_id = ?`
+        await run(ctx.env, sql, ...setKeys.map((k) => row[k]), id, ctx.userId)
       }
       const updated = await first(ctx.env, `SELECT * FROM ${m.table} WHERE id = ? AND user_id = ?`, id, ctx.userId)
       return Response.json(m.fromRow(updated))

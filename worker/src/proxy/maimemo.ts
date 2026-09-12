@@ -111,12 +111,20 @@ export function registerMaimemoRoutes() {
   on('POST', '/api/proxy/maimemo/today', true, async (ctx) => {
     const token = await maimemoToken(ctx.env, ctx.userId)
     const [newRes, reviewRes] = await Promise.all([
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_finished: true, is_new: true, limit: 1000 }),
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_finished: true, is_new: false, limit: 1000 })
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, {
+        is_finished: true,
+        is_new: true,
+        limit: 1000
+      }),
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, {
+        is_finished: true,
+        is_new: false,
+        limit: 1000
+      })
     ])
     return Response.json({
-      newWords: (newRes.today_items || []).filter(i => i.is_finished).length,
-      reviewWords: (reviewRes.today_items || []).filter(i => i.is_finished).length
+      newWords: (newRes.today_items || []).filter((i) => i.is_finished).length,
+      reviewWords: (reviewRes.today_items || []).filter((i) => i.is_finished).length
     })
   })
 
@@ -124,7 +132,10 @@ export function registerMaimemoRoutes() {
   on('GET', '/api/proxy/maimemo/progress', true, async (ctx) => {
     const token = await maimemoToken(ctx.env, ctx.userId)
     const prog = await post<{ progress?: { finished: number; total: number } }>(
-      '/api/v1/memo/study/get_study_progress', token, {})
+      '/api/v1/memo/study/get_study_progress',
+      token,
+      {}
+    )
     return Response.json({
       finished: prog.progress?.finished ?? 0,
       total: prog.progress?.total ?? 0
@@ -147,10 +158,14 @@ export function registerMaimemoRoutes() {
       // 主源：墨墨用户自建释义（UGC）
       try {
         const res = await get<{ interpretations?: InterpretationItem[] }>(
-          `/api/v1/memo/interpretations?voc_id=${item.voc_id}`, token)
-        const pub = (res.interpretations || []).find(i => i.status === 'PUBLISHED')
+          `/api/v1/memo/interpretations?voc_id=${item.voc_id}`,
+          token
+        )
+        const pub = (res.interpretations || []).find((i) => i.status === 'PUBLISHED')
         if (pub?.interpretation) return pub.interpretation
-      } catch { /* 降级到有道 */ }
+      } catch {
+        /* 降级到有道 */
+      }
 
       // 回退源：有道词典免费翻译（墨墨 API 不返回内置词典释义）
       return fetchYoudaoMeaning(item.voc_spelling)

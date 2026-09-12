@@ -37,7 +37,4 @@ export const materialsMapping = crudHandlers({
 
 export function registerMaterialRoutes() {
   on('GET', '/api/materials', true, materialsMapping.list)
-  on('POST', '/api/materials', true, materialsMapping.create)
-  on('PUT', '/api/materials/:id', true, materialsMapping.update)
-  on('DELETE', '/api/materials/:id', true, materialsMapping.remove)
 }

@@ -1,8 +1,19 @@
 import type { Env } from '../index'
-import { on, body } from '../router'
-import { all, first, batch, utc8Today } from '../db'
+import { on } from '../router'
+import { all, first } from '../db'
 
-/** 游戏化（gamification 单行 + points_log 流水 ↔ 前端 Gamification） */
+/**
+ * 游戏化（gamification 单行 + points_log 流水 ↔ 前端 Gamification）。
+ *
+ * 记录级同步（Phase 3）下积分为**服务端权威**：
+ * - `points_log` 是唯一积分事实来源，`gamification.points` 是它的投影（`SUM(points_log.points)`），
+ *   不再由客户端推送、也不做「加减法」累加（重放/并发天然幂等）。
+ * - 客户端只以「积分事件」追加（`POST /api/data/push` 的 `points` 数组），按 `ref_id` 幂等落账。
+ * - `streak`/`last_checkin` 由服务端按 `study_records` 的日期集合派生（见 api/sync.ts）。
+ * - 徽章由服务端发放（见 api/badges.ts），`user_badges` 主键去重保证仅发一次。
+ * - `achievements`（成就 id 列表）由客户端以 `POST /api/data/push` 的 `achievements` 字段上报解锁结果
+ *   （规则仍留在客户端 `checkAchievements()`），服务端在同一 batch 内做**只增不减的集合并集**并落库。
+ */
 
 export interface GamificationFull {
   points: number
@@ -12,6 +23,16 @@ export interface GamificationFull {
   pointsLog: { date: string; points: number; reason: string; refId?: string }[]
 }
 
+/** 解析 `gamification.achievements` 列（JSON 数组字符串 → 非空字符串数组；非法/损坏 → 空数组） */
+function parseStoredAchievements(raw: unknown): string[] {
+  try {
+    const v = JSON.parse(String(raw ?? '') || '[]')
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && !!x) : []
+  } catch {
+    return []
+  }
+}
+
 export async function getGamification(env: Env, userId: string): Promise<GamificationFull> {
   const row = await first(env, 'SELECT * FROM gamification WHERE user_id = ?', userId)
   const log = await all(env, 'SELECT * FROM points_log WHERE user_id = ? ORDER BY id', userId)
@@ -19,64 +40,109 @@ export async function getGamification(env: Env, userId: string): Promise<Gamific
     points: row?.points ?? 0,
     streak: row?.streak ?? 0,
     lastCheckin: row?.last_checkin ?? '',
-    achievements: (() => {
-      try {
-        const v = JSON.parse(row?.achievements || '[]')
-        return Array.isArray(v) ? v : []
-      } catch {
-        return []
-      }
-    })(),
+    achievements: parseStoredAchievements(row?.achievements),
     pointsLog: log.map((l: any) => ({
-      date: l.date, points: l.points, reason: l.reason, refId: l.ref_id ?? undefined
+      date: l.date,
+      points: l.points,
+      reason: l.reason,
+      refId: l.ref_id ?? undefined
     }))
   }
 }
 
-/**
- * 生成游戏化数据的替换语句。
- * points_log 只替换「本地来源」流水：服务端写入的流水（ref_id 带 'srv:' 前缀，如社区获赞/服务端规则奖励）
- * 必须保留——否则全量同步会冲掉这些流水，导致按 ref_id 精确回收积分（取消点赞/删评论）失效。
- */
-export function gamificationReplaceStatements(env: Env, userId: string, g: GamificationFull): D1PreparedStatement[] {
-  const stmts: D1PreparedStatement[] = [
-    env.DB.prepare(
-      'INSERT INTO gamification (user_id, points, streak, last_checkin, achievements) VALUES (?, ?, ?, ?, ?) ' +
-      'ON CONFLICT(user_id) DO UPDATE SET points = excluded.points, streak = excluded.streak, last_checkin = excluded.last_checkin, achievements = excluded.achievements'
-    ).bind(userId, g.points ?? 0, g.streak ?? 0, g.lastCheckin ?? '', JSON.stringify(g.achievements ?? [])),
-    env.DB.prepare("DELETE FROM points_log WHERE user_id = ? AND (ref_id IS NULL OR ref_id NOT LIKE 'srv:%')").bind(userId)
-  ]
-  for (const l of g.pointsLog ?? []) {
-    // 防御：客户端不应回传服务端流水（前端已过滤，这里兜底防伪造/重复）
-    if (l.refId?.startsWith('srv:')) continue
-    stmts.push(
-      env.DB.prepare('INSERT INTO points_log (user_id, date, points, reason, ref_id) VALUES (?, ?, ?, ?, ?)')
-        .bind(userId, l.date, l.points, l.reason, l.refId ?? null)
-    )
-  }
-  return stmts
+/** 一条待落账的积分流水（`refId` 为幂等键：服务端已存在同 `ref_id` 流水则整条跳过） */
+export interface PointsAward {
+  refId: string
+  points: number
+  reason: string
+  date: string
 }
 
-/** 服务端积分规则发放：gamification 加分 + points_log 写流水（refId 调用方需带 'srv:' 前缀） */
-export function serverAwardStatements(env: Env, userId: string, points: number, reason: string, refId: string): D1PreparedStatement[] {
-  return [
+/**
+ * 按 `ref_id` 幂等落账积分流水：`WHERE NOT EXISTS` 让「判重 + 插入」在**单条语句**内完成，
+ * 因此重放、并发 push 都不会重复记账（客户端事件与 `migrateLegacyData` 的补齐天然安全）。
+ */
+export function pointsAwardStatements(env: Env, userId: string, awards: PointsAward[]): D1PreparedStatement[] {
+  return awards.map((a) =>
     env.DB.prepare(
-      'INSERT INTO gamification (user_id, points) VALUES (?, ?) ' +
-      'ON CONFLICT(user_id) DO UPDATE SET points = points + excluded.points'
-    ).bind(userId, points),
-    env.DB.prepare('INSERT INTO points_log (user_id, date, points, reason, ref_id) VALUES (?, ?, ?, ?, ?)')
-      .bind(userId, utc8Today(), points, reason, refId)
+      'INSERT INTO points_log (user_id, date, points, reason, ref_id) ' +
+        'SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM points_log WHERE user_id = ? AND ref_id = ?)'
+    ).bind(userId, a.date, a.points, a.reason, a.refId, userId, a.refId)
+  )
+}
+
+/** LIKE 元字符转义：ref 键由客户端提供，可能含 `%`/`_`/`\`，不转义会让前缀撤销误删其它流水 */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (m) => `\\${m}`)
+}
+
+/**
+ * 撤销积分流水：按 `refId` 精确删除，或按 `refPrefix` 前缀删除（对齐客户端 `revokePointsByRef` /
+ * `revokePointsByRefPrefix` 语义）。重复撤销删除 0 行，天然幂等。
+ */
+export function pointsRevokeStatements(
+  env: Env,
+  userId: string,
+  refIds: string[],
+  refPrefixes: string[]
+): D1PreparedStatement[] {
+  return [
+    ...refIds.map((r) => env.DB.prepare('DELETE FROM points_log WHERE user_id = ? AND ref_id = ?').bind(userId, r)),
+    ...refPrefixes.map((p) =>
+      env.DB.prepare("DELETE FROM points_log WHERE user_id = ? AND ref_id LIKE ? ESCAPE '\\'").bind(
+        userId,
+        `${escapeLike(p)}%`
+      )
+    )
   ]
+}
+
+/**
+ * 权威投影语句：`gamification.points = SUM(points_log.points)`（单条语句内完成读改写，与流水写入同 batch）。
+ * `streak` 由服务端派生时一并写回「连续学习天数 + 最后学习日」；不派生时只动积分，避免覆盖已有的 streak。
+ */
+export function gamificationProjectionStatement(
+  env: Env,
+  userId: string,
+  streak?: { streak: number; lastCheckin: string }
+): D1PreparedStatement {
+  const sum = '(SELECT COALESCE(SUM(points), 0) FROM points_log WHERE user_id = ?)'
+  if (!streak)
+    return env.DB.prepare(
+      `INSERT INTO gamification (user_id, points) VALUES (?, ${sum}) ` +
+        'ON CONFLICT(user_id) DO UPDATE SET points = excluded.points'
+    ).bind(userId, userId)
+  return env.DB.prepare(
+    `INSERT INTO gamification (user_id, points, streak, last_checkin) VALUES (?, ${sum}, ?, ?) ` +
+      'ON CONFLICT(user_id) DO UPDATE SET points = excluded.points, streak = excluded.streak, last_checkin = excluded.last_checkin'
+  ).bind(userId, userId, streak.streak, streak.lastCheckin)
+}
+
+/** 读现存成就 id 列表（保留存储顺序），供 push 侧做「只增不减」的集合并集 */
+export async function getAchievements(env: Env, userId: string): Promise<string[]> {
+  const row = await first<{ achievements: string | null }>(
+    env,
+    'SELECT achievements FROM gamification WHERE user_id = ?',
+    userId
+  )
+  return parseStoredAchievements(row?.achievements)
+}
+
+/**
+ * 成就列表写回语句（并集结果落库）。`achievements` 列存 JSON 数组字符串。
+ *
+ * 与 `gamificationProjectionStatement`（只写 points/streak/last_checkin）在同一 batch 内**互不覆盖**：
+ * 两条语句都走 `ON CONFLICT(user_id) DO UPDATE`，各自只更新自己负责的列，先执行者建行、后执行者更新。
+ */
+export function achievementsMergeStatement(env: Env, userId: string, achievements: string[]): D1PreparedStatement {
+  return env.DB.prepare(
+    'INSERT INTO gamification (user_id, achievements) VALUES (?, ?) ' +
+      'ON CONFLICT(user_id) DO UPDATE SET achievements = excluded.achievements'
+  ).bind(userId, JSON.stringify(achievements))
 }
 
 export function registerGamificationRoutes() {
   on('GET', '/api/gamification', true, async (ctx) => {
-    return Response.json(await getGamification(ctx.env, ctx.userId))
-  })
-
-  on('PUT', '/api/gamification', true, async (ctx) => {
-    const b = await body<GamificationFull>(ctx.request)
-    await batch(ctx.env, gamificationReplaceStatements(ctx.env, ctx.userId, b))
     return Response.json(await getGamification(ctx.env, ctx.userId))
   })
 }

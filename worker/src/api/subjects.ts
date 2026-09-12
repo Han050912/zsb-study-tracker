@@ -1,6 +1,6 @@
 import type { Env } from '../index'
-import { on, body } from '../router'
-import { all, first, batch, uid, HttpError } from '../db'
+import { on } from '../router'
+import { all, uid } from '../db'
 
 /**
  * 科目/章节/知识点三层结构：
@@ -53,90 +53,106 @@ export async function getSubjectTree(env: Env, userId: string): Promise<SubjectT
       return { id: c.id, name: c.name, topics: topicRows.map((t: any) => t.name) }
     })
     return {
-      id: s.id, name: s.name, icon: s.icon, color: s.color,
-      weight: s.weight ?? 0, builtin: !!s.builtin,
-      chapters: treeChapters, mastery, topicImportance
+      id: s.id,
+      name: s.name,
+      icon: s.icon,
+      color: s.color,
+      weight: s.weight ?? 0,
+      builtin: !!s.builtin,
+      chapters: treeChapters,
+      mastery,
+      topicImportance
     }
   })
 }
 
-/** 生成单个科目整树插入语句（不含删除，调用方负责先清理） */
-export function subjectInsertStatements(env: Env, userId: string, s: SubjectTree): D1PreparedStatement[] {
-  const stmts: D1PreparedStatement[] = [
-    env.DB.prepare('INSERT INTO subjects (id, user_id, name, icon, color, weight, builtin) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .bind(s.id, userId, s.name, s.icon, s.color, s.weight ?? 0, s.builtin ? 1 : 0)
-  ]
+/**
+ * 生成单个科目整树的写入语句（不含该科目子树的删除，调用方负责先清理）。
+ *
+ * - `stamp`（记录级同步传入）：科目主行走 `ON CONFLICT(user_id, id) DO UPDATE`
+ *   —— 不能先删后插，否则每次推送都会换 rowid，同步后科目顺序漂移；
+ *   同时给 chapters/topics 行写上同一份 `updated_at/server_seq`（子表行继承所属科目的值）。
+ * - **保留客户端给出的 chapter id**（缺失才生成）；topic 在前端只有名称没有 id，
+ *   故按「同章节内同名沿用既有 topic id」解析：否则每次整树重建都换新 uid，
+ *   增量同步下客户端无法把同一知识点认作同一条记录（子树合并被破坏）。
+ */
+export async function subjectInsertStatements(
+  env: Env,
+  userId: string,
+  s: SubjectTree,
+  stamp?: { updatedAt: number; seq: number }
+): Promise<D1PreparedStatement[]> {
+  const stmts: D1PreparedStatement[] = []
+  if (stamp) {
+    stmts.push(
+      env.DB.prepare(
+        'INSERT INTO subjects (id, user_id, name, icon, color, weight, builtin, updated_at, server_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(user_id, id) DO UPDATE SET name = excluded.name, icon = excluded.icon, color = excluded.color, weight = excluded.weight, builtin = excluded.builtin, updated_at = excluded.updated_at, server_seq = excluded.server_seq'
+      ).bind(s.id, userId, s.name, s.icon, s.color, s.weight ?? 0, s.builtin ? 1 : 0, stamp.updatedAt, stamp.seq)
+    )
+  } else {
+    stmts.push(
+      env.DB.prepare(
+        'INSERT INTO subjects (id, user_id, name, icon, color, weight, builtin) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).bind(s.id, userId, s.name, s.icon, s.color, s.weight ?? 0, s.builtin ? 1 : 0)
+    )
+  }
+
+  // 既有 topic（同章节同名）→ 沿用其 id
+  const existing = await all<{ id: string; chapter_id: string; name: string }>(
+    env,
+    'SELECT id, chapter_id, name FROM topics WHERE user_id = ? AND chapter_id IN (SELECT id FROM chapters WHERE user_id = ? AND subject_id = ?)',
+    userId,
+    userId,
+    s.id
+  )
+  const topicIds = new Map(existing.map((t) => [`${t.chapter_id}|${t.name}`, t.id]))
+
   for (const c of s.chapters ?? []) {
     const chapterId = c.id || uid()
+    const mastery = (t: string) => s.mastery?.[t] ?? 0
+    const importance = (t: string) => s.topicImportance?.[t] ?? 'normal'
     stmts.push(
-      env.DB.prepare('INSERT INTO chapters (id, user_id, subject_id, name) VALUES (?, ?, ?, ?)').bind(chapterId, userId, s.id, c.name)
+      stamp
+        ? env.DB.prepare(
+            'INSERT INTO chapters (id, user_id, subject_id, name, updated_at, server_seq) VALUES (?, ?, ?, ?, ?, ?)'
+          ).bind(chapterId, userId, s.id, c.name, stamp.updatedAt, stamp.seq)
+        : env.DB.prepare('INSERT INTO chapters (id, user_id, subject_id, name) VALUES (?, ?, ?, ?)').bind(
+            chapterId,
+            userId,
+            s.id,
+            c.name
+          )
     )
     for (const t of c.topics ?? []) {
+      const topicId = topicIds.get(`${chapterId}|${t}`) ?? uid()
       stmts.push(
-        env.DB.prepare('INSERT INTO topics (id, user_id, chapter_id, name, mastery, importance) VALUES (?, ?, ?, ?, ?, ?)')
-          .bind(uid(), userId, chapterId, t, s.mastery?.[t] ?? 0, s.topicImportance?.[t] ?? 'normal')
+        stamp
+          ? env.DB.prepare(
+              'INSERT INTO topics (id, user_id, chapter_id, name, mastery, importance, updated_at, server_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            ).bind(topicId, userId, chapterId, t, mastery(t), importance(t), stamp.updatedAt, stamp.seq)
+          : env.DB.prepare(
+              'INSERT INTO topics (id, user_id, chapter_id, name, mastery, importance) VALUES (?, ?, ?, ?, ?, ?)'
+            ).bind(topicId, userId, chapterId, t, mastery(t), importance(t))
       )
     }
   }
   return stmts
 }
 
-/** 生成某用户全部科目树的删除语句（子表先删） */
-export function subjectDeleteStatements(env: Env, userId: string): D1PreparedStatement[] {
+/** 删除单个科目的整棵子树（topics → chapters → subjects）；其学习记录等由调用方另行处理 */
+export function subjectTreeDeleteStatements(env: Env, userId: string, subjectId: string): D1PreparedStatement[] {
   return [
-    env.DB.prepare('DELETE FROM topics WHERE user_id = ?').bind(userId),
-    env.DB.prepare('DELETE FROM chapters WHERE user_id = ?').bind(userId),
-    env.DB.prepare('DELETE FROM subjects WHERE user_id = ?').bind(userId)
+    env.DB.prepare(
+      'DELETE FROM topics WHERE user_id = ? AND chapter_id IN (SELECT id FROM chapters WHERE user_id = ? AND subject_id = ?)'
+    ).bind(userId, userId, subjectId),
+    env.DB.prepare('DELETE FROM chapters WHERE user_id = ? AND subject_id = ?').bind(userId, subjectId),
+    env.DB.prepare('DELETE FROM subjects WHERE user_id = ? AND id = ?').bind(userId, subjectId)
   ]
 }
 
 export function registerSubjectRoutes() {
   on('GET', '/api/subjects', true, async (ctx) => {
     return Response.json(await getSubjectTree(ctx.env, ctx.userId))
-  })
-
-  on('POST', '/api/subjects', true, async (ctx) => {
-    const b = await body<SubjectTree>(ctx.request)
-    if (!b?.name) throw new HttpError(400, '科目名称不能为空')
-    const id = b.id || uid()
-    await batch(ctx.env, subjectInsertStatements(ctx.env, ctx.userId, { ...b, id }))
-    const tree = (await getSubjectTree(ctx.env, ctx.userId)).find(s => s.id === id)
-    return Response.json(tree, { status: 201 })
-  })
-
-  on('PUT', '/api/subjects/:id', true, async (ctx) => {
-    const id = ctx.params.id
-    const exists = await first(ctx.env, 'SELECT id FROM subjects WHERE id = ? AND user_id = ?', id, ctx.userId)
-    if (!exists) throw new HttpError(404, '科目不存在')
-    const b = await body<SubjectTree>(ctx.request)
-    const stmts = [
-      ctx.env.DB.prepare('DELETE FROM topics WHERE user_id = ? AND chapter_id IN (SELECT id FROM chapters WHERE subject_id = ? AND user_id = ?)').bind(ctx.userId, id, ctx.userId),
-      ctx.env.DB.prepare('DELETE FROM chapters WHERE subject_id = ? AND user_id = ?').bind(id, ctx.userId),
-      ctx.env.DB.prepare('DELETE FROM subjects WHERE id = ? AND user_id = ?').bind(id, ctx.userId),
-      ...subjectInsertStatements(ctx.env, ctx.userId, { ...b, id })
-    ]
-    await batch(ctx.env, stmts)
-    const tree = (await getSubjectTree(ctx.env, ctx.userId)).find(s => s.id === id)
-    return Response.json(tree)
-  })
-
-  // 删除科目：级联删除其学习记录/刷题/真题/错题/笔记；资料仅解除关联
-  on('DELETE', '/api/subjects/:id', true, async (ctx) => {
-    const id = ctx.params.id
-    const exists = await first(ctx.env, 'SELECT id FROM subjects WHERE id = ? AND user_id = ?', id, ctx.userId)
-    if (!exists) throw new HttpError(404, '科目不存在')
-    const p = (sql: string, ...params: unknown[]) => ctx.env.DB.prepare(sql).bind(...params)
-    await batch(ctx.env, [
-      p('DELETE FROM topics WHERE user_id = ? AND chapter_id IN (SELECT id FROM chapters WHERE subject_id = ? AND user_id = ?)', ctx.userId, id, ctx.userId),
-      p('DELETE FROM chapters WHERE subject_id = ? AND user_id = ?', id, ctx.userId),
-      p('DELETE FROM subjects WHERE id = ? AND user_id = ?', id, ctx.userId),
-      p('DELETE FROM study_records WHERE subject_id = ? AND user_id = ?', id, ctx.userId),
-      p('DELETE FROM problem_sessions WHERE subject_id = ? AND user_id = ?', id, ctx.userId),
-      p('DELETE FROM exam_records WHERE subject_id = ? AND user_id = ?', id, ctx.userId),
-      p('DELETE FROM error_questions WHERE subject_id = ? AND user_id = ?', id, ctx.userId),
-      p('DELETE FROM notes WHERE subject_id = ? AND user_id = ?', id, ctx.userId),
-      p('UPDATE materials SET subject_id = NULL WHERE subject_id = ? AND user_id = ?', id, ctx.userId)
-    ])
-    return Response.json({ ok: true })
   })
 }

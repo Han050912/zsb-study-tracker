@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { first, batch, HttpError } from '../db'
+import { first, HttpError } from '../db'
 import { assertCleanAsync } from './sensitive'
 import { encryptSecret } from '../crypto'
 
@@ -36,6 +36,24 @@ export interface SettingsFull {
   partnerRemindEnabled: boolean
 }
 
+/** 昵称/简介唯一校验入口：REST 预校验与记录同步共用，返回 trim 后的新对象。 */
+export async function validateSettingsPublicText(value: SettingsFull, env: Env): Promise<SettingsFull> {
+  const next = { ...value }
+  if (typeof next.userName === 'string' && next.userName.trim()) {
+    const name = next.userName.trim()
+    if (name.length > 30) throw new HttpError(400, '昵称最多 30 个字符')
+    await assertCleanAsync(name, env)
+    next.userName = name
+  }
+  if (typeof next.bio === 'string') {
+    const bio = next.bio.trim()
+    if (bio.length > 100) throw new HttpError(400, '简介最多 100 个字符')
+    if (bio) await assertCleanAsync(bio, env)
+    next.bio = bio
+  }
+  return next
+}
+
 /** 容错解析 quotes JSON：数据损坏时降级为 undefined（用默认值），不拖垮整个设置接口 */
 function parseQuotes(raw: unknown): string[] | undefined {
   if (typeof raw !== 'string') return undefined
@@ -47,7 +65,11 @@ function parseQuotes(raw: unknown): string[] | undefined {
   }
 }
 
-/** 通知类型白名单（勿扰屏蔽类型的合法取值） */
+/**
+ * 通知类型白名单（勿扰屏蔽类型的合法取值）
+ * 其中 'message' 仅为兼容历史设置值保留（私信已不产生通知行，见 messages/unread-count）；
+ * 保留它可让用户设置里历史存储的 dnd_muted_types 中的 'message' 被正常解析，而非被静默丢弃。
+ */
 export const NOTIF_TYPES = ['like', 'comment', 'follow', 'achievement', 'message', 'system', 'partner'] as const
 
 /** 容错解析勿扰屏蔽类型 JSON：非法/损坏时回退空数组 */
@@ -64,7 +86,11 @@ export function parseMutedTypes(raw: unknown): string[] {
 }
 
 export async function getSettings(env: Env, userId: string): Promise<SettingsFull> {
-  const row = await first(env, 'SELECT s.*, u.username FROM user_settings s LEFT JOIN users u ON u.id = s.user_id WHERE s.user_id = ?', userId)
+  const row = await first(
+    env,
+    'SELECT s.*, u.username FROM user_settings s LEFT JOIN users u ON u.id = s.user_id WHERE s.user_id = ?',
+    userId
+  )
   const quotesRow = await first(env, 'SELECT quotes FROM default_quotes WHERE user_id = ?', userId)
   return {
     userName: row?.user_name ?? row?.username ?? '',
@@ -88,51 +114,75 @@ export async function getSettings(env: Env, userId: string): Promise<SettingsFul
     dndMutedTypes: parseMutedTypes(row?.dnd_muted_types),
     dndMuteMessage: !!row?.dnd_mute_message,
     partnerShareEnabled: !!row?.partner_share_enabled,
-    partnerRemindEnabled: row?.partner_remind_enabled !== 0,
+    partnerRemindEnabled: row?.partner_remind_enabled !== 0
   }
 }
 
 /** 生成设置数据的写入语句（upsert user_settings + default_quotes）。
  *  maimemoToken 仅在传入明文时加密存储；undefined 跳过该列，避免未持有 Token 的设备把云端凭证覆盖掉。 */
-export async function settingsReplaceStatements(env: Env, userId: string, s: SettingsFull): Promise<D1PreparedStatement[]> {
-  const commonCols = 'user_name = excluded.user_name, daily_goal_minutes = excluded.daily_goal_minutes, word_goal = excluded.word_goal, ' +
+export async function settingsReplaceStatements(
+  env: Env,
+  userId: string,
+  s: SettingsFull
+): Promise<D1PreparedStatement[]> {
+  const commonCols =
+    'user_name = excluded.user_name, daily_goal_minutes = excluded.daily_goal_minutes, word_goal = excluded.word_goal, ' +
     'problem_goal = excluded.problem_goal, exam_date = excluded.exam_date, theme = excluded.theme, reminder_enabled = excluded.reminder_enabled, ' +
     'reminder_time = excluded.reminder_time, onboarded = excluded.onboarded, join_progress_board = excluded.join_progress_board, profile_visibility = excluded.profile_visibility, bio = excluded.bio, ' +
     'do_not_disturb = excluded.do_not_disturb, dnd_start_time = excluded.dnd_start_time, dnd_end_time = excluded.dnd_end_time, dnd_muted_types = excluded.dnd_muted_types, dnd_mute_message = excluded.dnd_mute_message, ' +
-    'partner_share_enabled = excluded.partner_share_enabled, partner_remind_enabled = excluded.partner_remind_enabled'
+    'partner_share_enabled = excluded.partner_share_enabled, partner_remind_enabled = excluded.partner_remind_enabled, avatar = excluded.avatar'
   // 昵称缺失或为空（含纯空白）时写入 NULL：展示端统一回退登录用户名（COALESCE 口径），
   // 避免前端误传空字符串导致社区/团队等处出现空白作者名
   const userName = typeof s.userName === 'string' && s.userName.trim() ? s.userName.trim() : null
   const mutedJson = JSON.stringify(Array.isArray(s.dndMutedTypes) ? s.dndMutedTypes : [])
   const baseParams = [
-    userId, userName, s.dailyGoalMinutes ?? 240, s.wordGoal ?? 50, s.problemGoal ?? 30,
-    s.examDate ?? '', s.theme ?? 'light', s.reminderEnabled ? 1 : 0, s.reminderTime ?? '08:00', s.onboarded ? 1 : 0,
-    s.joinProgressBoard ? 1 : 0, s.profileVisibility ?? 'login', s.bio ?? '',
-    s.doNotDisturb ? 1 : 0, s.dndStartTime ?? '', s.dndEndTime ?? '', mutedJson, s.dndMuteMessage ? 1 : 0,
-    s.partnerShareEnabled ? 1 : 0, s.partnerRemindEnabled ? 1 : 0
+    userId,
+    userName,
+    s.dailyGoalMinutes ?? 240,
+    s.wordGoal ?? 50,
+    s.problemGoal ?? 30,
+    s.examDate ?? '',
+    s.theme ?? 'light',
+    s.reminderEnabled ? 1 : 0,
+    s.reminderTime ?? '08:00',
+    s.onboarded ? 1 : 0,
+    s.joinProgressBoard ? 1 : 0,
+    s.profileVisibility ?? 'login',
+    s.bio ?? '',
+    s.doNotDisturb ? 1 : 0,
+    s.dndStartTime ?? '',
+    s.dndEndTime ?? '',
+    mutedJson,
+    s.dndMuteMessage ? 1 : 0,
+    s.partnerShareEnabled ? 1 : 0,
+    s.partnerRemindEnabled ? 1 : 0
   ]
   const stmts: D1PreparedStatement[] = []
-  const newCols = ', do_not_disturb, dnd_start_time, dnd_end_time, dnd_muted_types, dnd_mute_message, partner_share_enabled, partner_remind_enabled'
+  const newCols =
+    ', do_not_disturb, dnd_start_time, dnd_end_time, dnd_muted_types, dnd_mute_message, partner_share_enabled, partner_remind_enabled'
 
   // 墨墨 Token 仅写入时加密存储（AES-256-GCM，密钥派生自 JWT_SECRET）
-  const tokenCipher = typeof s.maimemoToken === 'string' && s.maimemoToken.trim()
-    ? await encryptSecret(env, s.maimemoToken)
-    : undefined
+  const tokenCipher =
+    typeof s.maimemoToken === 'string' && s.maimemoToken.trim() ? await encryptSecret(env, s.maimemoToken) : undefined
 
   if (tokenCipher === undefined) {
     stmts.push(
       env.DB.prepare(
-        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' + newCols + ') ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
-        `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}`
+        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' +
+          newCols +
+          ') ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+          `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}`
       ).bind(...baseParams)
     )
   } else {
     stmts.push(
       env.DB.prepare(
-        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' + newCols + ', maimemo_token) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
-        `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}, maimemo_token = excluded.maimemo_token`
+        'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' +
+          newCols +
+          ', maimemo_token) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+          `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}, maimemo_token = excluded.maimemo_token`
       ).bind(...baseParams, tokenCipher)
     )
   }
@@ -140,11 +190,37 @@ export async function settingsReplaceStatements(env: Env, userId: string, s: Set
     stmts.push(
       env.DB.prepare(
         'INSERT INTO default_quotes (user_id, quotes) VALUES (?, ?) ' +
-        'ON CONFLICT(user_id) DO UPDATE SET quotes = excluded.quotes'
+          'ON CONFLICT(user_id) DO UPDATE SET quotes = excluded.quotes'
       ).bind(userId, JSON.stringify(s.quotes))
     )
   }
   return stmts
+}
+
+/**
+ * 设置域的记录级写入（键 = self）：复用 settingsReplaceStatements 的语义
+ * （`maimemoToken` 仅明文传入时覆盖，未传则保留云端已有凭证），并补写记录级 `updated_at/server_seq`
+ * ——该记录跨 user_settings（设置本体）与 default_quotes（自定义引言）两张行记录。
+ */
+export async function settingsRecordStatements(
+  env: Env,
+  userId: string,
+  value: SettingsFull,
+  stamp: { updatedAt: number; seq: number }
+): Promise<D1PreparedStatement[]> {
+  return [
+    ...(await settingsReplaceStatements(env, userId, value)),
+    env.DB.prepare('UPDATE user_settings SET updated_at = ?, server_seq = ? WHERE user_id = ?').bind(
+      stamp.updatedAt,
+      stamp.seq,
+      userId
+    ),
+    env.DB.prepare('UPDATE default_quotes SET updated_at = ?, server_seq = ? WHERE user_id = ?').bind(
+      stamp.updatedAt,
+      stamp.seq,
+      userId
+    )
+  ]
 }
 
 export function registerSettingsRoutes() {
@@ -152,23 +228,9 @@ export function registerSettingsRoutes() {
     return Response.json(await getSettings(ctx.env, ctx.userId))
   })
 
-  on('PUT', '/api/settings', true, async (ctx) => {
+  on('POST', '/api/settings/validate', true, async (ctx) => {
     const b = await body<SettingsFull>(ctx.request)
-    // 昵称在社区公开可见（发帖/评论/榜单/资料卡），过敏感词 + 长度限制
-    if (typeof b?.userName === 'string' && b.userName.trim()) {
-      const name = b.userName.trim()
-      if (name.length > 30) throw new HttpError(400, '昵称最多 30 个字符')
-      await assertCleanAsync(name, ctx.env)
-      b.userName = name
-    }
-    // 简介在我的页/访客主页公开可见，与昵称同口径过敏感词 + 长度限制；纯空白归一为 ''
-    if (typeof b?.bio === 'string') {
-      const bio = b.bio.trim()
-      if (bio.length > 100) throw new HttpError(400, '简介最多 100 个字符')
-      if (bio) await assertCleanAsync(bio, ctx.env)
-      b.bio = bio
-    }
-    await batch(ctx.env, await settingsReplaceStatements(ctx.env, ctx.userId, b))
-    return Response.json(await getSettings(ctx.env, ctx.userId))
+    const validated = await validateSettingsPublicText(b, ctx.env)
+    return Response.json({ userName: validated.userName, bio: validated.bio })
   })
 }
