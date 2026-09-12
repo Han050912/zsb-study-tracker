@@ -100,7 +100,7 @@ export async function cleanupOrphanUploads(env: Env): Promise<void> {
 export function registerUploadRoutes() {
   // 上传图片（裸二进制；?filename= 可选，仅用于记录原始文件名）
   on('POST', '/api/community/upload', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:upload', 20)
+    await rateLimit(ctx, 'community:upload', 20)
     const q = new URL(ctx.request.url).searchParams
     const variant = q.get('variant')
     const thumbFor = q.get('id')

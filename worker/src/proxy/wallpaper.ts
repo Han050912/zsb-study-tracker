@@ -94,7 +94,7 @@ async function fetchImage(fileId: string): Promise<Response> {
 export function registerWallpaperRoutes() {
   // 随机静态壁纸：Worker 取图转发（公开路由，IP 限流防滥用）
   on('GET', '/api/proxy/wallpaper', false, async (ctx) => {
-    rateLimit(ctx.request, 'wallpaper', 30, 60_000)
+    await rateLimit(ctx, 'wallpaper', 30)
     // 站点当前约 3000+ 页；页码越界返回空列表时回退第 1 页
     for (const page of [1 + Math.floor(Math.random() * 3000), 1]) {
       const ids = await fetchFileIds(page)

@@ -27,7 +27,7 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
 
 export function registerErrorImageRoutes() {
   on('POST', '/api/error-images', true, async (ctx) => {
-    rateLimit(ctx.request, 'error-images:upload', 20)
+    await rateLimit(ctx, 'error-images:upload', 20)
 
     // Content-Length 预检，避免超限文件读入内存后才拒绝
     const declared = Number(ctx.request.headers.get('Content-Length') || 0)

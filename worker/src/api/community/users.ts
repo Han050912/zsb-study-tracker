@@ -21,7 +21,7 @@ export function registerUsersRoutes() {
   // 精确查找用户：仅按对外用户 ID（user_code）定位，返回用户卡片 + 当前关注状态。
   // 用于「输入用户ID → 找到人 → 关注/加搭子」闭环；完整资料由 /profile 承载。
   on('GET', '/api/community/users/lookup', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:lookup', 30)
+    await rateLimit(ctx, 'community:lookup', 30)
     const key = (new URL(ctx.request.url).searchParams.get('key') || '').trim().toUpperCase()
     if (!key) throw new HttpError(400, '请输入用户ID')
     if (key.length > 8) throw new HttpError(404, '用户不存在')
@@ -330,7 +330,7 @@ export function registerUsersRoutes() {
 
   // 关注/取关（toggle；关注时向对方推 follow 通知，取关撤回——与点赞同口径）
   on('PUT', '/api/community/users/:id/follow', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:follow', 30)
+    await rateLimit(ctx, 'community:follow', 30)
     const targetId = ctx.params.id
     if (targetId === ctx.userId) throw new HttpError(400, '不能关注自己')
     const target = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', targetId)

@@ -13,7 +13,7 @@ import { notifyStatement, nowSec } from './shared'
 export function registerReportsRoutes() {
   // 举报帖子/评论/私信（举报人匿名，仅管理员可见；同一内容重复举报去重）
   on('POST', '/api/community/reports', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:report', 10)
+    await rateLimit(ctx, 'community:report', 10)
     const b = await parseBody(
       ctx.request,
       z.object({

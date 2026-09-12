@@ -110,7 +110,7 @@ export function registerMessagesRoutes() {
 
   // 发送私信（限流 + 敏感词；单向模式无需互关；私信不经通知中心，由「消息」模块承载）
   on('POST', '/api/community/messages/:peerId', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:msg', 30)
+    await rateLimit(ctx, 'community:msg', 30)
     const peerId = ctx.params.peerId
     if (peerId === ctx.userId) throw new HttpError(400, '不能给自己发私信')
     const peer = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', peerId)

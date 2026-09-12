@@ -122,7 +122,7 @@ async function createGitHubIssue(
 export function registerFeedbackRoutes() {
   // 提交反馈（登录用户）
   on('POST', '/api/feedback', true, async (ctx) => {
-    rateLimit(ctx.request, 'feedback', 20)
+    await rateLimit(ctx, 'feedback', 20)
     const b = await parseBody(
       ctx.request,
       z.object({
@@ -194,7 +194,7 @@ export function registerFeedbackRoutes() {
 
   // 管理员：反馈列表（?status=pending|resolved 可选筛选）
   on('GET', '/api/admin/feedback', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const status = new URL(ctx.request.url).searchParams.get('status')
     const filtered = status === 'pending' || status === 'resolved'
@@ -216,7 +216,7 @@ export function registerFeedbackRoutes() {
 
   // 管理员：更新反馈状态（pending ↔ resolved）
   on('PUT', '/api/admin/feedback/:id', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const b = await body<{ status?: unknown }>(ctx.request)
     const status = b?.status

@@ -1348,7 +1348,7 @@ async function pullBody(request: Request): Promise<{ full?: boolean; cursors?: u
 
 export function registerSyncRoutes() {
   on('POST', '/api/data/push', true, async (ctx) => {
-    rateLimit(ctx.request, 'data:sync', 60)
+    await rateLimit(ctx, 'data:sync', 60)
     const payload = await body<{ domains?: unknown; points?: unknown; achievements?: unknown }>(
       ctx.request,
       SYNC_MAX_BYTES
@@ -1512,7 +1512,7 @@ export function registerSyncRoutes() {
 
   on('POST', '/api/data/pull', true, async (ctx) => {
     // full=true 全量快照是全站最重的读端点（逐域 SELECT + 子树组装），与其他昂贵端点一样限流
-    rateLimit(ctx.request, 'data:pull', 60)
+    await rateLimit(ctx, 'data:pull', 60)
     const payload = await pullBody(ctx.request)
 
     const cursorsRaw = payload?.cursors

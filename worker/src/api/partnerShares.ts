@@ -71,7 +71,7 @@ async function getItem(env: Env, itemType: string, itemId: string, ownerId: stri
 export function registerPartnerShareRoutes() {
   // 分享错题/笔记给搭子（需 owner 开启数据共享）
   on('POST', '/api/partner-shares', true, async (ctx) => {
-    rateLimit(ctx.request, 'partner:share', 30)
+    await rateLimit(ctx, 'partner:share', 30)
     const b = await body(ctx.request)
     const partnerId = typeof b?.partnerId === 'string' ? b.partnerId : ''
     const itemType = typeof b?.itemType === 'string' ? b.itemType : ''
@@ -295,7 +295,7 @@ export function registerPartnerShareRoutes() {
 
   // 添加批注（双人私密交流）
   on('POST', '/api/partner-shares/:id/comments', true, async (ctx) => {
-    rateLimit(ctx.request, 'partner:comment', 30)
+    await rateLimit(ctx, 'partner:comment', 30)
     const b = await body(ctx.request)
     const content = typeof b?.content === 'string' ? b.content.trim() : ''
     if (!content) throw new HttpError(400, '批注内容必填')
@@ -329,7 +329,7 @@ export function registerPartnerShareRoutes() {
 
   // 复制分享的笔记到我的笔记（仅接收者；生成独立副本，PDF 同步复制分片）
   on('POST', '/api/partner-shares/:id/copy', true, async (ctx) => {
-    rateLimit(ctx.request, 'partner:copy', 30)
+    await rateLimit(ctx, 'partner:copy', 30)
     const b = await body(ctx.request)
     const subjectId = typeof b?.subjectId === 'string' ? b.subjectId : ''
     if (!subjectId) throw new HttpError(400, '请选择归属科目')

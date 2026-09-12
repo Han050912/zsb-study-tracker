@@ -175,7 +175,7 @@ function isChallengeActive(challenge: ChallengeRow): boolean {
 
 /** GET /api/teams - 获取公开小组列表（公开：访客可浏览公开小组，my=true 分支依赖登录态返回空） */
 on('GET', '/api/teams', false, async (ctx) => {
-  await rateLimit(ctx.request, 'teams_list', 60, 300_000)
+  await rateLimit(ctx, 'teams_list', 60)
 
   const url = new URL(ctx.request.url)
   const myTeams = url.searchParams.get('my') === 'true'
@@ -215,7 +215,7 @@ on('GET', '/api/teams', false, async (ctx) => {
 
 /** POST /api/teams - 创建学习小组 */
 on('POST', '/api/teams', true, async (ctx) => {
-  await rateLimit(ctx.request, 'create_team', 10, 60_000)
+  await rateLimit(ctx, 'create_team', 10)
 
   // isPublic 仅创建端点需要，在共享 schema 上扩展：仅接受布尔，缺省视为私密组
   const parsed = await parseBody(ctx.request, createTeamSchema)
@@ -390,7 +390,7 @@ async function addMember(env: Env, teamId: string, userId: string): Promise<void
 
 /** POST /api/teams/:id/join - 加入小组 */
 on('POST', '/api/teams/:id/join', true, async (ctx) => {
-  await rateLimit(ctx.request, 'join_team', 10, 60_000)
+  await rateLimit(ctx, 'join_team', 10)
 
   const teamId = ctx.params.id
 
@@ -416,7 +416,7 @@ on('POST', '/api/teams/:id/join', true, async (ctx) => {
 
 /** POST /api/teams/:id/apply - 通过邀请码申请加入私密小组 */
 on('POST', '/api/teams/:id/apply', true, async (ctx) => {
-  await rateLimit(ctx.request, 'apply_team', 10, 60_000)
+  await rateLimit(ctx, 'apply_team', 10)
 
   const teamId = ctx.params.id
   const team = await first<TeamRow>(ctx.env, 'SELECT * FROM study_teams WHERE id = ?', teamId)
@@ -789,7 +789,7 @@ on('POST', '/api/teams/:id/disband', true, async (ctx) => {
 
 /** POST /api/teams/:id/challenges - 创建挑战 */
 on('POST', '/api/teams/:id/challenges', true, async (ctx) => {
-  await rateLimit(ctx.request, 'create_challenge', 10, 60_000)
+  await rateLimit(ctx, 'create_challenge', 10)
 
   const teamId = ctx.params.id
   await assertTeamLeader(ctx.env, ctx.userId, teamId)
@@ -841,7 +841,7 @@ on('POST', '/api/teams/:id/challenges', true, async (ctx) => {
 
 /** POST /api/teams/challenges/:id/sync - 同步挑战进度 */
 on('POST', '/api/teams/challenges/:id/sync', true, async (ctx) => {
-  await rateLimit(ctx.request, 'sync_challenge', 100, 60_000)
+  await rateLimit(ctx, 'sync_challenge', 100)
 
   const challengeId = ctx.params.id
 
@@ -1000,7 +1000,7 @@ on('POST', '/api/teams/challenges/:id/sync', true, async (ctx) => {
 
 /** PUT /api/teams/challenges/:id - 编辑挑战（仅队长；未开始/进行中可编辑；不含 type） */
 on('PUT', '/api/teams/challenges/:id', true, async (ctx) => {
-  await rateLimit(ctx.request, 'update_challenge', 10, 60_000)
+  await rateLimit(ctx, 'update_challenge', 10)
 
   const challengeId = ctx.params.id
   const challenge = await first<ChallengeRow>(ctx.env, 'SELECT * FROM team_challenges WHERE id = ?', challengeId)

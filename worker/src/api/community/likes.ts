@@ -12,7 +12,7 @@ import { nowSec, awardStatements, revokeStatements, notifyStatement, displayName
 export function registerLikesRoutes() {
   // 点赞/取消点赞（toggle，幂等）
   on('POST', '/api/community/likes', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:like', 30)
+    await rateLimit(ctx, 'community:like', 30)
     const b = await body(ctx.request)
     const targetType = b?.targetType === 'comment' ? 'comment' : b?.targetType === 'post' ? 'post' : null
     const targetId = typeof b?.targetId === 'string' ? b.targetId : ''
@@ -123,7 +123,7 @@ export function registerLikesRoutes() {
 
   // 踩/取消踩（toggle，幂等；与赞互斥：踩时若已赞则取消赞并回收积分，防刷分）
   on('POST', '/api/community/dislikes', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:dislike', 30)
+    await rateLimit(ctx, 'community:dislike', 30)
     const b = await body(ctx.request)
     const targetType = b?.targetType === 'comment' ? 'comment' : b?.targetType === 'post' ? 'post' : null
     const targetId = typeof b?.targetId === 'string' ? b.targetId : ''

@@ -40,7 +40,7 @@ export function registerCirclesRoutes() {
 
   // 建圈（创建者自动成为圈主；名称过敏感词）
   on('POST', '/api/community/circles', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:circle', 10)
+    await rateLimit(ctx, 'community:circle', 10)
     const b = await body(ctx.request)
     const name = String(b?.name ?? '').trim()
     const description = String(b?.description ?? '')
@@ -124,7 +124,7 @@ export function registerCirclesRoutes() {
   // 加入/退圈 toggle：非成员→加入（公开圈直接 active；审核圈 pending 并通知圈主）；
   // active→退圈；pending→取消申请。圈主不能退出自己创建的圈。
   on('PUT', '/api/community/circles/:id/join', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:circle', 30)
+    await rateLimit(ctx, 'community:circle', 30)
     const circle = await first<any>(ctx.env, 'SELECT * FROM community_circles WHERE id = ?', ctx.params.id)
     if (!circle) throw new HttpError(404, '圈子不存在')
     const mine = await first<{ role: string; status: string }>(
@@ -194,7 +194,7 @@ export function registerCirclesRoutes() {
 
   // 圈主批准申请（pending → active，通知申请人）
   on('PUT', '/api/community/circles/:id/members/:uid/approve', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:circle', 30)
+    await rateLimit(ctx, 'community:circle', 30)
     const circle = await first<any>(
       ctx.env,
       'SELECT id, name, creator_id FROM community_circles WHERE id = ?',
@@ -226,7 +226,7 @@ export function registerCirclesRoutes() {
 
   // 圈主移除成员 / 拒绝申请
   on('DELETE', '/api/community/circles/:id/members/:uid', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:circle', 30)
+    await rateLimit(ctx, 'community:circle', 30)
     const circle = await first<any>(ctx.env, 'SELECT id, creator_id FROM community_circles WHERE id = ?', ctx.params.id)
     if (!circle) throw new HttpError(404, '圈子不存在')
     if (circle.creator_id !== ctx.userId) throw new HttpError(403, '仅圈主可移除成员')

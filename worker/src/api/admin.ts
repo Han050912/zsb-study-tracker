@@ -40,7 +40,7 @@ function modLogStatement(
 export function registerAdminRoutes() {
   // 帖子置顶/取消置顶
   on('PUT', '/api/admin/posts/:id/pin', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const post = await first<{ is_pinned: number }>(
       ctx.env,
@@ -58,7 +58,7 @@ export function registerAdminRoutes() {
 
   // 帖子隐藏/取消隐藏
   on('PUT', '/api/admin/posts/:id/hide', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const post = await first<{ is_hidden: number }>(
       ctx.env,
@@ -76,7 +76,7 @@ export function registerAdminRoutes() {
 
   // 帖子加精/取消加精（精华帖在广场「精华」Tab 展示）
   on('PUT', '/api/admin/posts/:id/feature', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const post = await first<{ is_featured: number }>(
       ctx.env,
@@ -94,7 +94,7 @@ export function registerAdminRoutes() {
 
   // 专家认证授予/更新（蓝 V + 专长领域；处理结果通知用户并留痕）
   on('PUT', '/api/admin/users/:id/verify', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const b = await body(ctx.request)
     const expertise = String(b?.expertise ?? '')
@@ -120,7 +120,7 @@ export function registerAdminRoutes() {
 
   // 撤销专家认证
   on('DELETE', '/api/admin/users/:id/verify', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const target = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', ctx.params.id)
     if (!target) throw new HttpError(404, '用户不存在')
@@ -140,7 +140,7 @@ export function registerAdminRoutes() {
 
   // 每日一题设置/取消（广场顶部展示最新一条被标记的未隐藏帖子）
   on('PUT', '/api/admin/posts/:id/daily', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const post = await first<{ is_daily: number }>(
       ctx.env,
@@ -158,7 +158,7 @@ export function registerAdminRoutes() {
 
   // 评论隐藏/取消隐藏
   on('PUT', '/api/admin/comments/:id/hide', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const c = await first<{ is_hidden: number }>(
       ctx.env,
@@ -176,7 +176,7 @@ export function registerAdminRoutes() {
 
   // 举报队列（仅待处理；附目标内容快照，目标已被删除时 target 为 null）
   on('GET', '/api/admin/reports', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const rows = await all<any>(
       ctx.env,
@@ -262,7 +262,7 @@ export function registerAdminRoutes() {
 
   // 处理举报：hide（隐藏）/ delete（删除）/ reject（驳回）；处理结果通知被处理人与举报人
   on('PUT', '/api/admin/reports/:id/resolve', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const b = await body(ctx.request)
     const action: 'hide' | 'delete' | 'reject' | null =
@@ -384,7 +384,7 @@ export function registerAdminRoutes() {
 
   // 自动统计快照 + 现有干预名单
   on('GET', '/api/admin/hot-topics', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const weekAgo = nowSec() - 7 * 86400
     const [stats, overrides] = await Promise.all([
@@ -404,7 +404,7 @@ export function registerAdminRoutes() {
 
   // 添加干预条目（置顶/屏蔽）
   on('POST', '/api/admin/hot-topics', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const b = await body(ctx.request)
     const text = String(b?.text ?? '')
@@ -432,7 +432,7 @@ export function registerAdminRoutes() {
 
   // 删除干预条目
   on('DELETE', '/api/admin/hot-topics/:id', true, async (ctx) => {
-    rateLimit(ctx.request, 'admin', 20)
+    await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
     const res = await run(ctx.env, 'DELETE FROM community_hot_topics WHERE id = ?', ctx.params.id)
     if (!res.meta.changes) throw new HttpError(404, '条目不存在')

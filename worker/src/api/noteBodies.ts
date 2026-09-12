@@ -59,7 +59,7 @@ export async function readNoteBody(
 
 export function registerNoteBodyRoutes() {
   on('PUT', '/api/note-bodies/:id', true, async (ctx) => {
-    rateLimit(ctx.request, 'note-body:write', 60)
+    await rateLimit(ctx, 'note-body:write', 60)
     const noteId = validNoteId(ctx.params.id)
     const declared = Number(ctx.request.headers.get('Content-Length') || 0)
     if (declared > NOTE_BODY_MAX_BYTES) throw new HttpError(413, '笔记正文超过 1MB 上限')
@@ -135,7 +135,7 @@ export function registerNoteBodyRoutes() {
   })
 
   on('POST', '/api/note-bodies/pull', true, async (ctx) => {
-    rateLimit(ctx.request, 'note-body:pull', 120)
+    await rateLimit(ctx, 'note-body:pull', 120)
     const payload = await body<{ ids?: unknown }>(ctx.request)
     if (!Array.isArray(payload?.ids)) throw new HttpError(400, 'ids 必须为数组')
     if (payload.ids.length > MAX_PULL_IDS) throw new HttpError(413, `每次最多拉取 ${MAX_PULL_IDS} 篇正文`)

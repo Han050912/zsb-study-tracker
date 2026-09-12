@@ -146,7 +146,7 @@ export function registerPostsRoutes() {
 
   // 发帖（每日首帖 +5 积分，按日期去重）
   on('POST', '/api/community/posts', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:post', 5)
+    await rateLimit(ctx, 'community:post', 5)
     const b = await parseBody(
       ctx.request,
       z.object({
@@ -336,7 +336,7 @@ export function registerPostsRoutes() {
 
   // 发表评论（一级或二级回复）
   on('POST', '/api/community/posts/:id/comments', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:comment', 10)
+    await rateLimit(ctx, 'community:comment', 10)
     const postId = ctx.params.id
     const post = await first<{ user_id: string; circle_id: string | null }>(
       ctx.env,
@@ -470,7 +470,7 @@ export function registerPostsRoutes() {
 
   // 提问帖标记解决/取消解决（仅楼主；已采纳最佳答案时需先取消采纳，避免「已采纳但未解答」矛盾态）
   on('PUT', '/api/community/posts/:id/resolve', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:resolve', 20)
+    await rateLimit(ctx, 'community:resolve', 20)
     const post = await first<{ user_id: string; type: string; is_resolved: number; accepted_answer_id: string | null }>(
       ctx.env,
       'SELECT user_id, type, is_resolved, accepted_answer_id FROM community_posts WHERE id = ?',
@@ -494,7 +494,7 @@ export function registerPostsRoutes() {
   // 采纳/取消采纳最佳答案（仅提问帖楼主；改采纳 = 先回收旧采纳再写入新采纳，同一事务）
   // 积分：被采纳者 +10「回答被采纳」、提问者 +3「提问被解答」，取消/改采纳按 refId 精确回收（防刷分）
   on('PUT', '/api/community/posts/:id/accept', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:accept', 20)
+    await rateLimit(ctx, 'community:accept', 20)
     const b = await body(ctx.request)
     const commentId = typeof b?.commentId === 'string' ? b.commentId : ''
     if (!commentId) throw new HttpError(400, '参数错误')

@@ -55,7 +55,7 @@ interface StudySessionRow {
 export function registerPartnerStudy() {
   // 发起双人番茄（邀请搭子；双方均不能有进行中的会话）
   on('POST', '/api/partner-study/sessions', true, async (ctx) => {
-    rateLimit(ctx.request, 'partner:study', 20)
+    await rateLimit(ctx, 'partner:study', 20)
     const b = await body(ctx.request)
     const partnerId = typeof b?.partnerId === 'string' ? b.partnerId : ''
     if (!partnerId) throw new HttpError(400, 'partnerId 必填')
@@ -253,7 +253,7 @@ async function mapSession(env: Env, s: StudySessionRow, userId: string) {
 export function registerPartnerPlans() {
   // 创建协作计划
   on('POST', '/api/partner-plans', true, async (ctx) => {
-    rateLimit(ctx.request, 'partner:plan', 20)
+    await rateLimit(ctx, 'partner:plan', 20)
     const b = await body(ctx.request)
     const partnerId = typeof b?.partnerId === 'string' ? b.partnerId : ''
     const title = typeof b?.title === 'string' ? b.title.trim() : ''
@@ -378,7 +378,7 @@ export function registerPartnerPlans() {
 
   // 添加任务
   on('POST', '/api/partner-plans/:id/tasks', true, async (ctx) => {
-    rateLimit(ctx.request, 'partner:plan:task', 30)
+    await rateLimit(ctx, 'partner:plan:task', 30)
     const b = await body(ctx.request)
     const title = typeof b?.title === 'string' ? b.title.trim() : ''
     const phase = typeof b?.phase === 'string' ? b.phase.trim() : ''
@@ -445,7 +445,7 @@ async function getPlan(env: Env, id: string) {
 export function registerPartnerReviews() {
   // 发起复盘邀约
   on('POST', '/api/partner-reviews', true, async (ctx) => {
-    rateLimit(ctx.request, 'partner:review', 20)
+    await rateLimit(ctx, 'partner:review', 20)
     const b = await body(ctx.request)
     const partnerId = typeof b?.partnerId === 'string' ? b.partnerId : ''
     const scheduledAt = Math.floor(Number(b?.scheduledAt) || 0)

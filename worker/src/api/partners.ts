@@ -128,7 +128,7 @@ export function registerPartnerRoutes() {
   // 推荐：三维打分（考试日期 40 + 薄弱科目 30 + 活跃时段 30）
   on('GET', '/api/community/partners/suggestions', true, async (ctx) => {
     // 该接口对每位候选做 2 次子查询，限制调用频率避免放大查询压力
-    rateLimit(ctx.request, 'community:partner:suggestions', 20, 60_000)
+    await rateLimit(ctx, 'community:partner:suggestions', 20)
     const candidates = await all<any>(
       ctx.env,
       `
@@ -221,7 +221,7 @@ export function registerPartnerRoutes() {
 
   // 发起搭子请求（pair_key 唯一约束根治并发；pending 反向 = 互相接受；rejected 后重发回 pending）
   on('POST', '/api/community/partners/:userId', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:partner', 10)
+    await rateLimit(ctx, 'community:partner', 10)
     const targetId = ctx.params.userId
     if (targetId === ctx.userId) throw new HttpError(400, '不能与自己成为搭子')
     const target = await first(ctx.env, 'SELECT id FROM users WHERE id = ?', targetId)
@@ -412,7 +412,7 @@ export function registerPartnerRoutes() {
 
   // 发送学习鼓励提醒（复用站内通知；受对方提醒开关管控）
   on('POST', '/api/community/partners/:userId/remind', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:partner:remind', 10)
+    await rateLimit(ctx, 'community:partner:remind', 10)
     const partnerId = ctx.params.userId
     await assertPartner(ctx.env, ctx.userId, partnerId)
 
