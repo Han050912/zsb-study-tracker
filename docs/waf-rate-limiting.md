@@ -1,6 +1,6 @@
 # WAF 限流规则配置说明
 
-面向项目所有者：**本文档的操作需在 Cloudflare 控制台手动完成**，代码仓库内没有任何自动化配置（不通过 `wrangler.toml` 或 Terraform 管理）。
+面向项目所有者：**本文档描述的 WAF 边缘规则需在 Cloudflare 控制台手动完成**（不通过 Terraform 管理）；Worker 内的 binding 限流配置在 `worker/wrangler.toml` 的 `[[ratelimits]]` 段，随部署自动生效（见第 5 节）。
 
 ---
 
@@ -71,6 +71,6 @@
 ## 5. 相关文件
 
 - Worker 内限流实现（Rate Limiting binding）：`worker/src/middleware/rateLimit.ts`
-- 速率限制绑定配置：worker/wrangler.toml 的 [[ratelimits]] 段
+- 速率限制绑定配置：`worker/wrangler.toml` 的 `[[ratelimits]]` 段
 - 登录端点（POST `/api/auth/login`）：`worker/src/api/auth.ts`
 - 设计文档：`docs/superpowers/specs/2026-08-30-security-hardening-design.md`

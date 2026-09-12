@@ -6,6 +6,7 @@ import { HttpError } from '../db'
  * 速率限制：基于 Cloudflare Workers 内置 Rate Limiting binding（2025-09 GA，wrangler.toml [[ratelimits]]）。
  * 计数跨实例共享（按 colo，宽松最终一致），是限流主防线；全局洪水防护依赖 WAF 层（现状未部署，见 docs/waf-rate-limiting.md）。
  * 局限：binding period 仅支持 10/60 秒；计数按 key 分 colo，非全局精确。
+ * 注意：同名 action 搭配不同档位时分别独立计数（如 community:circle 的创建 10 档与加入/审批 30 档互不占额）。
  */
 
 /** 限值档位：与 wrangler.toml 的 8 个 [[ratelimits]] 绑定一一对应 */
