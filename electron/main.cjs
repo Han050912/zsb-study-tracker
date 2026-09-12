@@ -5,10 +5,29 @@
  * - 保证 crypto.subtle（安全上下文）等 Web 能力可用；数据经 Cloudflare Worker 云端存储
  * - 开发环境直接加载 Vite Dev Server
  */
-const { app, BrowserWindow, Tray, Menu, nativeImage, protocol, net, ipcMain, Notification, session } = require('electron')
+const {
+  app,
+  BrowserWindow,
+  Tray,
+  Menu,
+  nativeImage,
+  protocol,
+  net,
+  ipcMain,
+  Notification,
+  session,
+  shell
+} = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { pathToFileURL } = require('node:url')
+
+const {
+  classifyWindowOpen,
+  isAllowedExternalUrl,
+  isInternalAppUrl,
+  resolveNotificationIconUrl
+} = require('./security.cjs')
 
 const APP_NAME = '专升本学习助手'
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
@@ -34,7 +53,7 @@ const DEV_CSP = [
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
   "worker-src 'self'",
   "manifest-src 'self'",
-  "frame-src https://challenges.cloudflare.com",
+  'frame-src https://challenges.cloudflare.com',
   "style-src 'self' 'unsafe-inline'",
   "connect-src 'self' http://localhost:* https://zsb-study-tracker.sryze.cc https://cn.zsbservice.de5.net https://challenges.cloudflare.com",
   "img-src 'self' data: blob: http://localhost:* https://cn.zsbservice.de5.net",
@@ -47,7 +66,7 @@ const PROD_CSP = [
   "script-src 'self' https://challenges.cloudflare.com",
   "worker-src 'self'",
   "manifest-src 'self'",
-  "frame-src https://challenges.cloudflare.com",
+  'frame-src https://challenges.cloudflare.com',
   "style-src 'self' 'unsafe-inline'",
   "connect-src 'self' http://localhost:* https://zsb-study-tracker.sryze.cc https://cn.zsbservice.de5.net https://challenges.cloudflare.com",
   "img-src 'self' data: blob: http://localhost:* https://cn.zsbservice.de5.net",
@@ -99,42 +118,48 @@ function setupAutoUpdater() {
    * 使用 node:https 替代 net.fetch，避免 Electron net 模块对 HTTPS 外部请求的不稳定支持。
    * 6 秒超时 + 全量异常捕获，失败不阻塞更新弹窗。
    */
-  function fetchReleaseNotes(version) {
+  function fetchReleaseNotes() {
     const url = 'https://cn.zsbservice.de5.net/api/latest-release'
     return new Promise((resolve) => {
       const https = require('node:https')
-      const req = https.get(url, {
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'zsb-desktop'
-        }
-      }, (res) => {
-        let data = ''
-        res.on('data', (chunk) => { data += chunk })
-        res.on('end', () => {
-          if (res.statusCode !== 200) {
-            console.error(`[fetchReleaseNotes] Worker API status: ${res.statusCode}, body: ${data.slice(0, 200)}`)
-            resolve({ notes: '', releaseDate: '' })
-            return
+      const req = https.get(
+        url,
+        {
+          headers: {
+            Accept: 'application/json',
+            'User-Agent': 'zsb-desktop'
           }
-          try {
-            const json = JSON.parse(data)
-            if (!json.success || !json.data) {
-              console.error('[fetchReleaseNotes] Worker API returned success=false or missing data')
+        },
+        (res) => {
+          let data = ''
+          res.on('data', (chunk) => {
+            data += chunk
+          })
+          res.on('end', () => {
+            if (res.statusCode !== 200) {
+              console.error(`[fetchReleaseNotes] Worker API status: ${res.statusCode}, body: ${data.slice(0, 200)}`)
               resolve({ notes: '', releaseDate: '' })
               return
             }
-            const release = json.data
-            const notes = release.body || ''
-            const releaseDate = release.published_at || ''
-            console.log(`[fetchReleaseNotes] fetched body length: ${notes.length}, published: ${releaseDate}`)
-            resolve({ notes, releaseDate })
-          } catch (err) {
-            console.error('[fetchReleaseNotes] JSON parse error:', err.message)
-            resolve({ notes: '', releaseDate: '' })
-          }
-        })
-      })
+            try {
+              const json = JSON.parse(data)
+              if (!json.success || !json.data) {
+                console.error('[fetchReleaseNotes] Worker API returned success=false or missing data')
+                resolve({ notes: '', releaseDate: '' })
+                return
+              }
+              const release = json.data
+              const notes = release.body || ''
+              const releaseDate = release.published_at || ''
+              console.log(`[fetchReleaseNotes] fetched body length: ${notes.length}, published: ${releaseDate}`)
+              resolve({ notes, releaseDate })
+            } catch (err) {
+              console.error('[fetchReleaseNotes] JSON parse error:', err.message)
+              resolve({ notes: '', releaseDate: '' })
+            }
+          })
+        }
+      )
       req.on('error', (err) => {
         console.error('[fetchReleaseNotes] request error:', err.message)
         resolve({ notes: '', releaseDate: '' })
@@ -151,7 +176,11 @@ function setupAutoUpdater() {
     // releaseNotes 可能是字符串（Markdown）或 [{version, note}] 数组，统一规整为字符串
     let notes = ''
     if (typeof info.releaseNotes === 'string') notes = info.releaseNotes
-    else if (Array.isArray(info.releaseNotes)) notes = info.releaseNotes.map(n => n.note || '').filter(Boolean).join('\n')
+    else if (Array.isArray(info.releaseNotes))
+      notes = info.releaseNotes
+        .map((n) => n.note || '')
+        .filter(Boolean)
+        .join('\n')
 
     const payload = {
       version: info.version,
@@ -166,7 +195,7 @@ function setupAutoUpdater() {
     }
 
     // electron-updater 未返回 releaseNotes 时，通过 Worker 中转接口兜底拉取
-    fetchReleaseNotes(info.version).then(({ notes: fetchedNotes, releaseDate: fetchedDate }) => {
+    fetchReleaseNotes().then(({ notes: fetchedNotes, releaseDate: fetchedDate }) => {
       payload.releaseNotes = fetchedNotes
       if (fetchedDate && !payload.releaseDate) payload.releaseDate = fetchedDate
       send('update:available', payload)
@@ -190,8 +219,12 @@ function setupAutoUpdater() {
     send('update:error', err && err.message ? err.message : String(err))
   })
 
-  ipcMain.on('update:check', () => { autoUpdater.checkForUpdates().catch(() => {}) })
-  ipcMain.on('update:download', () => { autoUpdater.downloadUpdate().catch(() => {}) })
+  ipcMain.on('update:check', () => {
+    autoUpdater.checkForUpdates().catch(() => {})
+  })
+  ipcMain.on('update:download', () => {
+    autoUpdater.downloadUpdate().catch(() => {})
+  })
   ipcMain.on('update:install', () => {
     quitForUpdate = true
     isQuitting = true
@@ -199,7 +232,9 @@ function setupAutoUpdater() {
   })
 
   // 启动后延迟检查，避免与启动画面争抢资源
-  setTimeout(() => { autoUpdater.checkForUpdates().catch(() => {}) }, 5000)
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {})
+  }, 5000)
 }
 
 /**
@@ -210,31 +245,32 @@ ipcMain.on('notify:show', async (_e, payload) => {
   if (!Notification.isSupported()) return
   const { title, body, icon } = payload || {}
   if (!title) return
-  // 头像图标：data URL 直接解析；http(s) URL 由主进程 net.fetch 下载（不受渲染进程 CORS 限制）；失败降级默认图标
+  // 图标来源白名单：仅 data:image 与应用自身头像资源（防止渲染进程借主进程网络栈发起任意请求）
+  const allowedIcon = resolveNotificationIconUrl(icon, { isDev })
   let iconImage
-  if (icon) {
-    const s = String(icon)
-    if (s.startsWith('data:')) {
-      try {
-        const img = nativeImage.createFromDataURL(s)
-        if (!img.isEmpty()) iconImage = img
-      } catch (e) {
-        console.error('[notify] createFromDataURL 失败:', e)
-      }
-    } else if (/^https?:\/\//.test(s)) {
-      try {
-        const res = await net.fetch(s)
-        if (res.ok) {
-          const buf = Buffer.from(await res.arrayBuffer())
-          const img = nativeImage.createFromBuffer(buf)
-          if (!img.isEmpty()) iconImage = img
-        } else {
-          console.error('[notify] net.fetch 头像失败, HTTP:', res.status)
-        }
-      } catch (e) {
-        console.error('[notify] net.fetch 下载头像异常:', e)
-      }
+  if (allowedIcon && allowedIcon.startsWith('data:')) {
+    try {
+      const img = nativeImage.createFromDataURL(allowedIcon)
+      if (!img.isEmpty()) iconImage = img
+    } catch (e) {
+      console.error('[notify] createFromDataURL 失败:', e)
     }
+  } else if (allowedIcon) {
+    try {
+      // redirect: 'error' —— 白名单只校验入口 URL，禁止跟随跳转，避免被 302 引到任意主机
+      const res = await net.fetch(allowedIcon, { redirect: 'error' })
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer())
+        const img = nativeImage.createFromBuffer(buf)
+        if (!img.isEmpty()) iconImage = img
+      } else {
+        console.error('[notify] net.fetch 头像失败, HTTP:', res.status)
+      }
+    } catch (e) {
+      console.error('[notify] net.fetch 下载头像异常:', e)
+    }
+  } else if (icon) {
+    console.warn('[notify] 通知图标来源未通过白名单，已忽略:', String(icon).slice(0, 120))
   }
   const n = new Notification({
     title: String(title),
@@ -303,6 +339,57 @@ function setupDevCSP() {
   })
 }
 
+/** 外链统一交给系统默认浏览器；失败仅记日志，不影响应用本身 */
+function openExternal(url) {
+  shell.openExternal(url).catch((e) => console.error('[nav] openExternal 失败:', url, e))
+}
+
+/** blob: 子窗口（资料页打开已上传文件）的隔离配置：清空 preload + sandbox，确保拿不到任何 IPC 能力 */
+const SAFE_BLOB_WINDOW_OPTIONS = {
+  width: 1000,
+  height: 720,
+  autoHideMenuBar: true,
+  backgroundColor: '#ffffff',
+  webPreferences: {
+    preload: '',
+    nodeIntegration: false,
+    contextIsolation: true,
+    sandbox: true,
+    webviewTag: false,
+    spellcheck: false
+  }
+}
+
+/**
+ * 导航与开窗防护（Electron 官方安全清单硬性项）：
+ * - window.open / target=_blank：外链交系统浏览器，仅 blob: 允许应用内安全子窗口，其余一律拒绝
+ * - 页面跳转 / 服务端重定向：只允许应用自身 origin，外链交系统浏览器
+ * 挂在 app.on('web-contents-created') 上，主窗口 / 启动画面 / 子窗口递归生效。
+ */
+function setupNavigationGuards() {
+  app.on('web-contents-created', (_e, contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+      const kind = classifyWindowOpen(url)
+      if (kind === 'external') {
+        openExternal(url)
+        return { action: 'deny' }
+      }
+      if (kind === 'blob') {
+        return { action: 'allow', overrideBrowserWindowOptions: SAFE_BLOB_WINDOW_OPTIONS }
+      }
+      return { action: 'deny' }
+    })
+
+    const guardNavigation = (event, url) => {
+      if (isInternalAppUrl(url, { isDev, devUrl: DEV_URL })) return
+      event.preventDefault()
+      if (isAllowedExternalUrl(url)) openExternal(url)
+    }
+    contents.on('will-navigate', guardNavigation)
+    contents.on('will-redirect', guardNavigation)
+  })
+}
+
 /** 启动画面：无边框小窗，主窗口就绪后关闭 */
 function createSplash() {
   splashWindow = new BrowserWindow({
@@ -366,7 +453,9 @@ function createMainWindow() {
     }
   })
 
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
 
   if (isDev) mainWindow.loadURL(DEV_URL)
   else mainWindow.loadURL('app://localhost/index.html')
@@ -377,16 +466,48 @@ function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'logo.png'))
   tray = new Tray(icon.resize({ width: 18, height: 18 }))
   tray.setToolTip(APP_NAME)
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '开始专注', click: () => { showMainWindow(); mainWindow.webContents.send('nav', { path: '/pomodoro' }) } },
-    { label: '今日总结', click: () => { showMainWindow(); mainWindow.webContents.send('nav', { path: '/daily-summary' }) } },
-    { label: '快速笔记', click: () => { showMainWindow(); mainWindow.webContents.send('nav', { path: '/notes' }) } },
-    { label: '今日词汇', click: () => { showMainWindow(); mainWindow.webContents.send('nav', { path: '/english', query: { tab: 'vocab' } }) } },
-    { type: 'separator' },
-    { label: '显示主界面', click: () => showMainWindow() },
-    { type: 'separator' },
-    { label: '退出', click: () => { isQuitting = true; app.quit() } }
-  ]))
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: '开始专注',
+        click: () => {
+          showMainWindow()
+          mainWindow.webContents.send('nav', { path: '/pomodoro' })
+        }
+      },
+      {
+        label: '今日总结',
+        click: () => {
+          showMainWindow()
+          mainWindow.webContents.send('nav', { path: '/daily-summary' })
+        }
+      },
+      {
+        label: '快速笔记',
+        click: () => {
+          showMainWindow()
+          mainWindow.webContents.send('nav', { path: '/notes' })
+        }
+      },
+      {
+        label: '今日词汇',
+        click: () => {
+          showMainWindow()
+          mainWindow.webContents.send('nav', { path: '/english', query: { tab: 'vocab' } })
+        }
+      },
+      { type: 'separator' },
+      { label: '显示主界面', click: () => showMainWindow() },
+      { type: 'separator' },
+      {
+        label: '退出',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        }
+      }
+    ])
+  )
   // macOS 托盘点击默认弹出菜单，不再绑定 click 切换窗口（避免菜单与显隐同时触发）
   if (process.platform !== 'darwin') {
     tray.on('click', () => {
@@ -399,8 +520,12 @@ function createTray() {
 
 function init() {
   app.setName(APP_NAME)
-  // Windows 通知（含图标）依赖稳定的 AppUserModelID；dev 环境未打包时默认值会导致通知图标不显示
-  app.setAppUserModelId('com.zsb.study.helper')
+  // Windows 通知（含图标）依赖稳定的 AppUserModelID；dev 环境未打包时默认值会导致通知图标不显示。
+  // 该值必须与 package.json 的 build.appId 完全一致：electron-builder 会按 appId 为 NSIS 快捷方式
+  // 写入 AppUserModelID（WinShell::SetLnkAUMI），不一致会导致通知图标丢失甚至不弹出。
+  // 一致性由 electron/app-id.test.cjs 断言保护，改动其一必须同步另一处。
+  app.setAppUserModelId('com.han.zsb-study-tracker')
+  setupNavigationGuards()
   if (!isDev) registerAppProtocol()
   else setupDevCSP() // 开发环境注入含 'unsafe-eval' 的 CSP（保障 HMR）
   createSplash()
@@ -415,6 +540,8 @@ function init() {
   })
 }
 
-app.on('before-quit', () => { isQuitting = true })
+app.on('before-quit', () => {
+  isQuitting = true
+})
 // 托盘常驻应用：所有窗口关闭后不自动退出，需通过托盘菜单或 Cmd+Q 退出
 app.on('window-all-closed', () => {})
