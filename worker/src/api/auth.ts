@@ -73,8 +73,8 @@ async function nextUserCode(env: Env): Promise<string> {
 
 export function registerAuthRoutes() {
   on('POST', '/api/auth/register', false, async (ctx) => {
-    await requireTurnstile(ctx.request, ctx.env)
     await rateLimit(ctx, 'register', 3) // 每 IP 每分钟最多 3 次注册
+    await requireTurnstile(ctx.request, ctx.env)
     const { username, password } = await parseBody(ctx.request, registerSchema)
     await assertCleanAsync(username, ctx.env) // 敏感词校验留在 handler（用户名社区公开展示）
     if (await first(ctx.env, 'SELECT id FROM users WHERE username = ?', username)) {
@@ -109,8 +109,8 @@ export function registerAuthRoutes() {
   })
 
   on('POST', '/api/auth/login', false, async (ctx) => {
-    await requireTurnstile(ctx.request, ctx.env)
     await rateLimit(ctx, 'login', 10) // 每 IP 每分钟最多 10 次登录尝试
+    await requireTurnstile(ctx.request, ctx.env)
     const { username, password } = await parseBody(ctx.request, loginSchema)
     // loginSchema 不做 trim：登录页已 trim，容忍历史空白
     const row = await first<UserRow>(ctx.env, 'SELECT * FROM users WHERE username = ?', username.trim())
