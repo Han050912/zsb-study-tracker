@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useToast } from '../composables/useToast'
 import dayjs from 'dayjs'
 import { useAppStore } from '../stores/app'
 import { formatMinutes } from '../utils/date'
@@ -7,7 +8,7 @@ import { API_BASE } from '../api/client'
 import type { PomodoroRecord } from '../types'
 
 const store = useAppStore()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
 // ---- 模式与时长 ----
 const mode = ref<'countdown' | 'countup'>('countdown')
@@ -40,19 +41,25 @@ function handleMouseMove(e: MouseEvent) {
   if (e.clientY > window.innerHeight - threshold) {
     // 鼠标在底部区域：显示按钮并取消隐藏定时器
     controlsVisible.value = true
-    if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
+    if (hideControlsTimer) {
+      clearTimeout(hideControlsTimer)
+      hideControlsTimer = null
+    }
   } else if (controlsVisible.value) {
     // 鼠标离开底部区域：启动 3 秒后隐藏
     if (!hideControlsTimer) {
-      hideControlsTimer = setTimeout(() => { controlsVisible.value = false }, 3000)
+      hideControlsTimer = setTimeout(() => {
+        controlsVisible.value = false
+      }, 3000)
     }
   }
 }
 
 const display = computed(() => {
-  const s = mode.value === 'countdown' && phase.value !== 'idle'
-    ? Math.max(0, (phase.value === 'focus' ? focusMinutes.value : breakMinutes.value) * 60 - seconds.value)
-    : seconds.value
+  const s =
+    mode.value === 'countdown' && phase.value !== 'idle'
+      ? Math.max(0, (phase.value === 'focus' ? focusMinutes.value : breakMinutes.value) * 60 - seconds.value)
+      : seconds.value
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 })
 
@@ -87,8 +94,13 @@ function start() {
     startBgRotation()
     // 进入专注时显示按钮 3 秒后自动隐藏
     controlsVisible.value = true
-    if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
-    hideControlsTimer = setTimeout(() => { controlsVisible.value = false }, 3000)
+    if (hideControlsTimer) {
+      clearTimeout(hideControlsTimer)
+      hideControlsTimer = null
+    }
+    hideControlsTimer = setTimeout(() => {
+      controlsVisible.value = false
+    }, 3000)
   }
   startTimestamp = Date.now()
   running.value = true
@@ -99,8 +111,13 @@ function pause() {
   stopTimer()
   // 暂停时保持按钮可见更久，方便用户看到「继续」按钮
   controlsVisible.value = true
-  if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
-  hideControlsTimer = setTimeout(() => { controlsVisible.value = false }, 8000)
+  if (hideControlsTimer) {
+    clearTimeout(hideControlsTimer)
+    hideControlsTimer = null
+  }
+  hideControlsTimer = setTimeout(() => {
+    controlsVisible.value = false
+  }, 8000)
 }
 
 function completePhase() {
@@ -162,7 +179,9 @@ function fetchBackground() {
   // r 参数防缓存；Worker 每次 302 到一张随机静态壁纸
   const url = `${API_BASE}/api/proxy/wallpaper?r=${Date.now()}`
   const img = new Image()
-  img.onload = () => { bgUrl.value = url }
+  img.onload = () => {
+    bgUrl.value = url
+  }
   img.src = url
 }
 
@@ -173,7 +192,10 @@ function startBgRotation() {
 }
 
 function stopBgRotation() {
-  if (bgTimer) { clearInterval(bgTimer); bgTimer = null }
+  if (bgTimer) {
+    clearInterval(bgTimer)
+    bgTimer = null
+  }
   bgUrl.value = ''
 }
 
@@ -182,7 +204,7 @@ const now = ref(new Date())
 let clockHandle: ReturnType<typeof setInterval> | null = null
 const clockText = computed(() => {
   const d = now.value
-  return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':')
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':')
 })
 const dateText = computed(() => {
   const d = now.value
@@ -209,7 +231,7 @@ const quote = ref(FAMOUS_QUOTES[0])
 let lastQuoteIdx = -1
 function randomQuote() {
   // 用户自定义名言也并入候选池
-  const pool = [...FAMOUS_QUOTES, ...store.settings.quotes.map(q => ({ text: q, author: '' }))]
+  const pool = [...FAMOUS_QUOTES, ...store.settings.quotes.map((q) => ({ text: q, author: '' }))]
   let idx = Math.floor(Math.random() * pool.length)
   if (pool.length > 1) {
     while (idx === lastQuoteIdx) idx = Math.floor(Math.random() * pool.length)
@@ -220,7 +242,9 @@ function randomQuote() {
 
 onMounted(() => {
   randomQuote()
-  clockHandle = setInterval(() => { now.value = new Date() }, 1000)
+  clockHandle = setInterval(() => {
+    now.value = new Date()
+  }, 1000)
   window.addEventListener('mousemove', handleMouseMove)
   document.addEventListener('visibilitychange', handleVisibilityChange)
 })
@@ -239,15 +263,22 @@ const recentInterruptions = computed(() => store.pomodoro.interruptions.slice(-5
 /** 响应式今日键：随实时时钟每秒更新，跨 00:00 后列表与编辑守卫自动切换到新的一天 */
 const todayKey = computed(() => dayjs(now.value).format('YYYY-MM-DD'))
 const todayRecordsSorted = computed(() =>
-  (store.pomodoro.records || []).filter(r => r.date === todayKey.value).sort((a, b) => b.time - a.time)
+  (store.pomodoro.records || []).filter((r) => r.date === todayKey.value).sort((a, b) => b.time - a.time)
 )
 const editingId = ref('')
 const editingText = ref('')
 
-function fmtClock(t: number) { return dayjs(t).format('HH:mm') }
+function fmtClock(t: number) {
+  return dayjs(t).format('HH:mm')
+}
 
 /** 编辑输入框挂载后自动聚焦并全选（与 SubjectPanel 行内改名一致，避免 autofocus 失效导致行卡在编辑态） */
-const vFocus = { mounted: (el: HTMLInputElement) => { el.focus(); el.select() } }
+const vFocus = {
+  mounted: (el: HTMLInputElement) => {
+    el.focus()
+    el.select()
+  }
+}
 
 function startEdit(r: PomodoroRecord) {
   if (editingId.value === r.id) return
@@ -265,13 +296,24 @@ function saveEdit() {
   if (editingId.value) store.updatePomodoroRecordDescription(editingId.value, editingText.value)
   editingId.value = ''
 }
-function cancelEdit() { editingId.value = '' }
+function cancelEdit() {
+  editingId.value = ''
+}
 </script>
 
 <template>
-  <div class="min-h-screen relative flex flex-col items-center justify-center p-6 transition-colors duration-700 overflow-hidden"
-    :class="bgUrl ? 'text-white' : phase === 'focus' ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white' : phase === 'break' ? 'bg-gradient-to-br from-emerald-50 to-teal-100 dark:from-emerald-950 dark:to-teal-900' : ''">
-
+  <div
+    class="min-h-screen relative flex flex-col items-center justify-center p-6 transition-colors duration-700 overflow-hidden"
+    :class="
+      bgUrl
+        ? 'text-white'
+        : phase === 'focus'
+          ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white'
+          : phase === 'break'
+            ? 'bg-gradient-to-br from-emerald-50 to-teal-100 dark:from-emerald-950 dark:to-teal-900'
+            : ''
+    "
+  >
     <!-- 背景图 + 遮罩（图片加载失败时 bgUrl 为空，自动降级为上方渐变） -->
     <template v-if="bgUrl">
       <img :src="bgUrl" alt="" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-1000" />
@@ -279,7 +321,9 @@ function cancelEdit() { editingId.value = '' }
     </template>
 
     <!-- 返回入口仅在配置页展示；专注计时中隐藏，保持界面零导航干扰 -->
-    <RouterLink v-if="phase === 'idle'" to="/" class="absolute top-4 left-4 z-10 text-sm opacity-60 hover:opacity-100">← 返回首页</RouterLink>
+    <RouterLink v-if="phase === 'idle'" to="/" class="absolute top-4 left-4 z-10 text-sm opacity-60 hover:opacity-100"
+      >← 返回首页</RouterLink
+    >
 
     <!-- 实时时钟（右上角，仅配置页展示） -->
     <div v-if="phase === 'idle'" class="absolute top-4 right-4 z-10 text-right">
@@ -292,18 +336,41 @@ function cancelEdit() { editingId.value = '' }
       <h1 class="text-2xl font-bold text-center">番茄专注</h1>
       <div class="card space-y-3">
         <div class="flex gap-2">
-          <button class="flex-1 btn" :class="mode === 'countdown' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'" @click="mode = 'countdown'">倒计时</button>
-          <button class="flex-1 btn" :class="mode === 'countup' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'" @click="mode = 'countup'">正计时</button>
+          <button
+            class="flex-1 btn"
+            :class="mode === 'countdown' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+            @click="mode = 'countdown'"
+          >
+            倒计时
+          </button>
+          <button
+            class="flex-1 btn"
+            :class="mode === 'countup' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+            @click="mode = 'countup'"
+          >
+            正计时
+          </button>
         </div>
         <div v-if="mode === 'countdown'" class="grid grid-cols-2 gap-3">
-          <div><label class="label">专注（分钟）</label><input v-model.number="focusMinutes" type="number" min="1" max="120" class="input" /></div>
-          <div><label class="label">休息（分钟）</label><input v-model.number="breakMinutes" type="number" min="1" max="30" class="input" /></div>
+          <div>
+            <label class="label">专注（分钟）</label
+            ><input v-model.number="focusMinutes" type="number" min="1" max="120" class="input" />
+          </div>
+          <div>
+            <label class="label">休息（分钟）</label
+            ><input v-model.number="breakMinutes" type="number" min="1" max="30" class="input" />
+          </div>
         </div>
         <div>
           <label class="label">任务描述（选填）</label>
-          <input v-model="taskDescription" maxlength="50" class="input" placeholder="本次专注的任务，如：复习高数第三章" />
+          <input
+            v-model="taskDescription"
+            maxlength="50"
+            class="input"
+            placeholder="本次专注的任务，如：复习高数第三章"
+          />
         </div>
-        <button class="btn-primary w-full !py-3 text-base" @click="start">开始专注 </button>
+        <button class="btn-primary w-full !py-3 text-base" @click="start">开始专注</button>
       </div>
 
       <!-- 名言点缀 -->
@@ -323,7 +390,11 @@ function cancelEdit() { editingId.value = '' }
           <div class="text-[11px] text-slate-400">今日专注</div>
         </div>
         <div class="card !p-3 text-center">
-          <div class="text-xl font-black text-primary-500">{{ store.todayPomodoro.count ? (store.todayPomodoro.minutes / store.todayPomodoro.count).toFixed(1) : '0.0' }}分</div>
+          <div class="text-xl font-black text-primary-500">
+            {{
+              store.todayPomodoro.count ? (store.todayPomodoro.minutes / store.todayPomodoro.count).toFixed(1) : '0.0'
+            }}分
+          </div>
           <div class="text-[11px] text-slate-400">平均时长</div>
         </div>
       </div>
@@ -331,19 +402,38 @@ function cancelEdit() { editingId.value = '' }
       <!-- 最近完成：今日番茄明细（独立板块，位于最近中断上方） -->
       <div class="card">
         <div class="section-title">最近完成（{{ todayRecordsSorted.length }} 个/今日）</div>
-        <div v-if="!todayRecordsSorted.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-3">今日还没有完成的番茄</div>
+        <div v-if="!todayRecordsSorted.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-3">
+          今日还没有完成的番茄
+        </div>
         <div v-else class="max-h-48 overflow-y-auto">
-          <div v-for="r in todayRecordsSorted" :key="r.id"
+          <div
+            v-for="r in todayRecordsSorted"
+            :key="r.id"
             class="text-xs py-1.5 flex items-center gap-2 text-slate-500 border-t border-slate-100 dark:border-slate-700 first:border-t-0 cursor-default"
-            @dblclick="startEdit(r)">
+            @dblclick="startEdit(r)"
+          >
             <template v-if="editingId === r.id">
-              <input v-model="editingText" v-focus maxlength="50" class="input !py-1 !text-xs flex-1"
-                @dblclick.stop @keydown.enter="onEditEnter" @keyup.esc="cancelEdit" @blur="saveEdit" />
+              <input
+                v-model="editingText"
+                v-focus
+                maxlength="50"
+                class="input !py-1 !text-xs flex-1"
+                @dblclick.stop
+                @keydown.enter="onEditEnter"
+                @keyup.esc="cancelEdit"
+                @blur="saveEdit"
+              />
             </template>
             <template v-else>
               <span class="opacity-60 whitespace-nowrap">{{ fmtClock(r.time) }}</span>
-              <span class="flex-1 truncate" :class="r.description ? '' : 'italic opacity-50'">{{ r.description || '未命名' }}</span>
-              <span v-if="r.source === 'party'" class="px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/40 text-primary-500 text-[10px] whitespace-nowrap">开黑·{{ r.partnerName }}</span>
+              <span class="flex-1 truncate" :class="r.description ? '' : 'italic opacity-50'">{{
+                r.description || '未命名'
+              }}</span>
+              <span
+                v-if="r.source === 'party'"
+                class="px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/40 text-primary-500 text-[10px] whitespace-nowrap"
+                >开黑·{{ r.partnerName }}</span
+              >
               <span class="whitespace-nowrap">{{ r.minutes }} 分钟</span>
             </template>
           </div>
@@ -353,13 +443,18 @@ function cancelEdit() { editingId.value = '' }
       <div v-if="recentInterruptions.length" class="card">
         <div class="section-title">最近中断（{{ store.todayPomodoro.interruptions }} 次/今日）</div>
         <div v-for="(it, i) in recentInterruptions" :key="i" class="text-xs py-1 flex gap-2 text-slate-500">
-          <span class="opacity-60">{{ it.date }}</span><span>{{ it.reason }}</span>
+          <span class="opacity-60">{{ it.date }}</span
+          ><span>{{ it.reason }}</span>
         </div>
       </div>
     </div>
 
     <!-- 计时中（沉浸式全屏）：大时钟距顶 1/4，番茄钟弱化至右上角，名言紧随大时钟，控制按钮沉底 -->
-    <div v-else class="absolute inset-0 z-10" :class="bgUrl || phase === 'focus' ? 'text-white' : 'text-slate-800 dark:text-slate-100'">
+    <div
+      v-else
+      class="absolute inset-0 z-10"
+      :class="bgUrl || phase === 'focus' ? 'text-white' : 'text-slate-800 dark:text-slate-100'"
+    >
       <!-- 番茄钟（右上角弱化展示，减少干扰） -->
       <div class="absolute top-4 right-4 text-right opacity-75">
         <div class="text-[11px] tracking-widest">{{ phase === 'focus' ? '专注中' : '休息中' }}</div>
@@ -368,7 +463,9 @@ function cancelEdit() { editingId.value = '' }
 
       <!-- 大号实时时钟：距页面顶部 1/4 -->
       <div class="absolute inset-x-0 top-1/4 px-6 text-center">
-        <div class="text-6xl md:text-8xl font-mono font-black tabular-nums tracking-wider drop-shadow-lg">{{ clockText }}</div>
+        <div class="text-6xl md:text-8xl font-mono font-black tabular-nums tracking-wider drop-shadow-lg">
+          {{ clockText }}
+        </div>
         <div class="mt-2 text-sm opacity-70">{{ dateText }}</div>
         <!-- 名言（点击换一句） -->
         <div class="mt-8 max-w-md mx-auto cursor-pointer select-none" title="点击换一句" @click="randomQuote">
@@ -380,11 +477,36 @@ function cancelEdit() { editingId.value = '' }
       <!-- 控制按钮（底部，低干扰，鼠标滑至底部自动唤起） -->
       <div
         class="absolute bottom-8 inset-x-0 flex gap-3 justify-center px-6 transition-all duration-500 ease-out"
-        :class="controlsVisible ? 'opacity-100 translate-y-0 pointer-events-auto' : 'opacity-0 translate-y-4 pointer-events-none'"
+        :class="
+          controlsVisible
+            ? 'opacity-100 translate-y-0 pointer-events-auto'
+            : 'opacity-0 translate-y-4 pointer-events-none'
+        "
       >
-        <button v-if="running" class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="pause">⏸ 暂停</button>
-        <button v-else class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="start">▶ 继续</button>
-        <button v-if="phase === 'focus'" class="btn backdrop-blur px-6" :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'" @click="showInterrupt = true">被打断</button>
+        <button
+          v-if="running"
+          class="btn backdrop-blur px-6"
+          :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'"
+          @click="pause"
+        >
+          ⏸ 暂停
+        </button>
+        <button
+          v-else
+          class="btn backdrop-blur px-6"
+          :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'"
+          @click="start"
+        >
+          ▶ 继续
+        </button>
+        <button
+          v-if="phase === 'focus'"
+          class="btn backdrop-blur px-6"
+          :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'"
+          @click="showInterrupt = true"
+        >
+          被打断
+        </button>
         <button class="btn bg-red-500/80 text-white px-6" @click="giveUp">结束</button>
       </div>
     </div>
@@ -394,7 +516,12 @@ function cancelEdit() { editingId.value = '' }
       <div v-if="showInterrupt" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
         <div class="card max-w-xs w-full text-slate-800 dark:text-slate-100">
           <h3 class="font-bold mb-3">记录中断原因</h3>
-          <input v-model="interruptReason" class="input" placeholder="如：看手机、有人打扰…" @keyup.enter="submitInterrupt" />
+          <input
+            v-model="interruptReason"
+            class="input"
+            placeholder="如：看手机、有人打扰…"
+            @keyup.enter="submitInterrupt"
+          />
           <div class="flex gap-2 mt-4 justify-end">
             <button class="btn-ghost" @click="showInterrupt = false">取消</button>
             <button class="btn-primary" @click="submitInterrupt">保存</button>

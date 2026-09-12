@@ -8,7 +8,7 @@ import type { PDFDocumentLoadingTask } from 'pdfjs-dist/types/src/display/api'
  * PDF 连续滚动查看器：与系统 PDF 查看器一致的阅读体验。
  * - 全部页面纵向连续滚动，IntersectionObserver 懒渲染（只渲染视口附近的页）
  * - 工具栏：页码指示、缩小 / 放大 / 适应宽度；放大后页面超出容器可横向滚动
- * props.bytes 为 PDF 原始字节（由父组件从云端 R2 拉取），null 表示加载中。
+ * props.bytes 为 PDF 原始字节（由父组件从云端 D1 分片拉取），null 表示加载中。
  */
 const props = defineProps<{ bytes: Uint8Array | null }>()
 
@@ -43,7 +43,10 @@ async function load() {
   try {
     // slice() 拷贝一份：pdf.js 默认将 data 转移给 worker，原缓冲区会被 neuter
     const task = await getDocument({ data: props.bytes.slice() })
-    if (seq !== renderSeq) { task.destroy().catch(() => {}); return }   // 挂起期间已被新一轮 load 取代
+    if (seq !== renderSeq) {
+      task.destroy().catch(() => {})
+      return
+    } // 挂起期间已被新一轮 load 取代
     loadingTask = task
     doc = await task.promise
     if (seq !== renderSeq) return
@@ -76,7 +79,10 @@ async function renderPage(pageNum: number) {
   const seq = renderSeq
   const el = pageEls[pageNum]
   const canvas = el?.querySelector('canvas')
-  if (!el || !canvas) { renderedPages.delete(pageNum); return }
+  if (!el || !canvas) {
+    renderedPages.delete(pageNum)
+    return
+  }
   try {
     const page = await doc.getPage(pageNum)
     if (seq !== renderSeq) return
@@ -115,13 +121,16 @@ function observeAllPages() {
 
 function setupObserver() {
   observer?.disconnect()
-  observer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue
-      const page = Number((entry.target as HTMLElement).dataset.page)
-      if (page) renderPage(page)
-    }
-  }, { root: scrollerRef.value, rootMargin: '400px 0px' })
+  observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue
+        const page = Number((entry.target as HTMLElement).dataset.page)
+        if (page) renderPage(page)
+      }
+    },
+    { root: scrollerRef.value, rootMargin: '400px 0px' }
+  )
   observeAllPages()
 }
 
@@ -153,14 +162,23 @@ function destroy() {
   renderSeq++
   observer?.disconnect()
   observer = null
-  if (loadingTask) { loadingTask.destroy().catch(() => {}); loadingTask = null }
+  if (loadingTask) {
+    loadingTask.destroy().catch(() => {})
+    loadingTask = null
+  }
   doc = null
   // 释放 DOM 引用与渲染记录，避免组件反复挂载/卸载时的内存泄漏
   pageEls.length = 0
   renderedPages.clear()
 }
 
-watch(() => props.bytes, () => { destroy(); load() })
+watch(
+  () => props.bytes,
+  () => {
+    destroy()
+    load()
+  }
+)
 onMounted(load)
 onUnmounted(destroy)
 </script>
@@ -168,7 +186,9 @@ onUnmounted(destroy)
 <template>
   <div class="flex flex-col h-full min-h-0">
     <!-- 工具栏：页码 + 缩放，与常见 PDF 查看器一致 -->
-    <div class="flex items-center justify-between px-3 py-2 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 text-xs text-slate-500 shrink-0">
+    <div
+      class="flex items-center justify-between px-3 py-2 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 text-xs text-slate-500 shrink-0"
+    >
       <span v-if="pageCount">{{ currentPage }} / {{ pageCount }} 页</span>
       <span v-else>&nbsp;</span>
       <div class="flex items-center gap-1">
@@ -186,16 +206,25 @@ onUnmounted(destroy)
     </div>
 
     <!-- 连续滚动页面区：放大后页宽超过容器，支持横向滚动 -->
-    <div ref="scrollerRef" class="flex-1 min-h-0 overflow-auto bg-slate-100 dark:bg-slate-900 p-3" @scroll.passive="onScroll">
+    <div
+      ref="scrollerRef"
+      class="flex-1 min-h-0 overflow-auto bg-slate-100 dark:bg-slate-900 p-3"
+      @scroll.passive="onScroll"
+    >
       <div v-if="loading" class="text-center text-xs text-slate-400 py-10">PDF 加载中…</div>
       <div v-else-if="loadError" class="flex flex-col items-center gap-2 text-red-400 py-10">
         <FileWarning :size="32" />
         <span class="text-xs">{{ loadError }}</span>
       </div>
       <div v-else class="space-y-3 mx-auto" :style="{ width: `${zoom * 100}%`, minWidth: 'min(100%, 280px)' }">
-        <div v-for="p in pageCount" :key="p" :ref="(el) => setPageEl(el, p)" :data-page="p"
+        <div
+          v-for="p in pageCount"
+          :key="p"
+          :ref="(el) => setPageEl(el, p)"
+          :data-page="p"
           class="rounded-lg shadow-sm bg-white dark:bg-slate-800 overflow-hidden"
-          :style="{ aspectRatio: String(pageRatios[p - 1] || 0.707) }">
+          :style="{ aspectRatio: String(pageRatios[p - 1] || 0.707) }"
+        >
           <canvas class="block w-full h-full"></canvas>
         </div>
       </div>

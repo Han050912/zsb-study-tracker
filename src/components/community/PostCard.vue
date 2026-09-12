@@ -45,10 +45,14 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
 </script>
 
 <template>
-  <article class="card space-y-3" :class="[
-    detail ? '' : 'cursor-pointer hover:shadow-md transition-shadow',
-    post.isHidden ? 'opacity-50 border-2 border-red-300 dark:border-red-700' : ''
-  ]" @click="!detail && emit('open')">
+  <article
+    class="card space-y-3"
+    :class="[
+      detail ? '' : 'cursor-pointer hover:shadow-md transition-shadow',
+      post.isHidden ? 'opacity-50 border-2 border-red-300 dark:border-red-700' : ''
+    ]"
+    @click="!detail && emit('open')"
+  >
     <!-- 作者行 -->
     <div class="flex items-center gap-2.5">
       <div class="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer" @click.stop="emit('profile')">
@@ -56,11 +60,21 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5">
             <span class="text-sm font-semibold truncate hover:text-primary-500">{{ post.userName }}</span>
-            <span v-if="post.userVerified"
+            <span
+              v-if="post.userVerified"
               class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
-              title="认证专家">✓</span>
-            <span v-if="isMine" class="text-[10px] leading-none px-1 py-0.5 rounded border shrink-0 border-slate-300 text-slate-500 dark:border-slate-500 dark:text-slate-400 font-medium">我</span>
-            <span class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0" :style="{ background: level.color + '1a', color: level.color }">
+              title="认证专家"
+              >✓</span
+            >
+            <span
+              v-if="isMine"
+              class="text-[10px] leading-none px-1 py-0.5 rounded border shrink-0 border-slate-300 text-slate-500 dark:border-slate-500 dark:text-slate-400 font-medium"
+              >我</span
+            >
+            <span
+              class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+              :style="{ background: level.color + '1a', color: level.color }"
+            >
               {{ level.name }}学者
             </span>
           </div>
@@ -68,21 +82,53 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
         </div>
       </div>
       <!-- 状态徽章 -->
-      <span v-if="post.refType === 'badge'" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">🎖 成就达成</span>
-      <span v-if="post.isPinned" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">📌 置顶</span>
-      <span v-if="post.isFeatured" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">🌟 精华</span>
-      <span v-if="post.isDaily" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400">📅 每日一题</span>
-      <span v-if="post.isHidden" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400">已隐藏</span>
-      <span v-if="post.isFlagged" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400">待审核</span>
-      <span v-if="post.type === 'question'"
+      <span
+        v-if="post.refType === 'badge'"
+        class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
+        >🎖 成就达成</span
+      >
+      <span
+        v-if="post.isPinned"
+        class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
+        >📌 置顶</span
+      >
+      <span
+        v-if="post.isFeatured"
+        class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400"
+        >🌟 精华</span
+      >
+      <span
+        v-if="post.isDaily"
+        class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400"
+        >📅 每日一题</span
+      >
+      <span
+        v-if="post.isHidden"
+        class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400"
+        >已隐藏</span
+      >
+      <span
+        v-if="post.isFlagged"
+        class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
+        >待审核</span
+      >
+      <span
+        v-if="post.type === 'question'"
         class="text-[10px] px-2 py-0.5 rounded-full shrink-0"
-        :class="post.isResolved
-          ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
-          : 'bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400'">
+        :class="
+          post.isResolved
+            ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+            : 'bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400'
+        "
+      >
         {{ post.isResolved ? '✅ 已解答' : '待解答' }}
       </span>
       <span class="text-[10px] px-2 py-0.5 rounded-full shrink-0" :class="meta.cls">{{ meta.label }}</span>
-      <span v-if="post.circleName" class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400">{{ post.circleName }}</span>
+      <span
+        v-if="post.circleName"
+        class="text-[10px] px-2 py-0.5 rounded-full shrink-0 bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400"
+        >{{ post.circleName }}</span
+      >
     </div>
 
     <!-- 正文：列表页纯文本截断预览；详情页 Markdown 富文本渲染（renderMarkdown 防 XSS） -->
@@ -92,16 +138,31 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
     <!-- 配图：列表页仅首图 16:9 裁剪缩略；详情页全部展示，点击进灯箱 -->
     <template v-if="post.imageUrls?.length">
       <div v-if="!detail" class="rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700">
-        <img :src="imageUrl(post.imageThumbs?.[0] || post.imageUrls[0])" loading="lazy"
-          class="w-full aspect-video object-cover" alt="帖子配图" />
-        <div v-if="post.imageUrls.length > 1"
-          class="text-right text-[10px] text-slate-400 px-1 py-0.5">共 {{ post.imageUrls.length }} 张</div>
+        <img
+          :src="imageUrl(post.imageThumbs?.[0] || post.imageUrls[0])"
+          loading="lazy"
+          class="w-full aspect-video object-cover"
+          alt="帖子配图"
+        />
+        <div v-if="post.imageUrls.length > 1" class="text-right text-[10px] text-slate-400 px-1 py-0.5">
+          共 {{ post.imageUrls.length }} 张
+        </div>
       </div>
-      <div v-else class="grid gap-2" :class="post.imageUrls.length === 1 ? 'grid-cols-1' : 'grid-cols-2 sm:grid-cols-3'">
-        <img v-for="(u, i) in post.imageUrls" :key="u" :src="imageUrl(u)" loading="lazy"
+      <div
+        v-else
+        class="grid gap-2"
+        :class="post.imageUrls.length === 1 ? 'grid-cols-1' : 'grid-cols-2 sm:grid-cols-3'"
+      >
+        <img
+          v-for="(u, i) in post.imageUrls"
+          :key="u"
+          :src="imageUrl(u)"
+          loading="lazy"
           class="w-full rounded-lg object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
           :class="post.imageUrls.length === 1 ? 'max-h-[480px]' : 'aspect-square'"
-          alt="帖子配图" @click.stop="emit('image', i)" />
+          alt="帖子配图"
+          @click.stop="emit('image', i)"
+        />
       </div>
     </template>
 
@@ -133,7 +194,9 @@ const contentHtml = computed(() => renderMarkdown(props.post.content))
             {{ post.isHidden ? '取消隐藏' : '隐藏' }}
           </button>
         </template>
-        <button v-if="!isMine" class="text-xs text-slate-400 hover:text-orange-500" @click="emit('report')">举报</button>
+        <button v-if="!isMine" class="text-xs text-slate-400 hover:text-orange-500" @click="emit('report')">
+          举报
+        </button>
         <slot name="actions" />
       </div>
     </div>

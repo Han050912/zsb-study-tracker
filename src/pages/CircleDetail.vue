@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import PostCard from '../components/community/PostCard.vue'
@@ -17,7 +19,7 @@ import type { CircleDetail, CommunityPost } from '../types'
 const route = useRoute()
 const router = useRouter()
 const { goBack } = useBack()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 const circleId = route.params.id as string
 
 const detail = ref<CircleDetail | null>(null)
@@ -33,8 +35,8 @@ const isActiveMember = computed(() => circle.value?.myStatus === 'owner' || circ
 onMounted(async () => {
   try {
     detail.value = await communityApi.circleDetail(circleId)
-  } catch (e: any) {
-    toast(e?.message || '圈子不存在')
+  } catch (e) {
+    toast(getErrorMessage(e, '圈子不存在'))
     router.replace('/community/circles')
     return
   } finally {
@@ -51,10 +53,10 @@ async function loadFeed(reset = false) {
     const res = await communityApi.feed({ circle: circleId, cursor: reset ? null : feedCursor.value })
     posts.value = reset ? res.posts : [...posts.value, ...res.posts]
     feedCursor.value = res.nextCursor
-  } catch (e: any) {
+  } catch (e) {
     // 首屏失败展示错误态；追加失败仅提示，保留已加载内容
-    if (reset) feedError.value = e?.message || '加载失败'
-    else toast(e?.message || '加载失败')
+    if (reset) feedError.value = getErrorMessage(e, '加载失败')
+    else toast(getErrorMessage(e, '加载失败'))
   } finally {
     feedLoading.value = false
   }
@@ -68,9 +70,14 @@ async function toggleJoin() {
   try {
     const res = await communityApi.joinCircle(circleId)
     const c = circle.value
-    if (res.status === 'active') { c.myStatus = 'member'; c.memberCount++; toast('已加入圈子') }
-    else if (res.status === 'pending') { c.myStatus = 'pending'; toast('已提交申请，等待圈主审批') }
-    else {
+    if (res.status === 'active') {
+      c.myStatus = 'member'
+      c.memberCount++
+      toast('已加入圈子')
+    } else if (res.status === 'pending') {
+      c.myStatus = 'pending'
+      toast('已提交申请，等待圈主审批')
+    } else {
       if (c.myStatus === 'member') c.memberCount = Math.max(0, c.memberCount - 1)
       c.myStatus = null
       toast('已退出/取消')
@@ -78,26 +85,43 @@ async function toggleJoin() {
     }
     // 成员列表刷新
     detail.value = await communityApi.circleDetail(circleId)
-  } catch (e: any) { toast(e?.message || '操作失败') }
-  finally { joinSubmitting.value = false }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  } finally {
+    joinSubmitting.value = false
+  }
 }
 
-// ---- 圈主审批/移除 ----
+// ---- 圈主审批/移除（per-user 提交守卫，防止双击并发重复请求） ----
+const acting = ref<Record<string, boolean>>({})
+
 async function approve(userId: string) {
+  if (acting.value[userId]) return
+  acting.value[userId] = true
   try {
     await communityApi.approveCircleMember(circleId, userId)
     detail.value = await communityApi.circleDetail(circleId)
     toast('已通过')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  } finally {
+    acting.value[userId] = false
+  }
 }
 
 async function removeMember(userId: string, name: string) {
   if (!window.confirm(`确认将 ${name} 移出圈子？`)) return
+  if (acting.value[userId]) return
+  acting.value[userId] = true
   try {
     await communityApi.removeCircleMember(circleId, userId)
     detail.value = await communityApi.circleDetail(circleId)
     toast('已移除')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  } finally {
+    acting.value[userId] = false
+  }
 }
 
 // ---- 圈内发帖 ----
@@ -108,13 +132,15 @@ function onPosted() {
 
 // ---- 帖子互动（局部状态） ----
 async function likePost(id: string) {
-  const p = posts.value.find(x => x.id === id)
+  const p = posts.value.find((x) => x.id === id)
   if (!p) return
   try {
     const { liked } = await communityApi.toggleLike('post', id)
     p.likedByMe = liked
     p.likesCount = Math.max(0, p.likesCount + (liked ? 1 : -1))
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 // ---- 资料卡 / 举报 ----
@@ -143,19 +169,39 @@ function openReport(postId: string) {
       <div class="card space-y-3">
         <div class="flex items-center gap-2 flex-wrap">
           <h2 class="text-lg font-bold flex-1 min-w-0 truncate">{{ circle.name }}</h2>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-            :class="circle.isPublic ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' : 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'">
+          <span
+            class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+            :class="
+              circle.isPublic
+                ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                : 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+            "
+          >
             {{ circle.isPublic ? '公开圈' : '审核圈' }}
           </span>
         </div>
-        <p v-if="circle.description" class="text-sm text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{{ circle.description }}</p>
+        <p v-if="circle.description" class="text-sm text-slate-500 dark:text-slate-400 whitespace-pre-wrap">
+          {{ circle.description }}
+        </p>
         <div class="flex items-center gap-3">
           <span class="text-xs text-slate-400">{{ circle.memberCount }} 位成员</span>
           <div class="flex-1"></div>
-          <button v-if="circle.myStatus !== 'owner'" class="btn-primary !text-xs"
+          <button
+            v-if="circle.myStatus !== 'owner'"
+            class="btn-primary !text-xs"
             :class="{ '!bg-slate-200 dark:!bg-slate-700 !text-slate-500 dark:!text-slate-300': !!circle.myStatus }"
-            :disabled="joinSubmitting" @click="toggleJoin">
-            {{ circle.myStatus === 'member' ? '退出圈子' : circle.myStatus === 'pending' ? '取消申请' : circle.isPublic ? '加入圈子' : '申请加入' }}
+            :disabled="joinSubmitting"
+            @click="toggleJoin"
+          >
+            {{
+              circle.myStatus === 'member'
+                ? '退出圈子'
+                : circle.myStatus === 'pending'
+                  ? '取消申请'
+                  : circle.isPublic
+                    ? '加入圈子'
+                    : '申请加入'
+            }}
           </button>
         </div>
       </div>
@@ -175,13 +221,22 @@ function openReport(postId: string) {
       <div v-if="detail?.members.length" class="card">
         <div class="label !mb-2">成员（{{ detail.members.length }}）</div>
         <div class="flex flex-wrap gap-3">
-          <div v-for="m in detail.members" :key="m.userId" class="flex items-center gap-1.5 cursor-pointer group"
-            @click="openProfile(m.userId)">
+          <div
+            v-for="m in detail.members"
+            :key="m.userId"
+            class="flex items-center gap-1.5 cursor-pointer group"
+            @click="openProfile(m.userId)"
+          >
             <UserAvatar :name="m.userName" :avatar="m.userAvatar" size="sm" />
             <span class="text-xs group-hover:text-primary-500">{{ m.userName }}</span>
             <span v-if="m.role === 'owner'" class="text-[10px] text-amber-500">圈主</span>
-            <button v-if="circle.myStatus === 'owner' && m.role !== 'owner'"
-              class="text-[10px] text-slate-300 hover:text-red-500" @click.stop="removeMember(m.userId, m.userName)">✕</button>
+            <button
+              v-if="circle.myStatus === 'owner' && m.role !== 'owner'"
+              class="text-[10px] text-slate-300 hover:text-red-500"
+              @click.stop="removeMember(m.userId, m.userName)"
+            >
+              ✕
+            </button>
           </div>
         </div>
       </div>
@@ -197,13 +252,19 @@ function openReport(postId: string) {
         <div v-if="!posts.length && !feedLoading" class="card text-center text-sm text-slate-400 py-8">
           {{ isActiveMember ? '圈内还没有帖子，来发第一帖吧～' : '加入圈子后查看圈内讨论' }}
         </div>
-        <PostCard v-for="p in posts" :key="p.id" :post="p"
+        <PostCard
+          v-for="p in posts"
+          :key="p.id"
+          :post="p"
           @like="likePost(p.id)"
           @open="router.push(`/community/post/${p.id}`)"
           @profile="openProfile(p.userId)"
-          @report="openReport(p.id)" />
+          @report="openReport(p.id)"
+        />
         <div v-if="feedCursor" class="text-center">
-          <button class="btn-ghost !text-xs" :disabled="feedLoading" @click="loadFeed()">{{ feedLoading ? '加载中…' : '加载更多' }}</button>
+          <button class="btn-ghost !text-xs" :disabled="feedLoading" @click="loadFeed()">
+            {{ feedLoading ? '加载中…' : '加载更多' }}
+          </button>
         </div>
       </template>
 

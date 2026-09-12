@@ -1,6 +1,8 @@
 <script setup lang="ts">
 /** 用户作品 Tab：帖子 / 点赞（仅本人）。游标分页 + 加载更多 + 空态/错误重试；点赞/踩计数口径与 community store 一致 */
-import { inject, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { getErrorMessage } from '../../utils/error'
+import { useToast } from '../../composables/useToast'
 import { useRouter } from 'vue-router'
 import type { CommunityPost } from '../../types'
 import { communityApi } from '../../api/community'
@@ -9,7 +11,7 @@ import PostCard from '../community/PostCard.vue'
 const props = defineProps<{ userId: string; isSelf: boolean }>()
 const activeTab = defineModel<'posts' | 'likes'>('activeTab', { default: 'posts' })
 const router = useRouter()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
 const posts = ref<CommunityPost[]>([])
 const cursor = ref<string | null>(null)
@@ -27,9 +29,10 @@ async function loadMore() {
   loading.value = true
   loadError.value = false
   try {
-    const res = tab === 'posts'
-      ? await communityApi.userPosts(props.userId, cursor.value)
-      : await communityApi.likedPosts(cursor.value)
+    const res =
+      tab === 'posts'
+        ? await communityApi.userPosts(props.userId, cursor.value)
+        : await communityApi.likedPosts(cursor.value)
     if (ticket !== loadTicket || tab !== activeTab.value) return // 已有更新请求或已切 tab，丢弃本次过期结果
     posts.value.push(...res.posts)
     cursor.value = res.nextCursor
@@ -44,12 +47,21 @@ async function loadMore() {
 function reset() {
   loadTicket++ // 使在途请求结果失效，避免切 tab 后旧数据写入新 tab
   loading.value = false // 在途请求已失效，解除加载锁让新请求可发起
-  posts.value = []; cursor.value = null; loaded.value = false; loadError.value = false
+  posts.value = []
+  cursor.value = null
+  loaded.value = false
+  loadError.value = false
   loadMore()
 }
 watch(activeTab, reset)
 // 访客态强制回 posts tab（外部误置 likes 时兜底；immediate 覆盖初始即为访客+likes 的场景）
-watch(() => props.isSelf, v => { if (!v && activeTab.value === 'likes') activeTab.value = 'posts' }, { immediate: true })
+watch(
+  () => props.isSelf,
+  (v) => {
+    if (!v && activeTab.value === 'likes') activeTab.value = 'posts'
+  },
+  { immediate: true }
+)
 onMounted(reset)
 
 /** 帖子点赞 toggle：计数口径同 community store likePost（赞踩互斥，点赞成功反向清踩）；先请求后改数，失败不改计数仅 toast */
@@ -63,8 +75,8 @@ async function onLike(p: CommunityPost) {
       p.dislikedByMe = false
       p.dislikesCount = Math.max(0, p.dislikesCount - 1)
     }
-  } catch (e: any) {
-    toast(e?.message || '操作失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
   }
 }
 
@@ -78,8 +90,8 @@ async function onDislike(p: CommunityPost) {
       p.likedByMe = false
       p.likesCount = Math.max(0, p.likesCount - 1)
     }
-  } catch (e: any) {
-    toast(e?.message || '操作失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
   }
 }
 </script>
@@ -88,20 +100,34 @@ async function onDislike(p: CommunityPost) {
   <div>
     <!-- Tab 头 -->
     <div class="flex border-b border-slate-100 dark:border-slate-700">
-      <button class="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors"
+      <button
+        class="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors"
         :class="activeTab === 'posts' ? 'border-primary-500 text-primary-600' : 'border-transparent text-slate-400'"
-        @click="activeTab = 'posts'">帖子</button>
-      <button v-if="isSelf" class="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors"
+        @click="activeTab = 'posts'"
+      >
+        帖子
+      </button>
+      <button
+        v-if="isSelf"
+        class="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors"
         :class="activeTab === 'likes' ? 'border-primary-500 text-primary-600' : 'border-transparent text-slate-400'"
-        @click="activeTab = 'likes'">点赞</button>
+        @click="activeTab = 'likes'"
+      >
+        点赞
+      </button>
     </div>
 
     <!-- 帖子列表 -->
     <div v-if="posts.length" class="space-y-3 mt-3">
-      <PostCard v-for="p in posts" :key="p.id" :post="p"
+      <PostCard
+        v-for="p in posts"
+        :key="p.id"
+        :post="p"
         @open="router.push(`/community/post/${p.id}`)"
         @profile="router.push(`/profile/${p.userId}`)"
-        @like="onLike(p)" @dislike="onDislike(p)" />
+        @like="onLike(p)"
+        @dislike="onDislike(p)"
+      />
     </div>
 
     <!-- 空态 -->

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
@@ -11,18 +12,34 @@ import PostComposer from './community/PostComposer.vue'
 import { subjectLabel } from '../utils/subject'
 import EnhancedRadarChart from './EnhancedRadarChart.vue'
 import type { Note, TopicImportance } from '../types'
+import { noteBodyExcerpt, noteBodyIncludes, noteBodyIndexVersion } from '../services/noteBodies'
 
 const props = defineProps<{ subjectId: string }>()
 const store = useAppStore()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
 const subject = computed(() => store.subjectMap[props.subjectId])
 const tab = ref<'chapters' | 'records' | 'problems' | 'exams' | 'notes'>('chapters')
 
-const subjectRecords = computed(() => store.records.filter(r => r.subjectId === props.subjectId).slice().reverse())
-const subjectProblems = computed(() => store.problemSessions.filter(p => p.subjectId === props.subjectId).slice().reverse())
-const subjectExams = computed(() => store.exams.filter(e => e.subjectId === props.subjectId).slice().reverse())
-const subjectNotes = computed(() => store.notes.filter(n => n.subjectId === props.subjectId))
+const subjectRecords = computed(() =>
+  store.records
+    .filter((r) => r.subjectId === props.subjectId)
+    .slice()
+    .reverse()
+)
+const subjectProblems = computed(() =>
+  store.problemSessions
+    .filter((p) => p.subjectId === props.subjectId)
+    .slice()
+    .reverse()
+)
+const subjectExams = computed(() =>
+  store.exams
+    .filter((e) => e.subjectId === props.subjectId)
+    .slice()
+    .reverse()
+)
+const subjectNotes = computed(() => store.notes.filter((n) => n.subjectId === props.subjectId))
 
 // ---- 学习记录（含计时器） ----
 const recMinutes = ref(30)
@@ -54,8 +71,12 @@ function fmtTimer(s: number) {
 function addRecord() {
   if (recMinutes.value <= 0) return
   store.addRecord({
-    subjectId: props.subjectId, date: today(), minutes: recMinutes.value,
-    chapterId: recChapter.value || undefined, topic: recTopic.value || undefined, note: recNote.value || undefined
+    subjectId: props.subjectId,
+    date: today(),
+    minutes: recMinutes.value,
+    chapterId: recChapter.value || undefined,
+    topic: recTopic.value || undefined,
+    note: recNote.value || undefined
   })
   recNote.value = ''
   toast(`已记录 ${recMinutes.value} 分钟学习 +积分`)
@@ -73,9 +94,9 @@ const pTypesSum = computed(() => typeDefs.value.reduce((s, t) => s + numType(t.k
 /** 题型有值时锁定「做题数量」为只读 */
 const pTotalLocked = computed(() => pTypesSum.value > 0)
 /** 题型分布明细（仅 > 0 的题型） */
-const typeBreakdown = computed(() => typeDefs.value
-  .map(t => ({ label: t.label, count: numType(t.key) }))
-  .filter(x => x.count > 0))
+const typeBreakdown = computed(() =>
+  typeDefs.value.map((t) => ({ label: t.label, count: numType(t.key) })).filter((x) => x.count > 0)
+)
 
 // ---- 刷题确认弹窗 ----
 const showConfirm = ref(false)
@@ -85,7 +106,10 @@ const correctInvalid = ref(false)
 
 function openConfirm() {
   const total = pTotalLocked.value ? pTypesSum.value : confirmTotal.value
-  if (total <= 0) { toast('请填写做题数量或各题型'); return }
+  if (total <= 0) {
+    toast('请填写做题数量或各题型')
+    return
+  }
   confirmCorrect.value = Math.min(confirmCorrect.value, total)
   showConfirm.value = true
 }
@@ -102,14 +126,19 @@ function onCorrectInput(e: Event) {
   if (v > total) {
     confirmCorrect.value = total
     correctInvalid.value = true
-    window.setTimeout(() => { correctInvalid.value = false }, 500)
+    window.setTimeout(() => {
+      correctInvalid.value = false
+    }, 500)
   } else {
     confirmCorrect.value = v
   }
 }
 function confirmSave() {
   const total = pTotalLocked.value ? pTypesSum.value : Math.max(0, Math.floor(Number(confirmTotal.value) || 0))
-  if (total <= 0) { toast('请填写做题数量或各题型'); return }
+  if (total <= 0) {
+    toast('请填写做题数量或各题型')
+    return
+  }
   const correct = Math.min(Math.max(0, Math.floor(Number(confirmCorrect.value) || 0)), total)
   const types: Record<string, number> = {}
   for (const t of typeDefs.value) {
@@ -132,21 +161,26 @@ const showShareComposer = ref(false)
 const shareContent = ref('')
 const shareTags = ref<string[]>([])
 const todayProblemStats = computed(() => {
-  const list = subjectProblems.value.filter(p => p.date === today())
+  const list = subjectProblems.value.filter((p) => p.date === today())
   const total = list.reduce((s, p) => s + p.total, 0)
   const correct = list.reduce((s, p) => s + p.correct, 0)
   return { total, correct, acc: total ? Math.round((correct / total) * 100) : 0 }
 })
 function openProblemShare() {
   const { total, correct, acc } = todayProblemStats.value
-  if (!total) { toast('今天还没有刷题记录，先刷几道题吧'); return }
+  if (!total) {
+    toast('今天还没有刷题记录，先刷几道题吧')
+    return
+  }
   shareContent.value = [
     '今日刷题打卡',
     `${subjectLabel(subject.value)}：${total} 题，答对 ${correct}，正确率 ${acc}%`,
     `连续打卡 ${store.gamification.streak} 天`
   ].join('\n')
-  shareTags.value = ['#每日打卡',
-    ...(props.subjectId === 'math' ? ['#高等数学'] : props.subjectId === 'english' ? ['#英语'] : [])]
+  shareTags.value = [
+    '#每日打卡',
+    ...(props.subjectId === 'math' ? ['#高等数学'] : props.subjectId === 'english' ? ['#英语'] : [])
+  ]
   showShareComposer.value = true
 }
 
@@ -154,12 +188,12 @@ function openProblemShare() {
 const radarChapters = computed(() => {
   const s = subject.value
   if (!s) return []
-  
+
   // 按章节组织数据
-  return s.chapters.map(ch => ({
+  return s.chapters.map((ch) => ({
     chapterId: ch.id,
     chapterName: ch.name,
-    topics: ch.topics.map(topic => ({
+    topics: ch.topics.map((topic) => ({
       name: topic,
       value: s.mastery[topic] || 0,
       max: 5,
@@ -178,13 +212,36 @@ function addExam() {
   examForm.value = { title: '', score: 100, totalScore: 150, minutes: 120 }
   toast('真题记录已保存')
 }
-const { el: examTrendEl } = useChart(() => ({
-  grid: { left: 40, right: 16, top: 20, bottom: 24 },
-  xAxis: { type: 'category', data: subjectExams.value.slice().reverse().map(e => e.date), axisLabel: { color: chartTextColor(), fontSize: 10 } },
-  yAxis: { type: 'value', axisLabel: { color: chartTextColor() } },
-  series: [{ type: 'line', smooth: true, data: subjectExams.value.slice().reverse().map(e => e.totalScore > 0 ? Math.round(e.score / e.totalScore * 100) : 0), name: '得分率%', lineStyle: { color: subject.value?.color }, itemStyle: { color: subject.value?.color }, areaStyle: { opacity: 0.15 } }],
-  tooltip: { trigger: 'axis' }
-}), [subjectExams])
+const { el: examTrendEl } = useChart(
+  () => ({
+    grid: { left: 40, right: 16, top: 20, bottom: 24 },
+    xAxis: {
+      type: 'category',
+      data: subjectExams.value
+        .slice()
+        .reverse()
+        .map((e) => e.date),
+      axisLabel: { color: chartTextColor(), fontSize: 10 }
+    },
+    yAxis: { type: 'value', axisLabel: { color: chartTextColor() } },
+    series: [
+      {
+        type: 'line',
+        smooth: true,
+        data: subjectExams.value
+          .slice()
+          .reverse()
+          .map((e) => (e.totalScore > 0 ? Math.round((e.score / e.totalScore) * 100) : 0)),
+        name: '得分率%',
+        lineStyle: { color: subject.value?.color },
+        itemStyle: { color: subject.value?.color },
+        areaStyle: { opacity: 0.15 }
+      }
+    ],
+    tooltip: { trigger: 'axis' }
+  }),
+  [subjectExams]
+)
 
 // ---- 笔记（点击跳转全屏笔记页面，弹窗编辑已废弃） ----
 const router = useRouter()
@@ -198,10 +255,15 @@ function openNote(n?: Note) {
 }
 const noteSearch = ref('')
 const filteredNotes = computed(() => {
+  const _indexVersion = noteBodyIndexVersion.value
   const kw = noteSearch.value.trim().toLowerCase()
   if (!kw) return subjectNotes.value
-  return subjectNotes.value.filter(n =>
-    n.title.toLowerCase().includes(kw) || n.content.toLowerCase().includes(kw) || n.tags.some(t => t.toLowerCase().includes(kw)))
+  return subjectNotes.value.filter(
+    (n) =>
+      n.title.toLowerCase().includes(kw) ||
+      (n.type !== 'pdf' && noteBodyIncludes(n.id, kw)) ||
+      n.tags.some((t) => t.toLowerCase().includes(kw))
+  )
 })
 
 // ---- 笔记文件导入（手动选择上传 + 拖拽上传，两种方式并行可用） ----
@@ -298,7 +360,10 @@ const editingChapterId = ref('')
 const editingChapterName = ref('')
 /** 输入框挂载后自动聚焦并全选，提升编辑流畅度 */
 const vFocus = {
-  mounted: (el: HTMLInputElement) => { el.focus(); el.select() }
+  mounted: (el: HTMLInputElement) => {
+    el.focus()
+    el.select()
+  }
 }
 function startEditChapter(ch: { id: string; name: string }) {
   editingChapterId.value = ch.id
@@ -308,7 +373,7 @@ function saveChapterName(chapterId: string) {
   // Enter 与 blur 可能连续触发，幂等守卫避免重复保存
   if (editingChapterId.value !== chapterId) return
   const name = editingChapterName.value.trim()
-  const oldName = subject.value?.chapters.find(c => c.id === chapterId)?.name
+  const oldName = subject.value?.chapters.find((c) => c.id === chapterId)?.name
   if (name && name !== oldName) {
     if (store.updateChapter(props.subjectId, chapterId, name)) toast('章节标题已更新')
   }
@@ -342,12 +407,15 @@ function importanceOf(topic: string): TopicImportance {
   return subject.value?.topicImportance?.[topic] || 'normal'
 }
 function importanceMeta(topic: string) {
-  return IMPORTANCE_OPTIONS.find(o => o.k === importanceOf(topic)) || IMPORTANCE_OPTIONS[0]
+  return IMPORTANCE_OPTIONS.find((o) => o.k === importanceOf(topic)) || IMPORTANCE_OPTIONS[0]
 }
 
 const showTopicModal = ref(false)
 const editTopic = ref<{ chapterId: string; old: string; text: string; importance: TopicImportance }>({
-  chapterId: '', old: '', text: '', importance: 'normal'
+  chapterId: '',
+  old: '',
+  text: '',
+  importance: 'normal'
 })
 function openTopicEdit(chapterId: string, topic: string) {
   editTopic.value = { chapterId, old: topic, text: topic, importance: importanceOf(topic) }
@@ -355,9 +423,21 @@ function openTopicEdit(chapterId: string, topic: string) {
 }
 function saveTopicEdit() {
   const text = editTopic.value.text.trim()
-  if (!text) { toast('知识点内容不能为空'); return }
-  const ok = store.updateTopic(props.subjectId, editTopic.value.chapterId, editTopic.value.old, text, editTopic.value.importance)
-  if (!ok) { toast('保存失败：与本章节其他知识点重名'); return }
+  if (!text) {
+    toast('知识点内容不能为空')
+    return
+  }
+  const ok = store.updateTopic(
+    props.subjectId,
+    editTopic.value.chapterId,
+    editTopic.value.old,
+    text,
+    editTopic.value.importance
+  )
+  if (!ok) {
+    toast('保存失败：与本章节其他知识点重名')
+    return
+  }
   showTopicModal.value = false
   toast('知识点已更新')
 }
@@ -380,7 +460,9 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
         <div class="text-[11px] text-slate-400">累计学习</div>
       </div>
       <div class="card !p-3 text-center">
-        <div class="text-xl font-black" :style="{ color: subject.color }">{{ subjectProblems.reduce((s, p) => s + p.total, 0) }}</div>
+        <div class="text-xl font-black" :style="{ color: subject.color }">
+          {{ subjectProblems.reduce((s, p) => s + p.total, 0) }}
+        </div>
         <div class="text-[11px] text-slate-400">累计刷题</div>
       </div>
       <div class="card !p-3 text-center">
@@ -391,67 +473,128 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
 
     <!-- Tab -->
     <div class="flex gap-1 overflow-x-auto bg-slate-100 dark:bg-slate-800 rounded-xl p-1">
-      <button v-for="t in [
-        { k: 'chapters', l: ' 章节掌握' }, { k: 'records', l: ' 学习记录' },
-        { k: 'problems', l: ' 刷题' }, { k: 'exams', l: ' 真题' }, { k: 'notes', l: ' 笔记' }
-      ]" :key="t.k" class="flex-1 whitespace-nowrap text-xs px-3 py-2 rounded-lg font-medium transition-colors"
+      <button
+        v-for="t in [
+          { k: 'chapters', l: ' 章节掌握' },
+          { k: 'records', l: ' 学习记录' },
+          { k: 'problems', l: ' 刷题' },
+          { k: 'exams', l: ' 真题' },
+          { k: 'notes', l: ' 笔记' }
+        ]"
+        :key="t.k"
+        class="flex-1 whitespace-nowrap text-xs px-3 py-2 rounded-lg font-medium transition-colors"
         :class="tab === t.k ? 'bg-white dark:bg-slate-700 shadow-sm' : 'text-slate-500'"
-        @click="tab = t.k as any">{{ t.l }}</button>
+        @click="tab = t.k as any"
+      >
+        {{ t.l }}
+      </button>
     </div>
 
     <!-- 章节树 + 掌握度 -->
     <div v-show="tab === 'chapters'" class="space-y-3">
       <div v-if="radarChapters.length" class="card">
-        <EnhancedRadarChart 
-          :chapters="radarChapters" 
-          :color="subject?.color"
-          title="掌握度雷达（薄弱环节一目了然）" />
+        <EnhancedRadarChart :chapters="radarChapters" :color="subject?.color" title="掌握度雷达（薄弱环节一目了然）" />
       </div>
       <div class="card">
         <div class="section-title">章节知识点（点击星星评估掌握度，双击知识点可编辑内容与重要程度）</div>
         <div class="space-y-1">
-          <div v-for="ch in subject.chapters" :key="ch.id" class="border border-slate-100 dark:border-slate-700 rounded-xl overflow-hidden">
-            <div class="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 group cursor-pointer"
-              role="button" tabindex="0"
+          <div
+            v-for="ch in subject.chapters"
+            :key="ch.id"
+            class="border border-slate-100 dark:border-slate-700 rounded-xl overflow-hidden"
+          >
+            <div
+              class="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 group cursor-pointer"
+              role="button"
+              tabindex="0"
               @click="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])"
               @keyup.enter="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])"
-              @keyup.space.prevent="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])">
+              @keyup.space.prevent="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])"
+            >
               <span class="flex items-center gap-1.5 min-w-0">
                 <!-- 编辑态：行内输入框，保持原标题字号与字重，排版不受影响 -->
-                <input v-if="editingChapterId === ch.id" v-model="editingChapterName" v-focus
+                <input
+                  v-if="editingChapterId === ch.id"
+                  v-model="editingChapterName"
+                  v-focus
                   class="input !py-0.5 !px-1.5 !text-sm !font-medium !w-48 max-w-full"
-                  @click.stop @dblclick.stop @keyup.enter.stop="saveChapterName(ch.id)"
-                  @keyup.esc="cancelEditChapter" @blur="saveChapterName(ch.id)" />
+                  @click.stop
+                  @dblclick.stop
+                  @keyup.enter.stop="saveChapterName(ch.id)"
+                  @keyup.esc="cancelEditChapter"
+                  @blur="saveChapterName(ch.id)"
+                />
                 <template v-else>
-                  <span class="cursor-text select-none" title="双击编辑章节标题" @dblclick.stop="startEditChapter(ch)">{{ ch.name }}</span>
+                  <span
+                    class="cursor-text select-none"
+                    title="双击编辑章节标题"
+                    @dblclick.stop="startEditChapter(ch)"
+                    >{{ ch.name }}</span
+                  >
                   <span class="text-xs text-slate-400 ml-1.5">{{ ch.topics.length }} 个知识点</span>
-                  <span class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-primary-500 text-xs cursor-pointer transition-opacity"
-                    title="编辑章节标题" @click.stop="startEditChapter(ch)">✏️</span>
+                  <span
+                    class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-primary-500 text-xs cursor-pointer transition-opacity"
+                    title="编辑章节标题"
+                    @click.stop="startEditChapter(ch)"
+                    >✏️</span
+                  >
                 </template>
               </span>
               <span class="flex items-center gap-2 shrink-0">
-                <span class="text-primary-500 text-xs hover:underline cursor-pointer" title="去社区讨论本章节知识点"
-                  @click.stop="openTopicDiscussion(ch.name)">讨论</span>
+                <span
+                  class="text-primary-500 text-xs hover:underline cursor-pointer"
+                  title="去社区讨论本章节知识点"
+                  @click.stop="openTopicDiscussion(ch.name)"
+                  >讨论</span
+                >
                 <span class="text-red-400 text-xs hover:underline" @click.stop="removeChapter(ch.id)">删除</span>
                 <span class="text-slate-400 text-xs">{{ expanded[ch.id] ? '▲' : '▼' }}</span>
               </span>
             </div>
             <div v-if="expanded[ch.id]" class="px-3 pb-2 space-y-1.5">
-              <div v-if="!ch.topics.length" class="text-xs text-slate-400 py-1">暂无知识点，在下方添加小标题后可评估掌握度</div>
-              <div v-for="topic in ch.topics" :key="topic" class="flex items-center justify-between text-sm py-0.5 group">
-                <span class="text-slate-600 dark:text-slate-300 flex items-center gap-2 cursor-pointer select-none"
-                  title="双击编辑知识点内容与重要程度" @dblclick="openTopicEdit(ch.id, topic)">
+              <div v-if="!ch.topics.length" class="text-xs text-slate-400 py-1">
+                暂无知识点，在下方添加小标题后可评估掌握度
+              </div>
+              <div
+                v-for="topic in ch.topics"
+                :key="topic"
+                class="flex items-center justify-between text-sm py-0.5 group"
+              >
+                <span
+                  class="text-slate-600 dark:text-slate-300 flex items-center gap-2 cursor-pointer select-none"
+                  title="双击编辑知识点内容与重要程度"
+                  @dblclick="openTopicEdit(ch.id, topic)"
+                >
                   {{ topic }}
-                  <span v-if="importanceOf(topic) !== 'normal'" class="text-[10px] px-1.5 py-0.5 rounded font-medium" :class="importanceMeta(topic).cls">
+                  <span
+                    v-if="importanceOf(topic) !== 'normal'"
+                    class="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                    :class="importanceMeta(topic).cls"
+                  >
                     {{ importanceMeta(topic).l }}
                   </span>
-                  <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" title="删除知识点" @click.stop="removeTopic(ch.id, topic)" @dblclick.stop>×</button>
+                  <button
+                    class="opacity-0 group-hover:opacity-100 text-red-400 text-xs"
+                    title="删除知识点"
+                    @click.stop="removeTopic(ch.id, topic)"
+                    @dblclick.stop
+                  >
+                    ×
+                  </button>
                 </span>
-                <StarRating :model-value="subject.mastery[topic] || 0" @update:model-value="v => store.setMastery(subject.id, topic, v)" />
+                <StarRating
+                  :model-value="subject.mastery[topic] || 0"
+                  @update:model-value="(v) => store.setMastery(subject.id, topic, v)"
+                />
               </div>
               <!-- 添加知识点 -->
               <div class="flex gap-2 pt-1">
-                <input v-model="newTopic[ch.id]" class="input !py-1 !text-xs" placeholder="添加知识点小标题，如：洛必达法则" @keyup.enter="addTopic(ch.id)" />
+                <input
+                  v-model="newTopic[ch.id]"
+                  class="input !py-1 !text-xs"
+                  placeholder="添加知识点小标题，如：洛必达法则"
+                  @keyup.enter="addTopic(ch.id)"
+                />
                 <button class="btn-ghost !py-1 !text-xs shrink-0" @click="addTopic(ch.id)">+ 添加</button>
               </div>
             </div>
@@ -470,7 +613,9 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
         <div class="section-title">记录本次学习</div>
         <!-- 计时器 -->
         <div class="flex items-center justify-center gap-3 py-2">
-          <span class="text-3xl font-mono font-bold tabular-nums" :class="timerRunning ? 'text-emerald-500' : ''">{{ fmtTimer(timerSeconds) }}</span>
+          <span class="text-3xl font-mono font-bold tabular-nums" :class="timerRunning ? 'text-emerald-500' : ''">{{
+            fmtTimer(timerSeconds)
+          }}</span>
           <button v-if="!timerRunning" class="btn-primary" @click="startTimer">▶ 开始</button>
           <button v-else class="btn-ghost" @click="pauseTimer">⏸ 暂停</button>
           <button class="btn-danger" :disabled="!timerSeconds" @click="stopTimer">⏹ 结束</button>
@@ -502,7 +647,9 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
             <span class="text-xs text-slate-400 w-20 shrink-0">{{ r.date }}</span>
             <span class="font-medium w-16 shrink-0" :style="{ color: subject.color }">{{ r.minutes }}分钟</span>
             <span class="flex-1 text-slate-500 truncate text-xs">{{ r.note || '—' }}</span>
-            <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" @click="store.deleteRecord(r.id)">删除</button>
+            <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" @click="store.deleteRecord(r.id)">
+              删除
+            </button>
           </div>
         </div>
       </div>
@@ -512,7 +659,9 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
     <div v-show="tab === 'problems'" class="space-y-3">
       <div class="card space-y-3">
         <div class="section-title">记录本次刷题</div>
-        <p class="text-[10px] text-slate-400">填写本次各题型做的题数（没做的题型可留空），点击「保存」后在弹窗中确认做题总数与答对数量</p>
+        <p class="text-[10px] text-slate-400">
+          填写本次各题型做的题数（没做的题型可留空），点击「保存」后在弹窗中确认做题总数与答对数量
+        </p>
         <div class="grid gap-2" :class="typeDefs.length > 4 ? 'grid-cols-5' : 'grid-cols-4'">
           <div v-for="t in typeDefs" :key="t.key">
             <label class="label">{{ t.label }}</label>
@@ -530,10 +679,24 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
           <div v-for="p in subjectProblems" :key="p.id" class="flex items-center gap-2 text-sm group">
             <span class="text-xs text-slate-400 w-20">{{ p.date }}</span>
             <span class="flex-1">{{ p.correct }}/{{ p.total }} 题</span>
-            <span class="text-xs font-semibold" :class="p.total > 0 && p.correct / p.total >= 0.8 ? 'text-emerald-500' : p.total > 0 && p.correct / p.total >= 0.6 ? 'text-amber-500' : 'text-red-400'">
-              {{ p.total > 0 ? Math.round(p.correct / p.total * 100) : 0 }}%
+            <span
+              class="text-xs font-semibold"
+              :class="
+                p.total > 0 && p.correct / p.total >= 0.8
+                  ? 'text-emerald-500'
+                  : p.total > 0 && p.correct / p.total >= 0.6
+                    ? 'text-amber-500'
+                    : 'text-red-400'
+              "
+            >
+              {{ p.total > 0 ? Math.round((p.correct / p.total) * 100) : 0 }}%
             </span>
-            <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" @click="store.deleteProblemSession(p.id)">删除</button>
+            <button
+              class="opacity-0 group-hover:opacity-100 text-red-400 text-xs"
+              @click="store.deleteProblemSession(p.id)"
+            >
+              删除
+            </button>
           </div>
         </div>
       </div>
@@ -554,33 +717,61 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
             <span class="flex-1 truncate">{{ e.title }}</span>
             <span class="font-semibold">{{ e.score }}/{{ e.totalScore }}</span>
             <span class="text-xs text-slate-400">{{ e.minutes }}分钟</span>
-            <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" @click="store.deleteExam(e.id)">删除</button>
+            <button class="opacity-0 group-hover:opacity-100 text-red-400 text-xs" @click="store.deleteExam(e.id)">
+              删除
+            </button>
           </div>
         </div>
       </div>
     </div>
 
     <!-- 笔记 -->
-    <div v-show="tab === 'notes'" class="space-y-3"
+    <div
+      v-show="tab === 'notes'"
+      class="space-y-3"
       @dragenter.prevent="onNoteDragEnter"
       @dragover.prevent
       @dragleave.prevent="onNoteDragLeave"
-      @drop.prevent="onNoteDrop">
+      @drop.prevent="onNoteDrop"
+    >
       <div class="card transition-shadow" :class="noteDragging ? 'ring-2 ring-primary-400 border-dashed' : ''">
         <div class="flex gap-2 mb-3">
           <input v-model="noteSearch" class="input" placeholder="全文检索笔记（标题/内容/标签）" />
-          <button class="btn-ghost shrink-0" title="从本地选择文件上传为笔记" @click="noteFileInput?.click()">📁 上传文件</button>
+          <button class="btn-ghost shrink-0" title="从本地选择文件上传为笔记" @click="noteFileInput?.click()">
+            📁 上传文件
+          </button>
           <button class="btn-primary shrink-0" @click="openNote()">+ 新建</button>
-          <input ref="noteFileInput" type="file" multiple accept=".md,.markdown,.txt,text/markdown,text/plain" class="hidden" @change="onNoteFileChange" />
+          <input
+            ref="noteFileInput"
+            type="file"
+            multiple
+            accept=".md,.markdown,.txt,text/markdown,text/plain"
+            class="hidden"
+            @change="onNoteFileChange"
+          />
         </div>
-        <p class="text-[10px] text-slate-400 mb-2">支持 .md / .markdown / .txt 上传或拖拽导入；PDF 导入与预览请前往「笔记」页面 · 点击卡片进入全屏编辑</p>
+        <p class="text-[10px] text-slate-400 mb-2">
+          支持 .md / .markdown / .txt 上传或拖拽导入；PDF 导入与预览请前往「笔记」页面 · 点击卡片进入全屏编辑
+        </p>
         <div v-if="!filteredNotes.length" class="text-xs text-slate-400 text-center py-4">暂无笔记</div>
         <div class="grid sm:grid-cols-2 gap-2">
-          <div v-for="n in filteredNotes" :key="n.id" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:shadow-sm" @click="openNote(n)">
+          <div
+            v-for="n in filteredNotes"
+            :key="n.id"
+            class="border border-slate-100 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:shadow-sm"
+            @click="openNote(n)"
+          >
             <div class="font-medium text-sm truncate">{{ n.title }}</div>
-            <div class="text-xs text-slate-400 line-clamp-2 mt-1">{{ n.type === 'pdf' ? 'PDF 文档' : n.content.replace(/\$+/g, '').slice(0, 80) }}</div>
+            <div class="text-xs text-slate-400 line-clamp-2 mt-1">
+              {{ n.type === 'pdf' ? 'PDF 文档' : noteBodyExcerpt(n.id) }}
+            </div>
             <div class="flex gap-1 mt-2 flex-wrap">
-              <span v-for="t in n.tags" :key="t" class="text-[10px] px-1.5 py-0.5 rounded bg-primary-50 dark:bg-primary-900/30 text-primary-500">#{{ t }}</span>
+              <span
+                v-for="t in n.tags"
+                :key="t"
+                class="text-[10px] px-1.5 py-0.5 rounded bg-primary-50 dark:bg-primary-900/30 text-primary-500"
+                >#{{ t }}</span
+              >
             </div>
           </div>
         </div>
@@ -597,10 +788,19 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
         <div>
           <label class="label">重要程度</label>
           <div class="flex gap-2">
-            <button v-for="o in IMPORTANCE_OPTIONS" :key="o.k" type="button"
+            <button
+              v-for="o in IMPORTANCE_OPTIONS"
+              :key="o.k"
+              type="button"
               class="flex-1 text-xs px-3 py-2 rounded-xl font-medium transition-all"
-              :class="[o.cls, editTopic.importance === o.k ? 'ring-2 ring-primary-400' : 'opacity-60 hover:opacity-100']"
-              @click="editTopic.importance = o.k">{{ o.l }}</button>
+              :class="[
+                o.cls,
+                editTopic.importance === o.k ? 'ring-2 ring-primary-400' : 'opacity-60 hover:opacity-100'
+              ]"
+              @click="editTopic.importance = o.k"
+            >
+              {{ o.l }}
+            </button>
           </div>
         </div>
       </div>
@@ -613,11 +813,20 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
     <!-- 真题弹窗 -->
     <Modal title="记录真题/套卷" :show="showExamModal" @close="showExamModal = false">
       <div class="space-y-3">
-        <div><label class="label">试卷名称</label><input v-model="examForm.title" class="input" placeholder="如：2023年真题卷" /></div>
+        <div>
+          <label class="label">试卷名称</label
+          ><input v-model="examForm.title" class="input" placeholder="如：2023年真题卷" />
+        </div>
         <div class="grid grid-cols-3 gap-2">
-          <div><label class="label">得分</label><input v-model.number="examForm.score" type="number" class="input" /></div>
-          <div><label class="label">总分</label><input v-model.number="examForm.totalScore" type="number" class="input" /></div>
-          <div><label class="label">用时(分)</label><input v-model.number="examForm.minutes" type="number" class="input" /></div>
+          <div>
+            <label class="label">得分</label><input v-model.number="examForm.score" type="number" class="input" />
+          </div>
+          <div>
+            <label class="label">总分</label><input v-model.number="examForm.totalScore" type="number" class="input" />
+          </div>
+          <div>
+            <label class="label">用时(分)</label><input v-model.number="examForm.minutes" type="number" class="input" />
+          </div>
         </div>
       </div>
       <template #footer>
@@ -631,21 +840,37 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
       <div class="space-y-3">
         <div>
           <label class="label">做题数量</label>
-          <input :value="pTotalLocked ? pTypesSum : confirmTotal" :disabled="pTotalLocked" type="number" min="0"
-            class="input disabled:opacity-60 disabled:cursor-not-allowed" @input="onTotalInput" />
+          <input
+            :value="pTotalLocked ? pTypesSum : confirmTotal"
+            :disabled="pTotalLocked"
+            type="number"
+            min="0"
+            class="input disabled:opacity-60 disabled:cursor-not-allowed"
+            @input="onTotalInput"
+          />
           <p v-if="pTotalLocked" class="text-[10px] text-slate-400 mt-1">已按各题型总和自动计算</p>
         </div>
         <div>
           <label class="label">答对数量</label>
-          <input :value="confirmCorrect" type="number" min="0"
-            :class="['input', correctInvalid ? '!border-red-500 shake' : '']" @input="onCorrectInput" />
-          <p class="text-[10px] mt-1" :class="correctInvalid ? 'text-red-500' : 'text-slate-400'">答对数量不能超过做题数量</p>
+          <input
+            :value="confirmCorrect"
+            type="number"
+            min="0"
+            :class="['input', correctInvalid ? '!border-red-500 shake' : '']"
+            @input="onCorrectInput"
+          />
+          <p class="text-[10px] mt-1" :class="correctInvalid ? 'text-red-500' : 'text-slate-400'">
+            答对数量不能超过做题数量
+          </p>
         </div>
         <div>
           <label class="label">题型分布</label>
           <div v-if="typeBreakdown.length" class="flex flex-wrap gap-1.5">
-            <span v-for="t in typeBreakdown" :key="t.label"
-              class="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+            <span
+              v-for="t in typeBreakdown"
+              :key="t.label"
+              class="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+            >
               {{ t.label }} {{ t.count }}
             </span>
           </div>
@@ -659,19 +884,36 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
     </Modal>
 
     <!-- 刷题成果分享 -->
-    <PostComposer v-model:show="showShareComposer" type="checkin" ref-type="record"
-      :preset-content="shareContent" :preset-tags="shareTags" />
-
+    <PostComposer
+      v-model:show="showShareComposer"
+      type="checkin"
+      ref-type="record"
+      :preset-content="shareContent"
+      :preset-tags="shareTags"
+    />
   </div>
 </template>
 
 <style scoped>
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-4px); }
-  40% { transform: translateX(4px); }
-  60% { transform: translateX(-3px); }
-  80% { transform: translateX(3px); }
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-4px);
+  }
+  40% {
+    transform: translateX(4px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(3px);
+  }
 }
-.shake { animation: shake 0.35s ease; }
+.shake {
+  animation: shake 0.35s ease;
+}
 </style>

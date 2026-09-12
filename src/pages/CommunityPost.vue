@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, ref, type Ref } from 'vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import { useRoute, useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
@@ -17,7 +19,7 @@ const route = useRoute()
 const router = useRouter()
 const { goBack } = useBack()
 const store = useCommunityStore()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 /** 侧边栏是否折叠（App.vue 注入），用于底部回复框与主内容区同列对齐 */
 const navCollapsed = inject<Ref<boolean>>('navCollapsed', ref(false))
 
@@ -63,13 +65,14 @@ const commentSort = ref<'hot' | 'latest'>('hot')
 const expandedReplies = ref(new Set<string>())
 function toggleReplies(id: string) {
   const s = new Set(expandedReplies.value)
-  if (s.has(id)) s.delete(id); else s.add(id)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
   expandedReplies.value = s
 }
 
 /** 一级评论 + 二级回复树（回复的 parentId 始终指向一级评论）；最佳答案置顶，其余按热度/时间排序 */
 const commentTree = computed(() => {
-  const roots = comments.value.filter(c => !c.parentId)
+  const roots = comments.value.filter((c) => !c.parentId)
   const byParent = new Map<string, CommunityComment[]>()
   for (const c of comments.value) {
     if (!c.parentId) continue
@@ -77,23 +80,26 @@ const commentTree = computed(() => {
     list.push(c)
     byParent.set(c.parentId, list)
   }
-  const accepted = roots.filter(c => c.isAccepted)
-  const others = roots.filter(c => !c.isAccepted)
-  others.sort((a, b) => commentSort.value === 'hot'
-    ? (b.likesCount - a.likesCount) || (b.createdAt - a.createdAt)
-    : b.createdAt - a.createdAt)
-  return [...accepted, ...others].map(r => ({ ...r, replies: byParent.get(r.id) || [] }))
+  const accepted = roots.filter((c) => c.isAccepted)
+  const others = roots.filter((c) => !c.isAccepted)
+  others.sort((a, b) =>
+    commentSort.value === 'hot' ? b.likesCount - a.likesCount || b.createdAt - a.createdAt : b.createdAt - a.createdAt
+  )
+  return [...accepted, ...others].map((r) => ({ ...r, replies: byParent.get(r.id) || [] }))
 })
 
 function findComment(id: string): CommunityComment | undefined {
-  return comments.value.find(c => c.id === id)
+  return comments.value.find((c) => c.id === id)
 }
 
 // ---- 点赞 ----
 async function likePost() {
   if (requireLogin(router)) return
   if (!post.value) return
-  const liked = await store.likePost(postId).catch((e: any) => { toast(e?.message || '操作失败'); return null })
+  const liked = await store.likePost(postId).catch((e) => {
+    toast(getErrorMessage(e, '操作失败'))
+    return null
+  })
   if (liked === null) return
   post.value.likedByMe = liked
   post.value.likesCount = Math.max(0, post.value.likesCount + (liked ? 1 : -1))
@@ -101,7 +107,10 @@ async function likePost() {
 
 async function likeComment(c: CommunityComment) {
   if (requireLogin(router)) return
-  const liked = await store.likeComment(c.id).catch((e: any) => { toast(e?.message || '操作失败'); return null })
+  const liked = await store.likeComment(c.id).catch((e) => {
+    toast(getErrorMessage(e, '操作失败'))
+    return null
+  })
   if (liked === null) return
   // 一级评论在 commentTree 中被展开为副本（携带 replies），必须更新原始数组中的对象
   const target = findComment(c.id)
@@ -115,7 +124,10 @@ async function likeComment(c: CommunityComment) {
 async function dislikePost() {
   if (requireLogin(router)) return
   if (!post.value) return
-  const res = await store.dislikePost(postId).catch((e: any) => { toast(e?.message || '操作失败'); return null })
+  const res = await store.dislikePost(postId).catch((e) => {
+    toast(getErrorMessage(e, '操作失败'))
+    return null
+  })
   if (res === null) return
   post.value.dislikedByMe = res.disliked
   post.value.dislikesCount = Math.max(0, post.value.dislikesCount + (res.disliked ? 1 : -1))
@@ -127,7 +139,10 @@ async function dislikePost() {
 
 async function dislikeComment(c: CommunityComment) {
   if (requireLogin(router)) return
-  const res = await store.dislikeComment(c.id).catch((e: any) => { toast(e?.message || '操作失败'); return null })
+  const res = await store.dislikeComment(c.id).catch((e) => {
+    toast(getErrorMessage(e, '操作失败'))
+    return null
+  })
   if (res === null) return
   const target = findComment(c.id)
   if (target) {
@@ -152,7 +167,7 @@ function reply(c: CommunityComment) {
   // 重复点击同一条评论：保持现有回复状态，不重置输入
   if (replySource.value?.id === c.id) return
   replySource.value = c
-  replyTarget.value = c.parentId ? (findComment(c.parentId) || c) : c
+  replyTarget.value = c.parentId ? findComment(c.parentId) || c : c
   // 聚焦输入框，用户直接输入回复内容（不再自动填入 @用户名）
   commentInputRef.value?.focus()
 }
@@ -173,13 +188,13 @@ async function send(text: string, imageUrls: string[]) {
     const c = await store.postComment(postId, text, replyTarget.value?.id, imageUrls)
     comments.value.push(c)
     // store.postComment 已同步广场列表内的计数，此处仅当本帖不在列表时手动 +1，避免重复计数
-    if (post.value && !store.posts.some(p => p.id === postId)) post.value.commentsCount++
+    if (post.value && !store.posts.some((p) => p.id === postId)) post.value.commentsCount++
     replyTarget.value = null
     replySource.value = null
     // 发送成功后清空输入框（失败时保留用户输入，避免重打内容）
     commentInputRef.value?.reset()
-  } catch (e: any) {
-    toast(e?.message || '评论失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '评论失败'))
   } finally {
     commentSubmitting.value = false
   }
@@ -191,21 +206,24 @@ async function removeComment(c: CommunityComment) {
   try {
     await store.removeComment(c.id, postId, removed)
     // 本地移除该评论及其回复
-    const ids = new Set([c.id, ...(c.replies?.map(r => r.id) ?? [])])
-    comments.value = comments.value.filter(x => !ids.has(x.id) && x.parentId !== c.id)
+    const ids = new Set([c.id, ...(c.replies?.map((r) => r.id) ?? [])])
+    comments.value = comments.value.filter((x) => !ids.has(x.id) && x.parentId !== c.id)
     // 同上：仅当本帖不在广场列表时手动回退，避免与 store 重复扣减
-    if (post.value && !store.posts.some(p => p.id === postId)) {
+    if (post.value && !store.posts.some((p) => p.id === postId)) {
       post.value.commentsCount = Math.max(0, post.value.commentsCount - removed)
     }
     // 删除的若为最佳答案：服务端级联已解除采纳并回退为待解答，本地同步（含广场列表副本）
     if (c.isAccepted && post.value) {
       post.value.acceptedAnswerId = undefined
       post.value.isResolved = false
-      const p = store.posts.find(x => x.id === postId)
-      if (p) { p.acceptedAnswerId = undefined; p.isResolved = false }
+      const p = store.posts.find((x) => x.id === postId)
+      if (p) {
+        p.acceptedAnswerId = undefined
+        p.isResolved = false
+      }
     }
-  } catch (e: any) {
-    toast(e?.message || '删除失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '删除失败'))
   }
 }
 
@@ -216,8 +234,8 @@ async function removePost() {
     await store.removePost(postId)
     toast('帖子已删除')
     router.replace('/community')
-  } catch (e: any) {
-    toast(e?.message || '删除失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '删除失败'))
   }
 }
 
@@ -245,16 +263,16 @@ async function toggleResolve() {
   try {
     const { isResolved } = await communityApi.resolvePost(postId)
     post.value.isResolved = isResolved
-    const p = store.posts.find(x => x.id === postId)
+    const p = store.posts.find((x) => x.id === postId)
     if (p) p.isResolved = isResolved
     toast(isResolved ? '已标记为已解答' : '已重新开放为待解答')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 // ---- 最佳答案采纳（仅提问帖楼主；仅一级评论；不能采纳自己的评论） ----
-const canAccept = computed(() =>
-  !!post.value && post.value.type === 'question' && isMine.value && !post.value.isHidden
-)
+const canAccept = computed(() => !!post.value && post.value.type === 'question' && isMine.value && !post.value.isHidden)
 
 function acceptVisible(c: CommunityComment) {
   return canAccept.value && !c.parentId && !c.isHidden && c.userId !== sessionUser.value?.id
@@ -281,8 +299,11 @@ async function accept(c: CommunityComment) {
     // 同步评论标记：旧采纳清除，新采纳置位（commentTree 为展开副本，必须改原始数组）
     for (const x of comments.value) x.isAccepted = x.id === res.acceptedAnswerId
     toast(res.acceptedAnswerId ? '已采纳最佳答案' : '已取消采纳，帖子重新开放为待解答')
-  } catch (e: any) { toast(e?.message || '操作失败') }
-  finally { accepting.value = false }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  } finally {
+    accepting.value = false
+  }
 }
 
 // ---- 评论图片灯箱 ----
@@ -311,7 +332,9 @@ async function togglePin() {
     const pinned = await store.adminPinPost(postId)
     post.value.isPinned = pinned
     toast(pinned ? '已置顶' : '已取消置顶')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 async function toggleFeature() {
@@ -320,7 +343,9 @@ async function toggleFeature() {
     const featured = await store.adminFeaturePost(postId)
     post.value.isFeatured = featured
     toast(featured ? '已加精' : '已取消加精')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 async function toggleHidePost() {
@@ -329,7 +354,9 @@ async function toggleHidePost() {
     const hidden = await store.adminHidePost(postId)
     post.value.isHidden = hidden
     toast(hidden ? '已隐藏' : '已取消隐藏')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 async function toggleHideComment(c: CommunityComment) {
@@ -338,7 +365,9 @@ async function toggleHideComment(c: CommunityComment) {
     const target = findComment(c.id)
     if (target) target.isHidden = hidden
     toast(hidden ? '评论已隐藏' : '评论已恢复')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 </script>
 
@@ -355,13 +384,30 @@ async function toggleHideComment(c: CommunityComment) {
     </div>
 
     <template v-else-if="post">
-      <PostCard :post="post" detail @like="likePost" @dislike="dislikePost" @pin="togglePin" @feature="toggleFeature" @hide="toggleHidePost"
-        @image="openLightbox" @report="openReport('post', post.id)" @profile="openProfile(post.userId)">
+      <PostCard
+        :post="post"
+        detail
+        @like="likePost"
+        @dislike="dislikePost"
+        @pin="togglePin"
+        @feature="toggleFeature"
+        @hide="toggleHidePost"
+        @image="openLightbox"
+        @report="openReport('post', post.id)"
+        @profile="openProfile(post.userId)"
+      >
         <template #actions>
           <!-- 已采纳最佳答案时禁用手动标记（需先取消采纳），避免出现矛盾态 -->
-          <button v-if="isMine && post.type === 'question' && !post.acceptedAnswerId" class="text-xs text-slate-400 hover:text-emerald-500"
-            @click.stop="toggleResolve">{{ post.isResolved ? '取消已解答' : '标记已解答' }}</button>
-          <button v-if="canDeletePost" class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost">删除</button>
+          <button
+            v-if="isMine && post.type === 'question' && !post.acceptedAnswerId"
+            class="text-xs text-slate-400 hover:text-emerald-500"
+            @click.stop="toggleResolve"
+          >
+            {{ post.isResolved ? '取消已解答' : '标记已解答' }}
+          </button>
+          <button v-if="canDeletePost" class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost">
+            删除
+          </button>
         </template>
       </PostCard>
 
@@ -370,31 +416,78 @@ async function toggleHideComment(c: CommunityComment) {
         <div class="flex items-center justify-between">
           <div class="section-title !mb-0">评论 {{ post.commentsCount || '' }}</div>
           <div class="flex items-center gap-1 text-xs">
-            <button class="px-2 py-1 rounded-md transition-colors"
-              :class="commentSort === 'hot' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium' : 'text-slate-400 hover:text-slate-600'"
-              @click="commentSort = 'hot'">热度</button>
-            <button class="px-2 py-1 rounded-md transition-colors"
-              :class="commentSort === 'latest' ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium' : 'text-slate-400 hover:text-slate-600'"
-              @click="commentSort = 'latest'">最新</button>
+            <button
+              class="px-2 py-1 rounded-md transition-colors"
+              :class="
+                commentSort === 'hot'
+                  ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium'
+                  : 'text-slate-400 hover:text-slate-600'
+              "
+              @click="commentSort = 'hot'"
+            >
+              热度
+            </button>
+            <button
+              class="px-2 py-1 rounded-md transition-colors"
+              :class="
+                commentSort === 'latest'
+                  ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium'
+                  : 'text-slate-400 hover:text-slate-600'
+              "
+              @click="commentSort = 'latest'"
+            >
+              最新
+            </button>
           </div>
         </div>
 
         <div v-if="!commentTree.length" class="text-center text-xs text-slate-400 py-4">暂无评论，来抢沙发～</div>
         <div v-for="c in commentTree" :key="c.id" :id="`comment-${c.id}`" class="space-y-3 scroll-mt-24">
-          <CommentItem :comment="c" :show-accept="acceptVisible(c)" :post-author-id="post?.userId" :replying="replySource?.id === c.id" :highlight="highlightCommentId === c.id" @like="likeComment(c)" @dislike="dislikeComment(c)" @reply="reply(c)" @remove="removeComment(c)"
-            @hide="toggleHideComment(c)" @report="openReport('comment', c.id)" @accept="accept(c)" @image="openCommentLightbox(c, $event)"
-            @profile="openProfile(c.userId)" />
+          <CommentItem
+            :comment="c"
+            :show-accept="acceptVisible(c)"
+            :post-author-id="post?.userId"
+            :replying="replySource?.id === c.id"
+            :highlight="highlightCommentId === c.id"
+            @like="likeComment(c)"
+            @dislike="dislikeComment(c)"
+            @reply="reply(c)"
+            @remove="removeComment(c)"
+            @hide="toggleHideComment(c)"
+            @report="openReport('comment', c.id)"
+            @accept="accept(c)"
+            @image="openCommentLightbox(c, $event)"
+            @profile="openProfile(c.userId)"
+          />
           <!-- 二级回复：默认折叠，点击展开（抖音式） -->
           <template v-if="c.replies?.length">
-            <button v-if="!expandedReplies.has(c.id)" class="text-xs text-slate-400 hover:text-primary-500 ml-11"
-              @click="toggleReplies(c.id)">展开 {{ c.replies.length }} 条回复 ↓</button>
+            <button
+              v-if="!expandedReplies.has(c.id)"
+              class="text-xs text-slate-400 hover:text-primary-500 ml-11"
+              @click="toggleReplies(c.id)"
+            >
+              展开 {{ c.replies.length }} 条回复 ↓
+            </button>
             <div v-else class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
               <div v-for="r in c.replies" :key="r.id" :id="`comment-${r.id}`" class="scroll-mt-24">
-                <CommentItem :comment="r" :post-author-id="post?.userId" :replying="replySource?.id === r.id" :highlight="highlightCommentId === r.id"
-                  @like="likeComment(r)" @dislike="dislikeComment(r)" @reply="reply(r)" @remove="removeComment(r)" @hide="toggleHideComment(r)"
-                  @report="openReport('comment', r.id)" @image="openCommentLightbox(r, $event)" @profile="openProfile(r.userId)" />
+                <CommentItem
+                  :comment="r"
+                  :post-author-id="post?.userId"
+                  :replying="replySource?.id === r.id"
+                  :highlight="highlightCommentId === r.id"
+                  @like="likeComment(r)"
+                  @dislike="dislikeComment(r)"
+                  @reply="reply(r)"
+                  @remove="removeComment(r)"
+                  @hide="toggleHideComment(r)"
+                  @report="openReport('comment', r.id)"
+                  @image="openCommentLightbox(r, $event)"
+                  @profile="openProfile(r.userId)"
+                />
               </div>
-              <button class="text-xs text-slate-400 hover:text-primary-500" @click="toggleReplies(c.id)">收起回复 ↑</button>
+              <button class="text-xs text-slate-400 hover:text-primary-500" @click="toggleReplies(c.id)">
+                收起回复 ↑
+              </button>
             </div>
           </template>
         </div>
@@ -410,15 +503,19 @@ async function toggleHideComment(c: CommunityComment) {
            （移动端 px-8=32，桌面 px-6=24），并加圆角与上阴影与 card 视觉协调 -->
       <div class="fixed bottom-16 md:bottom-0 inset-x-0 z-20" :class="navCollapsed ? 'md:left-16' : 'md:left-56'">
         <div class="max-w-2xl mx-auto px-8 md:px-6">
-          <div class="px-4 py-2 bg-white dark:bg-slate-800 border-t border-x border-slate-100 dark:border-slate-700 rounded-t-2xl shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
+          <div
+            class="px-4 py-2 bg-white dark:bg-slate-800 border-t border-x border-slate-100 dark:border-slate-700 rounded-t-2xl shadow-[0_-2px_8px_rgba(0,0,0,0.04)]"
+          >
             <div v-if="replySource" class="flex items-center text-xs text-slate-400 mb-1.5">
               <span class="truncate">正在回复 @{{ replySource.userName }}</span>
               <button class="text-primary-500 ml-2 shrink-0" @click="cancelReply">取消</button>
             </div>
-            <CommentInput ref="commentInputRef"
+            <CommentInput
+              ref="commentInputRef"
               :placeholder="replySource ? '写下你的回复…' : '写下你的评论…'"
               :submitting="commentSubmitting"
-              @send="send" />
+              @send="send"
+            />
           </div>
         </div>
       </div>

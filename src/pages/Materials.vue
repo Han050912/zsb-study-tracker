@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useToast } from '../composables/useToast'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
 import { normalizeUrl } from '../utils/url'
@@ -7,19 +8,22 @@ import { subjectLabel } from '../utils/subject'
 import type { Material } from '../types'
 
 const store = useAppStore()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
 const filterType = ref('')
 const filterSubject = ref('')
 
 const TYPES = [
-  { k: 'book', l: '书籍' }, { k: 'video', l: '视频' }, { k: 'link', l: '链接' }, { k: 'doc', l: '文档' }
+  { k: 'book', l: '书籍' },
+  { k: 'video', l: '视频' },
+  { k: 'link', l: '链接' },
+  { k: 'doc', l: '文档' }
 ]
 
 const list = computed(() => {
   let l = store.materials.slice().reverse()
-  if (filterType.value) l = l.filter(m => m.type === filterType.value)
-  if (filterSubject.value) l = l.filter(m => m.subjectId === filterSubject.value)
+  if (filterType.value) l = l.filter((m) => m.type === filterType.value)
+  if (filterSubject.value) l = l.filter((m) => m.subjectId === filterSubject.value)
   return l
 })
 
@@ -32,7 +36,10 @@ function open(m?: Material) {
   showModal.value = true
 }
 function save() {
-  if (!form.value.title?.trim()) { toast('请填写标题'); return }
+  if (!form.value.title?.trim()) {
+    toast('请填写标题')
+    return
+  }
   if (linkMode.value === 'url') form.value.fileName = undefined
   if (form.value.id) store.updateMaterial(form.value.id, form.value)
   else store.addMaterial(form.value as any)
@@ -70,7 +77,10 @@ function onFileChange(e: Event) {
   readMaterialFile(input.files?.[0])
   input.value = ''
 }
-function onFileDragEnter() { fileDragDepth++; fileDragging.value = true }
+function onFileDragEnter() {
+  fileDragDepth++
+  fileDragging.value = true
+}
 function onFileDragLeave() {
   fileDragDepth = Math.max(0, fileDragDepth - 1)
   if (fileDragDepth === 0) fileDragging.value = false
@@ -123,7 +133,11 @@ function remove() {
   toast('已删除')
 }
 
-const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dark:bg-red-900/30', 中: 'text-amber-500 bg-amber-50 dark:bg-amber-900/30', 低: 'text-slate-400 bg-slate-50 dark:bg-slate-700' }
+const priorityColor: Record<string, string> = {
+  高: 'text-red-500 bg-red-50 dark:bg-red-900/30',
+  中: 'text-amber-500 bg-amber-50 dark:bg-amber-900/30',
+  低: 'text-slate-400 bg-slate-50 dark:bg-slate-700'
+}
 </script>
 
 <template>
@@ -144,13 +158,19 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
       </select>
     </div>
 
-    <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">资料库空空如也，添加你的第一本教材吧</div>
+    <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">
+      资料库空空如也，添加你的第一本教材吧
+    </div>
 
     <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
       <div v-for="m in list" :key="m.id" class="card cursor-pointer hover:shadow-md transition-shadow" @click="open(m)">
         <div class="flex items-start justify-between gap-2">
-          <div class="text-sm font-bold flex-1">{{ TYPES.find(t => t.k === m.type)?.l.split(' ')[0] }} {{ m.title }}</div>
-          <span class="text-[10px] px-1.5 py-0.5 rounded shrink-0" :class="priorityColor[m.priority]">{{ m.priority }}</span>
+          <div class="text-sm font-bold flex-1">
+            {{ TYPES.find((t) => t.k === m.type)?.l.split(' ')[0] }} {{ m.title }}
+          </div>
+          <span class="text-[10px] px-1.5 py-0.5 rounded shrink-0" :class="priorityColor[m.priority]">{{
+            m.priority
+          }}</span>
         </div>
         <div class="text-xs text-slate-400 mt-1 space-x-2">
           <span v-if="m.author">{{ m.author }}</span>
@@ -165,7 +185,12 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
           </div>
         </div>
         <p v-if="m.notes" class="text-xs text-slate-400 mt-2 line-clamp-2">{{ m.notes }}</p>
-        <button v-if="m.url" type="button" class="text-xs text-primary-500 mt-2 inline-block hover:underline" @click.stop="openLink(m.url)">
+        <button
+          v-if="m.url"
+          type="button"
+          class="text-xs text-primary-500 mt-2 inline-block hover:underline"
+          @click.stop="openLink(m.url)"
+        >
           {{ m.fileName ? `打开文件「${m.fileName}」↗` : '打开链接 ↗' }}
         </button>
       </div>
@@ -190,7 +215,11 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
           </div>
           <div>
             <label class="label">优先级</label>
-            <select v-model="form.priority" class="input"><option>高</option><option>中</option><option>低</option></select>
+            <select v-model="form.priority" class="input">
+              <option>高</option>
+              <option>中</option>
+              <option>低</option>
+            </select>
           </div>
         </div>
         <input v-model="form.author" class="input" placeholder="作者 / UP主（可选）" />
@@ -198,41 +227,83 @@ const priorityColor: Record<string, string> = { 高: 'text-red-500 bg-red-50 dar
         <!-- 链接 / 文件 双模式 -->
         <div>
           <div class="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1 w-fit mb-2">
-            <button type="button" class="text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
+            <button
+              type="button"
+              class="text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
               :class="linkMode === 'url' ? 'bg-white dark:bg-slate-600 shadow-sm' : 'text-slate-500'"
-              @click="linkMode = 'url'">URL 链接</button>
-            <button type="button" class="text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
+              @click="linkMode = 'url'"
+            >
+              URL 链接
+            </button>
+            <button
+              type="button"
+              class="text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
               :class="linkMode === 'file' ? 'bg-white dark:bg-slate-600 shadow-sm' : 'text-slate-500'"
-              @click="linkMode = 'file'">文件上传</button>
+              @click="linkMode = 'file'"
+            >
+              文件上传
+            </button>
           </div>
 
-          <input v-if="linkMode === 'url'" v-model="form.url" class="input" placeholder="链接 URL（可选），如 https://…" />
+          <input
+            v-if="linkMode === 'url'"
+            v-model="form.url"
+            class="input"
+            placeholder="链接 URL（可选），如 https://…"
+          />
 
           <template v-else>
-            <div v-if="!form.fileName"
+            <div
+              v-if="!form.fileName"
               class="rounded-xl border-2 border-dashed transition-colors p-5 text-center cursor-pointer"
-              :class="fileDragging ? 'border-primary-400 bg-primary-50 dark:bg-primary-900/20' : 'border-slate-200 dark:border-slate-600 hover:border-primary-300'"
+              :class="
+                fileDragging
+                  ? 'border-primary-400 bg-primary-50 dark:bg-primary-900/20'
+                  : 'border-slate-200 dark:border-slate-600 hover:border-primary-300'
+              "
               @click="fileInput?.click()"
               @dragenter.prevent="onFileDragEnter"
               @dragover.prevent
               @dragleave.prevent="onFileDragLeave"
-              @drop.prevent="onFileDrop">
-              <div class="w-9 h-9 mx-auto rounded-full bg-primary-50 dark:bg-primary-900/30 text-primary-500 flex items-center justify-center text-lg font-bold">＋</div>
+              @drop.prevent="onFileDrop"
+            >
+              <div
+                class="w-9 h-9 mx-auto rounded-full bg-primary-50 dark:bg-primary-900/30 text-primary-500 flex items-center justify-center text-lg font-bold"
+              >
+                ＋
+              </div>
               <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">点击选择文件，或将文件拖拽到此处</p>
               <p class="text-[10px] text-slate-400 mt-0.5">单个文件 ≤ 8MB（PDF / 图片 / 文档等）</p>
             </div>
-            <div v-else class="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-600 px-3 py-2.5">
+            <div
+              v-else
+              class="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-600 px-3 py-2.5"
+            >
               <span class="text-lg"></span>
               <span class="flex-1 text-xs truncate">{{ form.fileName }}</span>
-              <button type="button" class="text-[10px] text-primary-500 hover:underline shrink-0" @click="fileInput?.click()">更换</button>
-              <button type="button" class="text-[10px] text-red-400 hover:underline shrink-0" @click="clearFile">移除</button>
+              <button
+                type="button"
+                class="text-[10px] text-primary-500 hover:underline shrink-0"
+                @click="fileInput?.click()"
+              >
+                更换
+              </button>
+              <button type="button" class="text-[10px] text-red-400 hover:underline shrink-0" @click="clearFile">
+                移除
+              </button>
             </div>
             <input ref="fileInput" type="file" class="hidden" @change="onFileChange" />
           </template>
         </div>
         <div v-if="form.type === 'book'" class="grid grid-cols-2 gap-2">
-          <div><label class="label">总页数</label><input v-model.number="form.totalPages" type="number" min="0" class="input" /></div>
-          <div><label class="label">已读页数</label><input v-model.number="form.readPages" type="number" min="0" class="input" /></div>
+          <div>
+            <label class="label">总页数</label
+            ><input v-model.number="form.totalPages" type="number" min="0" class="input" />
+          </div>
+          <div>
+            <label class="label">已读页数</label
+            ><input v-model.number="form.readPages" type="number" min="0" class="input" />
+          </div>
         </div>
         <textarea v-model="form.notes" rows="3" class="input" placeholder="阅读笔记摘抄…"></textarea>
       </div>

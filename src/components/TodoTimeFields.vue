@@ -2,13 +2,16 @@
 import { computed } from 'vue'
 import TimeFieldCard, { type TimePreset } from './TimeFieldCard.vue'
 
-const props = withDefaults(defineProps<{
-  start: string
-  due: string
-  hint?: string
-}>(), {
-  hint: '时间均为「当日」的时刻，待办须在今日完成。'
-})
+const props = withDefaults(
+  defineProps<{
+    start: string
+    due: string
+    hint?: string
+  }>(),
+  {
+    hint: '时间均为「当日」的时刻，待办须在今日完成。'
+  }
+)
 const emit = defineEmits<{ 'update:start': [string]; 'update:due': [string] }>()
 
 const startPresets: TimePreset[] = [
@@ -38,10 +41,21 @@ const summary = computed(() => {
 
 <template>
   <div class="space-y-3.5">
-    <div class="flex items-center gap-2 rounded-xl border border-primary-100 dark:border-primary-800/40 bg-gradient-to-r from-primary-50 to-sky-50 dark:from-primary-900/20 dark:to-sky-900/20 px-3 py-2.5">
-      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none"
-        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-        class="text-primary-500 shrink-0">
+    <div
+      class="flex items-center gap-2 rounded-xl border border-primary-100 dark:border-primary-800/40 bg-gradient-to-r from-primary-50 to-sky-50 dark:from-primary-900/20 dark:to-sky-900/20 px-3 py-2.5"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="text-primary-500 shrink-0"
+      >
         <circle cx="12" cy="12" r="10" />
         <path d="M12 16v-4" />
         <path d="M12 8h.01" />
@@ -58,8 +72,17 @@ const summary = computed(() => {
       @update:model-value="emit('update:start', $event)"
     >
       <template #icon>
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <polygon points="6 3 20 12 6 21 6 3" />
         </svg>
       </template>
@@ -74,8 +97,17 @@ const summary = computed(() => {
       @update:model-value="emit('update:due', $event)"
     >
       <template #icon>
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M5 22h14" />
           <path d="M5 2h14" />
           <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" />
@@ -89,9 +121,18 @@ const summary = computed(() => {
         v-if="invalid"
         class="flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 dark:border-rose-800/50 bg-rose-50 dark:bg-rose-900/20 px-3 py-2"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-          class="text-rose-500 shrink-0">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="text-rose-500 shrink-0"
+        >
           <circle cx="12" cy="12" r="10" />
           <line x1="12" x2="12" y1="8" y2="12" />
           <line x1="12" x2="12.01" y1="16" y2="16" />
@@ -102,9 +143,18 @@ const summary = computed(() => {
         v-else-if="summary"
         class="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700/40 px-3 py-2"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-          class="text-slate-400 shrink-0">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="text-slate-400 shrink-0"
+        >
           <circle cx="12" cy="12" r="10" />
           <polyline points="12 6 12 12 16 14" />
         </svg>

@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { inject, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
@@ -19,14 +21,14 @@ import UserAvatar from '../components/community/UserAvatar.vue'
 
 const store = useCommunityStore()
 const router = useRouter()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
 const showComposer = ref(false)
 const boardTab = ref<'checkin' | 'progress'>('checkin')
 const hotTopics = ref<HotTopic[]>([])
 
 onMounted(() => {
-  store.fetchFeed(true).catch(e => toast(e?.message || '加载失败'))
+  store.fetchFeed(true).catch((e) => toast(getErrorMessage(e, '加载失败')))
   if (isLoggedIn.value) store.fetchUnreadCount().catch(() => {})
   loadDaily()
   loadHotTopics()
@@ -34,24 +36,37 @@ onMounted(() => {
 
 // ---- 无限滚动：哨兵元素进入视口时加载下一页 ----
 const sentinel = ref<HTMLElement | null>(null)
-const observer = new IntersectionObserver(entries => {
-  if (entries.some(e => e.isIntersecting)) store.fetchFeed().catch(() => {})
-}, { rootMargin: '200px' })
-onMounted(() => { if (sentinel.value) observer.observe(sentinel.value) })
+const observer = new IntersectionObserver(
+  (entries) => {
+    if (entries.some((e) => e.isIntersecting)) store.fetchFeed().catch(() => {})
+  },
+  { rootMargin: '200px' }
+)
+onMounted(() => {
+  if (sentinel.value) observer.observe(sentinel.value)
+})
 onUnmounted(() => observer.disconnect())
 
 async function like(id: string) {
   if (requireLogin(router)) return
-  try { await store.likePost(id) } catch (e: any) { toast(e?.message || '操作失败') }
+  try {
+    await store.likePost(id)
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 async function dislike(id: string) {
   if (requireLogin(router)) return
-  try { await store.dislikePost(id) } catch (e: any) { toast(e?.message || '操作失败') }
+  try {
+    await store.dislikePost(id)
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 function filterTag(tag: string) {
-  store.setTag(tag).catch(e => toast(e?.message || '加载失败'))
+  store.setTag(tag).catch((e) => toast(getErrorMessage(e, '加载失败')))
 }
 
 function goRequireLogin(path: string) {
@@ -66,21 +81,20 @@ function openComposer() {
 
 /** 排序切换（最新/热门） */
 function chooseSort(sort: 'latest' | 'hot') {
-  store.setSort(sort).catch(e => toast(e?.message || '加载失败'))
+  store.setSort(sort).catch((e) => toast(getErrorMessage(e, '加载失败')))
 }
 
 /** 分类切换（推荐/提问/精华/关注 单选，再点当前项取消）；推荐/关注依赖登录态 */
 function chooseCategory(category: 'recommend' | 'question' | 'featured' | 'follow') {
   if ((category === 'recommend' || category === 'follow') && requireLogin(router)) return
-  store.setCategory(store.category === category ? '' : category)
-    .catch(e => toast(e?.message || '加载失败'))
+  store.setCategory(store.category === category ? '' : category).catch((e) => toast(getErrorMessage(e, '加载失败')))
 }
 
 // ---- 标签横向滑动提示（超出可视区可滑动查看，右侧渐变 + 文字提示） ----
 const tagScrollRef = ref<HTMLElement | null>(null)
-const tagHasMore = ref(false)   // 存在未展示完的标签
-const tagAtEnd = ref(false)     // 已滑动到最右
-const tagTouched = ref(false)   // 用户已滑动过（之后不再显示文字提示）
+const tagHasMore = ref(false) // 存在未展示完的标签
+const tagAtEnd = ref(false) // 已滑动到最右
+const tagTouched = ref(false) // 用户已滑动过（之后不再显示文字提示）
 
 function updateTagScroll() {
   const el = tagScrollRef.value
@@ -104,7 +118,9 @@ async function loadDaily() {
   try {
     const res = await communityApi.daily()
     dailyPost.value = res.post
-  } catch { dailyPost.value = null }
+  } catch {
+    dailyPost.value = null
+  }
 }
 
 // ---- 热门话题运营位 ----
@@ -112,7 +128,9 @@ async function loadHotTopics() {
   try {
     const res = await communityApi.hotTopics()
     hotTopics.value = res.topics
-  } catch { /* 静默降级 */ }
+  } catch {
+    /* 静默降级 */
+  }
 }
 
 // ---- 举报 ----
@@ -145,14 +163,18 @@ async function togglePin(id: string) {
   try {
     const pinned = await store.adminPinPost(id)
     toast(pinned ? '已置顶' : '已取消置顶')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 async function toggleFeature(id: string) {
   try {
     const featured = await store.adminFeaturePost(id)
     toast(featured ? '已加精' : '已取消加精')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 async function toggleDaily(id: string) {
@@ -160,14 +182,18 @@ async function toggleDaily(id: string) {
     const daily = await store.adminDailyPost(id)
     await loadDaily() // 顶部卡片同步刷新
     toast(daily ? '已设为每日一题' : '已取消每日一题')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 async function toggleHide(id: string) {
   try {
     const hidden = await store.adminHidePost(id)
     toast(hidden ? '已隐藏' : '已取消隐藏')
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 async function removePost(id: string) {
@@ -175,7 +201,9 @@ async function removePost(id: string) {
   try {
     await store.removePost(id)
     toast('帖子已删除')
-  } catch (e: any) { toast(e?.message || '删除失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '删除失败'))
+  }
 }
 </script>
 
@@ -198,79 +226,169 @@ async function removePost(id: string) {
     <div v-if="hotTopics.length" class="card !py-2.5">
       <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
         <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 shrink-0 pl-1">本周热门</span>
-        <TagBadge v-for="t in hotTopics" :key="t.tag" :tag="t.text"
-          :active="store.tag === t.tag" @click="filterTag(store.tag === t.tag ? '' : t.tag)" />
+        <TagBadge
+          v-for="t in hotTopics"
+          :key="t.tag"
+          :tag="t.text"
+          :active="store.tag === t.tag"
+          @click="filterTag(store.tag === t.tag ? '' : t.tag)"
+        />
       </div>
     </div>
 
     <!-- 榜单：打卡榜 / 进步榜（登录态；访客显示登录引导，避免空白与注定 401 的请求） -->
     <div v-if="isLoggedIn" class="card !py-3">
       <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit mb-3">
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="boardTab === 'checkin' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="boardTab = 'checkin'">打卡榜</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="boardTab === 'progress' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="boardTab = 'progress'">进步榜</button>
+        <button
+          class="px-3 py-1.5 rounded-md transition-colors"
+          :class="
+            boardTab === 'checkin'
+              ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+          "
+          @click="boardTab = 'checkin'"
+        >
+          打卡榜
+        </button>
+        <button
+          class="px-3 py-1.5 rounded-md transition-colors"
+          :class="
+            boardTab === 'progress'
+              ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+          "
+          @click="boardTab = 'progress'"
+        >
+          进步榜
+        </button>
       </div>
       <LeaderboardBoard v-show="boardTab === 'checkin'" />
       <ProgressBoard v-show="boardTab === 'progress'" />
     </div>
-    <button v-else class="card !py-3 text-sm text-slate-500 dark:text-slate-400 text-center w-full hover:border-primary-300 transition-colors"
-      @click="router.push('/login')">
+    <button
+      v-else
+      class="card !py-3 text-sm text-slate-500 dark:text-slate-400 text-center w-full hover:border-primary-300 transition-colors"
+      @click="router.push('/login')"
+    >
       登录后可查看打卡榜、进步榜与你的学习周报 →
     </button>
 
     <!-- 每日一题：管理员设置的最新一题，点击进入详情参与解答 -->
-    <button v-if="dailyPost" class="card !p-4 text-left w-full flex items-center gap-3 border-l-4 !border-l-primary-400"
-      @click="router.push(`/community/post/${dailyPost.id}`)">
+    <button
+      v-if="dailyPost"
+      class="card !p-4 text-left w-full flex items-center gap-3 border-l-4 !border-l-primary-400"
+      @click="router.push(`/community/post/${dailyPost.id}`)"
+    >
       <span class="text-xl shrink-0"></span>
       <div class="flex-1 min-w-0">
         <div class="text-xs font-semibold text-primary-500">每日一题</div>
         <div class="text-sm truncate mt-0.5">{{ dailyPost.content }}</div>
       </div>
-      <span class="text-[10px] text-slate-400 shrink-0">{{ dailyPost.userName }} · 💬{{ dailyPost.commentsCount }}</span>
+      <span class="text-[10px] text-slate-400 shrink-0"
+        >{{ dailyPost.userName }} · 💬{{ dailyPost.commentsCount }}</span
+      >
     </button>
 
     <!-- 排序 + 标签筛选 -->
     <div class="flex flex-col gap-2">
       <!-- 排序/筛选按钮组：独占一行 -->
       <div class="flex items-center bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit">
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.sort === 'latest' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseSort('latest')">最新</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.sort === 'hot' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseSort('hot')">热门</button>
+        <button
+          class="px-3 py-1.5 rounded-md transition-colors"
+          :class="
+            store.sort === 'latest'
+              ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+          "
+          @click="chooseSort('latest')"
+        >
+          最新
+        </button>
+        <button
+          class="px-3 py-1.5 rounded-md transition-colors"
+          :class="
+            store.sort === 'hot'
+              ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+          "
+          @click="chooseSort('hot')"
+        >
+          热门
+        </button>
         <span class="w-px h-4 bg-slate-300 dark:bg-slate-600 mx-1"></span>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.category === 'recommend' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('recommend')">推荐</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.category === 'question' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('question')">提问</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.category === 'featured' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('featured')">精华</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.category === 'follow' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('follow')">关注</button>
+        <button
+          class="px-3 py-1.5 rounded-md transition-colors"
+          :class="
+            store.category === 'recommend'
+              ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+          "
+          @click="chooseCategory('recommend')"
+        >
+          推荐
+        </button>
+        <button
+          class="px-3 py-1.5 rounded-md transition-colors"
+          :class="
+            store.category === 'question'
+              ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+          "
+          @click="chooseCategory('question')"
+        >
+          提问
+        </button>
+        <button
+          class="px-3 py-1.5 rounded-md transition-colors"
+          :class="
+            store.category === 'featured'
+              ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+          "
+          @click="chooseCategory('featured')"
+        >
+          精华
+        </button>
+        <button
+          class="px-3 py-1.5 rounded-md transition-colors"
+          :class="
+            store.category === 'follow'
+              ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+          "
+          @click="chooseCategory('follow')"
+        >
+          关注
+        </button>
       </div>
 
       <!-- 预设话题标签：横向单行排列，超出可视区可滑动查看 -->
       <div class="relative">
-        <div ref="tagScrollRef" class="flex gap-1.5 overflow-x-auto py-1 no-scrollbar scroll-smooth"
-          @scroll.passive="onTagScroll">
+        <div
+          ref="tagScrollRef"
+          class="flex gap-1.5 overflow-x-auto py-1 no-scrollbar scroll-smooth"
+          @scroll.passive="onTagScroll"
+        >
           <TagBadge tag="全部" :active="!store.tag" @click="filterTag('')" />
-          <TagBadge v-for="t in COMMUNITY_TAGS" :key="t" :tag="t" :active="store.tag === t" @click="filterTag(store.tag === t ? '' : t)" />
+          <TagBadge
+            v-for="t in COMMUNITY_TAGS"
+            :key="t"
+            :tag="t"
+            :active="store.tag === t"
+            @click="filterTag(store.tag === t ? '' : t)"
+          />
         </div>
         <!-- 右侧渐变遮罩：暗示还有更多标签 -->
-        <div v-if="tagHasMore && !tagAtEnd"
-          class="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-slate-50 dark:from-slate-900 to-transparent"></div>
+        <div
+          v-if="tagHasMore && !tagAtEnd"
+          class="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-slate-50 dark:from-slate-900 to-transparent"
+        ></div>
         <!-- 滑动提示：仅未滑动过时显示，明确告知可滑动查看 -->
         <transition name="fade">
-          <div v-if="tagHasMore && !tagAtEnd && !tagTouched"
-            class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-full bg-white/90 dark:bg-slate-800/90 px-1.5 py-0.5 text-[10px] text-slate-500 dark:text-slate-400 shadow-sm">
+          <div
+            v-if="tagHasMore && !tagAtEnd && !tagTouched"
+            class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-full bg-white/90 dark:bg-slate-800/90 px-1.5 py-0.5 text-[10px] text-slate-500 dark:text-slate-400 shadow-sm"
+          >
             <span>滑动查看</span>
             <span aria-hidden="true">›</span>
           </div>
@@ -295,23 +413,37 @@ async function removePost(id: string) {
             <UserAvatar :name="u.userName" :avatar="u.userAvatar" size="sm" />
             <span class="font-medium group-hover:text-primary-500">{{ u.userName }}</span>
           </div>
-          <span v-if="u.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
+          <span
+            v-if="u.verified"
+            class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+            title="认证专家"
+            >✓</span
+          >
           <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ u.reason }}</span>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 shrink-0">{{ u.totalPoints }} 分</span>
+          <span
+            class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 shrink-0"
+            >{{ u.totalPoints }} 分</span
+          >
           <button class="ml-auto btn-ghost !text-xs" @click="router.push(`/profile/${u.userId}`)">看主页</button>
         </div>
       </div>
     </div>
 
     <!-- 推荐加载失败提示（仅 recommend 分类下显示） -->
-    <div v-if="store.category === 'recommend' && store.error" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+    <div
+      v-if="store.category === 'recommend' && store.error"
+      class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400"
+    >
       <span>{{ store.error }}</span>
       <button class="ml-auto btn-ghost !text-xs shrink-0" @click="store.fetchFeed(true)">重试</button>
     </div>
 
     <!-- 帖子列表 -->
     <div class="space-y-3">
-      <PostCard v-for="p in store.posts" :key="p.id" :post="p"
+      <PostCard
+        v-for="p in store.posts"
+        :key="p.id"
+        :post="p"
         @like="like(p.id)"
         @dislike="dislike(p.id)"
         @tag="filterTag"
@@ -321,7 +453,8 @@ async function removePost(id: string) {
         @daily="toggleDaily(p.id)"
         @profile="openProfile(p.userId)"
         @hide="toggleHide(p.id)"
-        @report="openReport(p.id)">
+        @report="openReport(p.id)"
+      >
         <template v-if="isAdmin" #actions>
           <button class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost(p.id)">删除</button>
         </template>
@@ -336,7 +469,9 @@ async function removePost(id: string) {
     <!-- 无限滚动哨兵 -->
     <div ref="sentinel" class="h-1"></div>
     <div v-if="store.feedLoading" class="text-center text-xs text-slate-400 py-2">加载中…</div>
-    <div v-else-if="!store.hasMore && store.posts.length" class="text-center text-xs text-slate-400 py-2">没有更多了</div>
+    <div v-else-if="!store.hasMore && store.posts.length" class="text-center text-xs text-slate-400 py-2">
+      没有更多了
+    </div>
 
     <PostComposer v-model:show="showComposer" type="share" allow-type-switch allow-template />
     <ReportDialog v-model:show="showReport" target-type="post" :target-id="reportPostId" />
@@ -347,8 +482,19 @@ async function removePost(id: string) {
 
 <style scoped>
 /* 隐藏横向滚动条，保留滑动能力（以渐变遮罩替代视觉提示） */
-.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
-.no-scrollbar::-webkit-scrollbar { display: none; }
-.fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
 </style>

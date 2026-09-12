@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import { feedbackApi } from '../api/feedback'
 import { uploadImage, imageUrl } from '../api/community'
 import { useBack } from '../composables/useBack'
 import type { FeedbackType } from '../types'
 
-const router = useRouter()
 const { goBack } = useBack()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
 const TYPE_OPTIONS: { value: FeedbackType; label: string }[] = [
   { value: 'feature', label: '功能建议' },
@@ -41,8 +41,8 @@ async function onPick(e: Event) {
       try {
         const res = await uploadImage(file)
         images.value.push({ url: res.url })
-      } catch (err: any) {
-        toast(err?.message || '图片上传失败')
+      } catch (err) {
+        toast(getErrorMessage(err, '图片上传失败'))
       }
     }
   } finally {
@@ -55,19 +55,22 @@ function removeImage(i: number) {
 }
 
 async function submit() {
-  if (!content.value.trim()) { toast('请填写反馈内容'); return }
+  if (!content.value.trim()) {
+    toast('请填写反馈内容')
+    return
+  }
   submitting.value = true
   try {
     await feedbackApi.create({
       type: type.value,
       content: content.value.trim(),
       contact: contact.value.trim() || undefined,
-      imageUrls: images.value.map(i => i.url)
+      imageUrls: images.value.map((i) => i.url)
     })
     toast('反馈已提交，感谢！')
     goBack()
-  } catch (e: any) {
-    toast(e?.message || '提交失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '提交失败'))
   } finally {
     submitting.value = false
   }
@@ -86,20 +89,32 @@ async function submit() {
       <div>
         <div class="label">问题类型</div>
         <div class="flex flex-wrap gap-2">
-          <button v-for="o in TYPE_OPTIONS" :key="o.value"
+          <button
+            v-for="o in TYPE_OPTIONS"
+            :key="o.value"
             class="px-3 py-1.5 rounded-full text-sm border transition-colors"
-            :class="type === o.value
-              ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border-primary-200 dark:border-primary-800 font-semibold'
-              : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'"
-            @click="type = o.value">{{ o.label }}</button>
+            :class="
+              type === o.value
+                ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border-primary-200 dark:border-primary-800 font-semibold'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+            "
+            @click="type = o.value"
+          >
+            {{ o.label }}
+          </button>
         </div>
       </div>
 
       <!-- 文字描述 -->
       <div>
         <div class="label">描述 <span class="text-red-400">*</span></div>
-        <textarea v-model="content" :maxlength="CONTENT_MAX" rows="5" class="input !h-auto resize-y"
-          placeholder="请描述你遇到的问题或建议…" />
+        <textarea
+          v-model="content"
+          :maxlength="CONTENT_MAX"
+          rows="5"
+          class="input !h-auto resize-y"
+          placeholder="请描述你遇到的问题或建议…"
+        />
         <div class="text-right text-[10px] text-slate-400 mt-1">{{ content.length }} / {{ CONTENT_MAX }}</div>
       </div>
 
@@ -108,13 +123,22 @@ async function submit() {
         <div class="label">截图（可选，最多 {{ IMAGE_MAX }} 张）</div>
         <div class="flex flex-wrap gap-2">
           <div v-for="(img, i) in images" :key="img.url" class="relative w-20 h-20">
-            <img :src="imageUrl(img.url)" class="w-20 h-20 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
-            <button class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-slate-800 text-white text-xs leading-none"
-              @click="removeImage(i)">×</button>
+            <img
+              :src="imageUrl(img.url)"
+              class="w-20 h-20 object-cover rounded-lg border border-slate-200 dark:border-slate-700"
+            />
+            <button
+              class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-slate-800 text-white text-xs leading-none"
+              @click="removeImage(i)"
+            >
+              ×
+            </button>
           </div>
-          <label v-if="images.length < IMAGE_MAX"
+          <label
+            v-if="images.length < IMAGE_MAX"
             :class="uploading ? 'opacity-50 pointer-events-none' : ''"
-            class="w-20 h-20 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 flex flex-col items-center justify-center text-slate-400 text-[10px] cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700">
+            class="w-20 h-20 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 flex flex-col items-center justify-center text-slate-400 text-[10px] cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"
+          >
             <span class="text-xl leading-none">{{ uploading ? '…' : '+' }}</span>
             <span>{{ uploading ? '上传中' : '添加截图' }}</span>
             <input type="file" accept="image/*" multiple class="hidden" @change="onPick" />

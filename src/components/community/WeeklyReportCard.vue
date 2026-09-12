@@ -14,12 +14,17 @@ const store = useAppStore()
 const data = ref<WeeklyReport | null>(null)
 
 onMounted(async () => {
-  try { data.value = await communityApi.weeklyReport() } catch { /* 静默降级 */ }
+  try {
+    data.value = await communityApi.weeklyReport()
+  } catch {
+    /* 静默降级 */
+  }
 })
 
 const hasData = computed(() => !!data.value && (data.value.minutes > 0 || data.value.problems > 0))
-const accuracy = computed(() => data.value && data.value.problems
-  ? Math.round((data.value.correct / data.value.problems) * 100) : 0)
+const accuracy = computed(() =>
+  data.value && data.value.problems ? Math.round((data.value.correct / data.value.problems) * 100) : 0
+)
 const daysLeft = computed(() => {
   const d = store.settings.examDate
   if (!d) return null
@@ -39,7 +44,9 @@ function openShare() {
     `积分 +${data.value.points} · 社区互动 ${data.value.interactions} 次`,
     daysLeft.value != null && daysLeft.value > 0 ? `距离考试还有 ${daysLeft.value} 天` : '',
     '新的一周继续加油！'
-  ].filter(Boolean).join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
   showComposer.value = true
 }
 </script>
@@ -60,18 +67,29 @@ function openShare() {
         <div class="text-[10px] text-slate-400 mt-0.5">学习天数</div>
       </div>
       <div>
-        <div class="text-sm font-bold text-sky-500">{{ data.problems }}<span v-if="data.problems" class="text-[10px] font-medium"> 题</span></div>
-        <div class="text-[10px] text-slate-400 mt-0.5">刷题数<template v-if="data.problems">（{{ accuracy }}%）</template></div>
+        <div class="text-sm font-bold text-sky-500">
+          {{ data.problems }}<span v-if="data.problems" class="text-[10px] font-medium"> 题</span>
+        </div>
+        <div class="text-[10px] text-slate-400 mt-0.5">
+          刷题数<template v-if="data.problems">（{{ accuracy }}%）</template>
+        </div>
       </div>
       <div>
         <div class="text-sm font-bold text-amber-500">+{{ data.points }}</div>
         <div class="text-[10px] text-slate-400 mt-0.5">积分变化</div>
       </div>
     </div>
-    <div class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-2 mt-3 text-[10px] text-slate-400">
+    <div
+      class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-2 mt-3 text-[10px] text-slate-400"
+    >
       <span>{{ data.weekStart }} ~ {{ data.weekEnd }} · 社区互动 {{ data.interactions }} 次</span>
       <span v-if="daysLeft != null && daysLeft > 0">距考试 {{ daysLeft }} 天</span>
     </div>
-    <PostComposer v-model:show="showComposer" type="checkin" :preset-content="composerContent" :preset-tags="['#每日打卡']" />
+    <PostComposer
+      v-model:show="showComposer"
+      type="checkin"
+      :preset-content="composerContent"
+      :preset-tags="['#每日打卡']"
+    />
   </div>
 </template>

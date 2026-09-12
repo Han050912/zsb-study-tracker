@@ -3,14 +3,12 @@
  * 学习路径推荐卡（P2-4）：考试倒计时 + 按科目权重分配的周学习计划。
  * 数据来自 /api/learning-path；可一键生成打卡帖分享到社区求监督。
  */
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { learningPathApi } from '../api/learningPath'
 import { formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import PostComposer from './community/PostComposer.vue'
 import type { LearningPath } from '../types'
-
-const toast = inject<(m: string) => void>('toast', () => {})
 
 const data = ref<LearningPath | null>(null)
 const loading = ref(true)
@@ -33,7 +31,7 @@ const countdownText = computed(() => {
   return '考试已结束，静待佳音'
 })
 
-const hasPlan = computed(() => (data.value?.subjects ?? []).some(s => s.dailyMinutes > 0))
+const hasPlan = computed(() => (data.value?.subjects ?? []).some((s) => s.dailyMinutes > 0))
 
 // ---- 分享求监督 ----
 const showComposer = ref(false)
@@ -41,15 +39,17 @@ const composerContent = ref('')
 function openShare() {
   if (!data.value) return
   const lines = data.value.subjects
-    .filter(s => s.dailyMinutes > 0)
-    .map(s => `${subjectLabel(s)} ${formatMinutes(s.dailyMinutes)}/天`)
+    .filter((s) => s.dailyMinutes > 0)
+    .map((s) => `${subjectLabel(s)} ${formatMinutes(s.dailyMinutes)}/天`)
   composerContent.value = [
     '我的周学习计划',
     data.value.daysLeft != null && data.value.daysLeft > 0 ? `距离考试还有 ${data.value.daysLeft} 天` : '',
     `每日目标 ${formatMinutes(data.value.dailyGoalMinutes)}`,
     lines.length ? `${lines.join('、')}` : '',
     '求监督，一起上岸！'
-  ].filter(Boolean).join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
   showComposer.value = true
 }
 </script>
@@ -68,8 +68,11 @@ function openShare() {
 
     <!-- 科目分配 -->
     <div v-if="hasPlan" class="space-y-2">
-      <div v-for="s in data.subjects.filter(x => x.dailyMinutes > 0)" :key="s.id"
-        class="flex items-center gap-2 text-sm">
+      <div
+        v-for="s in data.subjects.filter((x) => x.dailyMinutes > 0)"
+        :key="s.id"
+        class="flex items-center gap-2 text-sm"
+      >
         <span v-if="s.icon" class="w-5 text-center">{{ s.icon }}</span>
         <span class="flex-1 truncate">{{ s.name }}</span>
         <span class="font-semibold text-primary-500 shrink-0">{{ formatMinutes(s.dailyMinutes) }}/天</span>
@@ -79,11 +82,13 @@ function openShare() {
         <span class="text-sm font-bold">{{ formatMinutes(data.weeklyTotalMinutes) }}</span>
       </div>
     </div>
-    <div v-else class="text-xs text-slate-400">
-      暂无科目，去「设置」添加科目并设置每日目标后即可生成计划。
-    </div>
+    <div v-else class="text-xs text-slate-400">暂无科目，去「设置」添加科目并设置每日目标后即可生成计划。</div>
 
-    <PostComposer v-model:show="showComposer" type="checkin" :preset-content="composerContent"
-      :preset-tags="['#每日打卡', '#升本经验']" />
+    <PostComposer
+      v-model:show="showComposer"
+      type="checkin"
+      :preset-content="composerContent"
+      :preset-tags="['#每日打卡', '#升本经验']"
+    />
   </div>
 </template>

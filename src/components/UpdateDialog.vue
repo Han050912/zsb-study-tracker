@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useToast } from '../composables/useToast'
 import { useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 /**
@@ -32,8 +33,8 @@ const updater = (window as any).updater as
     }
   | undefined
 
-// 全局 Toast（App.vue 通过 provide('toast') 注入），用于弹窗未打开时也提示更新错误
-const toast = inject<(m: string) => void>('toast', () => {})
+// 全局 Toast（App.vue 通过 provide(TOAST_KEY) 注入），用于弹窗未打开时也提示更新错误
+const toast = useToast()
 
 const show = ref(false)
 const info = ref<UpdateInfo | null>(null)
@@ -77,7 +78,7 @@ const sections = computed<NoteSection[]>(() => {
       current.items.push(text)
     }
   }
-  return result.filter(s => s.items.length > 0)
+  return result.filter((s) => s.items.length > 0)
 })
 
 /** 发布日期：YYYY-MM-DD 友好展示 */
@@ -138,20 +139,30 @@ onMounted(() => {
   })
 })
 
-onBeforeUnmount(() => { show.value = false })
+onBeforeUnmount(() => {
+  show.value = false
+})
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="update-fade">
-      <div v-if="show && info" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" @mousedown="onOverlayMousedown" @click="onOverlayClick">
-        <div class="update-pop bg-white dark:bg-slate-800 w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[85vh]">
+      <div
+        v-if="show && info"
+        class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+        @mousedown="onOverlayMousedown"
+        @click="onOverlayClick"
+      >
+        <div
+          class="update-pop bg-white dark:bg-slate-800 w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[85vh]"
+        >
           <!-- 头部：版本标题 + 前往发布页 -->
           <div class="flex items-center justify-between px-6 pt-5 pb-3">
             <h3 class="text-2xl font-bold text-slate-800 dark:text-slate-100">新版本 v{{ info.version }}</h3>
             <button
               class="px-4 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors shrink-0"
-              @click="goReleasePage">
+              @click="goReleasePage"
+            >
               前往发布页
             </button>
           </div>
@@ -161,11 +172,15 @@ onBeforeUnmount(() => { show.value = false })
             <template v-if="sections.length">
               <div v-for="sec in sections" :key="sec.title" class="mb-4">
                 <div class="flex items-center gap-2 font-bold text-slate-800 dark:text-slate-100 mb-2">
-                  <span v-if="sec.icon">{{ sec.icon }}</span><span>{{ sec.title }}</span>
+                  <span v-if="sec.icon">{{ sec.icon }}</span
+                  ><span>{{ sec.title }}</span>
                 </div>
                 <ul class="space-y-2">
-                  <li v-for="(item, idx) in sec.items" :key="idx"
-                    class="flex items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+                  <li
+                    v-for="(item, idx) in sec.items"
+                    :key="idx"
+                    class="flex items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300 leading-relaxed"
+                  >
                     <span class="mt-[7px] w-1.5 h-1.5 rounded-full bg-slate-800 dark:bg-slate-300 shrink-0"></span>
                     <span>{{ item }}</span>
                   </li>
@@ -185,16 +200,25 @@ onBeforeUnmount(() => { show.value = false })
               <template v-if="stage === 'idle'">
                 <button
                   class="px-5 py-1.5 rounded-md border border-blue-500 text-blue-500 text-sm font-medium hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                  @click="close">取消</button>
+                  @click="close"
+                >
+                  取消
+                </button>
                 <button
                   class="px-5 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors"
-                  @click="startDownload">更新</button>
+                  @click="startDownload"
+                >
+                  更新
+                </button>
               </template>
               <!-- 下载中：进度条 + 百分比 -->
               <template v-else-if="stage === 'downloading'">
                 <div class="flex items-center gap-3">
                   <div class="w-40 h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                    <div class="h-full bg-blue-500 rounded-full transition-all duration-300" :style="{ width: percent + '%' }"></div>
+                    <div
+                      class="h-full bg-blue-500 rounded-full transition-all duration-300"
+                      :style="{ width: percent + '%' }"
+                    ></div>
                   </div>
                   <span class="text-sm text-slate-500 tabular-nums">{{ percent }}%</span>
                 </div>
@@ -203,10 +227,16 @@ onBeforeUnmount(() => { show.value = false })
               <template v-else>
                 <button
                   class="px-5 py-1.5 rounded-md border border-blue-500 text-blue-500 text-sm font-medium hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                  @click="close">稍后重启</button>
+                  @click="close"
+                >
+                  稍后重启
+                </button>
                 <button
                   class="px-5 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors"
-                  @click="restartInstall">立即重启更新</button>
+                  @click="restartInstall"
+                >
+                  立即重启更新
+                </button>
               </template>
             </div>
           </div>
@@ -234,12 +264,24 @@ onBeforeUnmount(() => { show.value = false })
   animation: update-pop-out 0.15s ease-in;
 }
 @keyframes update-pop-in {
-  from { transform: scale(0.95) translateY(8px); opacity: 0; }
-  to { transform: scale(1) translateY(0); opacity: 1; }
+  from {
+    transform: scale(0.95) translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
 }
 @keyframes update-pop-out {
-  from { transform: scale(1); opacity: 1; }
-  to { transform: scale(0.97); opacity: 0; }
+  from {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(0.97);
+    opacity: 0;
+  }
 }
 /* 内容区滚动条（贴近参考图的细灰滚动条） */
 .update-scroll::-webkit-scrollbar {

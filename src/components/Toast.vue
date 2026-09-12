@@ -16,7 +16,10 @@ defineExpose({ show })
 
 <template>
   <Transition name="fade">
-    <div v-if="visible" class="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-800 text-sm px-4 py-2 rounded-full shadow-lg">
+    <div
+      v-if="visible"
+      class="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-800 text-sm px-4 py-2 rounded-full shadow-lg"
+    >
       {{ message }}
     </div>
   </Transition>

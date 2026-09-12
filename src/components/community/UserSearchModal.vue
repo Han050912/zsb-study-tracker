@@ -8,7 +8,7 @@ import FollowButton from '../profile/FollowButton.vue'
 import { communityApi } from '../../api/community'
 import type { UserLookupResult } from '../../types'
 
-const props = defineProps<{ show: boolean }>()
+defineProps<{ show: boolean }>()
 const emit = defineEmits<{ 'update:show': [boolean] }>()
 const router = useRouter()
 
@@ -27,8 +27,8 @@ async function search() {
   error.value = false
   try {
     result.value = await communityApi.lookup(key)
-  } catch (e: any) {
-    if (e?.status === 404) notFound.value = true
+  } catch (e) {
+    if ((e as { status?: number } | null)?.status === 404) notFound.value = true
     else error.value = true
   } finally {
     searching.value = false
@@ -50,8 +50,7 @@ function goProfile() {
   <Modal :show="show" title="找用户" @close="emit('update:show', false)">
     <!-- 搜索框 -->
     <div class="flex gap-2">
-      <input v-model="keyword" class="input flex-1" placeholder="输入用户ID"
-        maxlength="32" @keydown.enter="search" />
+      <input v-model="keyword" class="input flex-1" placeholder="输入用户ID" maxlength="32" @keydown.enter="search" />
       <button class="btn-primary !text-xs shrink-0" :disabled="searching" @click="search">
         {{ searching ? '搜索中' : '搜索' }}
       </button>
@@ -63,15 +62,31 @@ function goProfile() {
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-1.5 flex-wrap">
           <span class="font-semibold truncate">{{ result.userName }}</span>
-          <span v-if="result.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
+          <span
+            v-if="result.verified"
+            class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+            title="认证专家"
+            >✓</span
+          >
         </div>
         <div class="text-xs text-slate-400 mt-0.5">用户ID：{{ result.userCode }}</div>
-        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-1">{{ result.bio || '这个人很懒，什么都没写' }}</p>
+        <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-1">
+          {{ result.bio || '这个人很懒，什么都没写' }}
+        </p>
       </div>
       <div class="shrink-0 flex items-center gap-1.5">
-        <button class="text-xs px-2 py-1.5 rounded-full font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500" @click="goProfile">主页</button>
-        <FollowButton :user-id="result.userId" :followed-by-me="result.followedByMe"
-          :follows-me="result.followsMe" @change="onFollowChange" />
+        <button
+          class="text-xs px-2 py-1.5 rounded-full font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
+          @click="goProfile"
+        >
+          主页
+        </button>
+        <FollowButton
+          :user-id="result.userId"
+          :followed-by-me="result.followedByMe"
+          :follows-me="result.followsMe"
+          @change="onFollowChange"
+        />
       </div>
     </div>
 

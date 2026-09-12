@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useToast } from '../composables/useToast'
 import { ChevronDown } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import { sessionUser } from '../services/auth'
@@ -11,7 +12,7 @@ import UserWorksTabs from '../components/profile/UserWorksTabs.vue'
 import EditProfileModal from '../components/profile/EditProfileModal.vue'
 
 const store = useAppStore()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
 const user = computed(() => sessionUser.value)
 const myId = computed(() => sessionUser.value?.id ?? '')
@@ -68,9 +69,9 @@ const stats = computed(() => {
   ]
 })
 
-function exportBackup() {
+async function exportBackup() {
   try {
-    const blob = new Blob([store.exportJSON()], { type: 'application/json' })
+    const blob = new Blob([await store.exportJSON()], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `zsb-backup-${user.value?.username}-${new Date().toISOString().slice(0, 10)}.json`
@@ -105,7 +106,11 @@ function exportBackup() {
     <div class="card">
       <button class="w-full flex items-center justify-between" @click="showDataCenter = !showDataCenter">
         <span class="font-semibold text-sm">数据中心</span>
-        <ChevronDown :size="16" class="transition-transform text-slate-400" :class="showDataCenter ? 'rotate-180' : ''" />
+        <ChevronDown
+          :size="16"
+          class="transition-transform text-slate-400"
+          :class="showDataCenter ? 'rotate-180' : ''"
+        />
       </button>
       <div v-if="showDataCenter" class="mt-3 space-y-4">
         <!-- 账号与云端数据信息 -->
@@ -121,15 +126,23 @@ function exportBackup() {
               <span>{{ myDataSize }}</span>
             </div>
           </div>
-          <p class="text-[11px] text-slate-400">所有数据实时同步到云端数据库，多设备登录同一账号即可访问；建议定期导出备份作为应急恢复手段。</p>
+          <p class="text-[11px] text-slate-400">
+            所有数据实时同步到云端数据库，多设备登录同一账号即可访问；建议定期导出备份作为应急恢复手段。
+          </p>
         </div>
 
         <!-- 数据统计 -->
         <div>
           <h2 class="font-semibold text-sm mb-3">我的数据概览</h2>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <div v-for="s in stats" :key="s.label" class="bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2.5 text-center">
-              <div class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ s.value }}<span class="text-xs font-normal text-slate-400 ml-0.5">{{ s.unit }}</span></div>
+            <div
+              v-for="s in stats"
+              :key="s.label"
+              class="bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2.5 text-center"
+            >
+              <div class="text-lg font-bold text-primary-600 dark:text-primary-400">
+                {{ s.value }}<span class="text-xs font-normal text-slate-400 ml-0.5">{{ s.unit }}</span>
+              </div>
               <div class="text-xs text-slate-500 dark:text-slate-400">{{ s.label }}</div>
             </div>
           </div>

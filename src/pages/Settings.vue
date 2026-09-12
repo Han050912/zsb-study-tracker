@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useToast } from '../composables/useToast'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
 import { isDesktopNotify, notifyPermission, requestNotifyPermission } from '../services/notify'
@@ -7,12 +8,16 @@ import { subjectLabel } from '../utils/subject'
 import type { NotificationType } from '../types'
 
 const store = useAppStore()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 const s = computed(() => store.settings)
 
 const storageUsage = ref('—')
 onMounted(async () => {
-  try { storageUsage.value = await store.storageUsageText() } catch { /* 忽略 */ }
+  try {
+    storageUsage.value = await store.storageUsageText()
+  } catch {
+    /* 忽略 */
+  }
 })
 
 function update(key: string, value: any) {
@@ -55,8 +60,8 @@ async function toggleReminder(v: boolean) {
 }
 
 // ---- 数据管理 ----
-function exportData() {
-  const blob = new Blob([store.exportJSON()], { type: 'application/json' })
+async function exportData() {
+  const blob = new Blob([await store.exportJSON()], { type: 'application/json' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = `专升本学习数据_${new Date().toISOString().slice(0, 10)}.json`
@@ -101,6 +106,24 @@ async function clearAll() {
   setTimeout(() => location.reload(), 300)
 }
 
+// ---- 立即同步（手动触发：先推送本地待同步变更，再增量拉取服务端变更）----
+const syncing = ref(false)
+async function syncNow() {
+  if (syncing.value) return
+  syncing.value = true
+  try {
+    const r = await store.syncNow()
+    if (!r.ok) toast('同步失败，请检查网络后重试')
+    else if (r.rejected > 0)
+      toast(`同步完成：上传 ${r.applied} 条，${r.rejected} 条被服务端拒绝（本地保留，待下次拉取覆盖）`)
+    else toast(`同步完成：上传 ${r.applied} 条，拉取 ${r.changed} 条`)
+  } catch {
+    toast('同步失败，请检查网络后重试')
+  } finally {
+    syncing.value = false
+  }
+}
+
 // ---- 自定义科目 ----
 const showSubject = ref(false)
 const subForm = ref({ name: '', icon: '', color: '#8b5cf6', weight: 20 })
@@ -128,7 +151,12 @@ function onWeightChange(id: string, e: Event) {
 /** 删除任意科目（含内置），级联清理关联数据并回收对应积分，删除后对应科目页面自动隐藏 */
 function removeSubject(id: string, name: string) {
   const extra = id === 'english' ? '，英语专项数据（词汇/阅读/听力/作文模板）也将永久删除' : ''
-  if (!window.confirm(`删除「${name}」？其学习记录、笔记、刷题、错题、真题将一并删除${extra}，相关积分同步回收，删除后该科目页面自动隐藏。`)) return
+  if (
+    !window.confirm(
+      `删除「${name}」？其学习记录、笔记、刷题、错题、真题将一并删除${extra}，相关积分同步回收，删除后该科目页面自动隐藏。`
+    )
+  )
+    return
   store.removeSubject(id)
   toast('科目已删除，关联数据与积分已同步清理')
 }
@@ -144,10 +172,14 @@ function restoreDefaults() {
 // ---- 名言管理 ----
 const newQuote = ref('')
 function addQuote() {
-  if (!newQuote.value.trim()) return
-  store.settings.quotes.push(newQuote.value.trim())
+  const q = newQuote.value.trim()
+  if (!q) return
+  // 经 store action 更新：action 内完成「改 state + 打 updatedAt + stage settings/self + save()」
+  store.updateQuotes([...s.value.quotes, q])
   newQuote.value = ''
-  store.save()
+}
+function removeQuote(index: number) {
+  store.updateQuotes(s.value.quotes.filter((_, i) => i !== index))
 }
 
 // ---- 勿扰模式 ----
@@ -176,8 +208,23 @@ function toggleMutedType(t: NotificationType) {
     <div class="card space-y-3">
       <div class="section-title">基本信息</div>
       <div class="grid grid-cols-2 gap-3">
-        <div><label class="label">昵称</label><input :value="s.userName" class="input" @change="update('userName', ($event.target as HTMLInputElement).value)" /></div>
-        <div><label class="label">专升本考试日期</label><input type="date" :value="s.examDate" class="input" @change="update('examDate', ($event.target as HTMLInputElement).value)" /></div>
+        <div>
+          <label class="label">昵称</label
+          ><input
+            :value="s.userName"
+            class="input"
+            @change="update('userName', ($event.target as HTMLInputElement).value)"
+          />
+        </div>
+        <div>
+          <label class="label">专升本考试日期</label
+          ><input
+            type="date"
+            :value="s.examDate"
+            class="input"
+            @change="update('examDate', ($event.target as HTMLInputElement).value)"
+          />
+        </div>
       </div>
     </div>
 
@@ -185,9 +232,33 @@ function toggleMutedType(t: NotificationType) {
     <div class="card space-y-3">
       <div class="section-title">每日目标</div>
       <div class="grid grid-cols-3 gap-3">
-        <div><label class="label">学习时长（分钟）</label><input type="number" :value="s.dailyGoalMinutes" class="input" @change="update('dailyGoalMinutes', Number(($event.target as HTMLInputElement).value))" /></div>
-        <div><label class="label">单词量</label><input type="number" :value="s.wordGoal" class="input" @change="update('wordGoal', Number(($event.target as HTMLInputElement).value))" /></div>
-        <div><label class="label">做题量</label><input type="number" :value="s.problemGoal" class="input" @change="update('problemGoal', Number(($event.target as HTMLInputElement).value))" /></div>
+        <div>
+          <label class="label">学习时长（分钟）</label
+          ><input
+            type="number"
+            :value="s.dailyGoalMinutes"
+            class="input"
+            @change="update('dailyGoalMinutes', Number(($event.target as HTMLInputElement).value))"
+          />
+        </div>
+        <div>
+          <label class="label">单词量</label
+          ><input
+            type="number"
+            :value="s.wordGoal"
+            class="input"
+            @change="update('wordGoal', Number(($event.target as HTMLInputElement).value))"
+          />
+        </div>
+        <div>
+          <label class="label">做题量</label
+          ><input
+            type="number"
+            :value="s.problemGoal"
+            class="input"
+            @change="update('problemGoal', Number(($event.target as HTMLInputElement).value))"
+          />
+        </div>
       </div>
     </div>
 
@@ -207,14 +278,23 @@ function toggleMutedType(t: NotificationType) {
           <span v-if="sub.builtin" class="text-[10px] text-slate-400">（内置）</span>
           <span class="ml-auto flex items-center gap-1 text-xs text-slate-400">
             权重
-            <input type="number" min="0" max="100" class="input !w-16 !py-0.5 !px-1.5 !text-xs"
-              :value="sub.weight" title="修改权重百分比"
-              @change="onWeightChange(sub.id, $event)" />
+            <input
+              type="number"
+              min="0"
+              max="100"
+              class="input !w-16 !py-0.5 !px-1.5 !text-xs"
+              :value="sub.weight"
+              title="修改权重百分比"
+              @change="onWeightChange(sub.id, $event)"
+            />
             %
           </span>
           <button class="text-xs text-red-400 shrink-0" @click="removeSubject(sub.id, sub.name)">删除</button>
         </div>
-        <p class="text-[10px] text-slate-400">可自由增删科目、调整权重；删除科目后其独立页面自动隐藏，新增科目自动生成独立页面。权重为自定义考核占比配置（各科目之和不要求等于 100%），统计图表仍按实际学习时长计算。</p>
+        <p class="text-[10px] text-slate-400">
+          可自由增删科目、调整权重；删除科目后其独立页面自动隐藏，新增科目自动生成独立页面。权重为自定义考核占比配置（各科目之和不要求等于
+          100%），统计图表仍按实际学习时长计算。
+        </p>
       </div>
     </div>
 
@@ -222,16 +302,36 @@ function toggleMutedType(t: NotificationType) {
     <div class="card space-y-3">
       <div class="section-title">外观与提醒</div>
       <div class="flex gap-2">
-        <button v-for="t in [{ k: 'light', l: '浅色' }, { k: 'dark', l: '深色' }, { k: 'auto', l: '跟随系统' }]"
-          :key="t.k" class="btn flex-1" :class="s.theme === t.k ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-          @click="applyTheme(t.k)">{{ t.l }}</button>
+        <button
+          v-for="t in [
+            { k: 'light', l: '浅色' },
+            { k: 'dark', l: '深色' },
+            { k: 'auto', l: '跟随系统' }
+          ]"
+          :key="t.k"
+          class="btn flex-1"
+          :class="s.theme === t.k ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="applyTheme(t.k)"
+        >
+          {{ t.l }}
+        </button>
       </div>
       <div class="flex items-center justify-between">
         <span class="text-sm">每日学习提醒</span>
         <div class="flex items-center gap-2">
-          <input type="time" :value="s.reminderTime" class="input !w-auto !py-1" @change="update('reminderTime', ($event.target as HTMLInputElement).value)" />
-          <button class="btn !text-xs" :class="s.reminderEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-            @click="toggleReminder(!s.reminderEnabled)">{{ s.reminderEnabled ? '已开启' : '已关闭' }}</button>
+          <input
+            type="time"
+            :value="s.reminderTime"
+            class="input !w-auto !py-1"
+            @change="update('reminderTime', ($event.target as HTMLInputElement).value)"
+          />
+          <button
+            class="btn !text-xs"
+            :class="s.reminderEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+            @click="toggleReminder(!s.reminderEnabled)"
+          >
+            {{ s.reminderEnabled ? '已开启' : '已关闭' }}
+          </button>
         </div>
       </div>
       <div class="flex items-center justify-between">
@@ -239,16 +339,26 @@ function toggleMutedType(t: NotificationType) {
           <span class="text-sm">参与学习进步榜</span>
           <p class="text-[10px] text-slate-400 mt-0.5">在社区「进步榜」展示昵称与学习时长/刷题数排名，默认关闭</p>
         </div>
-        <button class="btn !text-xs" :class="s.joinProgressBoard ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-          @click="update('joinProgressBoard', !s.joinProgressBoard)">{{ s.joinProgressBoard ? '已参与' : '未参与' }}</button>
+        <button
+          class="btn !text-xs"
+          :class="s.joinProgressBoard ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="update('joinProgressBoard', !s.joinProgressBoard)"
+        >
+          {{ s.joinProgressBoard ? '已参与' : '未参与' }}
+        </button>
       </div>
       <div class="flex items-center justify-between">
         <div>
           <span class="text-sm">主页可见性</span>
           <p class="text-[10px] text-slate-400 mt-0.5">控制他人访问你成长主页的权限</p>
         </div>
-        <select class="input !w-auto !py-1.5 !text-xs" :value="s.profileVisibility"
-          @change="update('profileVisibility', ($event.target as HTMLSelectElement).value as 'public' | 'login' | 'private')">
+        <select
+          class="input !w-auto !py-1.5 !text-xs"
+          :value="s.profileVisibility"
+          @change="
+            update('profileVisibility', ($event.target as HTMLSelectElement).value as 'public' | 'login' | 'private')
+          "
+        >
           <option value="public">公开（所有人可见）</option>
           <option value="login">仅登录用户可见</option>
           <option value="private">仅自己可见</option>
@@ -259,16 +369,26 @@ function toggleMutedType(t: NotificationType) {
           <span class="text-sm">允许搭子查看我的学习数据</span>
           <p class="text-[10px] text-slate-400 mt-0.5">开启后搭子可查看你的周报对比与定向分享内容，默认关闭</p>
         </div>
-        <button class="btn !text-xs" :class="s.partnerShareEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-          @click="update('partnerShareEnabled', !s.partnerShareEnabled)">{{ s.partnerShareEnabled ? '已开启' : '已关闭' }}</button>
+        <button
+          class="btn !text-xs"
+          :class="s.partnerShareEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="update('partnerShareEnabled', !s.partnerShareEnabled)"
+        >
+          {{ s.partnerShareEnabled ? '已开启' : '已关闭' }}
+        </button>
       </div>
       <div class="flex items-center justify-between">
         <div>
           <span class="text-sm">允许搭子向我发送学习提醒</span>
           <p class="text-[10px] text-slate-400 mt-0.5">关闭后搭子将无法向你发送学习鼓励提醒，默认开启</p>
         </div>
-        <button class="btn !text-xs" :class="s.partnerRemindEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-          @click="update('partnerRemindEnabled', !s.partnerRemindEnabled)">{{ s.partnerRemindEnabled ? '已开启' : '已关闭' }}</button>
+        <button
+          class="btn !text-xs"
+          :class="s.partnerRemindEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="update('partnerRemindEnabled', !s.partnerRemindEnabled)"
+        >
+          {{ s.partnerRemindEnabled ? '已开启' : '已关闭' }}
+        </button>
       </div>
       <div class="pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3">
         <div class="flex items-center justify-between">
@@ -276,23 +396,54 @@ function toggleMutedType(t: NotificationType) {
             <span class="text-sm">勿扰模式</span>
             <p class="text-[10px] text-slate-400 mt-0.5">开启后不弹数字角标、不弹系统推送，通知中心照常记录历史</p>
           </div>
-          <button class="btn !text-xs" :class="s.doNotDisturb ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-            @click="update('doNotDisturb', !s.doNotDisturb)">{{ s.doNotDisturb ? '已开启' : '已关闭' }}</button>
+          <button
+            class="btn !text-xs"
+            :class="s.doNotDisturb ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+            @click="update('doNotDisturb', !s.doNotDisturb)"
+          >
+            {{ s.doNotDisturb ? '已开启' : '已关闭' }}
+          </button>
         </div>
         <div v-if="s.doNotDisturb" class="space-y-3">
           <div class="grid grid-cols-2 gap-3">
-            <div><label class="label">开始时间（留空=全天）</label><input type="time" :value="s.dndStartTime" class="input" @change="update('dndStartTime', ($event.target as HTMLInputElement).value)" /></div>
-            <div><label class="label">结束时间（留空=全天）</label><input type="time" :value="s.dndEndTime" class="input" @change="update('dndEndTime', ($event.target as HTMLInputElement).value)" /></div>
+            <div>
+              <label class="label">开始时间（留空=全天）</label
+              ><input
+                type="time"
+                :value="s.dndStartTime"
+                class="input"
+                @change="update('dndStartTime', ($event.target as HTMLInputElement).value)"
+              />
+            </div>
+            <div>
+              <label class="label">结束时间（留空=全天）</label
+              ><input
+                type="time"
+                :value="s.dndEndTime"
+                class="input"
+                @change="update('dndEndTime', ($event.target as HTMLInputElement).value)"
+              />
+            </div>
           </div>
           <div>
             <label class="label">屏蔽的提醒类型（勿扰期间不提示）</label>
             <div class="flex flex-wrap gap-2 mt-1">
-              <button v-for="t in notifTypeOptions" :key="t.k" class="btn !text-xs !py-1 !px-2.5"
+              <button
+                v-for="t in notifTypeOptions"
+                :key="t.k"
+                class="btn !text-xs !py-1 !px-2.5"
                 :class="s.dndMutedTypes.includes(t.k) ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-                @click="toggleMutedType(t.k)">{{ t.l }}</button>
-              <button class="btn !text-xs !py-1 !px-2.5"
+                @click="toggleMutedType(t.k)"
+              >
+                {{ t.l }}
+              </button>
+              <button
+                class="btn !text-xs !py-1 !px-2.5"
                 :class="s.dndMuteMessage ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-                @click="update('dndMuteMessage', !s.dndMuteMessage)">消息</button>
+                @click="update('dndMuteMessage', !s.dndMuteMessage)"
+              >
+                消息
+              </button>
             </div>
           </div>
         </div>
@@ -315,7 +466,7 @@ function toggleMutedType(t: NotificationType) {
       <div class="space-y-1 max-h-40 overflow-y-auto">
         <div v-for="(q, i) in s.quotes" :key="i" class="flex items-center gap-2 text-xs group">
           <span class="flex-1 text-slate-500 dark:text-slate-400">{{ q }}</span>
-          <button class="opacity-0 group-hover:opacity-100 text-red-400" @click="s.quotes.splice(i, 1); store.save()">×</button>
+          <button class="opacity-0 group-hover:opacity-100 text-red-400" @click="removeQuote(i)">×</button>
         </div>
       </div>
     </div>
@@ -325,17 +476,32 @@ function toggleMutedType(t: NotificationType) {
       <div class="section-title">数据管理</div>
       <div class="text-xs text-slate-400">云端数据大小：{{ storageUsage }}</div>
       <div class="flex gap-2 flex-wrap">
-        <button class="btn-primary" @click="exportData">导出 JSON 备份</button>
+        <button class="btn-primary" :disabled="syncing" @click="syncNow">
+          {{ syncing ? '同步中…' : '立即同步' }}
+        </button>
+        <button class="btn-ghost" @click="exportData">导出 JSON 备份</button>
         <button class="btn-ghost" @click="importFile?.click()">导入数据</button>
         <input ref="importFile" type="file" accept=".json" class="hidden" @change="onImport" />
-        <button class="btn-danger" @click="showClearConfirm = true; clearText = ''">清除全部数据</button>
+        <button
+          class="btn-danger"
+          @click="
+            () => {
+              showClearConfirm = true
+              clearText = ''
+            }
+          "
+        >
+          清除全部数据
+        </button>
         <button v-if="updater" class="btn-ghost" @click="checkUpdate">检查更新</button>
       </div>
     </div>
 
     <!-- 恢复默认科目确认 -->
     <Modal title="恢复默认科目" :show="showRestoreConfirm" @close="showRestoreConfirm = false">
-      <p class="text-sm text-slate-600 dark:text-slate-300">确定恢复默认科目列表？自定义新增的科目不会被删除，已删除的系统内置科目将会全部恢复。</p>
+      <p class="text-sm text-slate-600 dark:text-slate-300">
+        确定恢复默认科目列表？自定义新增的科目不会被删除，已删除的系统内置科目将会全部恢复。
+      </p>
       <template #footer>
         <button class="btn-ghost" @click="showRestoreConfirm = false">取消</button>
         <button class="btn-primary" @click="restoreDefaults">确认恢复</button>
@@ -345,11 +511,19 @@ function toggleMutedType(t: NotificationType) {
     <!-- 扩展科目弹窗 -->
     <Modal title="添加扩展科目" :show="showSubject" @close="showSubject = false">
       <div class="space-y-3">
-        <div><label class="label">科目名称</label><input v-model="subForm.name" class="input" placeholder="如：计算机基础、政治、专业课" /></div>
+        <div>
+          <label class="label">科目名称</label
+          ><input v-model="subForm.name" class="input" placeholder="如：计算机基础、政治、专业课" />
+        </div>
         <div class="grid grid-cols-3 gap-2">
           <div><label class="label">图标 emoji</label><input v-model="subForm.icon" class="input" maxlength="4" /></div>
-          <div><label class="label">颜色</label><input v-model="subForm.color" type="color" class="input !p-1 h-9" /></div>
-          <div><label class="label">考核权重%</label><input v-model.number="subForm.weight" type="number" min="1" max="100" class="input" /></div>
+          <div>
+            <label class="label">颜色</label><input v-model="subForm.color" type="color" class="input !p-1 h-9" />
+          </div>
+          <div>
+            <label class="label">考核权重%</label
+            ><input v-model.number="subForm.weight" type="number" min="1" max="100" class="input" />
+          </div>
         </div>
       </div>
       <template #footer>
@@ -360,7 +534,9 @@ function toggleMutedType(t: NotificationType) {
 
     <!-- 清除确认 -->
     <Modal title="危险操作" :show="showClearConfirm" @close="showClearConfirm = false">
-      <p class="text-sm text-slate-500">此操作将永久删除所有学习记录、笔记、错题、习惯数据，<b class="text-red-500">不可恢复</b>！建议先导出备份。</p>
+      <p class="text-sm text-slate-500">
+        此操作将永久删除所有学习记录、笔记、错题、习惯数据，<b class="text-red-500">不可恢复</b>！建议先导出备份。
+      </p>
       <p class="text-sm mt-3">请输入「<b>确认清除</b>」以继续：</p>
       <input v-model="clearText" class="input mt-2" placeholder="确认清除" />
       <template #footer>

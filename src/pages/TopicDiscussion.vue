@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import { useAppStore } from '../stores/app'
@@ -19,7 +21,7 @@ import type { CommunityPost } from '../types'
 const route = useRoute()
 const router = useRouter()
 const { goBack } = useBack()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 const appStore = useAppStore()
 
 const subjectId = route.params.subjectId as string
@@ -40,7 +42,9 @@ onMounted(() => {
     router.replace('/community')
     return
   }
-  loadFeed(true).finally(() => { loading.value = false })
+  loadFeed(true).finally(() => {
+    loading.value = false
+  })
 })
 
 async function loadFeed(reset = false) {
@@ -55,10 +59,10 @@ async function loadFeed(reset = false) {
     })
     posts.value = reset ? res.posts : [...posts.value, ...res.posts]
     feedCursor.value = res.nextCursor
-  } catch (e: any) {
+  } catch (e) {
     // 首屏失败展示错误态；追加失败仅提示，保留已加载内容
-    if (reset) feedError.value = e?.message || '加载失败'
-    else toast(e?.message || '加载失败')
+    if (reset) feedError.value = getErrorMessage(e, '加载失败')
+    else toast(getErrorMessage(e, '加载失败'))
   } finally {
     feedLoading.value = false
   }
@@ -72,13 +76,15 @@ function onPosted() {
 
 // ---- 帖子互动（局部状态） ----
 async function likePost(id: string) {
-  const p = posts.value.find(x => x.id === id)
+  const p = posts.value.find((x) => x.id === id)
   if (!p) return
   try {
     const { liked } = await communityApi.toggleLike('post', id)
     p.likedByMe = liked
     p.likesCount = Math.max(0, p.likesCount + (liked ? 1 : -1))
-  } catch (e: any) { toast(e?.message || '操作失败') }
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  }
 }
 
 // ---- 资料卡 / 举报 ----
@@ -120,13 +126,19 @@ function openReport(postId: string) {
         <div v-if="!posts.length && !feedLoading" class="card text-center text-sm text-slate-400 py-8">
           还没有讨论，来发第一帖吧～
         </div>
-        <PostCard v-for="p in posts" :key="p.id" :post="p"
+        <PostCard
+          v-for="p in posts"
+          :key="p.id"
+          :post="p"
           @like="likePost(p.id)"
           @open="router.push(`/community/post/${p.id}`)"
           @profile="openProfile(p.userId)"
-          @report="openReport(p.id)" />
+          @report="openReport(p.id)"
+        />
         <div v-if="feedCursor" class="text-center">
-          <button class="btn-ghost !text-xs" :disabled="feedLoading" @click="loadFeed()">{{ feedLoading ? '加载中…' : '加载更多' }}</button>
+          <button class="btn-ghost !text-xs" :disabled="feedLoading" @click="loadFeed()">
+            {{ feedLoading ? '加载中…' : '加载更多' }}
+          </button>
         </div>
       </template>
 
