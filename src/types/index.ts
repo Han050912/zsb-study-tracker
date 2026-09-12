@@ -21,6 +21,8 @@ export interface Subject {
   mastery: Record<string, number>
   /** 知识点 -> 重要程度（普通/重要/必考），未标记视为普通 */
   topicImportance: Record<string, TopicImportance>
+  /** 记录级 LWW 时间戳（客户端编辑时刻 ms；同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 学习记录（按次） */
@@ -33,6 +35,8 @@ export interface StudyRecord {
   topic?: string
   note?: string
   createdAt: number
+  /** 记录级 LWW 时间戳（客户端编辑时刻 ms；同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 刷题记录 */
@@ -44,6 +48,8 @@ export interface ProblemSession {
   correct: number
   /** 题型 -> 数量；键名随科目题型模板而定（数学：choice/blank/calc/proof，英语：choice/cloze/reading/translate/writing），旧数据键名不受影响 */
   types: Record<string, number>
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 错题 */
@@ -55,10 +61,13 @@ export interface ErrorQuestion {
   type: string // 题型跟随科目动态变化：数学/英语/自定义科目各自独立题型列表
   content: string
   answer?: string
-  image?: string // base64
+  /** 题目配图引用：'r2:<sha256>'（字节存 R2，经认证通道加载） */
+  image?: string
   reviewCount: number
   mastered: boolean
   createdAt: number
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 真题/套卷记录 */
@@ -71,6 +80,8 @@ export interface ExamRecord {
   totalScore: number
   minutes: number
   parts?: Record<string, number>
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 笔记 */
@@ -78,10 +89,10 @@ export interface Note {
   id: string
   subjectId: string
   title: string
-  /** 文本笔记为 Markdown 源码；PDF 笔记为 'd1:<id>' 引用（原文二进制分片存 D1，阅读时回源拼装） */
-  content: string
   tags: string[]
   updatedAt: number
+  /** Markdown 正文版本；正文存 IndexedDB + 云端独立分片，PDF 恒为 0 */
+  bodyUpdatedAt: number
   /** 缺省为 Markdown 笔记；'pdf' 表示 PDF 原文笔记（以查看器渲染，不可编辑正文） */
   type?: 'pdf'
 }
@@ -94,16 +105,50 @@ export interface VocabRecord {
   reviewWords: number
   /** 本条打卡获得的积分（删除时全额回收） */
   points: number
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
+}
+
+/** 英语阅读训练记录 */
+export interface ReadingRecord {
+  /** id 用于积分流水关联（refId），旧数据迁移时自动补齐 */
+  id?: string
+  date: string
+  wpm: number
+  accuracy: number
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
+}
+
+/** 英语听力练习记录 */
+export interface ListeningRecord {
+  /** id 用于积分流水关联（refId），旧数据迁移时自动补齐 */
+  id?: string
+  date: string
+  minutes: number
+  material: string
+  mode: '精听' | '泛听'
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
+}
+
+/** 作文模板；category 为新增可选字段（议论文/图表文/信件文），旧数据无此字段归入「自定义」 */
+export interface EssayTemplate {
+  id: string
+  title: string
+  content: string
+  level: number
+  category?: string
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 英语专项数据 */
 export interface EnglishExtra {
   vocab: VocabRecord[]
-  /** id 用于积分流水关联（refId），旧数据迁移时自动补齐 */
-  reading: { id?: string; date: string; wpm: number; accuracy: number }[]
-  listening: { id?: string; date: string; minutes: number; material: string; mode: '精听' | '泛听' }[]
-  /** 作文模板；category 为新增可选字段（议论文/图表文/信件文），旧数据无此字段归入「自定义」 */
-  templates: { id: string; title: string; content: string; level: number; category?: string }[]
+  reading: ReadingRecord[]
+  listening: ListeningRecord[]
+  templates: EssayTemplate[]
 }
 
 /** 每日总结 */
@@ -113,6 +158,8 @@ export interface DailySummary {
   harvest: string
   improve: string
   plan: string
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 习惯 */
@@ -127,6 +174,8 @@ export interface Habit {
   records: Record<string, number | string>
   /** 坏习惯「每日克制打卡」记录：date -> 1 */
   checkins?: Record<string, number>
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 学习资料 */
@@ -145,6 +194,8 @@ export interface Material {
   readPages?: number
   notes?: string
   createdAt: number
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 游戏化 */
@@ -169,13 +220,26 @@ export interface PomodoroRecord {
   source: 'solo' | 'party'
   /** 开黑搭子昵称快照（source='party' 时有值） */
   partnerName?: string
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 番茄钟统计 */
 export interface PomodoroStat {
-  daily: Record<string, { count: number; minutes: number; interruptions: number }>
+  /** 日统计条目；updatedAt 为 `day:<date>` 键的 LWW 时间戳 */
+  daily: Record<string, PomodoroDailyStat>
+  /** 打断列表：updatedAt 为运行时字段（T5 约定：`itr:<date>` 键的 LWW 时间戳 = 当日各行最大 updatedAt），类型上不声明 */
   interruptions: { date: string; reason: string; time: number }[]
   records: PomodoroRecord[]
+}
+
+/** 番茄日统计（pomodoro.daily 的条目） */
+export interface PomodoroDailyStat {
+  count: number
+  minutes: number
+  interruptions: number
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 待办 */
@@ -195,13 +259,29 @@ export interface Todo {
   startNotifiedAt?: number
   /** 截止提醒已发出的时间（去重用）；重设截止时间时清除 */
   dueNotifiedAt?: number
+  /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 /** 社区通知类型 */
 export type NotificationType = 'like' | 'comment' | 'follow' | 'achievement' | 'message' | 'system' | 'partner'
 
 /** 通知点击跳转目标类型 */
-export type NotificationTargetType = 'post' | 'user' | 'message' | 'team' | 'circle' | 'partner' | 'partner_share' | 'partner_comment' | 'partner_study' | 'partner_plan' | 'partner_review' | 'partner_remind' | 'partner_unbind' | 'partner_weekly'
+export type NotificationTargetType =
+  | 'post'
+  | 'user'
+  | 'message'
+  | 'team'
+  | 'circle'
+  | 'partner'
+  | 'partner_share'
+  | 'partner_comment'
+  | 'partner_study'
+  | 'partner_plan'
+  | 'partner_review'
+  | 'partner_remind'
+  | 'partner_unbind'
+  | 'partner_weekly'
 
 /** 设置 */
 export interface Settings {
@@ -241,6 +321,8 @@ export interface Settings {
   partnerShareEnabled: boolean
   /** 允许搭子向我发送学习鼓励提醒（默认开启） */
   partnerRemindEnabled: boolean
+  /** 记录级 LWW 时间戳（settings 域键 self 的同步时间戳，运行时字段，不进 UI） */
+  updatedAt?: number
 }
 
 export interface AppState {
@@ -722,10 +804,10 @@ export interface PartnerItem {
 
 /** 搭子周报对比数据 */
 export interface PartnerWeeklyStats {
-  minutes: number          // 本周学习时长（分钟）
-  problems: number         // 本周刷题数
-  pomodoroMinutes: number  // 本周番茄专注时长（分钟）
-  streak: number           // 连续打卡天数
+  minutes: number // 本周学习时长（分钟）
+  problems: number // 本周刷题数
+  pomodoroMinutes: number // 本周番茄专注时长（分钟）
+  streak: number // 连续打卡天数
 }
 export interface PartnerWeeklyReport {
   shared: boolean
@@ -826,7 +908,7 @@ export interface PartnerStudyRecord {
   partnerName: string
   partnerAvatar?: string
   startedAt: number // Unix 秒
-  endedAt: number   // Unix 秒
+  endedAt: number // Unix 秒
   myOnlineSeconds: number
   partnerOnlineSeconds: number
 }

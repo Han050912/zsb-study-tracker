@@ -5,23 +5,14 @@
  * 401 时清除会话并跳转登录页——但登录/注册接口除外：这两类公开端点的 401
  * 表示凭证错误（账号不存在或密码错误），透传服务端消息给调用方展示。
  */
+import { TOKEN_KEY, SESSION_FLAG, hasSession, desktopAuthHeaders } from '../utils/session'
+
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8787'
 
 /** 公开凭证端点：其 401 不属于「会话过期」，不做全局登出处理 */
 const CREDENTIAL_PATHS = ['/api/auth/login', '/api/auth/register']
 
 const isDesktop = __DESKTOP_BUILD__
-const TOKEN_KEY = 'jwt_token'
-const SESSION_FLAG = 'auth_logged_in'
-
-function getToken(): string | null {
-  return isDesktop ? localStorage.getItem(TOKEN_KEY) : null
-}
-
-/** 是否曾登录（用于 401 语义判断：会话过期 vs 未登录） */
-function hasSession(): boolean {
-  return isDesktop ? !!localStorage.getItem(TOKEN_KEY) : localStorage.getItem(SESSION_FLAG) === '1'
-}
 
 /** 401 全局处理：清除会话、通知清空内存数据、跳转登录页（导出供 XHR 上传等非 fetch 通道复用）。 */
 export function handleUnauthorized(): never {
@@ -37,10 +28,7 @@ export function handleUnauthorized(): never {
   throw Object.assign(new Error(had ? '登录已过期，请重新登录' : '请先登录'), { status: 401 })
 }
 
-export async function request<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await authFetch(path, options, { 'Content-Type': 'application/json' })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: '请求失败' }))
@@ -60,14 +48,10 @@ export async function authFetch(
 ): Promise<Response> {
   const headers: Record<string, string> = {
     ...baseHeaders,
-    ...(options.headers as Record<string, string> || {})
+    ...((options.headers as Record<string, string>) || {})
   }
-  if (isDesktop) {
-    const token = getToken()
-    if (token) headers['Authorization'] = `Bearer ${token}`
-    // 桌面端附加认证令牌，Worker 校验以跳过 Turnstile（Web 构建此分支整体 tree-shake）
-    headers['X-Desktop-Token'] = __DESKTOP_TOKEN__
-  }
+  // 桌面端附加认证头（X-Desktop-Token 无条件发送；Authorization 仅在 token 存在时）
+  Object.assign(headers, desktopAuthHeaders())
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
@@ -82,22 +66,25 @@ const KEEPALIVE_MAX_BYTES = 60_000
 
 /**
  * 页面卸载（beforeunload）时的兜底推送：keepalive 让请求在页面关闭后继续完成。
- * 仅用于全量同步保存，不读取响应。
+ * 当前用于按域同步的卸载兜底（单域载荷小，不会触发 keepalive 体积上限），不读取响应。
  */
 export function requestKeepalive(path: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): void {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (isDesktop) {
-    const token = getToken()
-    if (token) headers['Authorization'] = `Bearer ${token}`
-    headers['X-Desktop-Token'] = __DESKTOP_TOKEN__
-  }
+  Object.assign(headers, desktopAuthHeaders())
   const payload = JSON.stringify(body)
   if (payload.length > KEEPALIVE_MAX_BYTES) {
-    console.warn(`keepalive 推送载荷 ${(payload.length / 1024).toFixed(1)}KB 超过安全上限，本次兜底推送将跳过（日常推送不走此路径，不影响数据完整性）`)
+    console.warn(
+      `keepalive 推送载荷 ${(payload.length / 1024).toFixed(1)}KB 超过安全上限，本次兜底推送将跳过（日常推送不走此路径，不影响数据完整性）`
+    )
     return
   }
   fetch(`${API_BASE}${path}`, {
-    method, headers, body: payload, keepalive: true,
+    method,
+    headers,
+    body: payload,
+    keepalive: true,
     ...(isDesktop ? {} : { credentials: 'include' })
-  }).catch(() => { /* 卸载兜底，失败无法重试 */ })
+  }).catch(() => {
+    /* 卸载兜底，失败无法重试 */
+  })
 }

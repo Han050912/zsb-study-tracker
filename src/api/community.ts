@@ -1,7 +1,38 @@
 import { request, authFetch, API_BASE, handleUnauthorized } from './client'
+import { desktopAuthHeaders } from '../utils/session'
 import { compressImage } from '../utils/imageCompress'
 import type {
-  AdminReport, CircleDetail, CommunityCircle, CommunityComment, CommunityLeaderboard, CommunityMessage, CommunityNotification, CommunityPost, CommunityUserProfile, FollowListResult, HotTopic, HotTopicOverride, MessageConversation, Note, NotificationType, PartnerItem, PartnerPlan, PartnerPlanDetail, PartnerReview, PartnerShareDetail, PartnerShareItem, PartnerStudyRecord, PartnerStudySession, PartnerSuggestion, PartnerWeeklyReport, PostType, ProgressBoardData, RecommendFeedData, RecommendUser, UserLookupResult, UserStudyStats, WeeklyReport
+  AdminReport,
+  CircleDetail,
+  CommunityCircle,
+  CommunityComment,
+  CommunityLeaderboard,
+  CommunityMessage,
+  CommunityNotification,
+  CommunityPost,
+  CommunityUserProfile,
+  FollowListResult,
+  HotTopic,
+  HotTopicOverride,
+  MessageConversation,
+  NotificationType,
+  PartnerItem,
+  PartnerPlan,
+  PartnerPlanDetail,
+  PartnerReview,
+  PartnerShareDetail,
+  PartnerShareItem,
+  PartnerShareNoteItem,
+  PartnerStudyRecord,
+  PartnerStudySession,
+  PartnerSuggestion,
+  PartnerWeeklyReport,
+  PostType,
+  ProgressBoardData,
+  RecommendFeedData,
+  UserLookupResult,
+  UserStudyStats,
+  WeeklyReport
 } from '../types'
 
 export interface FeedQuery {
@@ -73,64 +104,81 @@ export interface UploadResult {
  * onProgress 收到 0-1 的进度值；失败抛出带服务端提示的 Error。
  */
 export function uploadImage(file: File, onProgress?: (ratio: number) => void): Promise<UploadResult> {
-  return new Promise(async (resolve, reject) => {
-    // 前端压缩：full（原图 WebP/GIF）+ thumb（640 缩略图 WebP）
-    let full: Blob, thumb: Blob
-    try {
-      const c = await compressImage(file)
-      full = c.full
-      thumb = c.thumb
-    } catch (e: any) {
-      reject(e)
-      return
-    }
-
-    const postBlob = (url: string, blob: Blob, onDone: (data: any) => void) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('POST', url)
-      // Web 端会话在 HttpOnly Cookie（withCredentials），桌面端走 Authorization Bearer + 桌面令牌
-      if (__DESKTOP_BUILD__) {
-        const token = localStorage.getItem('jwt_token')
-        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
-        xhr.setRequestHeader('X-Desktop-Token', __DESKTOP_TOKEN__)
-      } else {
-        xhr.withCredentials = true
+  return new Promise((resolve, reject) => {
+    void (async () => {
+      // 前端压缩：full（原图 WebP/GIF）+ thumb（640 缩略图 WebP）
+      let full: Blob, thumb: Blob
+      try {
+        const c = await compressImage(file)
+        full = c.full
+        thumb = c.thumb
+      } catch (e) {
+        reject(e)
+        return
       }
-      xhr.setRequestHeader('Content-Type', blob.type || 'application/octet-stream')
-      xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress?.(Math.min(1, e.loaded / e.total)) }
-      xhr.onload = () => {
-        let data: any = null
-        try { data = JSON.parse(xhr.responseText) } catch { /* 非 JSON */ }
-        if (xhr.status >= 200 && xhr.status < 300) { onDone(data); return }
-        if (xhr.status === 401) {
-          let settled = false
-          try {
-            handleUnauthorized()
-          } catch (e) {
-            settled = true
-            reject(e)
-          }
-          // handleUnauthorized 为 never（总会 throw），此行为兜底，确保 Promise 必然 settle
-          if (!settled) reject(Object.assign(new Error('登录已过期，请重新登录'), { status: 401 }))
-          return
+
+      const postBlob = (url: string, blob: Blob, onDone: (data: any) => void) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', url)
+        // Web 端会话在 HttpOnly Cookie（withCredentials），桌面端走 Authorization Bearer + 桌面令牌
+        const authHeaders = desktopAuthHeaders()
+        if (Object.keys(authHeaders).length) {
+          for (const [k, v] of Object.entries(authHeaders)) xhr.setRequestHeader(k, v)
+        } else {
+          xhr.withCredentials = true
         }
-        reject(Object.assign(new Error(data?.message || `上传失败（HTTP ${xhr.status}）`), { status: xhr.status }))
+        xhr.setRequestHeader('Content-Type', blob.type || 'application/octet-stream')
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) onProgress?.(Math.min(1, e.loaded / e.total))
+        }
+        xhr.onload = () => {
+          let data: any = null
+          try {
+            data = JSON.parse(xhr.responseText)
+          } catch {
+            /* 非 JSON */
+          }
+          if (xhr.status >= 200 && xhr.status < 300) {
+            onDone(data)
+            return
+          }
+          if (xhr.status === 401) {
+            let settled = false
+            try {
+              handleUnauthorized()
+            } catch (e) {
+              settled = true
+              reject(e)
+            }
+            // handleUnauthorized 为 never（总会 throw），此行为兜底，确保 Promise 必然 settle
+            if (!settled) reject(Object.assign(new Error('登录已过期，请重新登录'), { status: 401 }))
+            return
+          }
+          reject(Object.assign(new Error(data?.message || `上传失败（HTTP ${xhr.status}）`), { status: xhr.status }))
+        }
+        xhr.onerror = () => reject(new Error('网络错误，上传失败'))
+        xhr.send(blob)
       }
-      xhr.onerror = () => reject(new Error('网络错误，上传失败'))
-      xhr.send(blob)
-    }
 
-    // 1. 上传原图 → 拿 id
-    postBlob(`${API_BASE}/api/community/upload?filename=${encodeURIComponent(file.name.slice(0, 100))}`, full, (res) => {
-      if (!res?.id) { reject(new Error('上传返回异常')); return }
-      // 2. 上传缩略图，关联到原图 id
-      postBlob(`${API_BASE}/api/community/upload?variant=thumb&id=${encodeURIComponent(res.id)}`, thumb, () => {
-        // 两段上传各自的 onprogress 未必以 1 收尾（小缩略图可能不派发 100% 事件），完成时显式归 1，
-        // 保证调用方按 progress >= 1 判定「上传完成」的响应式状态能正确解除
-        onProgress?.(1)
-        resolve(res as UploadResult)
-      })
-    })
+      // 1. 上传原图 → 拿 id
+      postBlob(
+        `${API_BASE}/api/community/upload?filename=${encodeURIComponent(file.name.slice(0, 100))}`,
+        full,
+        (res) => {
+          if (!res?.id) {
+            reject(new Error('上传返回异常'))
+            return
+          }
+          // 2. 上传缩略图，关联到原图 id
+          postBlob(`${API_BASE}/api/community/upload?variant=thumb&id=${encodeURIComponent(res.id)}`, thumb, () => {
+            // 两段上传各自的 onprogress 未必以 1 收尾（小缩略图可能不派发 100% 事件），完成时显式归 1，
+            // 保证调用方按 progress >= 1 判定「上传完成」的响应式状态能正确解除
+            onProgress?.(1)
+            resolve(res as UploadResult)
+          })
+        }
+      )
+    })().catch(reject)
   })
 }
 
@@ -150,33 +198,52 @@ export const communityApi = {
     if (q.featured) params.set('featured', '1')
     if (q.follow) params.set('follow', '1')
     if (q.circle) params.set('circle', q.circle)
-    if (q.topicSubject && q.topicChapter) { params.set('topicSubject', q.topicSubject); params.set('topicChapter', q.topicChapter) }
+    if (q.topicSubject && q.topicChapter) {
+      params.set('topicSubject', q.topicSubject)
+      params.set('topicChapter', q.topicChapter)
+    }
     if (q.cursor) params.set('cursor', q.cursor)
     if (q.limit) params.set('limit', String(q.limit))
     const qs = params.toString()
     return request<FeedResult>(`/api/community/posts${qs ? `?${qs}` : ''}`)
   },
   post: (id: string) => request<PostDetail>(`/api/community/posts/${id}`),
-  createPost: (data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; topicRef?: string; refType?: string; refId?: string }) =>
-    request<CommunityPost>('/api/community/posts', { method: 'POST', body: JSON.stringify(data) }),
-  deletePost: (id: string) =>
-    request<{ ok: boolean }>(`/api/community/posts/${id}`, { method: 'DELETE' }),
+  createPost: (data: {
+    type: PostType
+    content: string
+    tags: string[]
+    imageUrls?: string[]
+    circleId?: string
+    topicRef?: string
+    refType?: string
+    refId?: string
+  }) => request<CommunityPost>('/api/community/posts', { method: 'POST', body: JSON.stringify(data) }),
+  deletePost: (id: string) => request<{ ok: boolean }>(`/api/community/posts/${id}`, { method: 'DELETE' }),
   /** 提问帖标记解决/取消解决（仅楼主；已采纳最佳答案时需先取消采纳） */
   resolvePost: (id: string) =>
     request<{ isResolved: boolean }>(`/api/community/posts/${id}/resolve`, { method: 'PUT' }),
   /** 采纳/取消采纳最佳答案（仅提问帖楼主；重复调用同一评论为取消采纳） */
   acceptAnswer: (postId: string, commentId: string) =>
-    request<{ acceptedAnswerId: string | null; isResolved: boolean }>(`/api/community/posts/${postId}/accept`, { method: 'PUT', body: JSON.stringify({ commentId }) }),
+    request<{ acceptedAnswerId: string | null; isResolved: boolean }>(`/api/community/posts/${postId}/accept`, {
+      method: 'PUT',
+      body: JSON.stringify({ commentId })
+    }),
   addComment: (postId: string, data: { content: string; parentId?: string; imageUrls?: string[] }) =>
-    request<CommunityComment>(`/api/community/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify(data) }),
-  deleteComment: (id: string) =>
-    request<{ ok: boolean }>(`/api/community/comments/${id}`, { method: 'DELETE' }),
+    request<CommunityComment>(`/api/community/posts/${postId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify(data)
+    }),
+  deleteComment: (id: string) => request<{ ok: boolean }>(`/api/community/comments/${id}`, { method: 'DELETE' }),
   toggleLike: (targetType: 'post' | 'comment', targetId: string) =>
-    request<{ liked: boolean }>('/api/community/likes', { method: 'POST', body: JSON.stringify({ targetType, targetId }) }),
+    request<{ liked: boolean }>('/api/community/likes', {
+      method: 'POST',
+      body: JSON.stringify({ targetType, targetId })
+    }),
   /** 踩/取消踩（toggle，与赞互斥） */
   dislike: (targetType: 'post' | 'comment', targetId: string) =>
     request<{ disliked: boolean; likeRevoked?: boolean }>('/api/community/dislikes', {
-      method: 'POST', body: JSON.stringify({ targetType, targetId })
+      method: 'POST',
+      body: JSON.stringify({ targetType, targetId })
     }),
   leaderboard: () => request<CommunityLeaderboard>('/api/community/leaderboard'),
   /** 上周学习周报（惰性计算） */
@@ -213,7 +280,8 @@ export const communityApi = {
   /** 关注列表 */
   following: (userId: string, cursor?: string | null) => followList(`/api/community/users/${userId}/following`, cursor),
   /** 互关列表 */
-  mutualFollows: (userId: string, cursor?: string | null) => followList(`/api/community/users/${userId}/mutual`, cursor),
+  mutualFollows: (userId: string, cursor?: string | null) =>
+    followList(`/api/community/users/${userId}/mutual`, cursor),
   /** 每日一题：最新一条被标记且未隐藏的帖子（无则 post 为 null） */
   daily: () => request<{ post: CommunityPost | null }>('/api/community/daily'),
   /** 圈子列表（按成员数倒序） */
@@ -242,15 +310,22 @@ export const communityApi = {
     if (cursor) params.set('cursor', cursor)
     const qs = params.toString()
     return request<{ messages: CommunityMessage[]; nextCursor: string | null; markedRead: number }>(
-      `/api/community/messages/with/${peerId}${qs ? `?${qs}` : ''}`)
+      `/api/community/messages/with/${peerId}${qs ? `?${qs}` : ''}`
+    )
   },
   /** 发送私信 */
   sendMessage: (peerId: string, content: string, imageUrls?: string[]) =>
-    request<CommunityMessage>(`/api/community/messages/${peerId}`, { method: 'POST', body: JSON.stringify({ content, imageUrls }) }),
+    request<CommunityMessage>(`/api/community/messages/${peerId}`, {
+      method: 'POST',
+      body: JSON.stringify({ content, imageUrls })
+    }),
   /** 私信未读总数（并入顶栏角标） */
   messageUnreadCount: () => request<{ count: number }>('/api/community/messages/unread-count'),
   report: (targetType: 'post' | 'comment' | 'message', targetId: string, reason: string, detail?: string) =>
-    request<{ ok: boolean }>('/api/community/reports', { method: 'POST', body: JSON.stringify({ targetType, targetId, reason, detail }) }),
+    request<{ ok: boolean }>('/api/community/reports', {
+      method: 'POST',
+      body: JSON.stringify({ targetType, targetId, reason, detail })
+    }),
   notifications: (cursor?: string | null, limit?: number, type?: NotificationType) => {
     const params = new URLSearchParams()
     if (cursor) params.set('cursor', cursor)
@@ -259,33 +334,32 @@ export const communityApi = {
     const qs = params.toString()
     return request<NotificationResult>(`/api/community/notifications${qs ? `?${qs}` : ''}`)
   },
-  markRead: (id: string) =>
-    request<{ ok: boolean }>(`/api/community/notifications/${id}/read`, { method: 'PUT' }),
-  markAllRead: () =>
-    request<{ ok: boolean }>('/api/community/notifications/read-all', { method: 'PUT' }),
+  markRead: (id: string) => request<{ ok: boolean }>(`/api/community/notifications/${id}/read`, { method: 'PUT' }),
+  markAllRead: () => request<{ ok: boolean }>('/api/community/notifications/read-all', { method: 'PUT' }),
 
   // ---- 管理员操作 ----
-  adminPinPost: (id: string) =>
-    request<{ isPinned: boolean }>(`/api/admin/posts/${id}/pin`, { method: 'PUT' }),
+  adminPinPost: (id: string) => request<{ isPinned: boolean }>(`/api/admin/posts/${id}/pin`, { method: 'PUT' }),
   adminFeaturePost: (id: string) =>
     request<{ isFeatured: boolean }>(`/api/admin/posts/${id}/feature`, { method: 'PUT' }),
-  adminHidePost: (id: string) =>
-    request<{ isHidden: boolean }>(`/api/admin/posts/${id}/hide`, { method: 'PUT' }),
-  adminHideComment: (id: string) =>
-    request<{ isHidden: boolean }>(`/api/admin/comments/${id}/hide`, { method: 'PUT' }),
-  adminReports: () =>
-    request<{ reports: AdminReport[] }>('/api/admin/reports'),
+  adminHidePost: (id: string) => request<{ isHidden: boolean }>(`/api/admin/posts/${id}/hide`, { method: 'PUT' }),
+  adminHideComment: (id: string) => request<{ isHidden: boolean }>(`/api/admin/comments/${id}/hide`, { method: 'PUT' }),
+  adminReports: () => request<{ reports: AdminReport[] }>('/api/admin/reports'),
   adminResolveReport: (id: string, action: 'hide' | 'delete' | 'reject', reason?: string) =>
-    request<{ ok: boolean }>(`/api/admin/reports/${id}/resolve`, { method: 'PUT', body: JSON.stringify({ action, reason }) }),
+    request<{ ok: boolean }>(`/api/admin/reports/${id}/resolve`, {
+      method: 'PUT',
+      body: JSON.stringify({ action, reason })
+    }),
   /** 授予/更新专家认证（蓝 V） */
   adminVerifyUser: (userId: string, expertise: string) =>
-    request<{ verified: boolean; expertise: string }>(`/api/admin/users/${userId}/verify`, { method: 'PUT', body: JSON.stringify({ expertise }) }),
+    request<{ verified: boolean; expertise: string }>(`/api/admin/users/${userId}/verify`, {
+      method: 'PUT',
+      body: JSON.stringify({ expertise })
+    }),
   /** 撤销专家认证 */
   adminUnverifyUser: (userId: string) =>
     request<{ verified: boolean }>(`/api/admin/users/${userId}/verify`, { method: 'DELETE' }),
   /** 设置/取消每日一题 */
-  adminDailyPost: (id: string) =>
-    request<{ isDaily: boolean }>(`/api/admin/posts/${id}/daily`, { method: 'PUT' }),
+  adminDailyPost: (id: string) => request<{ isDaily: boolean }>(`/api/admin/posts/${id}/daily`, { method: 'PUT' }),
   /** 热门话题：自动统计快照 + 干预名单 */
   adminHotTopics: () =>
     request<{ stats: { tag: string; count: number }[]; overrides: HotTopicOverride[] }>('/api/admin/hot-topics'),
@@ -293,8 +367,7 @@ export const communityApi = {
   adminAddHotTopic: (data: { text: string; tag: string; action: 'pin' | 'block' }) =>
     request<HotTopicOverride>('/api/admin/hot-topics', { method: 'POST', body: JSON.stringify(data) }),
   /** 热门话题：删除干预条目 */
-  adminDeleteHotTopic: (id: string) =>
-    request<{ ok: boolean }>(`/api/admin/hot-topics/${id}`, { method: 'DELETE' }),
+  adminDeleteHotTopic: (id: string) => request<{ ok: boolean }>(`/api/admin/hot-topics/${id}`, { method: 'DELETE' }),
   /** 学习搭子推荐 */
   partnerSuggestions: () => request<{ suggestions: PartnerSuggestion[] }>('/api/community/partners/suggestions'),
   /** 我的搭子 + 收到的请求 */
@@ -304,7 +377,10 @@ export const communityApi = {
     request<{ accepted: boolean }>(`/api/community/partners/${userId}`, { method: 'POST' }),
   /** 接受/拒绝请求 */
   respondPartner: (requestId: string, action: 'accept' | 'reject') =>
-    request<{ ok: boolean }>(`/api/community/partners/${requestId}`, { method: 'PUT', body: JSON.stringify({ action }) }),
+    request<{ ok: boolean }>(`/api/community/partners/${requestId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ action })
+    }),
   /** 一键解绑搭子（无需对方同意） */
   unbindPartner: (userId: string) =>
     request<{ ok: boolean }>(`/api/community/partners/${userId}`, { method: 'DELETE' }),
@@ -317,14 +393,18 @@ export const communityApi = {
 
   // ========== 错题/笔记定向分享 ==========
   createPartnerShare: (partnerId: string, itemType: 'error' | 'note', itemId: string, force = false) =>
-    request<{ id: string; duplicate?: boolean }>('/api/partner-shares', { method: 'POST', body: JSON.stringify({ partnerId, itemType, itemId, force }) }),
-  partnerShares: () =>
-    request<{ received: PartnerShareItem[]; sent: PartnerShareItem[] }>('/api/partner-shares'),
+    request<{ id: string; duplicate?: boolean }>('/api/partner-shares', {
+      method: 'POST',
+      body: JSON.stringify({ partnerId, itemType, itemId, force })
+    }),
+  partnerShares: () => request<{ received: PartnerShareItem[]; sent: PartnerShareItem[] }>('/api/partner-shares'),
   partnerShare: (id: string) => request<PartnerShareDetail>(`/api/partner-shares/${id}`),
   addShareComment: (shareId: string, content: string) =>
-    request<{ id: string }>(`/api/partner-shares/${shareId}/comments`, { method: 'POST', body: JSON.stringify({ content }) }),
-  deleteShare: (id: string) =>
-    request<{ ok: boolean }>(`/api/partner-shares/${id}`, { method: 'DELETE' }),
+    request<{ id: string }>(`/api/partner-shares/${shareId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify({ content })
+    }),
+  deleteShare: (id: string) => request<{ ok: boolean }>(`/api/partner-shares/${id}`, { method: 'DELETE' }),
   /** 分享 PDF 原文（受分享权限保护，供预览渲染） */
   partnerSharePdf: async (id: string): Promise<Uint8Array> => {
     const res = await authFetch(`/api/partner-shares/${id}/pdf`)
@@ -334,21 +414,43 @@ export const communityApi = {
     }
     return new Uint8Array(await res.arrayBuffer())
   },
+  /** 分享的错题配图（受分享权限保护，经代理返回字节） */
+  partnerShareImage: async (id: string): Promise<Blob> => {
+    const res = await authFetch(`/api/partner-shares/${id}/image`)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: '加载图片失败' }))
+      throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })
+    }
+    return res.blob()
+  },
   /** 复制分享的笔记到我的笔记，返回新笔记 */
   copyPartnerShare: (id: string, subjectId: string) =>
-    request<Note>(`/api/partner-shares/${id}/copy`, { method: 'POST', body: JSON.stringify({ subjectId }) }),
+    request<PartnerShareNoteItem & { updatedAt: number; bodyUpdatedAt: number }>(`/api/partner-shares/${id}/copy`, {
+      method: 'POST',
+      body: JSON.stringify({ subjectId })
+    }),
 
   // ========== 双人番茄自习室 ==========
   createStudySession: (partnerId: string, mode: 'countdown' | 'countup', focusMinutes?: number) =>
-    request<{ id: string }>('/api/partner-study/sessions', { method: 'POST', body: JSON.stringify({ partnerId, mode, focusMinutes }) }),
-  activeStudySession: () =>
-    request<{ session: PartnerStudySession | null }>('/api/partner-study/sessions/active'),
-  studySession: (id: string) =>
-    request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`),
-  updateStudySession: (id: string, state: 'idle' | 'focus' | 'done', minutes: number, onlineSeconds: number, elapsedSeconds?: number, running?: boolean) =>
-    request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`, { method: 'PUT', body: JSON.stringify({ state, minutes, onlineSeconds, elapsedSeconds, running }) }),
-  endStudySession: (id: string) =>
-    request<{ ok: boolean }>(`/api/partner-study/sessions/${id}`, { method: 'DELETE' }),
+    request<{ id: string }>('/api/partner-study/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ partnerId, mode, focusMinutes })
+    }),
+  activeStudySession: () => request<{ session: PartnerStudySession | null }>('/api/partner-study/sessions/active'),
+  studySession: (id: string) => request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`),
+  updateStudySession: (
+    id: string,
+    state: 'idle' | 'focus' | 'done',
+    minutes: number,
+    onlineSeconds: number,
+    elapsedSeconds?: number,
+    running?: boolean
+  ) =>
+    request<{ session: PartnerStudySession }>(`/api/partner-study/sessions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ state, minutes, onlineSeconds, elapsedSeconds, running })
+    }),
+  endStudySession: (id: string) => request<{ ok: boolean }>(`/api/partner-study/sessions/${id}`, { method: 'DELETE' }),
   /** 历史开黑记录（我参与且已结束的会话，按结束时间倒序） */
   studyHistory: () => request<{ records: PartnerStudyRecord[] }>('/api/partner-study/sessions/history'),
 
@@ -359,21 +461,28 @@ export const communityApi = {
   partnerPlan: (id: string) => request<PartnerPlanDetail>(`/api/partner-plans/${id}`),
   updatePartnerPlan: (id: string, title: string) =>
     request<{ ok: boolean }>(`/api/partner-plans/${id}`, { method: 'PUT', body: JSON.stringify({ title }) }),
-  deletePartnerPlan: (id: string) =>
-    request<{ ok: boolean }>(`/api/partner-plans/${id}`, { method: 'DELETE' }),
+  deletePartnerPlan: (id: string) => request<{ ok: boolean }>(`/api/partner-plans/${id}`, { method: 'DELETE' }),
   addPlanTask: (planId: string, title: string, phase: string) =>
-    request<{ id: string }>(`/api/partner-plans/${planId}/tasks`, { method: 'POST', body: JSON.stringify({ title, phase }) }),
+    request<{ id: string }>(`/api/partner-plans/${planId}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify({ title, phase })
+    }),
   updatePlanTask: (planId: string, taskId: string, done: boolean) =>
-    request<{ ok: boolean }>(`/api/partner-plans/${planId}/tasks/${taskId}`, { method: 'PUT', body: JSON.stringify({ done }) }),
+    request<{ ok: boolean }>(`/api/partner-plans/${planId}/tasks/${taskId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ done })
+    }),
   deletePlanTask: (planId: string, taskId: string) =>
     request<{ ok: boolean }>(`/api/partner-plans/${planId}/tasks/${taskId}`, { method: 'DELETE' }),
 
   // ========== 双向复盘邀约 ==========
   createPartnerReview: (partnerId: string, scheduledAt: number) =>
-    request<{ id: string }>('/api/partner-reviews', { method: 'POST', body: JSON.stringify({ partnerId, scheduledAt }) }),
+    request<{ id: string }>('/api/partner-reviews', {
+      method: 'POST',
+      body: JSON.stringify({ partnerId, scheduledAt })
+    }),
   partnerReviews: () => request<{ items: PartnerReview[] }>('/api/partner-reviews'),
   updatePartnerReview: (id: string, action: 'accept' | 'done', note?: string) =>
     request<{ ok: boolean }>(`/api/partner-reviews/${id}`, { method: 'PUT', body: JSON.stringify({ action, note }) }),
-  deletePartnerReview: (id: string) =>
-    request<{ ok: boolean }>(`/api/partner-reviews/${id}`, { method: 'DELETE' })
+  deletePartnerReview: (id: string) => request<{ ok: boolean }>(`/api/partner-reviews/${id}`, { method: 'DELETE' })
 }

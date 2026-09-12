@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { authApi } from '../api/auth'
+import { TOKEN_KEY, SESSION_FLAG, hasSession } from '../utils/session'
 
 /**
  * 认证服务：注册 / 登录 / 退出 / 会话持久化。
@@ -8,8 +9,6 @@ import { authApi } from '../api/auth'
  * - 桌面端：登录成功获得 HS256 JWT，存 localStorage 供 client.ts 携带
  */
 
-const TOKEN_KEY = 'jwt_token'
-const SESSION_FLAG = 'auth_logged_in'
 const GUEST_FLAG = 'auth_guest_mode'
 const isDesktop = __DESKTOP_BUILD__
 
@@ -54,22 +53,17 @@ function setSession(user: SessionUser | null, token?: string) {
   }
 }
 
-/** 本地是否存在会话凭据（桌面端看 JWT，Web 端看非敏感登录标志） */
-function hasLocalSession(): boolean {
-  return isDesktop ? !!localStorage.getItem(TOKEN_KEY) : localStorage.getItem(SESSION_FLAG) === '1'
-}
-
 /** 应用启动时恢复登录状态：有会话凭据则调用 /api/auth/me 验证并取回用户信息。
  *  仅 401（凭据失效）清除会话；网络故障保留凭据，下次启动重试。 */
 export async function restoreSession(): Promise<SessionUser | null> {
-  if (!hasLocalSession()) return null
+  if (!hasSession()) return null
   try {
     const { user } = await authApi.me()
     currentUser.value = user
     exitGuestMode() // 恢复登录态即结束访客模式，保持登录态与访客模式互斥
     return user
-  } catch (e: any) {
-    if (e?.status === 401) setSession(null)
+  } catch (e) {
+    if ((e as { status?: number } | null)?.status === 401) setSession(null)
     return null
   }
 }

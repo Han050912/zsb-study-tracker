@@ -15,9 +15,7 @@ export function useBack(fallback?: string) {
   const router = useRouter()
 
   function goBack() {
-    const fb = fallback
-      ?? (typeof route.name === 'string' ? BACK_FALLBACK[route.name] : undefined)
-      ?? '/community'
+    const fb = fallback ?? (typeof route.name === 'string' ? BACK_FALLBACK[route.name] : undefined) ?? '/community'
 
     // 有可回退的站内历史时，优先浏览器式后退
     if (router.options.history.state.back) {

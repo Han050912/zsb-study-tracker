@@ -1,8 +1,17 @@
 import { defineStore } from 'pinia'
+import { getErrorMessage } from '../utils/error'
 import { communityApi } from '../api/community'
 import { gamificationApi } from '../api/gamification'
 import { useAppStore } from './app'
-import type { CommunityCircle, CommunityComment, CommunityNotification, CommunityPost, NotificationType, PostType, RecommendUser } from '../types'
+import type {
+  CommunityCircle,
+  CommunityComment,
+  CommunityNotification,
+  CommunityPost,
+  NotificationType,
+  PostType,
+  RecommendUser
+} from '../types'
 
 /**
  * 社区广场状态。动态流为公共数据，通知为当前用户私有；
@@ -105,8 +114,8 @@ export const useCommunityStore = defineStore('community', {
           this.recommendExtras = { circles: res.circles, users: res.users }
           this.error = null
           this.hasMore = false
-        } catch (e: any) {
-          this.error = e?.message || '推荐加载失败'
+        } catch (e) {
+          this.error = getErrorMessage(e, '推荐加载失败')
         } finally {
           this.feedLoading = false
         }
@@ -134,27 +143,41 @@ export const useCommunityStore = defineStore('community', {
           cursor: this.feedCursor
         })
         if (ticket !== feedTicket) return // 已有更新的请求，丢弃本次过期结果
-        const existing = new Set(this.posts.map(p => p.id))
-        this.posts.push(...res.posts.filter(p => !existing.has(p.id)))
+        const existing = new Set(this.posts.map((p) => p.id))
+        this.posts.push(...res.posts.filter((p) => !existing.has(p.id)))
         this.feedCursor = res.nextCursor
         this.hasMore = !!res.nextCursor
-      } catch (e: any) {
-        this.error = e?.message || '动态加载失败'
+      } catch (e) {
+        this.error = getErrorMessage(e, '动态加载失败')
       } finally {
         if (ticket === feedTicket) this.feedLoading = false
       }
     },
 
     /** 发帖成功返回新帖；仅当命中当前筛选时插入列表头部（精华/关注筛选下新帖必未加精、作者非关注对象，不插入；圈子帖不进广场） */
-    async publishPost(data: { type: PostType; content: string; tags: string[]; imageUrls?: string[]; circleId?: string; topicRef?: string; refType?: string; refId?: string }) {
+    async publishPost(data: {
+      type: PostType
+      content: string
+      tags: string[]
+      imageUrls?: string[]
+      circleId?: string
+      topicRef?: string
+      refType?: string
+      refId?: string
+    }) {
       const post = await communityApi.createPost(data)
       // 后端返回的头像可能因云端 user_settings 同步时序缺失，用前端当前头像兜底，确保刚发出的帖子立即显示当前头像（无需刷新）
       if (!post.userAvatar) {
         const avatar = useAppStore().settings.avatar
         if (avatar) post.userAvatar = avatar
       }
-      if (this.sort === 'latest' && this.category === '' && !data.circleId && !data.topicRef
-        && (!this.tag || post.tags.includes(this.tag))) {
+      if (
+        this.sort === 'latest' &&
+        this.category === '' &&
+        !data.circleId &&
+        !data.topicRef &&
+        (!this.tag || post.tags.includes(this.tag))
+      ) {
         this.posts.unshift(post)
       }
       await this.syncGamification()
@@ -163,13 +186,13 @@ export const useCommunityStore = defineStore('community', {
 
     async removePost(id: string) {
       await communityApi.deletePost(id)
-      this.posts = this.posts.filter(p => p.id !== id)
+      this.posts = this.posts.filter((p) => p.id !== id)
     },
 
     /** 帖子点赞 toggle，同步更新列表内计数；返回最新点赞态 */
     async likePost(id: string): Promise<boolean> {
       const { liked } = await communityApi.toggleLike('post', id)
-      const p = this.posts.find(x => x.id === id)
+      const p = this.posts.find((x) => x.id === id)
       if (p) {
         p.likedByMe = liked
         p.likesCount = Math.max(0, p.likesCount + (liked ? 1 : -1))
@@ -193,7 +216,7 @@ export const useCommunityStore = defineStore('community', {
     /** 帖子踩 toggle（与赞互斥），同步列表内计数；返回 { disliked, likeRevoked } */
     async dislikePost(id: string): Promise<{ disliked: boolean; likeRevoked?: boolean }> {
       const res = await communityApi.dislike('post', id)
-      const p = this.posts.find(x => x.id === id)
+      const p = this.posts.find((x) => x.id === id)
       if (p) {
         p.dislikedByMe = res.disliked
         p.dislikesCount = Math.max(0, p.dislikesCount + (res.disliked ? 1 : -1))
@@ -214,23 +237,31 @@ export const useCommunityStore = defineStore('community', {
     },
 
     /** 发表评论，返回新评论；同步列表内帖子评论数 */
-    async postComment(postId: string, content: string, parentId?: string, imageUrls?: string[]): Promise<CommunityComment> {
+    async postComment(
+      postId: string,
+      content: string,
+      parentId?: string,
+      imageUrls?: string[]
+    ): Promise<CommunityComment> {
       const c = await communityApi.addComment(postId, { content, parentId, imageUrls })
       // 后端返回的头像可能因云端 user_settings 同步时序缺失，用前端当前头像兜底，避免新评论短暂显示默认头像
       if (!c.userAvatar) {
         const avatar = useAppStore().settings.avatar
         if (avatar) c.userAvatar = avatar
       }
-      const p = this.posts.find(x => x.id === postId)
+      const p = this.posts.find((x) => x.id === postId)
       if (p) p.commentsCount++
       await this.syncGamification()
       return c
     },
 
     /** 采纳/取消采纳最佳答案；同步列表内帖子状态并刷新积分（提问者 +3/被采纳者 +10 由服务端发放） */
-    async acceptAnswer(postId: string, commentId: string): Promise<{ acceptedAnswerId: string | null; isResolved: boolean }> {
+    async acceptAnswer(
+      postId: string,
+      commentId: string
+    ): Promise<{ acceptedAnswerId: string | null; isResolved: boolean }> {
       const res = await communityApi.acceptAnswer(postId, commentId)
-      const p = this.posts.find(x => x.id === postId)
+      const p = this.posts.find((x) => x.id === postId)
       if (p) {
         p.acceptedAnswerId = res.acceptedAnswerId ?? undefined
         p.isResolved = res.isResolved
@@ -242,7 +273,7 @@ export const useCommunityStore = defineStore('community', {
     /** 删除评论；removed 为级联删除的总条数（含二级回复），用于回退计数 */
     async removeComment(id: string, postId: string, removed: number) {
       await communityApi.deleteComment(id)
-      const p = this.posts.find(x => x.id === postId)
+      const p = this.posts.find((x) => x.id === postId)
       if (p) p.commentsCount = Math.max(0, p.commentsCount - removed)
     },
 
@@ -260,8 +291,8 @@ export const useCommunityStore = defineStore('community', {
       }
       if (!this.hasMoreNotify) return
       const res = await communityApi.notifications(this.notifyCursor, undefined, this.notifyFilter || undefined)
-      const existing = new Set(this.notifications.map(n => n.id))
-      this.notifications.push(...res.items.filter(n => !existing.has(n.id)))
+      const existing = new Set(this.notifications.map((n) => n.id))
+      this.notifications.push(...res.items.filter((n) => !existing.has(n.id)))
       this.unreadCount = res.unreadCount
       this.unreadExcludingMuted = res.unreadExcludingMuted
       this.notifyCursor = res.nextCursor
@@ -295,14 +326,14 @@ export const useCommunityStore = defineStore('community', {
 
     async adminPinPost(id: string): Promise<boolean> {
       const { isPinned } = await communityApi.adminPinPost(id)
-      const p = this.posts.find(x => x.id === id)
+      const p = this.posts.find((x) => x.id === id)
       if (p) p.isPinned = isPinned
       return isPinned
     },
 
     async adminHidePost(id: string): Promise<boolean> {
       const { isHidden } = await communityApi.adminHidePost(id)
-      const p = this.posts.find(x => x.id === id)
+      const p = this.posts.find((x) => x.id === id)
       if (p) p.isHidden = isHidden
       return isHidden
     },
@@ -314,14 +345,14 @@ export const useCommunityStore = defineStore('community', {
 
     async adminFeaturePost(id: string): Promise<boolean> {
       const { isFeatured } = await communityApi.adminFeaturePost(id)
-      const p = this.posts.find(x => x.id === id)
+      const p = this.posts.find((x) => x.id === id)
       if (p) p.isFeatured = isFeatured
       return isFeatured
     },
 
     async adminDailyPost(id: string): Promise<boolean> {
       const { isDaily } = await communityApi.adminDailyPost(id)
-      const p = this.posts.find(x => x.id === id)
+      const p = this.posts.find((x) => x.id === id)
       if (p) p.isDaily = isDaily
       return isDaily
     }

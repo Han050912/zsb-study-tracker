@@ -59,10 +59,7 @@ async function checkPartnerReminders() {
       changed = true
       if (hooks.isSuppressed?.()) continue
       // 提醒人头像作为通知图标（未设置头像时生成首字母头像兜底）
-      const icon = buildAvatarIcon(
-        n.actorName || '搭',
-        n.actorAvatar ? imageUrl(n.actorAvatar) : undefined
-      )
+      const icon = buildAvatarIcon(n.actorName || '搭', n.actorAvatar ? imageUrl(n.actorAvatar) : undefined)
       if (!sendNotification('学习搭子提醒', n.content, icon)) {
         hooks.onFallback?.(`学习搭子提醒：${n.content}`)
       }

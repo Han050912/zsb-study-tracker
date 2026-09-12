@@ -2,19 +2,13 @@ import { authFetch } from './client'
 
 /**
  * PDF 原文云端存储（Worker + D1 分片）：
- * - 导入时二进制直传 /api/pdfs/:id，笔记 content 仅存 'd1:<id>' 引用，
- *   避免 base64 膨胀与全量同步反复搬运大文件
- * - 阅读时按引用回源拉取字节，交给 pdf.js 渲染
+ * - 导入时二进制直传 /api/pdfs/:id，id 直接使用 note.id
+ * - 阅读时按 note.id 回源拉取字节，交给 pdf.js 渲染
  */
 
 /** 单文件上限 30MB，与 Worker 端 worker/src/api/pdfs.ts 保持一致 */
 export const PDF_MAX_BYTES = 30 * 1024 * 1024
 export const PDF_MAX_MB = PDF_MAX_BYTES / 1024 / 1024
-
-/** PDF 笔记 content 的引用前缀 */
-export const PDF_REF_PREFIX = 'd1:'
-
-export const pdfRefOf = (content: string) => content.slice(PDF_REF_PREFIX.length)
 
 async function ensureOk(res: Response, action: string): Promise<void> {
   if (res.ok) return
@@ -32,7 +26,7 @@ export async function uploadPdf(id: string, file: File): Promise<void> {
   await ensureOk(res, '上传')
 }
 
-/** 按引用 id 拉取 PDF 字节 */
+/** 按 note id 拉取 PDF 字节 */
 export async function fetchPdf(id: string): Promise<Uint8Array> {
   const res = await authFetch(`/api/pdfs/${id}`)
   await ensureOk(res, '加载 PDF')

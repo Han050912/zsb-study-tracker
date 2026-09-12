@@ -11,7 +11,7 @@ import 'katex/dist/katex.min.css'
 const md: InstanceType<typeof MarkdownIt> = new MarkdownIt({
   html: false,
   linkify: true, // 自动识别 URL 为链接
-  breaks: true,  // 单换行即 <br>，对齐 Typora 的默认换行行为
+  breaks: true, // 单换行即 <br>，对齐 Typora 的默认换行行为
   typographer: false
 })
 

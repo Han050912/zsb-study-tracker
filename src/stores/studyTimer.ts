@@ -73,7 +73,10 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
 
   function stopTimer() {
     running.value = false
-    if (handle) { clearInterval(handle); handle = null }
+    if (handle) {
+      clearInterval(handle)
+      handle = null
+    }
     const elapsed = Math.floor((Date.now() - startTimestamp) / 1000)
     pausedElapsed += elapsed
     onlineBase += elapsed
@@ -142,7 +145,14 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     const s = session.value
     if (!s) return
     try {
-      const res = await communityApi.updateStudySession(s.id, state, myMinutes.value, onlineSeconds.value, pausedElapsed, running.value)
+      const res = await communityApi.updateStudySession(
+        s.id,
+        state,
+        myMinutes.value,
+        onlineSeconds.value,
+        pausedElapsed,
+        running.value
+      )
       if (!session.value) return
       session.value.partnerState = res.session.partnerState
       session.value.partnerMinutes = res.session.partnerMinutes
@@ -150,11 +160,19 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
       session.value.partnerElapsedSeconds = res.session.partnerElapsedSeconds
       session.value.partnerRunning = res.session.partnerRunning
       if (res.session.status === 'done') {
-        if (phase.value === 'focus') appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', session.value.partnerName)
+        if (phase.value === 'focus')
+          appStore.recordPomodoro(
+            Math.round(seconds.value / 60),
+            currentDescription(),
+            'party',
+            session.value.partnerName
+          )
         sessionCompleted.value++
         finishSession()
       }
-    } catch { /* 同步失败静默 */ }
+    } catch {
+      /* 同步失败静默 */
+    }
   }
 
   function enterSession(s: PartnerStudySession | null | undefined) {
@@ -169,7 +187,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
       partnerAvatar: s.partnerAvatar,
       focusMinutes: finiteOr(s.focusMinutes, 25),
       mode: s.mode ?? 'countdown',
-      myState: (s.myState as string) === 'break' ? 'done' : s.myState ?? 'idle',
+      myState: (s.myState as string) === 'break' ? 'done' : (s.myState ?? 'idle'),
       myMinutes: Number(s.myMinutes) || 0,
       partnerState: s.partnerState ?? 'idle',
       partnerMinutes: Number(s.partnerMinutes) || 0,
@@ -207,7 +225,9 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     try {
       await communityApi.endStudySession(s.id)
       finishSession()
-    } catch { /* 结束失败静默 */ }
+    } catch {
+      /* 结束失败静默 */
+    }
   }
 
   function waitForPartner() {
@@ -217,7 +237,11 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   async function leaveSession() {
     pendingChoice.value = null
     if (session.value) {
-      try { await syncState('done') } catch { /* 忽略 */ }
+      try {
+        await syncState('done')
+      } catch {
+        /* 忽略 */
+      }
     }
     finishSession()
   }
@@ -226,7 +250,10 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     stopTimer()
     // 开黑输入框在鼠标移开底部后隐藏，用户可能全程未看到：会话结束必须清空，避免残留描述写入下次开黑记录
     taskDescription.value = ''
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+    if (pollTimer) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('pagehide', onPageHide)
     session.value = null
@@ -242,7 +269,14 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     if (!session.value) return
     try {
       const res = running.value
-        ? await communityApi.updateStudySession(session.value.id, phase.value, myMinutes.value, onlineSeconds.value, seconds.value, true)
+        ? await communityApi.updateStudySession(
+            session.value.id,
+            phase.value,
+            myMinutes.value,
+            onlineSeconds.value,
+            seconds.value,
+            true
+          )
         : await communityApi.studySession(session.value.id)
       if (!session.value) return
       session.value.partnerState = res.session.partnerState
@@ -251,11 +285,19 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
       session.value.partnerElapsedSeconds = res.session.partnerElapsedSeconds
       session.value.partnerRunning = res.session.partnerRunning
       if (res.session.status === 'done') {
-        if (phase.value === 'focus') appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', session.value.partnerName)
+        if (phase.value === 'focus')
+          appStore.recordPomodoro(
+            Math.round(seconds.value / 60),
+            currentDescription(),
+            'party',
+            session.value.partnerName
+          )
         sessionCompleted.value++
         finishSession()
       }
-    } catch { /* 轮询失败静默 */ }
+    } catch {
+      /* 轮询失败静默 */
+    }
   }
 
   function handleVisibilityChange() {
@@ -268,14 +310,35 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     const elapsed = pausedElapsed + runningElapsed
     requestKeepalive(
       `/api/partner-study/sessions/${session.value.id}`,
-      { state: phase.value, minutes: myMinutes.value, onlineSeconds: onlineBase + runningElapsed, elapsedSeconds: elapsed },
+      {
+        state: phase.value,
+        minutes: myMinutes.value,
+        onlineSeconds: onlineBase + runningElapsed,
+        elapsedSeconds: elapsed
+      },
       'PUT'
     )
   }
 
   return {
-    session, phase, seconds, running, myMinutes, onlineSeconds,
-    display, pomodoroCompleted, sessionCompleted, pendingChoice, taskDescription,
-    start, pause, endSession, enterSession, finishSession, waitForPartner, leaveSession, finishFocus
+    session,
+    phase,
+    seconds,
+    running,
+    myMinutes,
+    onlineSeconds,
+    display,
+    pomodoroCompleted,
+    sessionCompleted,
+    pendingChoice,
+    taskDescription,
+    start,
+    pause,
+    endSession,
+    enterSession,
+    finishSession,
+    waitForPartner,
+    leaveSession,
+    finishFocus
   }
 })

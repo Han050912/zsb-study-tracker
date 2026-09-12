@@ -12,19 +12,25 @@ let echartsModule: EchartsModule | null = null
 
 /** 模块级单例：首次图表挂载触发 echarts 加载，多个图表实例共享同一次网络往返 */
 function ensureEcharts(): Promise<EchartsModule> {
-  modulePromise ??= import('../lib/echarts').then(m => {
-    echartsModule = m.default
-    return m.default
-  }).catch(e => {
-    // 加载失败置空缓存，避免永久缓存 rejected promise，后续挂载可重试
-    modulePromise = null
-    throw e
-  })
+  modulePromise ??= import('../lib/echarts')
+    .then((m) => {
+      echartsModule = m.default
+      return m.default
+    })
+    .catch((e) => {
+      // 加载失败置空缓存，避免永久缓存 rejected promise，后续挂载可重试
+      modulePromise = null
+      throw e
+    })
   return modulePromise
 }
 
 /** ECharts 封装：自动初始化、响应式 resize、主题感知；onClick 可选，绑定图表点击事件 */
-export function useChart(optionFn: () => EChartsOption | null | undefined, deps: Ref<any>[] = [], onClick?: (params: ECElementEvent) => void) {
+export function useChart(
+  optionFn: () => EChartsOption | null | undefined,
+  deps: Ref<any>[] = [],
+  onClick?: (params: ECElementEvent) => void
+) {
   const el = ref<HTMLElement>()
   let chart: ECharts | null = null
   let ready = false
@@ -53,7 +59,10 @@ export function useChart(optionFn: () => EChartsOption | null | undefined, deps:
     const nowDark = isDark()
     if (nowDark === wasDark) return
     wasDark = nowDark
-    if (chart) { chart.dispose(); chart = null }
+    if (chart) {
+      chart.dispose()
+      chart = null
+    }
     render()
   })
 
@@ -73,11 +82,13 @@ export function useChart(optionFn: () => EChartsOption | null | undefined, deps:
       })
       ro.observe(el.value)
     }
-    void ensureEcharts().then(() => {
-      if (!el.value) return    // 加载期间组件已卸载则放弃
-      ready = true
-      render()
-    }).catch(e => console.error('[useChart] echarts 加载失败', e))
+    void ensureEcharts()
+      .then(() => {
+        if (!el.value) return // 加载期间组件已卸载则放弃
+        ready = true
+        render()
+      })
+      .catch((e) => console.error('[useChart] echarts 加载失败', e))
   })
   onUnmounted(() => {
     window.removeEventListener('resize', onResize)

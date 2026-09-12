@@ -34,7 +34,7 @@ async function bootstrap() {
   app.mount('#app')
 }
 
-bootstrap().catch(e => {
+bootstrap().catch((e) => {
   console.error('应用初始化失败', e)
   document.body.innerHTML = '<p style="padding:2rem;text-align:center;color:#888">应用初始化失败，请刷新重试</p>'
 })

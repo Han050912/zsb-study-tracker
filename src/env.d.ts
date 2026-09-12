@@ -6,11 +6,13 @@ declare const __DESKTOP_BUILD__: boolean
 /** 编译期常量：桌面端认证令牌，Worker 校验以跳过 Turnstile */
 declare const __DESKTOP_TOKEN__: string
 
+/* eslint-disable @typescript-eslint/no-empty-object-type -- Vue SFC shim 官方写法 */
 declare module '*.vue' {
   import type { DefineComponent } from 'vue'
   const component: DefineComponent<{}, {}, any>
   export default component
 }
+/* eslint-enable @typescript-eslint/no-empty-object-type */
 
 /** Electron preload 桥接（仅桌面端打包环境注入） */
 interface Window {
@@ -19,8 +21,12 @@ interface Window {
     check: () => void
     download: () => void
     install: () => void
-    onAvailable: (cb: (info: { version: string; releaseName: string; releaseNotes: string; releaseDate: string }) => void) => void
-    onProgress: (cb: (p: { percent: number; transferred: number; total: number; bytesPerSecond: number }) => void) => void
+    onAvailable: (
+      cb: (info: { version: string; releaseName: string; releaseNotes: string; releaseDate: string }) => void
+    ) => void
+    onProgress: (
+      cb: (p: { percent: number; transferred: number; total: number; bytesPerSecond: number }) => void
+    ) => void
     onDownloaded: (cb: (info: { version: string }) => void) => void
     onError: (cb: (msg: string) => void) => void
   }

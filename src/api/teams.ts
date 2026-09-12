@@ -30,7 +30,9 @@ export async function joinTeam(teamId: string): Promise<void> {
 }
 
 /** 按邀请码查询私密小组 */
-export async function getTeamByInvite(code: string): Promise<{ id: string; name: string; description: string; memberCount: number; maxMembers: number }> {
+export async function getTeamByInvite(
+  code: string
+): Promise<{ id: string; name: string; description: string; memberCount: number; maxMembers: number }> {
   return request(`/api/teams/by-invite?code=${encodeURIComponent(code)}`)
 }
 
@@ -67,11 +69,16 @@ export async function withdrawRequest(teamId: string): Promise<void> {
 
 /** 重新生成邀请码（仅队长） */
 export async function resetInviteCode(teamId: string): Promise<{ inviteCode: string; inviteCodeExpiresAt: number }> {
-  return request<{ inviteCode: string; inviteCodeExpiresAt: number }>(`/api/teams/${teamId}/invite-code`, { method: 'POST' })
+  return request<{ inviteCode: string; inviteCodeExpiresAt: number }>(`/api/teams/${teamId}/invite-code`, {
+    method: 'POST'
+  })
 }
 
 /** 编辑小组信息（名称/描述/人数上限，仅队长） */
-export async function updateTeam(teamId: string, data: { name: string; description?: string; maxMembers: number }): Promise<void> {
+export async function updateTeam(
+  teamId: string,
+  data: { name: string; description?: string; maxMembers: number }
+): Promise<void> {
   await request(`/api/teams/${teamId}`, {
     method: 'PUT',
     body: JSON.stringify(data)
@@ -84,12 +91,15 @@ export async function leaveTeam(teamId: string): Promise<void> {
 }
 
 /** 创建挑战 */
-export async function createChallenge(teamId: string, data: {
-  type: ChallengeType
-  target: number
-  durationDays: number
-  startDate: string
-}): Promise<{ id: string }> {
+export async function createChallenge(
+  teamId: string,
+  data: {
+    type: ChallengeType
+    target: number
+    durationDays: number
+    startDate: string
+  }
+): Promise<{ id: string }> {
   return request<{ id: string }>(`/api/teams/${teamId}/challenges`, {
     method: 'POST',
     body: JSON.stringify(data)
@@ -131,11 +141,14 @@ export async function disbandTeam(teamId: string): Promise<void> {
 }
 
 /** 编辑挑战（不含 type） */
-export async function updateChallenge(challengeId: string, data: {
-  target: number
-  durationDays: number
-  startDate: string
-}): Promise<void> {
+export async function updateChallenge(
+  challengeId: string,
+  data: {
+    target: number
+    durationDays: number
+    startDate: string
+  }
+): Promise<void> {
   await request(`/api/teams/challenges/${challengeId}`, {
     method: 'PUT',
     body: JSON.stringify(data)

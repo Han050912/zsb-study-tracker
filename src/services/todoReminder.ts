@@ -31,7 +31,7 @@ let hooks: TodoReminderHooks | null = null
 
 /** 待办名称拼接，用于在通知正文中明确列出是哪些待办 */
 function joinNames(list: Todo[]): string {
-  return list.map(t => `「${t.text}」`).join('、')
+  return list.map((t) => `「${t.text}」`).join('、')
 }
 
 function deliver(title: string, body: string) {
@@ -49,7 +49,7 @@ export function checkTodoReminders() {
   const now = Date.now()
   const todos = hooks.getTodos()
 
-  const started = todos.filter(t => t.startAt && t.startAt <= now && !t.done && !t.startNotifiedAt)
+  const started = todos.filter((t) => t.startAt && t.startAt <= now && !t.done && !t.startNotifiedAt)
   if (started.length) {
     deliver(
       '待办已到开始时间',
@@ -57,13 +57,19 @@ export function checkTodoReminders() {
         ? `${joinNames(started)}该开始啦，现在就动手`
         : `${started.length} 个待办已到开始时间：${joinNames(started)}`
     )
-    hooks.onNotified(started.map(t => t.id), 'start')
+    hooks.onNotified(
+      started.map((t) => t.id),
+      'start'
+    )
   }
 
-  const overdue = todos.filter(t => t.dueAt && t.dueAt <= now && !t.done && !t.dueNotifiedAt)
+  const overdue = todos.filter((t) => t.dueAt && t.dueAt <= now && !t.done && !t.dueNotifiedAt)
   if (overdue.length) {
     deliver('待办未完成提醒', `已到最晚截止时间仍未完成：${joinNames(overdue)}`)
-    hooks.onNotified(overdue.map(t => t.id), 'due')
+    hooks.onNotified(
+      overdue.map((t) => t.id),
+      'due'
+    )
   }
 }
 
