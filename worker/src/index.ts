@@ -48,6 +48,15 @@ export interface Env {
   /** 桌面端共享令牌（Cloudflare Secrets / .dev.vars，不落地仓库）：
    *  与桌面端构建时注入的 DESKTOP_TOKEN 一致，用于识别可信桌面客户端跳过 Turnstile */
   DESKTOP_TOKEN?: string
+  /** Workers 内置速率限制绑定（wrangler.toml [[ratelimits]]，按限值档位划分） */
+  RL_3: RateLimit
+  RL_5: RateLimit
+  RL_10: RateLimit
+  RL_20: RateLimit
+  RL_30: RateLimit
+  RL_60: RateLimit
+  RL_100: RateLimit
+  RL_120: RateLimit
 }
 
 export default {

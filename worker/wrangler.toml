@@ -48,3 +48,62 @@ CF_ACCOUNT_ID = "f56530b741377e91f44791c2aecd5855"
 # 每周一 08:00（UTC+8）＝ UTC 周一 00:00：双向推送上周学习周报
 [triggers]
 crons = ["0 0 * * 1"]
+
+# ---------- 速率限制（Workers 内置 Rate Limiting binding，2025-09 GA）----------
+# 按限值档位划分绑定；period 仅支持 10/60 秒，计数按 key 分 colo（跨实例共享，非全局精确）。
+# namespace_id 账号内唯一；档位与代码 rateLimit.ts 的 RateLimitTier 一一对应。
+[[ratelimits]]
+name = "RL_3"
+namespace_id = "1001"
+[ratelimits.simple]
+limit = 3
+period = 60
+
+[[ratelimits]]
+name = "RL_5"
+namespace_id = "1002"
+[ratelimits.simple]
+limit = 5
+period = 60
+
+[[ratelimits]]
+name = "RL_10"
+namespace_id = "1003"
+[ratelimits.simple]
+limit = 10
+period = 60
+
+[[ratelimits]]
+name = "RL_20"
+namespace_id = "1004"
+[ratelimits.simple]
+limit = 20
+period = 60
+
+[[ratelimits]]
+name = "RL_30"
+namespace_id = "1005"
+[ratelimits.simple]
+limit = 30
+period = 60
+
+[[ratelimits]]
+name = "RL_60"
+namespace_id = "1006"
+[ratelimits.simple]
+limit = 60
+period = 60
+
+[[ratelimits]]
+name = "RL_100"
+namespace_id = "1007"
+[ratelimits.simple]
+limit = 100
+period = 60
+
+[[ratelimits]]
+name = "RL_120"
+namespace_id = "1008"
+[ratelimits.simple]
+limit = 120
+period = 60
