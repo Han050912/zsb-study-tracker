@@ -163,23 +163,60 @@ export async function revokeStatements(env: Env, refId: string): Promise<D1Prepa
   return stmts
 }
 
+/** D1 单条查询绑定参数上限为 100，分块留余量 */
+const REVOKE_CHUNK = 90
+
+/**
+ * 按 refId 批量回收积分流水：分块一次查出全部命中流水 → 按 user_id 聚合 →
+ * 每个受影响用户一条 UPDATE + 分块 DELETE。与逐 refId 调用 revokeStatements 语义等价
+ * （MAX(MAX(x-a,0)-b,0) ≡ MAX(x-a-b,0)），但查询次数从 O(refIds) 次全表扫描降为 O(分块数)。
+ * 只生成语句不执行，由调用方并入 batch 原子提交。
+ */
+export async function revokeStatementsForRefIds(env: Env, refIds: string[]): Promise<D1PreparedStatement[]> {
+  const ids = [...new Set(refIds.filter(Boolean))]
+  if (!ids.length) return []
+  const byUser = new Map<string, number>()
+  for (let i = 0; i < ids.length; i += REVOKE_CHUNK) {
+    const chunk = ids.slice(i, i + REVOKE_CHUNK)
+    const logs = await all<{ user_id: string; points: number }>(
+      env,
+      `SELECT user_id, points FROM points_log WHERE ref_id IN (${chunk.map(() => '?').join(',')})`,
+      ...chunk
+    )
+    for (const l of logs) byUser.set(l.user_id, (byUser.get(l.user_id) || 0) + l.points)
+  }
+  const stmts: D1PreparedStatement[] = []
+  for (const [uid, pts] of byUser) {
+    stmts.push(env.DB.prepare('UPDATE gamification SET points = MAX(points - ?, 0) WHERE user_id = ?').bind(pts, uid))
+  }
+  for (let i = 0; i < ids.length; i += REVOKE_CHUNK) {
+    const chunk = ids.slice(i, i + REVOKE_CHUNK)
+    stmts.push(env.DB.prepare(`DELETE FROM points_log WHERE ref_id IN (${chunk.map(() => '?').join(',')})`).bind(...chunk))
+  }
+  return stmts
+}
+
 /** 回收一组点赞目标的全部「获赞」流水（refId = like:{user}:{type}:{target}），删除帖子/评论时调用，防止目标删除后积分残留被刷分 */
 export async function revokeLikeStatements(
   env: Env,
   targetType: 'post' | 'comment',
   targetIds: string[]
 ): Promise<D1PreparedStatement[]> {
-  if (!targetIds.length) return []
-  const likes = await all<{ user_id: string; target_id: string }>(
-    env,
-    `SELECT user_id, target_id FROM community_likes WHERE target_type = ? AND target_id IN (${targetIds.map(() => '?').join(',')})`,
-    targetType,
-    ...targetIds
-  )
-  const stmts: D1PreparedStatement[] = []
-  for (const l of likes)
-    stmts.push(...(await revokeStatements(env, `srv:like:${l.user_id}:${targetType}:${l.target_id}`)))
-  return stmts
+  const targets = [...new Set(targetIds.filter(Boolean))]
+  if (!targets.length) return []
+  const refIds: string[] = []
+  // 分块查询：评论数可超过 D1 单查询 100 参数上限（修复原实现一次 IN 全量传入的潜在缺陷）
+  for (let i = 0; i < targets.length; i += REVOKE_CHUNK) {
+    const chunk = targets.slice(i, i + REVOKE_CHUNK)
+    const likes = await all<{ user_id: string; target_id: string }>(
+      env,
+      `SELECT user_id, target_id FROM community_likes WHERE target_type = ? AND target_id IN (${chunk.map(() => '?').join(',')})`,
+      targetType,
+      ...chunk
+    )
+    refIds.push(...likes.map((l) => `srv:like:${l.user_id}:${targetType}:${l.target_id}`))
+  }
+  return revokeStatementsForRefIds(env, refIds)
 }
 
 export function notifyStatement(
