@@ -1,21 +1,19 @@
 import { defineStore } from 'pinia'
 import {
   createDefaultState,
-  ACHIEVEMENTS,
   LEVELS,
   levelOf,
   VOCAB_HABIT_ID,
   PROBLEM_HABIT_ID,
   defaultSubjects
 } from '../data/defaults'
-import { today, yesterday, uid, daysBetween } from '../utils/date'
+import { today, uid, daysBetween } from '../utils/date'
 import {
   stageAchievements,
   stageDelete,
   stagePoints,
   stageUpsert
 } from '../services/syncOutbox'
-import { ERROR_IMAGE_PREFIX, dataUrlToBytes, uploadErrorImage } from '../api/errorImages'
 import {
   clearAllNoteBodies,
   getNoteBody,
@@ -35,9 +33,6 @@ import {
 import type {
   AppState,
   StudyRecord,
-  ProblemSession,
-  ErrorQuestion,
-  ExamRecord,
   Note,
   DailySummary,
   Habit,
@@ -53,6 +48,11 @@ import type {
 } from '../types'
 
 import { syncActions } from './app/sync'
+import { gamificationActions } from './app/gamification'
+import { recordsActions } from './app/records'
+import { problemsActions } from './app/problems'
+import { examsActions } from './app/exams'
+import { errorsActions } from './app/errors'
 
 export const useAppStore = defineStore('app', {
   // 初始为默认空数据；登录后通过 hydrate() 从云端全量拉取该用户的数据
@@ -100,32 +100,11 @@ export const useAppStore = defineStore('app', {
 
   actions: {
     ...syncActions,
-
-    /**
-     * 存量错题图片迁移：base64 dataURL → 内容寻址对象存储引用（'r2:<sha256>'）。
-     * 幂等设计（第一优先级）：
-     * - id 由服务端按落盘字节计算，重复执行/多设备并发只会覆盖同一对象与同一引用；
-     * - 已完成（r2:）的条目直接跳过，中断后下次 hydrate 续跑；
-     * - 单条失败只记日志，不影响其余条目，下次 hydrate 重试。
-     */
-    async migrateErrorImages() {
-      const targets = this.errorQuestions.filter((q) => q.image?.startsWith('data:'))
-      if (!targets.length) return
-      let changed = false
-      for (const q of targets) {
-        try {
-          const bytes = dataUrlToBytes(q.image!)
-          const id = await uploadErrorImage(bytes)
-          q.image = ERROR_IMAGE_PREFIX + id
-          // 被改写的记录逐条打点进 outbox（hydrate 后随 flushOutbox 上行）
-          touchRecord('errorQuestions', q)
-          changed = true
-        } catch (e) {
-          console.error('错题图片迁移失败', q.id, e)
-        }
-      }
-      if (changed) this.save()
-    },
+    ...gamificationActions,
+    ...recordsActions,
+    ...problemsActions,
+    ...examsActions,
+    ...errorsActions,
 
     /**
      * 旧版本数据迁移：
@@ -211,139 +190,6 @@ export const useAppStore = defineStore('app', {
       } catch (e) {
         console.error('迁移旧版数据失败', e)
       }
-    },
-
-    /**
-     * 增加积分并记录日志（本地乐观展示）；refId 关联产生积分的原始记录。
-     * 同时发送 award 积分事件随 push 同批上报（设计 §5.1）：服务端按 refId 幂等落账，
-     * **refId 必须确定性**（同一事件重放/多设备重推不会重复加分），故为必填（编译期约束全部调用点）。
-     */
-    addPoints(points: number, reason: string, refId: string) {
-      this.gamification.points += points
-      this.gamification.pointsLog.push({ date: today(), points, reason, refId })
-      stagePoints({ op: 'award', refId, points, reason, date: today() })
-      this.checkAchievements()
-    },
-
-    /** 按匹配条件回收积分：总积分回滚 + 彻底删除对应积分流水（内部公共实现） */
-    revokePointsWhere(match: (l: { date: string; points: number; reason: string; refId?: string }) => boolean) {
-      const logs = this.gamification.pointsLog.filter(match)
-      if (!logs.length) return
-      const sum = logs.reduce((s, l) => s + l.points, 0)
-      this.gamification.points = Math.max(0, this.gamification.points - sum)
-      this.gamification.pointsLog = this.gamification.pointsLog.filter((l) => !match(l))
-    },
-
-    /**
-     * 回收某条原始记录对应的全部积分（本地乐观回收）。
-     * `sendEvent`：是否同时发送 revoke 事件——
-     * - 删除引发的回收：records/problemSessions/exams/habits 由服务端按删除墓碑自动撤销（§5.1），不发事件避免冗余；
-     * - 非删除场景（取消打卡/取消完成待办）与服务端无自动撤销的域（todos/english）：必须发事件，否则他端流水不回收。
-     */
-    revokePointsByRef(refId: string, sendEvent = false) {
-      this.revokePointsWhere((l) => l.refId === refId)
-      if (sendEvent) stagePoints({ op: 'revoke', refId })
-    },
-
-    /** 按 refId 前缀回收积分（用于删除习惯等聚合记录；sendEvent 语义同 revokePointsByRef） */
-    revokePointsByRefPrefix(prefix: string, sendEvent = false) {
-      this.revokePointsWhere((l) => !!l.refId?.startsWith(prefix))
-      if (sendEvent) stagePoints({ op: 'revoke', refPrefix: prefix })
-    },
-
-    /** 打卡：更新连胜（本地乐观值；streak/lastCheckin 以服务端快照为权威，push/pull 响应到达即覆盖） */
-    checkin() {
-      const t = today()
-      if (this.gamification.lastCheckin === t) return
-      this.gamification.streak = this.gamification.lastCheckin === yesterday() ? this.gamification.streak + 1 : 1
-      this.gamification.lastCheckin = t
-      // 确定性 refId：每日一次，跨设备/重放幂等
-      this.addPoints(10, '每日打卡', `checkin:${t}`)
-    },
-
-    addRecord(rec: Omit<StudyRecord, 'id' | 'createdAt'>) {
-      const id = uid()
-      const record: StudyRecord = { ...rec, id, createdAt: Date.now() }
-      this.records.push(record)
-      this.checkin()
-      this.addPoints(Math.max(1, Math.round(rec.minutes / 10)), `学习 ${rec.minutes} 分钟`, id)
-      touchRecord('records', record)
-      this.save()
-    },
-    deleteRecord(id: string) {
-      // 本地回收即可：删除墓碑到达后服务端自动撤销该记录积分（设计 §5.1），无需重复发 revoke 事件
-      this.revokePointsByRef(id)
-      const rec = this.records.find((r) => r.id === id)
-      this.records = this.records.filter((r) => r.id !== id)
-      if (rec) stageDelete('records', id, Date.now())
-      this.save()
-    },
-
-    addProblemSession(p: Omit<ProblemSession, 'id'>) {
-      const id = uid()
-      const session: ProblemSession = { ...p, id }
-      this.problemSessions.push(session)
-      const pts = Math.round(p.total / 5)
-      if (pts > 0) this.addPoints(pts, `刷题 ${p.total} 道`, id)
-      touchRecord('problemSessions', session)
-      this.save()
-    },
-    deleteProblemSession(id: string) {
-      // 删除墓碑到达后服务端自动撤销积分（设计 §5.1），本地回收即可
-      this.revokePointsByRef(id)
-      const p = this.problemSessions.find((x) => x.id === id)
-      this.problemSessions = this.problemSessions.filter((x) => x.id !== id)
-      if (p) stageDelete('problemSessions', id, Date.now())
-      this.save()
-    },
-
-    addErrorQuestion(q: Omit<ErrorQuestion, 'id' | 'createdAt' | 'reviewCount' | 'mastered'>) {
-      const question: ErrorQuestion = { ...q, id: uid(), createdAt: Date.now(), reviewCount: 0, mastered: false }
-      this.errorQuestions.push(question)
-      touchRecord('errorQuestions', question)
-      this.save()
-    },
-    reviewError(id: string) {
-      const q = this.errorQuestions.find((e) => e.id === id)
-      if (q) {
-        q.reviewCount++
-        touchRecord('errorQuestions', q)
-        this.addPoints(2, '复习错题', `error:${id}`)
-        this.save()
-      }
-    },
-    toggleErrorMastered(id: string) {
-      const q = this.errorQuestions.find((e) => e.id === id)
-      if (q) {
-        q.mastered = !q.mastered
-        touchRecord('errorQuestions', q)
-        this.save()
-      }
-    },
-    deleteError(id: string) {
-      // 服务端对 errorQuestions 的删除按 ref_id = 'error:<key>' 自动撤销积分（设计 §5.1），本地回收即可
-      this.revokePointsByRef(`error:${id}`)
-      const q = this.errorQuestions.find((e) => e.id === id)
-      this.errorQuestions = this.errorQuestions.filter((e) => e.id !== id)
-      if (q) stageDelete('errorQuestions', id, Date.now())
-      this.save()
-    },
-
-    addExam(e: Omit<ExamRecord, 'id'>) {
-      const id = uid()
-      const exam: ExamRecord = { ...e, id }
-      this.exams.push(exam)
-      this.addPoints(20, '完成真题/套卷', id)
-      touchRecord('exams', exam)
-      this.save()
-    },
-    deleteExam(id: string) {
-      // 删除墓碑到达后服务端自动撤销积分（设计 §5.1），本地回收即可
-      this.revokePointsByRef(id)
-      const e = this.exams.find((x) => x.id === id)
-      this.exams = this.exams.filter((x) => x.id !== id)
-      if (e) stageDelete('exams', id, Date.now())
-      this.save()
     },
 
     setMastery(subjectId: string, topic: string, level: number) {
@@ -941,40 +787,6 @@ export const useAppStore = defineStore('app', {
       this.settings.avatar = url
       touchSettings(this.settings)
       this.save()
-    },
-
-    /** 成就检测 */
-    checkAchievements() {
-      const has = (id: string) => this.gamification.achievements.includes(id)
-      const unlock = (id: string) => {
-        if (!has(id)) {
-          this.gamification.achievements.push(id)
-          // 成就上报走 push 的 achievements 字段（服务端只增不减并集，§5.2），随下次 push 同批上报
-          stageAchievements([id])
-          const def = ACHIEVEMENTS.find((a) => a.id === id)
-          window.dispatchEvent(new CustomEvent('achievement', { detail: def }))
-        }
-      }
-      if (this.gamification.points > 0) unlock('first_checkin')
-      if (this.gamification.streak >= 7) unlock('streak_7')
-      if (this.gamification.streak >= 30) unlock('streak_30')
-      if (this.totalMinutes >= 100 * 60) unlock('hours_100')
-      if (this.errorQuestions.reduce((s, e) => s + e.reviewCount, 0) >= 50) unlock('error_50')
-      if (this.totalProblems >= 1000) unlock('problems_1000')
-      if (this.gamification.points >= 5000) unlock('points_5000')
-      const totalPomo = Object.values(this.pomodoro.daily).reduce((s, d) => s + d.count, 0)
-      if (totalPomo >= 50) unlock('pomodoro_50')
-      const todaySubjects = new Set(this.todayRecords.map((r) => r.subjectId))
-      if (this.subjects.length > 0 && this.subjects.every((s) => todaySubjects.has(s.id))) unlock('all_subjects')
-      const morning = this.habits.find((h) => h.name.includes('晨读'))
-      if (morning) {
-        let cnt = 0
-        for (let i = 0; i < 7; i++) {
-          const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)
-          if (morning.records[d]) cnt++
-        }
-        if (cnt >= 7) unlock('early_bird')
-      }
     },
 
     /** 导出/导入/清空 */
