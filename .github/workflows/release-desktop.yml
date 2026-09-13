@@ -40,12 +40,15 @@ jobs:
 
       # mac 不进 CI：无签名 + 无更新通道（见 docs/superpowers/specs/2026-09-13-cleanup-batch-design.md）
       # electron-builder 不执行 vite build，渲染层需显式先构建
+      # DESKTOP_TOKEN 在渲染层构建期被消费（vite.config.ts 编译为 __DESKTOP_TOKEN__），
+      # 必须挂在 build:desktop 步骤；electron-builder 不读取该变量
       - name: Build renderer
         run: npm run build:desktop
+        env:
+          # 桌面端共享令牌：未配置 secret 时桌面端回退人机验证（fail-closed，不阻塞发版）
+          DESKTOP_TOKEN: ${{ secrets.DESKTOP_TOKEN }}
 
       - name: Build & publish Windows installer
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 桌面端共享令牌：未配置 secret 时桌面端回退人机验证（fail-closed，不阻塞发版）
-          DESKTOP_TOKEN: ${{ secrets.DESKTOP_TOKEN }}
