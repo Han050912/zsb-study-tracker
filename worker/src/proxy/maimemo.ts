@@ -142,15 +142,21 @@ export function registerMaimemoRoutes() {
     })
   })
 
-  // 今日单词明细（含拼写 + 释义）：新学 + 复习全部条目，按学习顺序排列
+  // 今日单词明细（含拼写 + 释义）：新学 + 复习条目，按学习顺序排列
   on('POST', '/api/proxy/maimemo/today-detail', true, async (ctx) => {
     const token = await maimemoToken(ctx.env, ctx.userId)
-    // 拉取全部今日条目（新学 + 复习），不按 is_finished 过滤，由前端展示完成状态
+    // 子请求上限：Workers 免费计划 50 次/请求。释义最坏走两条路径（墨墨 UGC + 有道回退），
+    // 条目上限 20 保证最坏 2×20+2 = 42 次子请求
+    const MAX_TODAY_ITEMS = 20
+    // 拉取今日条目（新学 + 复习，各自最多 MAX_TODAY_ITEMS 条），不按 is_finished 过滤，由前端展示完成状态
     const [newRes, reviewRes] = await Promise.all([
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: true, limit: 1000 }),
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: false, limit: 1000 })
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: true, limit: MAX_TODAY_ITEMS }),
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: false, limit: MAX_TODAY_ITEMS })
     ])
-    const items = [...(newRes.today_items || []), ...(reviewRes.today_items || [])]
+    const newItems = newRes.today_items || []
+    const reviewItems = reviewRes.today_items || []
+    const total = newItems.length + reviewItems.length
+    const items = [...newItems, ...reviewItems].slice(0, MAX_TODAY_ITEMS)
     if (!items.length) return Response.json({ words: [] })
 
     // 批量拉取释义：并发 8 路，优先墨墨 UGC 释义，为空时回退有道词典
@@ -178,7 +184,9 @@ export function registerMaimemoRoutes() {
         isNew: item.is_new,
         isFinished: item.is_finished,
         meaning: meanings[i]
-      }))
+      })),
+      total,
+      truncated: total > items.length
     })
   })
 }
