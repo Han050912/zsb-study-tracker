@@ -1,12 +1,5 @@
 import { defineStore } from 'pinia'
-import {
-  createDefaultState,
-  LEVELS,
-  levelOf,
-  VOCAB_HABIT_ID,
-  PROBLEM_HABIT_ID,
-  defaultSubjects
-} from '../data/defaults'
+import { createDefaultState, LEVELS, levelOf } from '../data/defaults'
 import { today, uid, daysBetween } from '../utils/date'
 import {
   stageAchievements,
@@ -14,12 +7,7 @@ import {
   stagePoints,
   stageUpsert
 } from '../services/syncOutbox'
-import {
-  clearAllNoteBodies,
-  getNoteBody,
-  queueNoteBody,
-  removeNoteBody
-} from '../services/noteBodies'
+import { clearAllNoteBodies, getNoteBody, queueNoteBody } from '../services/noteBodies'
 import {
   stageAllDeletes,
   stageAllUpserts,
@@ -27,19 +15,13 @@ import {
   touchEnglish,
   touchPomodoroDay,
   touchPomodoroRecord,
-  touchRecord,
-  touchSettings
+  touchRecord
 } from './app/staging'
 import type {
   AppState,
   StudyRecord,
-  Note,
-  DailySummary,
-  Habit,
-  Material,
   Subject,
   Todo,
-  TopicImportance,
   PomodoroRecord,
   VocabRecord,
   ReadingRecord,
@@ -53,6 +35,11 @@ import { recordsActions } from './app/records'
 import { problemsActions } from './app/problems'
 import { examsActions } from './app/exams'
 import { errorsActions } from './app/errors'
+import { subjectsActions } from './app/subjects'
+import { notesActions } from './app/notes'
+import { summariesActions } from './app/summaries'
+import { habitsActions } from './app/habits'
+import { settingsActions } from './app/settings'
 
 export const useAppStore = defineStore('app', {
   // 初始为默认空数据；登录后通过 hydrate() 从云端全量拉取该用户的数据
@@ -105,6 +92,11 @@ export const useAppStore = defineStore('app', {
     ...problemsActions,
     ...examsActions,
     ...errorsActions,
+    ...subjectsActions,
+    ...notesActions,
+    ...summariesActions,
+    ...habitsActions,
+    ...settingsActions,
 
     /**
      * 旧版本数据迁移：
@@ -190,358 +182,6 @@ export const useAppStore = defineStore('app', {
       } catch (e) {
         console.error('迁移旧版数据失败', e)
       }
-    },
-
-    setMastery(subjectId: string, topic: string, level: number) {
-      const s = this.subjects.find((x) => x.id === subjectId)
-      if (s) {
-        s.mastery[topic] = level
-        // subjects 键 = subjectId，值 = 科目整棵聚合（含 chapters/topics）
-        touchRecord('subjects', s)
-        this.save()
-      }
-    },
-
-    addSubject(s: Omit<Subject, 'id' | 'chapters' | 'mastery' | 'topicImportance' | 'builtin'>) {
-      // 必须生成唯一 id，否则动态路由 /subject/:id 与导航将全部指向 /subject/undefined
-      const subject: Subject = { ...s, id: uid(), builtin: false, chapters: [], mastery: {}, topicImportance: {} }
-      this.subjects.push(subject)
-      touchRecord('subjects', subject)
-      this.save()
-    },
-    /** 恢复被删除的内置科目：仅补回缺失的，不覆盖已存在（含已改名）的内置科目，不影响自定义科目与错题数据。返回恢复数量 */
-    restoreDefaultSubjects(): number {
-      const existingIds = new Set(this.subjects.map((x) => x.id))
-      let restored = 0
-      for (const d of defaultSubjects()) {
-        if (!existingIds.has(d.id)) {
-          const subject: Subject = { ...d }
-          this.subjects.push(subject)
-          touchRecord('subjects', subject)
-          restored++
-        }
-      }
-      if (restored > 0) this.save()
-      return restored
-    },
-    /** 修改任意科目的考核权重百分比 */
-    updateSubjectWeight(id: string, weight: number) {
-      const s = this.subjects.find((x) => x.id === id)
-      if (s) {
-        s.weight = Math.min(100, Math.max(0, Math.round(weight) || 0))
-        touchRecord('subjects', s)
-        this.save()
-      }
-    },
-    /** 删除科目：级联删除其学习记录/刷题/真题/错题/笔记等关联数据，并逐条回收这些数据产生的积分 */
-    removeSubject(id: string) {
-      const now = Date.now()
-      // 本地积分回收：records/problemSessions/exams/errorQuestions 的删除由服务端按墓碑自动撤销流水（§5.1），
-      // 不发 revoke 事件（避免冗余）；english 域服务端无自动撤销 → 显式发事件
-      for (const r of this.records.filter((x) => x.subjectId === id)) this.revokePointsByRef(r.id)
-      for (const p of this.problemSessions.filter((x) => x.subjectId === id)) this.revokePointsByRef(p.id)
-      for (const e of this.exams.filter((x) => x.subjectId === id)) this.revokePointsByRef(e.id)
-      for (const q of this.errorQuestions.filter((x) => x.subjectId === id)) this.revokePointsByRef(`error:${q.id}`)
-      // 内置英语科目的专项数据（词汇/阅读/听力）一并清理并回收积分
-      if (id === 'english') {
-        for (const v of this.english.vocab) {
-          this.revokePointsByRef(v.id, true)
-          stageDelete('english', `vocab:${v.id}`, now)
-        }
-        for (const r of this.english.reading)
-          if (r.id) {
-            this.revokePointsByRef(r.id, true)
-            stageDelete('english', `reading:${r.id}`, now)
-          }
-        for (const l of this.english.listening)
-          if (l.id) {
-            this.revokePointsByRef(l.id, true)
-            stageDelete('english', `listening:${l.id}`, now)
-          }
-        this.english = { vocab: [], reading: [], listening: [], templates: [] }
-      }
-      // 先收集受影响记录再过滤（stage 墓碑需要原对象的 id）
-      const delRecords = this.records.filter((x) => x.subjectId === id)
-      const delSessions = this.problemSessions.filter((x) => x.subjectId === id)
-      const delExams = this.exams.filter((x) => x.subjectId === id)
-      const delErrors = this.errorQuestions.filter((x) => x.subjectId === id)
-      const delNotes = this.notes.filter((n) => n.subjectId === id)
-      this.subjects = this.subjects.filter((s) => s.id !== id)
-      this.records = this.records.filter((r) => r.subjectId !== id)
-      this.problemSessions = this.problemSessions.filter((p) => p.subjectId !== id)
-      this.exams = this.exams.filter((e) => e.subjectId !== id)
-      this.errorQuestions = this.errorQuestions.filter((q) => q.subjectId !== id)
-      this.notes = this.notes.filter((n) => n.subjectId !== id)
-      // 资料仅解除科目关联，不删除资料本身
-      for (const m of this.materials)
-        if (m.subjectId === id) {
-          m.subjectId = undefined
-          touchRecord('materials', m, now)
-        }
-      // 逐条 stage 删除墓碑（服务端收到后清行 + 自动撤销对应积分/清理孤儿资源）
-      for (const r of delRecords) stageDelete('records', r.id, now)
-      for (const p of delSessions) stageDelete('problemSessions', p.id, now)
-      for (const e of delExams) stageDelete('exams', e.id, now)
-      for (const q of delErrors) stageDelete('errorQuestions', q.id, now)
-      for (const n of delNotes) stageDelete('notes', n.id, now)
-      stageDelete('subjects', id, now)
-      this.save()
-    },
-    addChapter(subjectId: string, name: string) {
-      const s = this.subjects.find((x) => x.id === subjectId)
-      if (s) {
-        s.chapters.push({ id: uid(), name, topics: [] })
-        touchRecord('subjects', s)
-        this.save()
-      }
-    },
-    /** 重命名章节标题：内容为空或章节不存在时返回 false */
-    updateChapter(subjectId: string, chapterId: string, name: string): boolean {
-      const s = this.subjects.find((x) => x.id === subjectId)
-      const ch = s?.chapters.find((c) => c.id === chapterId)
-      const n = name.trim()
-      if (!s || !ch || !n) return false
-      ch.name = n
-      touchRecord('subjects', s)
-      this.save()
-      return true
-    },
-    /** 向章节添加知识点（小标题） */
-    addTopic(subjectId: string, chapterId: string, topic: string) {
-      const s = this.subjects.find((x) => x.id === subjectId)
-      const ch = s?.chapters.find((c) => c.id === chapterId)
-      if (s && ch && !ch.topics.includes(topic)) {
-        ch.topics.push(topic)
-        touchRecord('subjects', s)
-        this.save()
-      }
-    },
-    removeTopic(subjectId: string, chapterId: string, topic: string) {
-      const s = this.subjects.find((x) => x.id === subjectId)
-      const ch = s?.chapters.find((c) => c.id === chapterId)
-      if (s && ch) {
-        ch.topics = ch.topics.filter((t) => t !== topic)
-        delete s.mastery[topic]
-        if (s.topicImportance) delete s.topicImportance[topic]
-        touchRecord('subjects', s)
-        this.save()
-      }
-    },
-    removeChapter(subjectId: string, chapterId: string) {
-      const s = this.subjects.find((x) => x.id === subjectId)
-      if (s) {
-        const ch = s.chapters.find((c) => c.id === chapterId)
-        if (ch) {
-          for (const t of ch.topics) {
-            delete s.mastery[t]
-            if (s.topicImportance) delete s.topicImportance[t]
-          }
-        }
-        s.chapters = s.chapters.filter((c) => c.id !== chapterId)
-        touchRecord('subjects', s)
-        this.save()
-      }
-    },
-    /**
-     * 编辑知识点：支持重命名 + 调整重要程度，一次持久化。
-     * 重命名时同步迁移掌握度与重要程度数据；返回 false 表示内容为空或与本章节其他知识点重名。
-     */
-    updateTopic(
-      subjectId: string,
-      chapterId: string,
-      oldTopic: string,
-      newTopic: string,
-      importance?: TopicImportance
-    ): boolean {
-      const s = this.subjects.find((x) => x.id === subjectId)
-      const ch = s?.chapters.find((c) => c.id === chapterId)
-      if (!s || !ch) return false
-      const name = newTopic.trim()
-      if (!name) return false
-      if (!s.topicImportance) s.topicImportance = {}
-      if (name !== oldTopic) {
-        if (ch.topics.includes(name)) return false
-        const idx = ch.topics.indexOf(oldTopic)
-        if (idx < 0) return false
-        ch.topics[idx] = name
-        if (s.mastery[oldTopic] !== undefined) {
-          s.mastery[name] = s.mastery[oldTopic]
-          delete s.mastery[oldTopic]
-        }
-        if (s.topicImportance[oldTopic] !== undefined) {
-          s.topicImportance[name] = s.topicImportance[oldTopic]
-          delete s.topicImportance[oldTopic]
-        }
-      }
-      s.topicImportance[name] = importance || 'normal'
-      touchRecord('subjects', s)
-      this.save()
-      return true
-    },
-
-    /** 批量导入笔记：正文进入独立本地缓存，Pinia/outbox 只保存元数据。 */
-    importNotes(
-      subjectId: string,
-      items: { id?: string; title: string; content: string; tags: string[]; type?: Note['type'] }[]
-    ) {
-      const now = Date.now()
-      for (const n of items) {
-        const note: Note = {
-          id: n.id || uid(),
-          subjectId,
-          title: n.title || '未命名',
-          tags: n.tags,
-          updatedAt: now,
-          bodyUpdatedAt: n.type === 'pdf' ? 0 : now,
-          type: n.type
-        }
-        if (n.type !== 'pdf') queueNoteBody(note.id, n.content, now)
-        this.notes.push(note)
-        touchRecord('notes', note, now)
-      }
-      this.save()
-    },
-
-    saveNote(note: Partial<Note> & { subjectId: string; content?: string }): string | null {
-      const now = Date.now()
-      if (note.id) {
-        const n = this.notes.find((x) => x.id === note.id)
-        if (n) {
-          const bodyChanged = n.type !== 'pdf' && note.content !== undefined && note.content !== getNoteBody(n.id)
-          if (bodyChanged) queueNoteBody(n.id, note.content!, now)
-          Object.assign(n, {
-            subjectId: note.subjectId,
-            title: note.title ?? n.title,
-            tags: note.tags ?? n.tags,
-            type: note.type,
-            bodyUpdatedAt: bodyChanged ? now : n.bodyUpdatedAt
-          })
-          touchRecord('notes', n, now)
-          this.save()
-          return n.id
-        }
-      } else {
-        const created: Note = {
-          id: uid(),
-          subjectId: note.subjectId,
-          title: note.title || '未命名',
-          tags: note.tags || [],
-          updatedAt: now,
-          bodyUpdatedAt: note.type === 'pdf' ? 0 : now,
-          type: note.type
-        }
-        if (created.type !== 'pdf') queueNoteBody(created.id, note.content || '', now)
-        this.notes.push(created)
-        touchRecord('notes', created, created.updatedAt)
-        this.save()
-        return created.id
-      }
-      return null
-    },
-    deleteNote(id: string) {
-      const note = this.notes.find((n) => n.id === id)
-      this.notes = this.notes.filter((n) => n.id !== id)
-      removeNoteBody(id)
-      // Markdown/PDF 分片由服务端在墓碑被接受时于同一 batch 清理。
-      if (note) stageDelete('notes', id, Date.now())
-      this.save()
-    },
-
-    saveSummary(s: DailySummary) {
-      const isNew = !this.summaries[s.date]
-      const summary: DailySummary = { ...s, updatedAt: Date.now() }
-      this.summaries[s.date] = summary
-      // 仅当天首次保存总结时奖励积分，重复编辑不重复加分
-      if (s.date === today() && isNew) this.addPoints(5, '完成每日总结', `summary:${s.date}`)
-      // summaries 键 = 日期
-      stageUpsert('summaries', s.date, summary, summary.updatedAt!)
-      this.save()
-    },
-
-    addHabit(h: Omit<Habit, 'id' | 'records'>) {
-      const habit: Habit = { ...h, id: uid(), records: {} }
-      this.habits.push(habit)
-      // habits 键 = habitId，值 = 单个习惯（含 records/checkins）
-      touchRecord('habits', habit)
-      this.save()
-    },
-    deleteHabit(id: string) {
-      // 回收该习惯全部打卡积分并删除对应流水（服务端删习惯时按 habit:<key>:% 自动撤销，本地回收即可）
-      this.revokePointsByRefPrefix(`habit:${id}:`)
-      const h = this.habits.find((x) => x.id === id)
-      this.habits = this.habits.filter((x) => x.id !== id)
-      if (h) stageDelete('habits', id, Date.now())
-      this.save()
-    },
-    /** 记录习惯打卡；好习惯当天从「未完成」变为「完成」奖励 +2 积分，取消完成则全额回收（历史日期仅记数据，不动积分） */
-    recordHabit(id: string, date: string, value: number | string) {
-      const h = this.habits.find((x) => x.id === id)
-      if (!h) return
-      const hadValue = !!h.records[date]
-      h.records[date] = value
-      if (!h.bad && date === today()) {
-        const refId = `habit:${id}:${date}`
-        if (value && !hadValue) this.addPoints(2, `完成习惯「${h.name}」`, refId)
-        // 取消打卡为非删除场景：服务端不会自动撤销 → 必须显式发 revoke 事件
-        else if (!value && hadValue) this.revokePointsByRef(refId, true)
-      }
-      // 坏习惯发生记录与克制打卡互斥：记录发生即视为当天未克制
-      if (h.bad && Number(value) > 0 && h.checkins?.[date]) delete h.checkins[date]
-      touchRecord('habits', h)
-      this.save()
-    },
-    /** 坏习惯「每日克制打卡」：打卡/取消打卡；与发生次数互斥（打卡视为当天未犯，清除当天发生记录） */
-    toggleBadHabitCheckin(id: string, date: string) {
-      const h = this.habits.find((x) => x.id === id)
-      if (!h || !h.bad) return
-      if (!h.checkins) h.checkins = {}
-      if (h.checkins[date]) {
-        delete h.checkins[date]
-      } else {
-        h.checkins[date] = 1
-        delete h.records[date]
-      }
-      // 坏习惯克制打卡不动积分
-      touchRecord('habits', h)
-      this.save()
-    },
-    /** 单独修改习惯目标；「每日背单词」「每日做题」按固定 id 与设置页每日目标双向同步 */
-    updateHabitTarget(id: string, target: number) {
-      const h = this.habits.find((x) => x.id === id)
-      if (!h) return
-      const t = Math.max(1, Math.round(target) || 1)
-      h.target = t
-      touchRecord('habits', h)
-      if (id === VOCAB_HABIT_ID) {
-        this.settings.wordGoal = t
-        touchSettings(this.settings)
-      }
-      if (id === PROBLEM_HABIT_ID) {
-        this.settings.problemGoal = t
-        touchSettings(this.settings)
-      }
-      this.save()
-    },
-
-    addMaterial(m: Omit<Material, 'id' | 'createdAt'>) {
-      const material: Material = { ...m, id: uid(), createdAt: Date.now() }
-      this.materials.push(material)
-      touchRecord('materials', material)
-      this.save()
-    },
-    updateMaterial(id: string, patch: Partial<Material>) {
-      const m = this.materials.find((x) => x.id === id)
-      if (m) {
-        Object.assign(m, patch)
-        touchRecord('materials', m)
-        this.save()
-      }
-    },
-    deleteMaterial(id: string) {
-      const m = this.materials.find((x) => x.id === id)
-      this.materials = this.materials.filter((x) => x.id !== id)
-      if (m) stageDelete('materials', id, Date.now())
-      this.save()
     },
 
     /** 新增待办；可同时指定开始时间与最晚截止时间（时间戳），到点由提醒调度器弹通知 */
@@ -747,45 +387,6 @@ export const useAppStore = defineStore('app', {
       const t = this.english.templates.find((x) => x.id === id)
       this.english.templates = this.english.templates.filter((x) => x.id !== id)
       if (t) stageDelete('english', `template:${id}`, Date.now())
-      this.save()
-    },
-
-    updateSettings(patch: Partial<AppState['settings']>) {
-      // 每日目标统一钳制为 >=1 的整数，与 updateHabitTarget 口径一致
-      if (patch.wordGoal !== undefined) patch.wordGoal = Math.max(1, Math.round(patch.wordGoal) || 1)
-      if (patch.problemGoal !== undefined) patch.problemGoal = Math.max(1, Math.round(patch.problemGoal) || 1)
-      Object.assign(this.settings, patch)
-      // 每日目标与习惯列表「每日背单词」「每日做题」按固定 id 实时双向同步
-      if (patch.wordGoal !== undefined) {
-        const h = this.habits.find((x) => x.id === VOCAB_HABIT_ID && !x.bad)
-        if (h) {
-          h.target = patch.wordGoal
-          touchRecord('habits', h)
-        }
-      }
-      if (patch.problemGoal !== undefined) {
-        const h = this.habits.find((x) => x.id === PROBLEM_HABIT_ID && !x.bad)
-        if (h) {
-          h.target = patch.problemGoal
-          touchRecord('habits', h)
-        }
-      }
-      // settings 键 = self（整体 stage；maimemoToken 空值语义见 touchSettings 注释）
-      touchSettings(this.settings)
-      this.save()
-    },
-
-    /** 替换自定义名言列表（settings 整行随 self 上行；maimemoToken 空值语义见 touchSettings 注释） */
-    updateQuotes(quotes: string[]) {
-      this.settings.quotes = quotes
-      touchSettings(this.settings)
-      this.save()
-    },
-
-    /** 设置头像（上传端点只存 R2 文件并返回 URL；settings 行由同步协议写入） */
-    setAvatar(url: string) {
-      this.settings.avatar = url
-      touchSettings(this.settings)
       this.save()
     },
 
