@@ -1,7 +1,7 @@
 import type { Env } from '../index'
 import { z } from 'zod'
 import { on, body } from '../router'
-import { all, first, run, batch, uid, utc8Today, HttpError } from '../db'
+import { all, first, run, batch, uid, utc8Today, randomCode, HttpError } from '../db'
 import { parseBody } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
 import { notifyStatement } from './community'
@@ -15,21 +15,14 @@ import { assertCleanAsync } from './sensitive'
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
-const INVITE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-
-function genInviteCode(): string {
-  let code = ''
-  for (let i = 0; i < 8; i++) {
-    code += INVITE_CHARS[Math.floor(Math.random() * INVITE_CHARS.length)]
-  }
-  return code
-}
-
-/** 生成唯一邀请码：查重，冲突则重试一次（碰撞概率极低，一次重试足够） */
+/** 生成唯一邀请码：查重循环，冲突重试（32^8 空间，碰撞概率极低；CSPRNG 防预测） */
 async function newInviteCode(env: Env): Promise<string> {
-  const code = genInviteCode()
-  const exists = await first<{ id: string }>(env, 'SELECT id FROM study_teams WHERE invite_code = ?', code)
-  return exists ? genInviteCode() : code
+  for (let i = 0; i < 10; i++) {
+    const code = randomCode()
+    const exists = await first<{ id: string }>(env, 'SELECT id FROM study_teams WHERE invite_code = ?', code)
+    if (!exists) return code
+  }
+  throw new HttpError(500, '生成邀请码失败，请重试')
 }
 
 // ---------- 类型定义 ----------

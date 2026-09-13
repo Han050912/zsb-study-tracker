@@ -48,6 +48,9 @@ export interface Env {
   /** 桌面端共享令牌（Cloudflare Secrets / .dev.vars，不落地仓库）：
    *  与桌面端构建时注入的 DESKTOP_TOKEN 一致，用于识别可信桌面客户端跳过 Turnstile */
   DESKTOP_TOKEN?: string
+  /** 敏感字段加密密钥（Cloudflare Secrets，不落地仓库）：独立于 JWT_SECRET，轮换 JWT_SECRET 不再作废已存 Token；
+   *  未配置时回退 JWT_SECRET 派生（兼容现网）；生产：npx wrangler secret put ENCRYPT_SECRET */
+  ENCRYPT_SECRET?: string
   /** Workers 内置速率限制绑定（wrangler.toml [[ratelimits]]，按限值档位划分） */
   RL_3: RateLimit
   RL_5: RateLimit
@@ -62,7 +65,7 @@ export interface Env {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const origin = request.headers.get('Origin')
-    const cors = corsHeaders(origin)
+    const cors = corsHeaders(origin, new URL(request.url).host)
 
     // OPTIONS 预检：统一在此处理，不进入路由
     if (request.method === 'OPTIONS') {
