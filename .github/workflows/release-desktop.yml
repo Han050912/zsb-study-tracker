@@ -48,6 +48,7 @@ jobs:
           # 桌面端共享令牌：未配置 secret 时桌面端回退人机验证（fail-closed，不阻塞发版）
           DESKTOP_TOKEN: ${{ secrets.DESKTOP_TOKEN }}
 
+      # 注意：electron-builder 默认发布为 draft Release，需在 GitHub Releases 手动 publish 后 electron-updater 才可见
       - name: Build & publish Windows installer
         run: npx electron-builder --win --publish always
         env:

@@ -41,6 +41,7 @@ bucket_name = "zsb-study-images"
 #   生产：npx wrangler secret put CF_API_TOKEN
 #   本地：在 worker/.dev.vars 中写 CF_API_TOKEN=xxx（该文件已被 .gitignore 忽略）
 # ENCRYPT_SECRET：敏感字段加密密钥，npx wrangler secret put ENCRYPT_SECRET（未配置回退 JWT_SECRET 派生）
+#   ⚠️ 配置后再移除，或回滚到引入 ENCRYPT_SECRET 之前的代码，都会使期间写入的密文不可解（用户需重填墨墨 Token）
 # CF_ACCOUNT_ID：账户 ID 非敏感，直接复用本文件顶部的 account_id。
 #   若需本地覆盖（例如本地调试），可在 .dev.vars 中写 CF_ACCOUNT_ID=xxx。
 #   注意：wrangler.toml 的 account_id 不会自动注入运行时 env，需在 .dev.vars 显式提供。

@@ -74,3 +74,4 @@
 - 速率限制绑定配置：`worker/wrangler.toml` 的 `[[ratelimits]]` 段
 - 登录端点（POST `/api/auth/login`）：`worker/src/api/auth.ts`
 - 设计文档：`docs/superpowers/specs/2026-08-30-security-hardening-design.md`
+- API 域名单一来源：根目录 `.env` 的 `VITE_API_BASE`（构建期生成 `dist/api-base.json` 供 Electron 主进程读取，见 `vite.config.ts` 的 emit-api-base 插件）
