@@ -34,6 +34,18 @@ const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
 const isDev = !app.isPackaged
 const DIST_ROOT = path.join(__dirname, '..', 'dist')
 
+// API 域名单一来源：构建期由 vite 写入 dist/api-base.json（源自 .env 的 VITE_API_BASE）。
+// 读取失败时 API_BASE 为空串：CSP 不含 API 域、更新检查报错——比静默指向旧域名更可诊断
+function readApiBase() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(DIST_ROOT, 'api-base.json'), 'utf8')).apiBase || ''
+  } catch (e) {
+    console.error('[api-base] 读取 dist/api-base.json 失败，桌面端将无法连接 API', e && e.message)
+    return ''
+  }
+}
+const API_BASE = readApiBase()
+
 /**
  * Content-Security-Policy：开发 / 生产两套策略，由 isDev 环境自动切换，无需人工改代码。
  *
@@ -47,7 +59,7 @@ const DIST_ROOT = path.join(__dirname, '..', 'dist')
  *   原因：webRequest 仅对 http/https 生效，对 app:// 协议不生效，故生产必须走协议处理器注入。
  */
 
-/** 开发 CSP：保留 'unsafe-eval'（Vite HMR 依赖）与 script 'unsafe-inline' */
+/** 开发 CSP：保留 'unsafe-eval'（Vite HMR 依赖）与 script 'unsafe-inline'；API 域名来自运行时读取的 API_BASE，localhost 供 vite dev */
 const DEV_CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
@@ -55,12 +67,12 @@ const DEV_CSP = [
   "manifest-src 'self'",
   'frame-src https://challenges.cloudflare.com',
   "style-src 'self' 'unsafe-inline'",
-  "connect-src 'self' http://localhost:* https://zsb-study-tracker.sryze.cc https://cn.zsbservice.de5.net https://challenges.cloudflare.com",
-  "img-src 'self' data: blob: http://localhost:* https://cn.zsbservice.de5.net",
+  `connect-src 'self' http://localhost:* https://zsb-study-tracker.sryze.cc ${API_BASE} https://challenges.cloudflare.com`,
+  `img-src 'self' data: blob: http://localhost:* ${API_BASE}`,
   "font-src 'self' data:"
 ].join('; ')
 
-/** 生产 CSP：移除 'unsafe-eval' 与 script 'unsafe-inline'，输出严格安全策略 */
+/** 生产 CSP：移除 'unsafe-eval' 与 script 'unsafe-inline'，输出严格安全策略；connect-src 无需连本机故不含 localhost */
 const PROD_CSP = [
   "default-src 'self'",
   "script-src 'self' https://challenges.cloudflare.com",
@@ -68,8 +80,8 @@ const PROD_CSP = [
   "manifest-src 'self'",
   'frame-src https://challenges.cloudflare.com',
   "style-src 'self' 'unsafe-inline'",
-  "connect-src 'self' http://localhost:* https://zsb-study-tracker.sryze.cc https://cn.zsbservice.de5.net https://challenges.cloudflare.com",
-  "img-src 'self' data: blob: http://localhost:* https://cn.zsbservice.de5.net",
+  `connect-src 'self' https://zsb-study-tracker.sryze.cc ${API_BASE} https://challenges.cloudflare.com`,
+  `img-src 'self' data: blob: http://localhost:* ${API_BASE}`,
   "font-src 'self' data:"
 ].join('; ')
 
@@ -119,7 +131,7 @@ function setupAutoUpdater() {
    * 6 秒超时 + 全量异常捕获，失败不阻塞更新弹窗。
    */
   function fetchReleaseNotes() {
-    const url = 'https://cn.zsbservice.de5.net/api/latest-release'
+    const url = `${API_BASE}/api/latest-release`
     return new Promise((resolve) => {
       const https = require('node:https')
       const req = https.get(
