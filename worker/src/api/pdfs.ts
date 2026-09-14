@@ -40,8 +40,9 @@ function pdfBytesResponse(body: BodyInit, totalLen: number): Response {
   })
 }
 
-/** 失效指定 PDF 的读缓存：写路径（PUT/DELETE）必须调用，否则替换或删除后最长 TTL 内仍返回旧字节 */
-async function purgePdfCache(userId: string, pdfId: string): Promise<void> {
+/** 失效指定 PDF 的读缓存：写路径（PUT/DELETE）必须调用，否则替换或删除后最长 TTL 内仍返回旧字节。
+ *  同步接口按笔记删除清理孤儿分片（sync.ts）同样必须调用——那里绕过本文件的写路径直删 D1 分片 */
+export async function purgePdfCache(userId: string, pdfId: string): Promise<void> {
   await caches.default.delete(pdfCacheKey(userId, pdfId))
 }
 

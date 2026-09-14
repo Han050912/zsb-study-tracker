@@ -32,6 +32,7 @@ import { readingMapping, listeningMapping, templatesMapping } from './english'
 import { materialsMapping } from './materials'
 import { todosMapping } from './todos'
 import { rateLimit } from '../middleware/rateLimit'
+import { purgePdfCache } from './pdfs'
 
 /**
  * 记录级增量同步协议（设计 §4）：
@@ -923,13 +924,15 @@ function pointsRefOfDeleted(domain: string, key: string): { refId?: string; refP
  * - `errorQuestions`：`image = 'r2:<sha256>'` → 删 `error_images` 归属行 + R2 对象
  * R2 对象无法进 D1 batch，键收集到 `r2Keys` 由主 batch 提交后再删。
  * 幂等：行不存在时删除 0 行；R2 对象不存在时删除为无操作，重复删除同样安全。
+ * PDF 读缓存条目同样无法进 batch：待失效的 pdf_id 收集到 `pdfPurgeIds`，主 batch 提交后再删（见调用方）。
  */
 async function orphanCleanupStatements(
   env: Env,
   userId: string,
   domain: string,
   keys: string[],
-  r2Keys: Set<string>
+  r2Keys: Set<string>,
+  pdfPurgeIds: Set<string>
 ): Promise<D1PreparedStatement[]> {
   if (!keys.length) return []
 
@@ -940,6 +943,8 @@ async function orphanCleanupStatements(
         env.DB.prepare('DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ?').bind(userId, key),
         env.DB.prepare('DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?').bind(userId, key)
       )
+      // PDF 以 note.id 作 pdf_id：删分片必须同时失效读缓存，否则 TTL 内仍能按旧 URL 读到已删文件
+      pdfPurgeIds.add(key)
     }
     return statements
   }
@@ -1428,6 +1433,8 @@ export function registerSyncRoutes() {
     let revokeAll = false
     /** 待删除的 R2 对象键：R2 无法进 D1 batch，故主 batch 提交后再删 */
     const r2Keys = new Set<string>()
+    /** 待失效的 PDF 读缓存 pdf_id（notes 删除驱动）：同上，主 batch 提交后再删缓存条目 */
+    const pdfPurgeIds = new Set<string>()
 
     const rejected: RejectedItem[] = []
     for (let i = 0; i < validated.length; i++) {
@@ -1453,7 +1460,7 @@ export function registerSyncRoutes() {
         if (ref.refPrefix) revokePrefixes.add(ref.refPrefix)
       }
       // 删除驱动的孤儿清理（notes → pdf_chunks；errorQuestions → error_images + R2）
-      statements.push(...(await orphanCleanupStatements(ctx.env, ctx.userId, domain, deletedKeys, r2Keys)))
+      statements.push(...(await orphanCleanupStatements(ctx.env, ctx.userId, domain, deletedKeys, r2Keys, pdfPurgeIds)))
       versions[domain] = seq
       applied[domain] = d.upserts.length
       deletes[domain] = d.deletes.length
@@ -1513,6 +1520,9 @@ export function registerSyncRoutes() {
 
     // 9. R2 对象清理：主 batch 成功后再删，避免「对象已删、记录仍在」；对象不存在时删除为无操作
     for (const key of r2Keys) await ctx.env.IMAGES.delete(key).catch((e) => console.error('R2 删除失败', key, e))
+
+    // 9b. PDF 读缓存失效（笔记删除驱动）：同批已删分片，缓存在此处删，避免「缓存已删、分片仍在」
+    for (const pdfId of pdfPurgeIds) await purgePdfCache(ctx.userId, pdfId).catch(() => {})
 
     return Response.json({
       ok: true,
