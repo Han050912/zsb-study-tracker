@@ -75,7 +75,7 @@ export async function register(username: string, password: string, cfTurnstileTo
   if (username.length < 2) throw new Error('用户名至少 2 个字符')
   if (username.length > 20) throw new Error('用户名最多 20 个字符')
   if (password.length < 6) throw new Error('密码至少 6 位')
-  if (password.length > 128) throw new Error('密码最多 128 位')
+  if (password.length > 64) throw new Error('密码最多 64 位')
   const { token, user } = await authApi.register(username, password, cfTurnstileToken)
   setSession(user, token)
   return user
