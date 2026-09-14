@@ -3,7 +3,7 @@ import { hashPassword, verifyPassword, signToken, verifyTokenFull } from '../aut
 import { first, run, batch, uid, randomCode, HttpError } from '../db'
 import { parseBody, registerSchema, loginSchema, timingSafeEqual } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
-import { authCookieHeader, clearAuthCookieHeader, extractToken } from '../middleware/auth'
+import { authCookieHeader, clearAuthCookieHeader, extractToken, purgeRevokedCache } from '../middleware/auth'
 import { assertCleanAsync } from './sensitive'
 import type { Env } from '../index'
 
@@ -139,6 +139,9 @@ export function registerAuthRoutes() {
           payload.jti,
           payload.exp
         )
+        // 黑名单落库后删除该 jti 的「未吊销」缓存条目（顺序不可颠倒：先落库再清缓存，
+        // 否则并发请求可能在两步之间把「未吊销」重新写回缓存）；TTL 内不清理则已登出的 token 仍被放行
+        await purgeRevokedCache(payload.jti)
       }
     }
     return Response.json({ ok: true }, { headers: { 'Set-Cookie': clearAuthCookieHeader(ctx.request) } })
