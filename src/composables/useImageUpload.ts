@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { uploadImage, IMAGE_MAX_BYTES } from '../api/community'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from './useToast'
@@ -114,6 +114,10 @@ export function useImageUpload(maxCount: number) {
     for (const i of images.value) URL.revokeObjectURL(i.localUrl)
     images.value = []
   }
+
+  // 组件销毁时必须释放预览 blob URL：调用方可能从未调用 reset（如直接离开页面），
+  // 在 composable 内注册清理可覆盖全部调用方；在飞上传的结果只会写入已脱离的 item，无副作用
+  onUnmounted(reset)
 
   return {
     images,
