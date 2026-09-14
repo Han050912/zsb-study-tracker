@@ -85,7 +85,7 @@ export function registerAuthRoutes() {
       id: uid(),
       user_code: userCode,
       username,
-      password_hash: hashPassword(password),
+      password_hash: await hashPassword(password),
       role: 'user',
       created_at: Date.now()
     }
@@ -101,7 +101,7 @@ export function registerAuthRoutes() {
     // 初始化用户设置与游戏化数据（昵称取登录用户名，其余默认值由表结构兜底）
     await run(ctx.env, 'INSERT INTO user_settings (user_id, user_name) VALUES (?, ?)', row.id, row.username)
     await run(ctx.env, 'INSERT INTO gamification (user_id) VALUES (?)', row.id)
-    const token = await signToken(row.id, ctx.env.JWT_SECRET)
+    const token = await signToken(row.id, ctx.env.JWT_SECRET, row.role || 'user')
     return Response.json(
       { token, user: toUser(row) },
       { status: 201, headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } }
@@ -114,10 +114,10 @@ export function registerAuthRoutes() {
     const { username, password } = await parseBody(ctx.request, loginSchema)
     // loginSchema 不做 trim：登录页已 trim，容忍历史空白
     const row = await first<UserRow>(ctx.env, 'SELECT * FROM users WHERE username = ?', username.trim())
-    if (!row || !verifyPassword(password, row.password_hash)) {
+    if (!row || !(await verifyPassword(password, row.password_hash))) {
       throw new HttpError(401, '用户名或密码错误')
     }
-    const token = await signToken(row.id, ctx.env.JWT_SECRET)
+    const token = await signToken(row.id, ctx.env.JWT_SECRET, row.role || 'user')
     return Response.json(
       { token, user: toUser(row) },
       { headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } }

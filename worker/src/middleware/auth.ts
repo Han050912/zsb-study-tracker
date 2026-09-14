@@ -47,8 +47,9 @@ export function clearAuthCookieHeader(request: Request): string {
   return parts.join('; ')
 }
 
-/** 解析并校验 JWT（含黑名单吊销），返回 user_id；失败抛 401 */
-async function resolveUser(request: Request, env: Env): Promise<string> {
+/** 解析并校验 JWT（含黑名单吊销），返回 user_id + role claim；失败抛 401。
+ *  role 为 '' 表示无 role claim（旧 token），消费方需回退 DB 查询角色 */
+async function resolveUser(request: Request, env: Env): Promise<{ userId: string; role: string }> {
   const ext = extractToken(request)
   if (!ext) throw new HttpError(401, '未登录或登录已过期')
   // CSRF 防护：Cookie 认证的写请求必须来自可信 Origin（跨站表单/脚本无法伪造 Origin）
@@ -59,19 +60,29 @@ async function resolveUser(request: Request, env: Env): Promise<string> {
   const payload = await verifyTokenFull(ext.token, env.JWT_SECRET)
   if (!payload) throw new HttpError(401, '未登录或登录已过期')
   if (await isRevoked(env, payload.jti)) throw new HttpError(401, '登录已失效，请重新登录')
-  return payload.userId
+  return { userId: payload.userId, role: payload.role ?? '' }
+}
+
+/** 解析 JWT → { userId, role }；缺失/无效/已吊销一律 401。role 为 '' 表示旧 token 无 role claim */
+export async function resolveAuth(request: Request, env: Env): Promise<{ userId: string; role: string }> {
+  return resolveUser(request, env)
+}
+
+/** 可选认证（内部）：解析 JWT → { userId, role }；任何失败均返回 { userId: '', role: '' }（不抛错） */
+export async function tryGetAuth(request: Request, env: Env): Promise<{ userId: string; role: string }> {
+  try {
+    return await resolveUser(request, env)
+  } catch {
+    return { userId: '', role: '' }
+  }
 }
 
 /** 解析 JWT → user_id；缺失/无效/已吊销一律 401 */
 export async function requireAuth(request: Request, env: Env): Promise<string> {
-  return resolveUser(request, env)
+  return (await resolveUser(request, env)).userId
 }
 
 /** 可选认证：解析 JWT → user_id；任何失败均返回空字符串（不抛错），供公开接口识别登录态 */
 export async function tryGetUser(request: Request, env: Env): Promise<string> {
-  try {
-    return await resolveUser(request, env)
-  } catch {
-    return ''
-  }
+  return (await tryGetAuth(request, env)).userId
 }

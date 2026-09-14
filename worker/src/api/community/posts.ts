@@ -47,7 +47,7 @@ export function registerPostsRoutes() {
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const cursor = url.searchParams.get('cursor') || ''
 
-    const admin = await isAdmin(ctx.env, ctx.userId)
+    const admin = await isAdmin(ctx.env, ctx.userId, ctx.role)
     const where: string[] = []
     const params: unknown[] = [ctx.userId, ctx.userId]
     if (!admin) {
@@ -112,7 +112,7 @@ export function registerPostsRoutes() {
 
   // 帖子详情（含评论列表，前端组装二级树；管理员可见隐藏内容）
   on('GET', '/api/community/posts/:id', false, async (ctx) => {
-    const admin = await isAdmin(ctx.env, ctx.userId)
+    const admin = await isAdmin(ctx.env, ctx.userId, ctx.role)
     const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)'
     const postParams: unknown[] = [ctx.userId, ctx.userId, ctx.params.id]
     if (!admin) postParams.push(ctx.userId)
@@ -305,7 +305,7 @@ export function registerPostsRoutes() {
     )
     if (!post) throw new HttpError(404, '帖子不存在')
     const isOwner = post.user_id === ctx.userId
-    if (!isOwner && !(await isAdmin(ctx.env, ctx.userId))) throw new HttpError(403, '只能删除自己的帖子')
+    if (!isOwner && !(await isAdmin(ctx.env, ctx.userId, ctx.role))) throw new HttpError(403, '只能删除自己的帖子')
     // 回收该帖下全部评论产生的积分流水（评论帖子/收到评论/回答被采纳/提问被解答），与单独删评论口径一致
     // 管理员删除时跳过积分回收——管理操作不应惩罚用户
     const commentRows = await all<{ id: string; image_urls: string }>(
@@ -449,7 +449,7 @@ export function registerPostsRoutes() {
     )
     if (!c) throw new HttpError(404, '评论不存在')
     const isOwner = c.user_id === ctx.userId
-    if (!isOwner && !(await isAdmin(ctx.env, ctx.userId))) throw new HttpError(403, '只能删除自己的评论')
+    if (!isOwner && !(await isAdmin(ctx.env, ctx.userId, ctx.role))) throw new HttpError(403, '只能删除自己的评论')
     // 回收该评论及其回复产生的积分流水（评论帖子/收到评论/采纳积分 + 获赞），防止反复评论+删除刷分
     // 管理员删除时跳过积分回收——管理操作不应惩罚用户
     const { statements, removedIds, imageIds } = await commentCascadeStatements(ctx.env, id, c.post_id)

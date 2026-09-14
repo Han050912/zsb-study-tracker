@@ -271,8 +271,11 @@ export async function displayName(env: Env, userId: string): Promise<string> {
   return r?.name || '升本人'
 }
 
-/** 当前用户是否为管理员 */
-export async function isAdmin(env: Env, userId: string): Promise<boolean> {
+/** 当前用户是否为管理员。role 为 JWT claim 快照：'admin' 直接放行、
+ *  其他非空值直接拒绝（claim 可信且省 DB 查询）；空值（旧 token 无 claim）回退 DB 查询 */
+export async function isAdmin(env: Env, userId: string, role?: string): Promise<boolean> {
+  if (role === 'admin') return true // claim 快路径：免 DB 查询
+  if (role) return false // claim 存在且非 admin：免 DB 查询（旧 token 无 claim 才走 DB）
   const u = await first<{ role: string }>(env, 'SELECT role FROM users WHERE id = ?', userId)
   return u?.role === 'admin'
 }
@@ -300,7 +303,10 @@ export interface CircleRow {
 }
 
 /** 圈子可读性校验：审核圈仅活跃成员/管理员可读其帖子流 */
-export async function assertCircleReadable(ctx: { env: Env; userId: string }, circleId: string): Promise<CircleRow> {
+export async function assertCircleReadable(
+  ctx: { env: Env; userId: string; role?: string },
+  circleId: string
+): Promise<CircleRow> {
   const circle = await first<CircleRow>(ctx.env, 'SELECT id, is_public FROM community_circles WHERE id = ?', circleId)
   if (!circle) throw new HttpError(404, '圈子不存在')
   if (!circle.is_public) {
@@ -310,7 +316,7 @@ export async function assertCircleReadable(ctx: { env: Env; userId: string }, ci
       circleId,
       ctx.userId
     )
-    if (!member && !(await isAdmin(ctx.env, ctx.userId))) throw new HttpError(403, '审核圈内容仅成员可见')
+    if (!member && !(await isAdmin(ctx.env, ctx.userId, ctx.role))) throw new HttpError(403, '审核圈内容仅成员可见')
   }
   return circle
 }

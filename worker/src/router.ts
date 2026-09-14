@@ -1,5 +1,5 @@
 import type { Env } from './index'
-import { requireAuth, tryGetUser } from './middleware/auth'
+import { resolveAuth, tryGetAuth } from './middleware/auth'
 import { HttpError } from './db'
 
 export interface Ctx {
@@ -7,6 +7,8 @@ export interface Ctx {
   env: Env
   /** 需认证路由由中间件解析注入；公开路由为空字符串 */
   userId: string
+  /** JWT role claim 快照；'' 表示匿名或旧 token 无 role claim（消费方须回退 DB 查询） */
+  role: string
   /** 路径参数，如 { id: 'xxx' } */
   params: Record<string, string>
 }
@@ -63,8 +65,9 @@ export async function route(request: Request, env: Env): Promise<Response> {
     // auth=false：仍尝试解析 JWT，已登录用户 ctx.userId 不再被误清空；
     //   公开接口的 SQL 关联（liked_by_me/disliked_by_me/followed_by_me）和
     //   login 可见性判断依赖于此，否则认证用户访问公开接口会被误判为匿名
-    const userId = r.auth ? await requireAuth(request, env) : await tryGetUser(request, env)
-    return r.handler({ request, env, userId, params })
+    // role：JWT role claim 快照；'' 表示匿名或旧 token 无 claim（isAdmin 对空 role 走 DB 回退）
+    const auth = r.auth ? await resolveAuth(request, env) : await tryGetAuth(request, env)
+    return r.handler({ request, env, userId: auth.userId, role: auth.role, params })
   }
   throw new HttpError(404, '接口不存在')
 }
