@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on } from '../router'
-import { all, first } from '../db'
+import { all, first, utc8Today } from '../db'
 
 /**
  * 游戏化（gamification 单行 + points_log 流水 ↔ 前端 Gamification）。
@@ -33,9 +33,28 @@ function parseStoredAchievements(raw: unknown): string[] {
   }
 }
 
+/** 流水回传窗口（天）：只回传最近一年，响应是展示/导出用快照，服务端仍是完整权威账本 */
+const POINTS_LOG_WINDOW_DAYS = 365
+/** 流水回传条数上限：窗口内重度用户仍可能超限，只回传最新 1000 条 */
+const POINTS_LOG_LIMIT = 1000
+
 export async function getGamification(env: Env, userId: string): Promise<GamificationFull> {
   const row = await first(env, 'SELECT * FROM gamification WHERE user_id = ?', userId)
-  const log = await all(env, 'SELECT * FROM points_log WHERE user_id = ? ORDER BY id', userId)
+  // 回传的 pointsLog 只是展示/导出用快照，服务端才是权威账本：限「最近 365 天 + 最新 1000 条」，
+  // 避免长期账号每次同步都全量回传整个流水；窗口/上限外的历史不参与客户端逐条撤销，
+  // 批量撤销改由 `revoke all` 事件一次性完成（见 api/sync.ts 的 parsePointsEvents）
+  const cutoff = new Date(Date.parse(`${utc8Today()}T00:00:00Z`) - POINTS_LOG_WINDOW_DAYS * 86400000)
+    .toISOString()
+    .slice(0, 10)
+  // 取最新 1000 条（ORDER BY id DESC）后反转：响应顺序仍是 id 升序（前端依赖该顺序取最近 20 条）
+  const log = await all(
+    env,
+    'SELECT * FROM points_log WHERE user_id = ? AND date >= ? ORDER BY id DESC LIMIT ?',
+    userId,
+    cutoff,
+    POINTS_LOG_LIMIT
+  )
+  log.reverse()
   return {
     points: row?.points ?? 0,
     streak: row?.streak ?? 0,
@@ -77,16 +96,21 @@ function escapeLike(s: string): string {
 }
 
 /**
- * 撤销积分流水：按 `refId` 精确删除，或按 `refPrefix` 前缀删除（对齐客户端 `revokePointsByRef` /
- * `revokePointsByRefPrefix` 语义）。重复撤销删除 0 行，天然幂等。
+ * 撤销积分流水：按 `refId` 精确删除、按 `refPrefix` 前缀删除（对齐客户端 `revokePointsByRef` /
+ * `revokePointsByRefPrefix` 语义），或 `revokeAll` 一次性删除该用户全部**有 ref_id** 的流水
+ * （无 ref_id 的历史流水按语义不可撤销，保持）。删除 0 行亦幂等。
  */
 export function pointsRevokeStatements(
   env: Env,
   userId: string,
   refIds: string[],
-  refPrefixes: string[]
+  refPrefixes: string[],
+  revokeAll = false
 ): D1PreparedStatement[] {
   return [
+    ...(revokeAll
+      ? [env.DB.prepare('DELETE FROM points_log WHERE user_id = ? AND ref_id IS NOT NULL').bind(userId)]
+      : []),
     ...refIds.map((r) => env.DB.prepare('DELETE FROM points_log WHERE user_id = ? AND ref_id = ?').bind(userId, r)),
     ...refPrefixes.map((p) =>
       env.DB.prepare("DELETE FROM points_log WHERE user_id = ? AND ref_id LIKE ? ESCAPE '\\'").bind(
