@@ -15,6 +15,7 @@ const {
   net,
   ipcMain,
   Notification,
+  dialog,
   session,
   shell
 } = require('electron')
@@ -96,6 +97,9 @@ let tray = null
 let isQuitting = false
 // 更新安装前需要真正退出应用（绕过「关闭最小化到托盘」的拦截）
 let quitForUpdate = false
+// 主窗口加载失败提示是否已弹出：loadURL rejection 与 did-fail-load 是两条独立通道，
+// 同一次失败可能先后触发，靠该标记去重避免弹窗叠罗汉；每次发起加载前复位
+let mainLoadFailedDialogOpen = false
 
 // ---- 自动更新（electron-updater，仅 Windows 打包端启用） ----
 let autoUpdater = null
@@ -207,11 +211,13 @@ function setupAutoUpdater() {
     }
 
     // electron-updater 未返回 releaseNotes 时，通过 Worker 中转接口兜底拉取
-    fetchReleaseNotes().then(({ notes: fetchedNotes, releaseDate: fetchedDate }) => {
-      payload.releaseNotes = fetchedNotes
-      if (fetchedDate && !payload.releaseDate) payload.releaseDate = fetchedDate
-      send('update:available', payload)
-    }).catch((e) => console.error('[fetchReleaseNotes] 拉取失败', e && e.message))
+    fetchReleaseNotes()
+      .then(({ notes: fetchedNotes, releaseDate: fetchedDate }) => {
+        payload.releaseNotes = fetchedNotes
+        if (fetchedDate && !payload.releaseDate) payload.releaseDate = fetchedDate
+        send('update:available', payload)
+      })
+      .catch((e) => console.error('[fetchReleaseNotes] 拉取失败', e && e.message))
   })
 
   autoUpdater.on('download-progress', (p) => {
@@ -305,7 +311,19 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => showMainWindow())
-  app.whenReady().then(init)
+  // 初始化失败属于致命错误：无窗口可提示，故用 showErrorBox（不依赖任何窗口），随后显式退出
+  app
+    .whenReady()
+    .then(init)
+    .catch((err) => {
+      const message = err && err.message ? err.message : String(err)
+      console.error('[startup] 初始化失败:', message)
+      dialog.showErrorBox(
+        `${APP_NAME} 启动失败`,
+        `应用初始化时发生异常，即将退出，请重新启动。\n\n技术信息：${message}`
+      )
+      app.quit()
+    })
 }
 
 /** 自定义 app:// 协议：将请求映射到 dist 目录（含路径穿越防护与非法编码防护） */
@@ -416,12 +434,68 @@ function createSplash() {
     backgroundColor: '#4f46e5',
     webPreferences: { contextIsolation: true, nodeIntegration: false }
   })
-  splashWindow.loadFile(path.join(__dirname, 'splash.html'))
+  // 启动画面加载失败只记日志：缺了启动画面不应该拖垮整个启动流程（也不弹模态框打扰用户）
+  splashWindow
+    .loadFile(path.join(__dirname, 'splash.html'))
+    .catch((e) => console.error('[splash] 启动画面加载失败，继续启动主窗口:', e))
 }
 
 function closeSplash() {
   if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close()
   splashWindow = null
+}
+
+/** 主窗口内容加载（初次加载与失败重试共用）：两条加载路径的失败都汇入 onMainWindowLoadFailed */
+function loadMainWindowContent() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  // 发起新一轮加载前复位，避免上一轮的弹窗状态吞掉本轮第一次失败提示
+  mainLoadFailedDialogOpen = false
+  if (isDev) mainWindow.loadURL(DEV_URL).catch(onMainWindowLoadFailed)
+  else mainWindow.loadURL('app://localhost/index.html').catch(onMainWindowLoadFailed)
+}
+
+/**
+ * 主窗口加载失败兜底：关闭永驻的启动画面，给出可恢复提示（重试 / 退出）。
+ *
+ * 加载失败时 ready-to-show 永不触发，若不兜底，启动画面会一直停在最前，用户既进不去也无处退出。
+ * 重试即重新发起同一次加载，失败会再次回到这里（由用户点击驱动，不会自旋）。
+ */
+function onMainWindowLoadFailed(err) {
+  const message = err && err.message ? err.message : String(err)
+  console.error('[nav] 主窗口加载失败:', message)
+  closeSplash()
+  // 窗口已销毁（如失败弹窗期间用户从托盘退出）：没有可恢复的对象，仅记日志
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainLoadFailedDialogOpen) return
+  mainLoadFailedDialogOpen = true
+  // 窗口此时是隐藏的（show: false 且 ready-to-show 未触发），先显出来，
+  // 否则没有任何可见窗口，弹窗也可能被压在不可见的父窗口后面
+  if (!mainWindow.isVisible()) mainWindow.show()
+
+  dialog
+    .showMessageBox(mainWindow, {
+      type: 'error',
+      title: APP_NAME,
+      message: '页面加载失败',
+      detail: `应用界面未能加载，可能由网络异常或安装文件损坏导致。\n\n技术信息：${message}`,
+      buttons: ['重试', '退出'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true
+    })
+    .then(({ response }) => {
+      mainLoadFailedDialogOpen = false
+      if (response === 0) {
+        loadMainWindowContent()
+      } else {
+        isQuitting = true
+        app.quit()
+      }
+    })
+    .catch((e) => {
+      mainLoadFailedDialogOpen = false
+      console.error('[nav] 加载失败提示弹窗异常:', e)
+    })
 }
 
 function showMainWindow() {
@@ -469,8 +543,14 @@ function createMainWindow() {
     mainWindow = null
   })
 
-  if (isDev) mainWindow.loadURL(DEV_URL)
-  else mainWindow.loadURL('app://localhost/index.html')
+  // 兜底：app:// 协议处理器返回 404 等场景不会让 loadURL rejection，但会触发 did-fail-load
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // -3 为 ERR_ABORTED：普通导航中断（如重定向、被新导航取代），并非真实失败
+    if (errorCode === -3 || !isMainFrame) return
+    onMainWindowLoadFailed(new Error(`${errorDescription} (${errorCode}) ${validatedURL}`))
+  })
+
+  loadMainWindowContent()
 }
 
 /** 系统托盘：图标 + 右键菜单（快捷操作 / 显示主界面 / 退出），单击切换窗口显隐 */
