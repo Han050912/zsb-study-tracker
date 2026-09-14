@@ -191,7 +191,9 @@ export async function revokeStatementsForRefIds(env: Env, refIds: string[]): Pro
   }
   for (let i = 0; i < ids.length; i += REVOKE_CHUNK) {
     const chunk = ids.slice(i, i + REVOKE_CHUNK)
-    stmts.push(env.DB.prepare(`DELETE FROM points_log WHERE ref_id IN (${chunk.map(() => '?').join(',')})`).bind(...chunk))
+    stmts.push(
+      env.DB.prepare(`DELETE FROM points_log WHERE ref_id IN (${chunk.map(() => '?').join(',')})`).bind(...chunk)
+    )
   }
   return stmts
 }

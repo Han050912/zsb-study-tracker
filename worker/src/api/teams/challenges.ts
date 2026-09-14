@@ -62,7 +62,11 @@ export function registerChallengeRoutes() {
     const now = nowSec()
 
     // 获取所有成员并初始化进度
-    const members = await all<{ user_id: string }>(ctx.env, 'SELECT user_id FROM team_members WHERE team_id = ?', teamId)
+    const members = await all<{ user_id: string }>(
+      ctx.env,
+      'SELECT user_id FROM team_members WHERE team_id = ?',
+      teamId
+    )
 
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare(
@@ -110,7 +114,11 @@ export function registerChallengeRoutes() {
 
     if (challenge.type === 'streak') {
       // 连续打卡天数
-      const g = await first<{ streak: number }>(ctx.env, 'SELECT streak FROM gamification WHERE user_id = ?', ctx.userId)
+      const g = await first<{ streak: number }>(
+        ctx.env,
+        'SELECT streak FROM gamification WHERE user_id = ?',
+        ctx.userId
+      )
       currentValue = g?.streak ?? 0
     } else if (challenge.type === 'minutes') {
       // 挑战期间的学习时长
@@ -158,7 +166,11 @@ export function registerChallengeRoutes() {
     )
 
     if (isCompleted && !oldProgress?.is_completed) {
-      const team = await first<{ name: string }>(ctx.env, 'SELECT name FROM study_teams WHERE id = ?', challenge.team_id)
+      const team = await first<{ name: string }>(
+        ctx.env,
+        'SELECT name FROM study_teams WHERE id = ?',
+        challenge.team_id
+      )
 
       stmts.push(
         notifyStatement(ctx.env, {

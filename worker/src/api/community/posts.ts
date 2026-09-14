@@ -317,10 +317,12 @@ export function registerPostsRoutes() {
     const revoke: D1PreparedStatement[] = []
     if (isOwner) {
       // 回收全部评论的积分流水（评论帖子/收到评论/回答被采纳），一次批量查询替代逐条串行
-      revoke.push(...(await revokeStatementsForRefIds(
-        ctx.env,
-        commentIds.flatMap((cid) => [`srv:${cid}`, `srv:accept:${cid}`])
-      )))
+      revoke.push(
+        ...(await revokeStatementsForRefIds(
+          ctx.env,
+          commentIds.flatMap((cid) => [`srv:${cid}`, `srv:accept:${cid}`])
+        ))
+      )
       // 回收帖子本身及全部评论的「获赞」流水（取消点赞之外的另一条点赞退出路径）
       revoke.push(...(await revokeLikeStatements(ctx.env, 'post', [id])))
       revoke.push(...(await revokeLikeStatements(ctx.env, 'comment', commentIds)))
@@ -456,10 +458,12 @@ export function registerPostsRoutes() {
     const revoke: D1PreparedStatement[] = []
     if (isOwner) {
       // 回收该评论及其回复的积分流水，一次批量查询替代逐条串行
-      revoke.push(...(await revokeStatementsForRefIds(
-        ctx.env,
-        removedIds.flatMap((cid) => [`srv:${cid}`, `srv:accept:${cid}`])
-      )))
+      revoke.push(
+        ...(await revokeStatementsForRefIds(
+          ctx.env,
+          removedIds.flatMap((cid) => [`srv:${cid}`, `srv:accept:${cid}`])
+        ))
+      )
       revoke.push(...(await revokeLikeStatements(ctx.env, 'comment', removedIds)))
     }
     await batch(ctx.env, [...revoke, ...statements])

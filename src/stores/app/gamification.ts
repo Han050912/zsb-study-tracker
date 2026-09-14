@@ -32,7 +32,10 @@ export const gamificationActions: GamificationActionsShape = {
   },
 
   /** 按匹配条件回收积分：总积分回滚 + 彻底删除对应积分流水（内部公共实现） */
-  revokePointsWhere(this: AppStoreThis, match: (l: { date: string; points: number; reason: string; refId?: string }) => boolean) {
+  revokePointsWhere(
+    this: AppStoreThis,
+    match: (l: { date: string; points: number; reason: string; refId?: string }) => boolean
+  ) {
     const logs = this.gamification.pointsLog.filter(match)
     if (!logs.length) return
     const sum = logs.reduce((s, l) => s + l.points, 0)

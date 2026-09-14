@@ -38,11 +38,7 @@ export function handleUnauthorized(): never {
   throw new ApiError(had ? '登录已过期，请重新登录' : '请先登录', 401)
 }
 
-export async function request<T>(
-  path: string,
-  options: RequestInit = {},
-  timeoutMs?: number
-): Promise<T> {
+export async function request<T>(path: string, options: RequestInit = {}, timeoutMs?: number): Promise<T> {
   const res = await authFetch(path, options, { 'Content-Type': 'application/json' }, timeoutMs)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: '请求失败' }))

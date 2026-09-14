@@ -5,5 +5,4 @@
  * 若后续为 summaries 域新增 action，按 sync.ts 模式补 AppStoreThis 类型标注与 this-free 显式签名类型。
  */
 
-export const summariesActions = {
-}
+export const summariesActions = {}

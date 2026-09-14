@@ -11,18 +11,19 @@ import type { PomodoroRecord } from '../../types'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type PomodoroActionsShape = {
-  recordPomodoro(
-    minutes: number,
-    description?: string,
-    source?: 'solo' | 'party',
-    partnerName?: string
-  ): void
+  recordPomodoro(minutes: number, description?: string, source?: 'solo' | 'party', partnerName?: string): void
   updatePomodoroRecordDescription(id: string, text: string): void
   recordInterruption(reason: string): void
 }
 
 export const pomodoroActions: PomodoroActionsShape = {
-  recordPomodoro(this: AppStoreThis, minutes: number, description = '', source: 'solo' | 'party' = 'solo', partnerName?: string) {
+  recordPomodoro(
+    this: AppStoreThis,
+    minutes: number,
+    description = '',
+    source: 'solo' | 'party' = 'solo',
+    partnerName?: string
+  ) {
     if (minutes < 1) return
     const t = today()
     const now = Date.now()

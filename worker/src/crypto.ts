@@ -38,7 +38,11 @@ export async function decryptSecret(env: Env, ciphertext: string): Promise<strin
     if (parts.length !== 3 || parts[0] !== 'enc') return null
     const iv = fromB64(parts[1])
     const ct = fromB64(parts[2])
-    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, await keyFromSecret(env.ENCRYPT_SECRET || env.JWT_SECRET), ct)
+    const pt = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      await keyFromSecret(env.ENCRYPT_SECRET || env.JWT_SECRET),
+      ct
+    )
     return new TextDecoder().decode(pt)
   } catch {
     // 新密钥解密失败：回退 legacy（历史数据由 JWT_SECRET 派生加密）；两者皆失败则报错并返回 null

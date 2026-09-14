@@ -152,8 +152,14 @@ export function registerMaimemoRoutes() {
     const FETCH_LIMIT = 200
     // 拉取今日条目（新学 + 复习，各自最多 FETCH_LIMIT 条），不按 is_finished 过滤，由前端展示完成状态
     const [newRes, reviewRes] = await Promise.all([
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: true, limit: FETCH_LIMIT }),
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: false, limit: FETCH_LIMIT })
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, {
+        is_new: true,
+        limit: FETCH_LIMIT
+      }),
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, {
+        is_new: false,
+        limit: FETCH_LIMIT
+      })
     ])
     const newItems = newRes.today_items || []
     const reviewItems = reviewRes.today_items || []

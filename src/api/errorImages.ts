@@ -19,11 +19,16 @@ export function errorImageRefOf(image: string): string {
 
 /** 上传错题图片字节（幂等：相同内容 → 服务端算出的同一 id），返回服务端计算的 id */
 export async function uploadErrorImage(bytes: ArrayBuffer): Promise<string> {
-  const res = await authFetch('/api/error-images', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/octet-stream' },
-    body: bytes
-  }, {}, 60_000)
+  const res = await authFetch(
+    '/api/error-images',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: bytes
+    },
+    {},
+    60_000
+  )
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: '' }))
     throw Object.assign(new Error(err.message || `图片上传失败（HTTP ${res.status}）`), { status: res.status })
