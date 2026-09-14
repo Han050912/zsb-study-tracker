@@ -330,6 +330,9 @@ CREATE TABLE IF NOT EXISTS study_records (
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
+CREATE INDEX IF NOT EXISTS idx_study_records_user_date ON study_records(user_id, date);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_study_records_user_date ON study_records(user_id, date)"
 
 -- ========== 刷题记录 ==========
 CREATE TABLE IF NOT EXISTS problem_sessions (
@@ -344,6 +347,9 @@ CREATE TABLE IF NOT EXISTS problem_sessions (
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
+CREATE INDEX IF NOT EXISTS idx_problem_sessions_user_date ON problem_sessions(user_id, date);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_problem_sessions_user_date ON problem_sessions(user_id, date)"
 
 -- ========== 错题本 ==========
 CREATE TABLE IF NOT EXISTS error_questions (
@@ -541,6 +547,9 @@ CREATE INDEX IF NOT EXISTS idx_points_log_ref
   ON points_log(ref_id) WHERE ref_id IS NOT NULL;
 -- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
 --   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_points_log_ref ON points_log(ref_id) WHERE ref_id IS NOT NULL"
+CREATE INDEX IF NOT EXISTS idx_points_log_user ON points_log(user_id);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_points_log_user ON points_log(user_id)"
 
 -- ========== 番茄钟统计 ==========
 CREATE TABLE IF NOT EXISTS pomodoro_daily (
