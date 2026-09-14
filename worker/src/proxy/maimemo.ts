@@ -148,15 +148,18 @@ export function registerMaimemoRoutes() {
     // 子请求上限：Workers 免费计划 50 次/请求。释义最坏走两条路径（墨墨 UGC + 有道回退），
     // 条目上限 20 保证最坏 2×20+2 = 42 次子请求
     const MAX_TODAY_ITEMS = 20
-    // 拉取今日条目（新学 + 复习，各自最多 MAX_TODAY_ITEMS 条），不按 is_finished 过滤，由前端展示完成状态
+    // 子请求上界由 slice(0, MAX_TODAY_ITEMS) 保证，与上游 limit 无关；FETCH_LIMIT 只影响单条响应体积
+    const FETCH_LIMIT = 200
+    // 拉取今日条目（新学 + 复习，各自最多 FETCH_LIMIT 条），不按 is_finished 过滤，由前端展示完成状态
     const [newRes, reviewRes] = await Promise.all([
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: true, limit: MAX_TODAY_ITEMS }),
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: false, limit: MAX_TODAY_ITEMS })
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: true, limit: FETCH_LIMIT }),
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: false, limit: FETCH_LIMIT })
     ])
     const newItems = newRes.today_items || []
     const reviewItems = reviewRes.today_items || []
     const total = newItems.length + reviewItems.length
     const items = [...newItems, ...reviewItems].slice(0, MAX_TODAY_ITEMS)
+    const truncated = total > MAX_TODAY_ITEMS || newItems.length >= FETCH_LIMIT || reviewItems.length >= FETCH_LIMIT
     if (!items.length) return Response.json({ words: [] })
 
     // 批量拉取释义：并发 8 路，优先墨墨 UGC 释义，为空时回退有道词典
@@ -186,7 +189,7 @@ export function registerMaimemoRoutes() {
         meaning: meanings[i]
       })),
       total,
-      truncated: total > items.length
+      truncated
     })
   })
 }
