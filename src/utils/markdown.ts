@@ -108,7 +108,13 @@ let katexPromise: Promise<Katex> | null = null
 /** 首次公式渲染时动态加载 KaTeX（JS 与 CSS 均归入异步 chunk，不进首屏）；后续调用复用缓存 */
 function loadKatex(): Promise<Katex> {
   if (!katexPromise) {
-    katexPromise = Promise.all([import('katex'), import('katex/dist/katex.min.css')]).then(([m]) => m.default)
+    // 加载失败（如网络抖动）时清空缓存，允许下次渲染重试，避免会话内公式永久停在占位样式
+    katexPromise = Promise.all([import('katex'), import('katex/dist/katex.min.css')])
+      .then(([m]) => m.default)
+      .catch((e) => {
+        katexPromise = null
+        throw e
+      })
   }
   return katexPromise
 }
