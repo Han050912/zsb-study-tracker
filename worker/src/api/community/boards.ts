@@ -258,24 +258,23 @@ export function registerBoardsRoutes() {
       ctx.userId
     )
     const tags = myTags.map((r) => r.tag)
-    const followIds = (
-      await all<{ followee_id: string }>(
-        ctx.env,
-        'SELECT followee_id FROM user_follows WHERE follower_id = ?',
-        ctx.userId
-      )
-    ).map((r) => r.followee_id)
+    // 仅探测是否存在关注关系：关注列表改用子查询，避免逐 id 绑定参数触发 D1 单语句 100 参数上限
+    const hasFollows = !!(await first<{ x: number }>(
+      ctx.env,
+      'SELECT 1 AS x FROM user_follows WHERE follower_id = ? LIMIT 1',
+      ctx.userId
+    ))
 
     // 2. 帖子推荐：关注作者 OR 常用 tag；无信号或结果为空则回退热门
     let postRows: any[]
     // 软违规待审帖仅作者/管理员可见（与列表/详情接口同一口径）
     const postsParams: unknown[] = [ctx.userId]
     let postWhere = 'p.is_hidden = 0 AND p.circle_id IS NULL AND (p.is_flagged = 0 OR p.user_id = ?)'
-    if (followIds.length || tags.length) {
+    if (hasFollows || tags.length) {
       const ors: string[] = []
-      if (followIds.length) {
-        ors.push(`p.user_id IN (${followIds.map(() => '?').join(',')})`)
-        postsParams.push(...followIds)
+      if (hasFollows) {
+        ors.push('p.user_id IN (SELECT followee_id FROM user_follows WHERE follower_id = ?)')
+        postsParams.push(ctx.userId)
       }
       if (tags.length) {
         ors.push(`EXISTS (SELECT 1 FROM json_each(p.tags) j WHERE j.value IN (${tags.map(() => '?').join(',')}))`)
