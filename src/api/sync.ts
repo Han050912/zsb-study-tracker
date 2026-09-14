@@ -14,11 +14,13 @@ import type { Gamification } from '../types'
  *   （本次该域实际收到的记录/墓碑中最大的 server_seq/seq）。
  */
 
-/** 积分事件（设计 §5.1）：award 按 refId 幂等落账；revoke 支持 refId 精确与 refPrefix 前缀撤销 */
+/** 积分事件（设计 §5.1）：award 按 refId 幂等落账；revoke 支持 refId 精确、refPrefix 前缀与 all 全量撤销 */
 export interface PointsEvent {
   op: 'award' | 'revoke'
   refId?: string
   refPrefix?: string
+  /** revoke：一次性撤销服务端全部有 ref_id 的流水（无 ref_id 的历史流水不可撤销）；与 refId/refPrefix 互斥 */
+  all?: true
   points?: number
   reason?: string
   date?: string

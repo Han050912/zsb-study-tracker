@@ -107,7 +107,7 @@ export function stageDelete(domain: string, key: string, deletedAt: number): voi
   persist(state)
 }
 
-/** 暂存一条积分事件（award/revoke；服务端按 refId 幂等，重复推送安全） */
+/** 暂存一条积分事件（award/revoke，revoke 含 `all` 全量撤销；发放按 refId 幂等、撤销重复执行安全） */
 export function stagePoints(event: PointsEvent): void {
   if (!currentUserId) return
   const state = load()

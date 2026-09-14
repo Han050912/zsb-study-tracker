@@ -40,8 +40,9 @@ export const importExportActions: ImportExportActionsShape = {
       const now = Date.now()
       // 记录级协议没有整域替换：旧状态中被整批覆盖的记录逐条 stage 删除墓碑
       stageAllDeletes(this.$state, now)
-      // gamification 服务端权威、不可整域推送：对将被覆盖的旧流水按 refId 撤销（新流水随后以事件补齐）
-      for (const l of this.gamification.pointsLog) if (l.refId) stagePoints({ op: 'revoke', refId: l.refId })
+      // gamification 服务端权威、不可整域推送：先以 all 事件一次性清空服务端流水（无 ref_id 的旧流水不可撤销，保持），
+      // 导入的新流水随后由 stageLogAwards 以 award 事件补齐，服务端 points = SUM(log) 与导入结果一致
+      stagePoints({ op: 'revoke', all: true })
       this.$patch({ ...createDefaultState(), ...data })
       this.migrateLegacyData()
       // 恢复笔记正文：新备份单独携带 noteBodies；旧版备份退回 Note.content 内联字段。
@@ -73,8 +74,9 @@ export const importExportActions: ImportExportActionsShape = {
     const now = Date.now()
     // 旧数据逐条 stage 删除墓碑（服务端对 habits/records 等的删除会自动撤销关联积分）
     stageAllDeletes(this.$state, now)
-    // 积分流水按 refId 逐条撤销 → 服务端 points = SUM(log) 归零（无 refId 的旧流水无法撤销，保持）
-    for (const l of this.gamification.pointsLog) if (l.refId) stagePoints({ op: 'revoke', refId: l.refId })
+    // 以 all 事件一次性撤销服务端全部有 ref_id 的流水 → 服务端 points = SUM(log) 归零
+    // （无 ref_id 的旧流水按语义不可撤销，保持；不依赖回传快照是否完整）
+    stagePoints({ op: 'revoke', all: true })
     clearAllNoteBodies()
     this.$patch(createDefaultState())
     // 默认数据（内置科目/习惯/设置）作为新状态整体上行，对齐旧「整域替换」语义

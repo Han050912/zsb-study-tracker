@@ -45,7 +45,8 @@ import { rateLimit } from '../middleware/rateLimit'
  * `gamification` 由服务端权威维护：客户端推送该域 → 400，仅作为快照随 push/pull 响应回传。
  *
  * 积分（设计 §5.1/§5.2，与记录写入**同一 batch**原子提交）：
- * - `points` 事件：`award` 按 `ref_id` 幂等落账、`revoke` 支持 `refId` 精确与 `refPrefix` 前缀撤销。
+ * - `points` 事件：`award` 按 `ref_id` 幂等落账、`revoke` 支持 `refId` 精确、`refPrefix` 前缀与
+ *   `all: true` 全量（撤销该用户全部有 ref_id 的流水，供导入/清空这类「整体替换」场景使用）。
  * - 记录删除被接受（写墓碑）时，服务端**同时**撤销该记录关联的流水（records/problemSessions/exams →
  *   `<key>`；errorQuestions → `error:<key>`；habits → `habit:<key>:%`）。
  * - 权威派生量：今日 `study_records` 分钟 ≥60 → +3（`srv:study-minutes:<date>`）；streak 按学习日期集合
@@ -805,17 +806,17 @@ function validateDomainChanges(
 /**
  * 校验并拆分 points 事件（设计 §5.1）：
  * - `award`：需 `refId`（幂等键）、正整数的 `points`、非空 `reason`；`date` 缺省为服务端今日
- * - `revoke`：`refId`（精确）与 `refPrefix`（前缀）二选一
+ * - `revoke`：`refId`（精确）与 `refPrefix`（前缀）二选一，或 `all: true`（全量撤销，不与前两者同用）
  * 任何非法形状 → 400 中文提示；校验先于任何数据库访问（与域校验同批原子）。
  */
 function parsePointsEvents(points: unknown): {
   awards: PointsAward[]
-  revokes: { refId?: string; refPrefix?: string }[]
+  revokes: { refId?: string; refPrefix?: string; all?: true }[]
 } {
   if (points === undefined || points === null) return { awards: [], revokes: [] }
   if (!Array.isArray(points)) throw new HttpError(400, 'points 必须为数组')
   const awards: PointsAward[] = []
-  const revokes: { refId?: string; refPrefix?: string }[] = []
+  const revokes: { refId?: string; refPrefix?: string; all?: true }[] = []
   for (const item of points) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new HttpError(400, 'points 含非法条目')
     const e = item as Record<string, unknown>
@@ -834,6 +835,14 @@ function parsePointsEvents(points: unknown): {
       continue
     }
     if (e.op === 'revoke') {
+      if (e.all !== undefined && typeof e.all !== 'boolean')
+        throw new HttpError(400, 'points 的 revoke 事件的 all 必须为布尔值')
+      if (e.all === true) {
+        if (refId || refPrefix)
+          throw new HttpError(400, 'points 的 revoke 事件的 all 不能与 refId 或 refPrefix 同时出现')
+        revokes.push({ all: true })
+        continue
+      }
       if (refId && refPrefix) throw new HttpError(400, 'points 的 revoke 事件不能同时给 refId 与 refPrefix')
       if (!refId && !refPrefix) throw new HttpError(400, 'points 的 revoke 事件必须给 refId 或 refPrefix')
       revokes.push({ refId, refPrefix })
@@ -1413,9 +1422,10 @@ export function registerSyncRoutes() {
     const versions: Record<string, number> = {}
     const applied: Record<string, number> = {}
     const deletes: Record<string, number> = {}
-    // 待撤销的积分流水（删除驱动 + 客户端 revoke 事件）：refId 精确 + refPrefix 前缀
+    // 待撤销的积分流水（删除驱动 + 客户端 revoke 事件）：refId 精确 + refPrefix 前缀 + all 全量
     const revokeRefIds = new Set<string>()
     const revokePrefixes = new Set<string>()
+    let revokeAll = false
     /** 待删除的 R2 对象键：R2 无法进 D1 batch，故主 batch 提交后再删 */
     const r2Keys = new Set<string>()
 
@@ -1463,24 +1473,30 @@ export function registerSyncRoutes() {
     for (const r of events.revokes) {
       if (r.refId) revokeRefIds.add(r.refId)
       if (r.refPrefix) revokePrefixes.add(r.refPrefix)
+      if (r.all) revokeAll = true
     }
-    statements.push(...pointsRevokeStatements(ctx.env, ctx.userId, [...revokeRefIds], [...revokePrefixes]))
+    statements.push(...pointsRevokeStatements(ctx.env, ctx.userId, [...revokeRefIds], [...revokePrefixes], revokeAll))
     const awards: PointsAward[] = [...events.awards, ...derived.awards]
     const existing = await readExistingRefIds(
       ctx.env,
       ctx.userId,
       awards.map((a) => a.refId)
     )
-    // 同批 refPrefix 撤销覆盖到的 refId 同样以本次发放为准（前缀撤销删掉旧流水后需重新写入）
+    // 同批 refPrefix 撤销覆盖到的 refId 同样以本次发放为准（前缀撤销删掉旧流水后需重新写入）；
+    // revokeAll 清空全部有 ref_id 的流水，故本次发放的每一条都必须重新写入
     const newAwards = awards.filter(
       (a) =>
-        !existing.has(a.refId) || revokeRefIds.has(a.refId) || [...revokePrefixes].some((p) => a.refId.startsWith(p))
+        !existing.has(a.refId) ||
+        revokeRefIds.has(a.refId) ||
+        revokeAll ||
+        [...revokePrefixes].some((p) => a.refId.startsWith(p))
     )
     statements.push(...pointsAwardStatements(ctx.env, ctx.userId, newAwards))
     statements.push(...derived.statements)
 
-    // 7. 权威投影：points = SUM(points_log.points)；派生过 streak 时一并写回（同批，无中间态）
-    if (newAwards.length || revokeRefIds.size || revokePrefixes.size || derived.streak)
+    // 7. 权威投影：points = SUM(points_log.points)；派生过 streak 时一并写回（同批，无中间态）。
+    //    revokeAll（批量撤销）同样触发重算：清空流水后投影随之归零
+    if (newAwards.length || revokeRefIds.size || revokePrefixes.size || revokeAll || derived.streak)
       statements.push(gamificationProjectionStatement(ctx.env, ctx.userId, derived.streak ?? undefined))
 
     // 7b. 成就集合并集（设计 §5.1/§5.2）：规则留在客户端（`checkAchievements()`），以**事件**传输解锁结果；
