@@ -28,7 +28,7 @@ export async function uploadPdf(id: string, file: File): Promise<void> {
 
 /** 按 note id 拉取 PDF 字节 */
 export async function fetchPdf(id: string): Promise<Uint8Array> {
-  const res = await authFetch(`/api/pdfs/${id}`)
+  const res = await authFetch(`/api/pdfs/${id}`, {}, undefined, 300_000)
   await ensureOk(res, '加载 PDF')
   return new Uint8Array(await res.arrayBuffer())
 }

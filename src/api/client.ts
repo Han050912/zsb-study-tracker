@@ -9,6 +9,16 @@ import { TOKEN_KEY, SESSION_FLAG, hasSession, desktopAuthHeaders } from '../util
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8787'
 
+/** 带状态码的 API 错误：统一替代 `Object.assign(new Error(...), { status })` 样板 */
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 /** 公开凭证端点：其 401 不属于「会话过期」，不做全局登出处理 */
 const CREDENTIAL_PATHS = ['/api/auth/login', '/api/auth/register']
 
@@ -25,14 +35,18 @@ export function handleUnauthorized(): never {
     window.location.hash = '#/login'
   }
   // 曾登录（会话过期）与访客（未登录）的 401 语义不同，提示语区分，避免误导
-  throw Object.assign(new Error(had ? '登录已过期，请重新登录' : '请先登录'), { status: 401 })
+  throw new ApiError(had ? '登录已过期，请重新登录' : '请先登录', 401)
 }
 
-export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await authFetch(path, options, { 'Content-Type': 'application/json' })
+export async function request<T>(
+  path: string,
+  options: RequestInit = {},
+  timeoutMs?: number
+): Promise<T> {
+  const res = await authFetch(path, options, { 'Content-Type': 'application/json' }, timeoutMs)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: '请求失败' }))
-    throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })
+    throw new ApiError(err.message || `HTTP ${res.status}`, res.status)
   }
   return res.json()
 }
@@ -44,7 +58,9 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
 export async function authFetch(
   path: string,
   options: RequestInit = {},
-  baseHeaders: Record<string, string> = {}
+  baseHeaders: Record<string, string> = {},
+  /** 默认 30s 超时，防止弱网下请求永久挂起；下载大文件等慢请求由调用方传更大的 timeoutMs */
+  timeoutMs = 30_000
 ): Promise<Response> {
   const headers: Record<string, string> = {
     ...baseHeaders,
@@ -52,9 +68,12 @@ export async function authFetch(
   }
   // 桌面端附加认证头（X-Desktop-Token 无条件发送；Authorization 仅在 token 存在时）
   Object.assign(headers, desktopAuthHeaders())
+  // 调用方未指定 signal 时启用超时中断（下载大文件等慢请求由调用方传更大的 timeoutMs）
+  const signal = options.signal ?? AbortSignal.timeout(timeoutMs)
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
+    signal,
     ...(isDesktop ? {} : { credentials: 'include' })
   })
   if (res.status === 401 && !CREDENTIAL_PATHS.includes(path)) handleUnauthorized()

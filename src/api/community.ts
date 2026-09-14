@@ -1,4 +1,4 @@
-import { request, authFetch, API_BASE, handleUnauthorized } from './client'
+import { request, authFetch, API_BASE, handleUnauthorized, ApiError } from './client'
 import { desktopAuthHeaders } from '../utils/session'
 import { compressImage } from '../utils/imageCompress'
 import type {
@@ -128,6 +128,9 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
           xhr.withCredentials = true
         }
         xhr.setRequestHeader('Content-Type', blob.type || 'application/octet-stream')
+        // 大图弱网上传可能较慢，给 60s 硬超时（fetch 通道的默认 30s 对应不到 XHR）
+        xhr.timeout = 60_000
+        xhr.ontimeout = () => reject(new ApiError('上传超时，请重试', 408))
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) onProgress?.(Math.min(1, e.loaded / e.total))
         }
@@ -151,10 +154,10 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
               reject(e)
             }
             // handleUnauthorized 为 never（总会 throw），此行为兜底，确保 Promise 必然 settle
-            if (!settled) reject(Object.assign(new Error('登录已过期，请重新登录'), { status: 401 }))
+            if (!settled) reject(new ApiError('登录已过期，请重新登录', 401))
             return
           }
-          reject(Object.assign(new Error(data?.message || `上传失败（HTTP ${xhr.status}）`), { status: xhr.status }))
+          reject(new ApiError(data?.message || `上传失败（HTTP ${xhr.status}）`, xhr.status))
         }
         xhr.onerror = () => reject(new Error('网络错误，上传失败'))
         xhr.send(blob)
