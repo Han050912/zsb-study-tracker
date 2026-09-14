@@ -1,6 +1,7 @@
 import type { Env } from '../index'
 import { on } from '../router'
 import { first, HttpError } from '../db'
+import { rateLimit } from '../middleware/rateLimit'
 import { decryptSecret } from '../crypto'
 
 /**
@@ -109,6 +110,7 @@ async function fetchYoudaoMeaning(word: string): Promise<string> {
 export function registerMaimemoRoutes() {
   // 今日背诵数据：分别拉取新词/复习词的已完成条目计数
   on('POST', '/api/proxy/maimemo/today', true, async (ctx) => {
+    await rateLimit(ctx, 'maimemo:today', 20)
     const token = await maimemoToken(ctx.env, ctx.userId)
     const [newRes, reviewRes] = await Promise.all([
       post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, {
@@ -130,6 +132,7 @@ export function registerMaimemoRoutes() {
 
   // 学习进度：{ finished, total }
   on('GET', '/api/proxy/maimemo/progress', true, async (ctx) => {
+    await rateLimit(ctx, 'maimemo:progress', 30)
     const token = await maimemoToken(ctx.env, ctx.userId)
     const prog = await post<{ progress?: { finished: number; total: number } }>(
       '/api/v1/memo/study/get_study_progress',
@@ -144,6 +147,7 @@ export function registerMaimemoRoutes() {
 
   // 今日单词明细（含拼写 + 释义）：新学 + 复习条目，按学习顺序排列
   on('POST', '/api/proxy/maimemo/today-detail', true, async (ctx) => {
+    await rateLimit(ctx, 'maimemo:today-detail', 5)
     const token = await maimemoToken(ctx.env, ctx.userId)
     // 子请求上限：Workers 免费计划 50 次/请求。释义最坏走两条路径（墨墨 UGC + 有道回退），
     // 条目上限 20 保证最坏 2×20+2 = 42 次子请求

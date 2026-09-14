@@ -101,6 +101,7 @@ export function registerUsersRoutes() {
 
   // 用户资料卡：社区公开荣誉信息（等级/连续打卡/徽章墙/专家认证），不含私有学习数据
   on('GET', '/api/community/users/:id/profile', false, async (ctx) => {
+    await rateLimit(ctx, 'community:profile', 30)
     const u = await first<any>(
       ctx.env,
       `

@@ -1,5 +1,6 @@
 import { on } from '../../router'
 import { all, first, utc8Today } from '../../db'
+import { rateLimit } from '../../middleware/rateLimit'
 import { mapPost, POST_SELECT, nowSec } from './shared'
 
 /**
@@ -10,6 +11,7 @@ import { mapPost, POST_SELECT, nowSec } from './shared'
 export function registerBoardsRoutes() {
   // 每日一题：最新一条被标记且未隐藏的帖子（广场顶部展示）
   on('GET', '/api/community/daily', false, async (ctx) => {
+    await rateLimit(ctx, 'community:daily', 120)
     const row = await first<any>(
       ctx.env,
       `${POST_SELECT} WHERE p.is_daily = 1 AND p.is_hidden = 0 ORDER BY p.created_at DESC LIMIT 1`,
@@ -385,6 +387,7 @@ export function registerBoardsRoutes() {
 
   // 热门话题运营位：近 7 天帖子 tag 频次自动统计（D1 JSON1），叠加管理员 pin/block 干预，上限 5 条
   on('GET', '/api/community/hot-topics', false, async (ctx) => {
+    await rateLimit(ctx, 'community:hot-topics', 60)
     const overrides = await all<{ id: string; text: string; tag: string; action: string }>(
       ctx.env,
       'SELECT id, text, tag, action FROM community_hot_topics'
