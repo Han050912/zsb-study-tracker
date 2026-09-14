@@ -32,7 +32,7 @@ import { registerUploadRoutes, cleanupOrphanUploads } from './api/uploads'
 import { registerFeedbackRoutes } from './api/feedback'
 import './api/teams'
 import { HttpError } from './db'
-import { canCache, getCached, purgeUserCache, putCache } from './middleware/cache'
+import { canCache, canCachePublic, getCached, purgeUserCache, putCache } from './middleware/cache'
 import { corsHeaders } from './cors'
 
 export interface Env {
@@ -73,8 +73,8 @@ export default {
     }
 
     try {
-      // 高频只读 GET 请求走边缘缓存
-      if (canCache(request)) {
+      // 高频只读 GET 请求走边缘缓存（私有前缀按用户隔离，公开图片/头像全站共享）
+      if (canCache(request) || canCachePublic(request)) {
         const cached = await getCached(request)
         if (cached) {
           // Cache API 返回的 Response headers 不可变，需先复制一份再写 CORS 头
@@ -88,7 +88,7 @@ export default {
       for (const [k, v] of Object.entries(cors)) res.headers.set(k, v)
 
       // 缓存成功的 200 响应
-      if (canCache(request) && res.status === 200) {
+      if ((canCache(request) || canCachePublic(request)) && res.status === 200) {
         putCache(request, res.clone(), ctx)
       }
       // 写操作成功后失效该用户的读缓存，避免写入后 TTL 内读到旧数据
