@@ -408,18 +408,18 @@ export const communityApi = {
       body: JSON.stringify({ content })
     }),
   deleteShare: (id: string) => request<{ ok: boolean }>(`/api/partner-shares/${id}`, { method: 'DELETE' }),
-  /** 分享 PDF 原文（受分享权限保护，供预览渲染） */
+  /** 分享 PDF 原文（受分享权限保护，供预览渲染）。大文件慢网下载，给 300s 长超时，与 pdfs.ts 下载同口径 */
   partnerSharePdf: async (id: string): Promise<Uint8Array> => {
-    const res = await authFetch(`/api/partner-shares/${id}/pdf`)
+    const res = await authFetch(`/api/partner-shares/${id}/pdf`, {}, undefined, 300_000)
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: '加载 PDF 失败' }))
       throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })
     }
     return new Uint8Array(await res.arrayBuffer())
   },
-  /** 分享的错题配图（受分享权限保护，经代理返回字节） */
+  /** 分享的错题配图（受分享权限保护，经代理返回字节）。同为二进制下载，长超时避免慢网被默认 30s 截断 */
   partnerShareImage: async (id: string): Promise<Blob> => {
-    const res = await authFetch(`/api/partner-shares/${id}/image`)
+    const res = await authFetch(`/api/partner-shares/${id}/image`, {}, undefined, 300_000)
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: '加载图片失败' }))
       throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })
