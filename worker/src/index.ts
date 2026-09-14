@@ -30,7 +30,7 @@ import { registerLearningPathRoutes } from './api/learningPath'
 import { registerPdfRoutes } from './api/pdfs'
 import { registerUploadRoutes, cleanupOrphanUploads } from './api/uploads'
 import { registerFeedbackRoutes } from './api/feedback'
-import './api/teams'
+import { registerTeamRoutes } from './api/teams'
 import { HttpError } from './db'
 import { canCache, canCachePublic, getCached, purgeUserCache, putCache } from './middleware/cache'
 import { corsHeaders } from './cors'
@@ -148,3 +148,4 @@ registerLearningPathRoutes()
 registerPdfRoutes()
 registerUploadRoutes()
 registerFeedbackRoutes()
+registerTeamRoutes()
