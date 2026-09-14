@@ -62,7 +62,9 @@ onMounted(async () => {
 async function loadDetail() {
   loading.value = true
   try {
-    detail.value = await getTeamDetail(teamId)
+    // 经邀请码跳转进入时透传 invite，私密小组详情接口据此放行非成员
+    const invite = typeof route.query.invite === 'string' ? route.query.invite : undefined
+    detail.value = await getTeamDetail(teamId, invite)
     await loadRequests()
   } catch (e) {
     toast(getErrorMessage(e, '小组不存在'))

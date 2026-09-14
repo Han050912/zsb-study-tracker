@@ -6,7 +6,7 @@ import { parseBody } from '../../schemas'
 import { rateLimit } from '../../middleware/rateLimit'
 import { notifyStatement } from '../community'
 import { assertCleanAsync } from '../sensitive'
-import { nowSec, assertTeamLeader, mapChallenge } from './shared'
+import { nowSec, assertTeamLeader, assertTeamReadable, mapChallenge } from './shared'
 import type { TeamRow, ChallengeRow } from './shared'
 
 /**
@@ -220,11 +220,9 @@ export function registerTeamsRoutes() {
         inviteExpiresAt,
         now
       ),
-      ctx.env.DB.prepare("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, 'leader', ?)").bind(
-        teamId,
-        ctx.userId,
-        now
-      )
+      ctx.env.DB.prepare(
+        "INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, 'leader', ?)"
+      ).bind(teamId, ctx.userId, now)
     ])
 
     return Response.json({ id: teamId })
@@ -236,7 +234,11 @@ export function registerTeamsRoutes() {
     const code = (url.searchParams.get('code') || '').trim().toUpperCase()
     if (!code) throw new HttpError(400, '请输入邀请码')
 
-    const team = await first<TeamRow>(ctx.env, 'SELECT * FROM study_teams WHERE invite_code = ? AND is_public = 0', code)
+    const team = await first<TeamRow>(
+      ctx.env,
+      'SELECT * FROM study_teams WHERE invite_code = ? AND is_public = 0',
+      code
+    )
     if (!team) throw new HttpError(404, '邀请码无效')
     if (!team.invite_code_expires_at || team.invite_code_expires_at < nowSec()) {
       throw new HttpError(410, '邀请码已过期')
@@ -268,6 +270,19 @@ export function registerTeamsRoutes() {
     )
 
     if (!team) throw new HttpError(404, '小组不存在')
+
+    // 私密小组可读性校验：仅成员/管理员/持有效邀请码或被邀请申请人可读；
+    // 持邀请码的申请人经由 /teams/:id?invite= 进入申请页，故邀请码与待审申请均须放行
+    const myRequest = await first<{ user_id: string }>(
+      ctx.env,
+      'SELECT user_id FROM team_join_requests WHERE team_id = ? AND user_id = ?',
+      teamId,
+      ctx.userId
+    )
+    await assertTeamReadable(ctx, team, {
+      inviteCode: new URL(ctx.request.url).searchParams.get('invite'),
+      hasPendingRequest: !!myRequest
+    })
 
     // 获取成员列表
     const members = await all<{
@@ -301,13 +316,6 @@ export function registerTeamsRoutes() {
   `,
       ctx.userId,
       teamId
-    )
-
-    const myRequest = await first<{ user_id: string }>(
-      ctx.env,
-      'SELECT user_id FROM team_join_requests WHERE team_id = ? AND user_id = ?',
-      teamId,
-      ctx.userId
     )
 
     return Response.json({

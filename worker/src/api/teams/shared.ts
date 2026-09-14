@@ -1,9 +1,10 @@
 import type { Env } from '../../index'
 import { first, HttpError } from '../../db'
+import { isAdmin } from '../community/shared'
 
 /**
- * 组队挑战共享 helper：行类型、挑战行 → 前端对象映射、成员/队长校验。
- * 由 teams.ts 与 challenges.ts 复用；leaf 模块，不依赖任何域文件。
+ * 组队挑战共享 helper：行类型、挑战行 → 前端对象映射、成员/队长/可读性校验。
+ * 由 teams.ts 与 challenges.ts 复用；仅额外依赖 community/shared 的 isAdmin（无循环依赖）。
  * 零逻辑改动：本文件声明从原 teams.ts 逐字搬迁，仅加 export。
  */
 
@@ -76,4 +77,26 @@ export async function assertTeamMember(env: Env, userId: string, teamId: string)
 export async function assertTeamLeader(env: Env, userId: string, teamId: string): Promise<void> {
   const member = await assertTeamMember(env, userId, teamId)
   if (member.role !== 'leader') throw new HttpError(403, '仅队长可操作')
+}
+
+/** 小组可读性校验：私密小组仅成员/管理员/持有效邀请码或被邀请申请人可读成员与挑战列表 */
+export async function assertTeamReadable(
+  ctx: { env: Env; userId: string; role?: string },
+  team: TeamRow & { my_role?: string | null },
+  opts: { inviteCode?: string | null; hasPendingRequest?: boolean } = {}
+): Promise<void> {
+  if (team.is_public || team.my_role) return
+  if (await isAdmin(ctx.env, ctx.userId, ctx.role)) return
+  if (opts.hasPendingRequest) return
+  // 邀请码口径与 by-invite / apply 一致：trim + 大写，过期时间为空视为无效
+  const code = (opts.inviteCode ?? '').trim().toUpperCase()
+  if (
+    code &&
+    code === (team.invite_code ?? '') &&
+    !!team.invite_code_expires_at &&
+    team.invite_code_expires_at >= nowSec()
+  ) {
+    return
+  }
+  throw new HttpError(403, '私密小组仅成员可见')
 }

@@ -19,9 +19,10 @@ export async function createTeam(data: {
   })
 }
 
-/** 获取小组详情 */
-export async function getTeamDetail(teamId: string): Promise<TeamDetail> {
-  return request<TeamDetail>(`/api/teams/${teamId}`)
+/** 获取小组详情（私密小组需携带有效邀请码方可读，用于邀请码申请入口） */
+export async function getTeamDetail(teamId: string, inviteCode?: string): Promise<TeamDetail> {
+  const query = inviteCode ? `?invite=${encodeURIComponent(inviteCode)}` : ''
+  return request<TeamDetail>(`/api/teams/${teamId}${query}`)
 }
 
 /** 加入小组 */
