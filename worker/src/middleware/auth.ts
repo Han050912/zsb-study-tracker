@@ -1,7 +1,7 @@
 import type { Env } from '../index'
 import { verifyTokenFull, JWT_TTL_SECONDS } from '../auth'
 import { first, HttpError } from '../db'
-import { isAllowedOrigin } from '../cors'
+import { isAllowedOrigin, isLocalHost } from '../cors'
 
 export const AUTH_COOKIE = 'zsb_session'
 
@@ -55,7 +55,9 @@ async function resolveUser(request: Request, env: Env): Promise<{ userId: string
   // CSRF 防护：Cookie 认证的写请求必须来自可信 Origin（跨站表单/脚本无法伪造 Origin）
   if (ext.fromCookie && !SAFE_METHODS.has(request.method)) {
     const origin = request.headers.get('Origin')
-    if (origin && !isAllowedOrigin(origin, new URL(request.url).host)) throw new HttpError(403, '请求来源不受信任')
+    // 与 index.ts 的 CORS 判定一致：本机 host 或 .dev.vars 显式开关（wrangler dev 下 host 被改写时兜底）
+    const allowLocal = isLocalHost(new URL(request.url).host) || env.ALLOW_LOCAL_ORIGINS === '1'
+    if (origin && !isAllowedOrigin(origin, allowLocal)) throw new HttpError(403, '请求来源不受信任')
   }
   const payload = await verifyTokenFull(ext.token, env.JWT_SECRET)
   if (!payload) throw new HttpError(401, '未登录或登录已过期')

@@ -33,7 +33,7 @@ import { registerFeedbackRoutes } from './api/feedback'
 import { registerTeamRoutes } from './api/teams'
 import { HttpError } from './db'
 import { canCache, canCachePublic, getCached, purgeUserCache, putCache } from './middleware/cache'
-import { corsHeaders } from './cors'
+import { corsHeaders, isLocalHost } from './cors'
 
 export interface Env {
   DB: D1Database
@@ -60,12 +60,17 @@ export interface Env {
   RL_60: RateLimit
   RL_100: RateLimit
   RL_120: RateLimit
+  /** 本地开发 CORS 放行开关：仅在 worker/.dev.vars 中设置 '1'（生产环境禁止配置）。
+   *  wrangler dev 在声明生产 routes 后会把 request.url 的 host 改写为生产域名，
+   *  导致 isLocalHost 判定失效，本地 vite 前端来源被 CORS 拒绝；此开关显式放行本机来源 */
+  ALLOW_LOCAL_ORIGINS?: string
 }
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const origin = request.headers.get('Origin')
-    const cors = corsHeaders(origin, new URL(request.url).host)
+    const allowLocal = isLocalHost(new URL(request.url).host) || env.ALLOW_LOCAL_ORIGINS === '1'
+    const cors = corsHeaders(origin, allowLocal)
 
     // OPTIONS 预检：统一在此处理，不进入路由
     if (request.method === 'OPTIONS') {

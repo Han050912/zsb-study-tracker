@@ -47,6 +47,13 @@ bucket_name = "zsb-study-images"
 #   注意：wrangler.toml 的 account_id 不会自动注入运行时 env，需在 .dev.vars 显式提供。
 CF_ACCOUNT_ID = "f56530b741377e91f44791c2aecd5855"
 
+# ---------- 本地开发 CORS 开关 ----------
+# ALLOW_LOCAL_ORIGINS：本文件已声明生产 routes（cn.zsbservice.de5.net/*），wrangler dev 会把
+#   request.url 的 host 改写为生产域名，使 cors.ts 的 isLocalHost 判定失效、vite dev 前端
+#   （Origin: http://localhost:5173）被 CORS 拒绝。本地开发需在 worker/.dev.vars 中写
+#   ALLOW_LOCAL_ORIGINS=1 显式放行本机来源（见 worker/.dev.vars.example）。
+#   ⚠️ 生产环境禁止配置该变量（不要写入本 [vars] 段，也不要 wrangler secret put）。
+
 # 每周一 08:00（UTC+8）＝ UTC 周一 00:00：双向推送上周学习周报
 [triggers]
 crons = ["0 0 * * 1"]
