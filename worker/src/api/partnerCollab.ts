@@ -129,22 +129,35 @@ export function registerPartnerStudy() {
       ctx.userId
     )
 
-    const records = await Promise.all(
-      rows.map(async (r) => {
-        const side = r.from_id === ctx.userId ? 'from' : 'to'
-        const partnerId = side === 'from' ? r.to_id : r.from_id
-        return {
-          id: r.id,
-          partnerId,
-          partnerName: await displayName(ctx.env, partnerId),
-          partnerAvatar: await avatarOf(ctx.env, partnerId),
-          startedAt: r.created_at,
-          endedAt: r.ended_at ?? r.updated_at,
-          myOnlineSeconds: side === 'from' ? r.from_online_seconds : r.to_online_seconds,
-          partnerOnlineSeconds: side === 'from' ? r.to_online_seconds : r.from_online_seconds
-        }
-      })
-    )
+    // 批量取全部对手方资料（一次 IN 查询替代逐行 displayName + avatarOf）
+    const partnerIds = [...new Set(rows.map((r) => (r.from_id === ctx.userId ? r.to_id : r.from_id)))]
+    const profiles = new Map<string, { name: string; avatar: string | null }>()
+    if (partnerIds.length) {
+      const profRows = await all<{ id: string; name: string; avatar: string | null }>(
+        ctx.env,
+        `SELECT u.id, COALESCE(s.user_name, u.username) AS name, s.avatar
+         FROM users u LEFT JOIN user_settings s ON s.user_id = u.id
+         WHERE u.id IN (${partnerIds.map(() => '?').join(',')})`,
+        ...partnerIds
+      )
+      for (const p of profRows) profiles.set(p.id, p)
+    }
+
+    const records = rows.map((r) => {
+      const side = r.from_id === ctx.userId ? 'from' : 'to'
+      const partnerId = side === 'from' ? r.to_id : r.from_id
+      const p = profiles.get(partnerId)
+      return {
+        id: r.id,
+        partnerId,
+        partnerName: p?.name || '升本人',
+        partnerAvatar: p?.avatar ?? undefined,
+        startedAt: r.created_at,
+        endedAt: r.ended_at ?? r.updated_at,
+        myOnlineSeconds: side === 'from' ? r.from_online_seconds : r.to_online_seconds,
+        partnerOnlineSeconds: side === 'from' ? r.to_online_seconds : r.from_online_seconds
+      }
+    })
     return Response.json({ records })
   })
 
@@ -305,20 +318,32 @@ export function registerPartnerPlans() {
       ctx.userId
     )
 
-    const items = await Promise.all(
-      rows.map(async (r) => {
-        const partnerId = r.from_id === ctx.userId ? r.to_id : r.from_id
-        return {
-          id: r.id,
-          title: r.title,
-          partnerId,
-          partnerName: await displayName(ctx.env, partnerId),
-          taskTotal: r.total,
-          myDone: r.my_done,
-          createdAt: r.created_at
-        }
-      })
-    )
+    // 批量取全部搭子的展示名（一次 IN 查询替代逐行 displayName）
+    const partnerIds = [...new Set(rows.map((r) => (r.from_id === ctx.userId ? r.to_id : r.from_id)))]
+    const partnerNames = new Map<string, string>()
+    if (partnerIds.length) {
+      const nameRows = await all<{ id: string; name: string }>(
+        ctx.env,
+        `SELECT u.id, COALESCE(s.user_name, u.username) AS name FROM users u
+         LEFT JOIN user_settings s ON s.user_id = u.id
+         WHERE u.id IN (${partnerIds.map(() => '?').join(',')})`,
+        ...partnerIds
+      )
+      for (const n of nameRows) partnerNames.set(n.id, n.name)
+    }
+
+    const items = rows.map((r) => {
+      const partnerId = r.from_id === ctx.userId ? r.to_id : r.from_id
+      return {
+        id: r.id,
+        title: r.title,
+        partnerId,
+        partnerName: partnerNames.get(partnerId) || '升本人',
+        taskTotal: r.total,
+        myDone: r.my_done,
+        createdAt: r.created_at
+      }
+    })
     return Response.json({ items })
   })
 
@@ -488,22 +513,34 @@ export function registerPartnerReviews() {
       ctx.userId
     )
 
-    const items = await Promise.all(
-      rows.map(async (r) => {
-        const isFrom = r.from_id === ctx.userId
-        const partnerId = isFrom ? r.to_id : r.from_id
-        return {
-          id: r.id,
-          partnerId,
-          partnerName: await displayName(ctx.env, partnerId),
-          scheduledAt: r.scheduled_at,
-          status: r.status,
-          note: r.note,
-          isFrom,
-          createdAt: r.created_at
-        }
-      })
-    )
+    // 批量取全部对手方的展示名（一次 IN 查询替代逐行 displayName）
+    const partnerIds = [...new Set(rows.map((r) => (r.from_id === ctx.userId ? r.to_id : r.from_id)))]
+    const partnerNames = new Map<string, string>()
+    if (partnerIds.length) {
+      const nameRows = await all<{ id: string; name: string }>(
+        ctx.env,
+        `SELECT u.id, COALESCE(s.user_name, u.username) AS name FROM users u
+         LEFT JOIN user_settings s ON s.user_id = u.id
+         WHERE u.id IN (${partnerIds.map(() => '?').join(',')})`,
+        ...partnerIds
+      )
+      for (const n of nameRows) partnerNames.set(n.id, n.name)
+    }
+
+    const items = rows.map((r) => {
+      const isFrom = r.from_id === ctx.userId
+      const partnerId = isFrom ? r.to_id : r.from_id
+      return {
+        id: r.id,
+        partnerId,
+        partnerName: partnerNames.get(partnerId) || '升本人',
+        scheduledAt: r.scheduled_at,
+        status: r.status,
+        note: r.note,
+        isFrom,
+        createdAt: r.created_at
+      }
+    })
     return Response.json({ items })
   })
 

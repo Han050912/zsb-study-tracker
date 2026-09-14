@@ -127,7 +127,7 @@ function hoursScore(my: number[], other: number[]): number {
 export function registerPartnerRoutes() {
   // 推荐：三维打分（考试日期 40 + 薄弱科目 30 + 活跃时段 30）
   on('GET', '/api/community/partners/suggestions', true, async (ctx) => {
-    // 该接口对每位候选做 2 次子查询，限制调用频率避免放大查询压力
+    // 候选人薄弱科目/活跃时段已合并为 2 次 IN 批量查询（替代逐候选 2 次子查询），限流仍用于控制高频调用总压力
     await rateLimit(ctx, 'community:partner:suggestions', 20)
     const candidates = await all<any>(
       ctx.env,
@@ -158,9 +158,47 @@ export function registerPartnerRoutes() {
     const myWeak = await weakSubjects(ctx.env, ctx.userId)
     const myHours = await topHours(ctx.env, ctx.userId)
 
+    // 批量取全部候选人的薄弱科目（按 候选×科目 分组，与逐候选弱科目查询等价）
+    const candIds = candidates.map((c) => c.id)
+    const weakRows = candIds.length
+      ? await all<{ user_id: string; subject_id: string }>(
+          ctx.env,
+          `SELECT t.user_id, c.subject_id FROM topics t
+           JOIN chapters c ON c.id = t.chapter_id AND c.user_id = t.user_id
+           WHERE t.user_id IN (${candIds.map(() => '?').join(',')}) AND t.mastery > 0
+           GROUP BY t.user_id, c.subject_id HAVING AVG(t.mastery) < 3`,
+          ...candIds
+        )
+      : []
+    const candWeak = new Map<string, string[]>()
+    for (const r of weakRows) {
+      const arr = candWeak.get(r.user_id) ?? []
+      arr.push(r.subject_id)
+      candWeak.set(r.user_id, arr)
+    }
+
+    // 批量取全部候选人的活跃时段（按 候选×小时 分组求和，降序后各取前 3，与逐候选 topHours 等价）
+    const hourRows = candIds.length
+      ? await all<{ user_id: string; h: number }>(
+          ctx.env,
+          `SELECT user_id, CAST(((created_at + 28800) % 86400) / 3600 AS INTEGER) AS h
+           FROM study_records WHERE user_id IN (${candIds.map(() => '?').join(',')}) AND created_at >= ?
+           GROUP BY user_id, h ORDER BY user_id, SUM(minutes) DESC`,
+          ...candIds,
+          nowSec() - 30 * 86400
+        )
+      : []
+    const candHours = new Map<string, number[]>()
+    for (const r of hourRows) {
+      const arr = candHours.get(r.user_id) ?? []
+      if (arr.length < 3) arr.push(r.h)
+      candHours.set(r.user_id, arr)
+    }
+
     const suggestions = []
     for (const c of candidates) {
-      const [cWeak, cHours] = await Promise.all([weakSubjects(ctx.env, c.id), topHours(ctx.env, c.id)])
+      const cWeak = candWeak.get(c.id) ?? []
+      const cHours = candHours.get(c.id) ?? []
       const exam = examScore(myExam, c.exam_date)
       const weak = weakScore(myWeak, cWeak)
       const hours = hoursScore(myHours, cHours)
