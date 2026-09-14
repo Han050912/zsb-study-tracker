@@ -6,14 +6,15 @@ const props = defineProps<{ show: boolean; message: string; danger: boolean }>()
 const emit = defineEmits<{ confirm: []; cancel: [] }>()
 
 const confirmBtn = ref<HTMLButtonElement | null>(null)
-/** Modal 组件实例：经其 $el 拿到对话框根节点（Teleport 到 body），供焦点陷阱枚举可聚焦元素 */
+/** Modal 组件实例：经其暴露的 dialogEl 拿到对话框面板容器，供焦点陷阱枚举可聚焦元素 */
 const modalRef = ref<InstanceType<typeof Modal> | null>(null)
 /** 打开前的活动元素，关闭时还原焦点 */
 let previousFocus: Element | null = null
 
-/** 对话框内全部可聚焦元素（含 Modal 外壳的 × 关闭按钮），Tab 循环以此为界 */
+/** 对话框内全部可聚焦元素（含 Modal 外壳的 × 关闭按钮），Tab 循环以此为界。
+ *  注意：Modal 模板根是 Teleport，$el 非元素节点，须经其 defineExpose 的 dialogEl 取真实容器 */
 function getFocusables(): HTMLElement[] {
-  const root = (modalRef.value as unknown as { $el?: unknown } | null)?.$el
+  const root = (modalRef.value as unknown as { dialogEl?: unknown } | null)?.dialogEl
   if (!(root instanceof HTMLElement)) return []
   return Array.from(
     root.querySelectorAll<HTMLElement>(

@@ -1,8 +1,13 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 defineProps<{ title: string; show: boolean }>()
 const emit = defineEmits<{ close: [] }>()
+
+/** 对话框面板容器（Teleport 内的真实 HTMLElement），暴露给父组件做焦点陷阱等 DOM 枚举 */
+const dialogEl = ref<HTMLElement | null>(null)
+defineExpose({ dialogEl })
 
 const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(() => emit('close'))
 </script>
@@ -17,6 +22,7 @@ const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(() => emit('clo
         @click="onOverlayClick"
       >
         <div
+          ref="dialogEl"
           class="bg-white dark:bg-slate-800 w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[88vh] flex flex-col animate-pop"
         >
           <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700">
