@@ -78,13 +78,3 @@ export async function tryGetAuth(request: Request, env: Env): Promise<{ userId: 
     return { userId: '', role: '' }
   }
 }
-
-/** 解析 JWT → user_id；缺失/无效/已吊销一律 401 */
-export async function requireAuth(request: Request, env: Env): Promise<string> {
-  return (await resolveUser(request, env)).userId
-}
-
-/** 可选认证：解析 JWT → user_id；任何失败均返回空字符串（不抛错），供公开接口识别登录态 */
-export async function tryGetUser(request: Request, env: Env): Promise<string> {
-  return (await tryGetAuth(request, env)).userId
-}

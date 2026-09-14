@@ -23,7 +23,7 @@ export async function uploadErrorImage(bytes: ArrayBuffer): Promise<string> {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: bytes
-  })
+  }, {}, 60_000)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: '' }))
     throw Object.assign(new Error(err.message || `图片上传失败（HTTP ${res.status}）`), { status: res.status })

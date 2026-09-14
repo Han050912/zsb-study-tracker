@@ -83,7 +83,7 @@ export const imageUrl = (path: string) => `${API_BASE}${path}`
 
 /** 上传头像（裸二进制 256×256 裁剪图；服务端写入 user_settings.avatar 并返回新 URL） */
 export async function uploadAvatar(blob: Blob): Promise<{ url: string }> {
-  const res = await authFetch('/api/community/upload?variant=avatar', { method: 'POST', body: blob }, {})
+  const res = await authFetch('/api/community/upload?variant=avatar', { method: 'POST', body: blob }, {}, 60_000)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: '上传失败' }))
     throw Object.assign(new Error(err.message || `HTTP ${res.status}`), { status: res.status })

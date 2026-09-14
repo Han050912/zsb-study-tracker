@@ -211,7 +211,7 @@ function setupAutoUpdater() {
       payload.releaseNotes = fetchedNotes
       if (fetchedDate && !payload.releaseDate) payload.releaseDate = fetchedDate
       send('update:available', payload)
-    })
+    }).catch((e) => console.error('[fetchReleaseNotes] 拉取失败', e && e.message))
   })
 
   autoUpdater.on('download-progress', (p) => {

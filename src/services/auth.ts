@@ -74,8 +74,9 @@ export async function register(username: string, password: string, cfTurnstileTo
   // 前置校验与 Worker 端口径一致，保证错误提示即时
   if (username.length < 2) throw new Error('用户名至少 2 个字符')
   if (username.length > 20) throw new Error('用户名最多 20 个字符')
-  if (password.length < 6) throw new Error('密码至少 6 位')
+  if (password.length < 8) throw new Error('密码至少 8 位')
   if (password.length > 64) throw new Error('密码最多 64 位')
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) throw new Error('密码必须同时包含字母和数字')
   const { token, user } = await authApi.register(username, password, cfTurnstileToken)
   setSession(user, token)
   return user
