@@ -1,9 +1,29 @@
+import { z } from 'zod'
 import { on } from '../router'
 import { crudHandlers } from '../db'
+
+/** 与 materialsMapping.toRow 消费字段一一对应 */
+const materialBodySchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string(),
+    type: z.string(),
+    subjectId: z.string().optional(),
+    priority: z.string().optional(),
+    url: z.string().optional(),
+    fileName: z.string().optional(),
+    author: z.string().optional(),
+    totalPages: z.number().optional(),
+    readPages: z.number().optional(),
+    notes: z.string().optional(),
+    createdAt: z.number().optional()
+  })
+  .passthrough()
 
 /** 学习资料（materials 表 ↔ 前端 Material） */
 export const materialsMapping = crudHandlers({
   table: 'materials',
+  schema: materialBodySchema,
   toRow: (userId, b, id) => ({
     id,
     user_id: userId,

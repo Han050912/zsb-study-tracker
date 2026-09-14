@@ -1,9 +1,22 @@
+import { z } from 'zod'
 import { on } from '../router'
 import { crudHandlers } from '../db'
+
+/** 与 vocabMapping.toRow 消费字段一一对应 */
+const vocabBodySchema = z
+  .object({
+    id: z.string().optional(),
+    date: z.string(),
+    newWords: z.number(),
+    reviewWords: z.number(),
+    points: z.number().optional()
+  })
+  .passthrough()
 
 /** 背单词打卡（vocab_records 表 ↔ 前端 VocabRecord） */
 export const vocabMapping = crudHandlers({
   table: 'vocab_records',
+  schema: vocabBodySchema,
   toRow: (userId, b, id) => ({
     id,
     user_id: userId,

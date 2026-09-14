@@ -1,9 +1,27 @@
+import { z } from 'zod'
 import { on } from '../router'
 import { crudHandlers } from '../db'
+
+/** 与 todosMapping.toRow 消费字段一一对应 */
+const todoBodySchema = z
+  .object({
+    id: z.string().optional(),
+    date: z.string(),
+    text: z.string(),
+    done: z.boolean().optional(),
+    order: z.number().optional(),
+    completedAt: z.number().optional(),
+    startAt: z.number().optional(),
+    dueAt: z.number().optional(),
+    startNotifiedAt: z.number().optional(),
+    dueNotifiedAt: z.number().optional()
+  })
+  .passthrough()
 
 /** 待办事项（todos 表 ↔ 前端 Todo，"order" 为保留字列需引号） */
 export const todosMapping = crudHandlers({
   table: 'todos',
+  schema: todoBodySchema,
   toRow: (userId, b, id) => ({
     id,
     user_id: userId,

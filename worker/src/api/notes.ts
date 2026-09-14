@@ -1,9 +1,24 @@
+import { z } from 'zod'
 import { on } from '../router'
 import { crudHandlers } from '../db'
+
+/** 与 notesMapping.toRow 消费字段一一对应；updatedAt 是 LWW 比较键，必须显式给出（见 toRow 注释） */
+const noteBodySchema = z
+  .object({
+    id: z.string().optional(),
+    subjectId: z.string(),
+    title: z.string(),
+    tags: z.array(z.string()).optional(),
+    type: z.string().optional(),
+    updatedAt: z.number(),
+    bodyUpdatedAt: z.number().optional()
+  })
+  .passthrough()
 
 /** 笔记元数据（正文走 /api/note-bodies；PDF 原文以 note.id 为 pdf_id 走 /api/pdfs）。 */
 export const notesMapping = crudHandlers({
   table: 'notes',
+  schema: noteBodySchema,
   toRow: (userId, b, id) => ({
     id,
     user_id: userId,

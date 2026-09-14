@@ -1,5 +1,9 @@
+import { z } from 'zod'
 import type { Env } from './index'
 import type { Ctx } from './router'
+
+// zod 全局中文报错：crud create/update 校验失败的 400 文案直接回给前端
+z.config(z.locales.zhCN())
 
 /** 业务错误：message 会原样返回给前端 */
 export class HttpError extends Error {
@@ -74,6 +78,22 @@ export interface CrudMapping<Body = any> {
   toRow: (userId: string, body: Body, id: string) => Record<string, unknown>
   /** 数据库行 → 前端 camelCase 对象 */
   fromRow: (row: any) => any
+  /**
+   * 可选请求体校验（建议 z.object(...).passthrough() 宽松模式，仅约束 toRow 消费的字段）：
+   * create/update 时 safeParse，失败抛 400（首个 issue 的字段路径 + 中文文案）；缺席时行为不变。
+   */
+  schema?: z.ZodTypeAny
+}
+
+/** 校验请求体：schema 缺席直接放行；失败取首个 issue 组 400 文案（字段路径 + 中文消息） */
+function validateBody(m: CrudMapping<any>, b: unknown): void {
+  if (!m.schema) return
+  const result = m.schema.safeParse(b)
+  if (!result.success) {
+    const issue = result.error.issues[0]
+    const path = issue.path.join('.')
+    throw new HttpError(400, `参数无效：${path ? `${path} ` : ''}${issue.message}`)
+  }
 }
 
 /** 列名加双引号，兼容 "order" 等保留字列 */
@@ -103,6 +123,7 @@ export function crudHandlers<Body = any>(m: CrudMapping<Body>) {
 
     async create(ctx: Ctx): Promise<Response> {
       const b = (await parseBody(ctx.request)) as Body & { id?: string }
+      validateBody(m, b)
       const id = typeof b?.id === 'string' && b.id ? b.id : uid()
       const row = m.toRow(ctx.userId, b, id)
       const { sql, params } = insertStatement(m.table, row)
@@ -116,6 +137,7 @@ export function crudHandlers<Body = any>(m: CrudMapping<Body>) {
       const exists = await first(ctx.env, `SELECT id FROM ${m.table} WHERE id = ? AND user_id = ?`, id, ctx.userId)
       if (!exists) throw new HttpError(404, '记录不存在')
       const b = (await parseBody(ctx.request)) as Body
+      validateBody(m, b)
       const row = m.toRow(ctx.userId, b, id)
       delete row.id
       delete row.user_id
