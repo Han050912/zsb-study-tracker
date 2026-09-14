@@ -42,6 +42,8 @@ const listRef = ref<HTMLDivElement | null>(null)
 const ordered = computed(() => [...messages.value].reverse())
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+/** 轮询在飞标记：上一次请求未返回时跳过本次 tick，避免请求叠加与重复补拉资料 */
+let pollInFlight = false
 
 async function load(reset = false) {
   try {
@@ -80,11 +82,17 @@ async function scrollToBottom() {
   listRef.value?.scrollTo({ top: listRef.value.scrollHeight })
 }
 
-/** 拉取一次最新消息，若数量变化则滚动到底部 */
+/** 拉取一次最新消息，若数量变化则滚动到底部；上次未返回则跳过本次（失败也不阻塞后续轮询） */
 async function pollOnce() {
-  const before = messages.value.length
-  await load(true)
-  if (messages.value.length !== before) await scrollToBottom()
+  if (pollInFlight) return
+  pollInFlight = true
+  try {
+    const before = messages.value.length
+    await load(true)
+    if (messages.value.length !== before) await scrollToBottom()
+  } finally {
+    pollInFlight = false
+  }
 }
 /** 页面可见时每 5s 轮询新消息；切后台（标签页隐藏/桌面端最小化）暂停，回前台立即补拉一次 */
 function startPolling() {
