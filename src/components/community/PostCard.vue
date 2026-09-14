@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watchEffect } from 'vue'
 import type { CommunityPost, PostType } from '../../types'
 import { levelOf } from '../../data/defaults'
 import { fromNow } from '../../utils/date'
 import { isAdmin, sessionUser } from '../../services/auth'
 import { imageUrl } from '../../api/community'
-import { renderMarkdown } from '../../utils/markdown'
+import { renderMarkdown, hasMath, renderMarkdownWithMath } from '../../utils/markdown'
 import UserAvatar from './UserAvatar.vue'
 import TagBadge from './TagBadge.vue'
 import LikeButton from './LikeButton.vue'
@@ -40,8 +40,26 @@ const TYPE_META: Record<PostType, { label: string; cls: string }> = {
 const level = computed(() => levelOf(props.post.userPoints))
 const meta = computed(() => TYPE_META[props.post.type] || TYPE_META.share)
 const isMine = computed(() => props.post.userId === sessionUser.value?.id)
-/** 详情页 Markdown 渲染（renderMarkdown 内部 html:false 转义原始 HTML + KaTeX 公式） */
-const contentHtml = computed(() => renderMarkdown(props.post.content))
+/**
+ * 详情页 Markdown 渲染（renderMarkdown 内部 html:false 转义原始 HTML 防 XSS）。
+ * 两阶段：同步渲染立即可见（无公式场景即最终态）；含公式时异步加载 KaTeX chunk 后原地升级。
+ */
+const contentHtml = ref('')
+let contentSeq = 0
+watchEffect(() => {
+  const text = props.post.content
+  const seq = ++contentSeq
+  contentHtml.value = renderMarkdown(text)
+  if (hasMath(text)) {
+    renderMarkdownWithMath(text)
+      .then((r) => {
+        if (seq === contentSeq) contentHtml.value = r
+      })
+      .catch(() => {
+        /* KaTeX chunk 加载失败：保留纯文本占位，不阻塞内容展示 */
+      })
+  }
+})
 </script>
 
 <template>

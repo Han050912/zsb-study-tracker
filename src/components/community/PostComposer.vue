@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
@@ -9,7 +9,7 @@ import TagBadge from './TagBadge.vue'
 import { useCommunityStore } from '../../stores/community'
 import { COMMUNITY_TAGS } from '../../data/defaults'
 import { communityApi, IMAGE_MAX_PER_POST } from '../../api/community'
-import { renderMarkdown } from '../../utils/markdown'
+import { renderMarkdown, hasMath, renderMarkdownWithMath } from '../../utils/markdown'
 import type { CommunityCircle, PostType } from '../../types'
 
 /**
@@ -82,7 +82,27 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
 /** Markdown 预览开关 */
 const preview = ref(false)
-const previewHtml = computed(() => renderMarkdown(content.value))
+/**
+ * 预览 HTML（两阶段渲染）：同步渲染立即可见（无公式即最终态）；
+ * 含公式时异步加载 KaTeX chunk 后原地升级。仅预览 Tab 下渲染，编辑态不浪费解析。
+ */
+const previewHtml = ref('')
+let previewSeq = 0
+watchEffect(() => {
+  if (!preview.value) return
+  const text = content.value
+  const seq = ++previewSeq
+  previewHtml.value = renderMarkdown(text)
+  if (hasMath(text)) {
+    renderMarkdownWithMath(text)
+      .then((r) => {
+        if (seq === previewSeq) previewHtml.value = r
+      })
+      .catch(() => {
+        /* KaTeX chunk 加载失败：保留纯文本占位 */
+      })
+  }
+})
 
 /** 我的活跃圈子（广场发帖时可选发入圈内） */
 const myCircles = ref<CommunityCircle[]>([])
