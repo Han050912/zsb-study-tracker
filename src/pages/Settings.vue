@@ -63,13 +63,21 @@ async function toggleReminder(v: boolean) {
 
 // ---- 数据管理 ----
 async function exportData() {
-  const blob = new Blob([await store.exportJSON()], { type: 'application/json' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `专升本学习数据_${new Date().toISOString().slice(0, 10)}.json`
-  a.click()
-  URL.revokeObjectURL(a.href)
-  toast('数据已导出')
+  try {
+    const blob = new Blob([await store.exportJSON()], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `专升本学习数据_${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    // 延迟释放：点击后同步 revoke 会中断下载
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+    toast('数据已导出')
+  } catch (e) {
+    console.error('导出数据失败', e)
+    toast('导出失败，请重试')
+  }
 }
 
 const importFile = ref<HTMLInputElement>()
