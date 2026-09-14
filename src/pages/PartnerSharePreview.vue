@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 搭子分享全屏预览：通知中心与搭子分享页统一入口；完整展示错题/笔记（含图片）+ 批注交流 + 添加到我的笔记 */
-import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
@@ -9,7 +9,7 @@ import { communityApi } from '../api/community'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import PdfViewer from '../components/PdfViewer.vue'
 import Modal from '../components/Modal.vue'
-import { renderMarkdown, hasMath, renderMarkdownWithMath } from '../utils/markdown'
+import { useMarkdownHtml } from '../composables/useMarkdownHtml'
 import { fromNow } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import { useBack } from '../composables/useBack'
@@ -65,22 +65,7 @@ const isOwner = computed(() => !!detail.value && detail.value.ownerId === sessio
  * 笔记正文 HTML（两阶段渲染）：同步渲染立即可见（无公式即最终态）；
  * 含公式时异步加载 KaTeX chunk 后原地升级（同一 v-html 容器，无布局跳动）。
  */
-const noteHtml = ref('')
-let noteSeq = 0
-watchEffect(() => {
-  const text = noteView.value?.content ?? ''
-  const seq = ++noteSeq
-  noteHtml.value = renderMarkdown(text)
-  if (hasMath(text)) {
-    renderMarkdownWithMath(text)
-      .then((r) => {
-        if (seq === noteSeq) noteHtml.value = r
-      })
-      .catch(() => {
-        /* KaTeX chunk 加载失败：保留纯文本占位 */
-      })
-  }
-})
+const noteHtml = useMarkdownHtml(() => noteView.value?.content ?? '')
 
 onMounted(load)
 

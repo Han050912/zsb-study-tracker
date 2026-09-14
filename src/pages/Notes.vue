@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
-import { renderMarkdown, hasMath, renderMarkdownWithMath } from '../utils/markdown'
+import { useMarkdownHtml } from '../composables/useMarkdownHtml'
 import PdfViewer from '../components/PdfViewer.vue'
 import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 import { uploadPdf, fetchPdf, PDF_MAX_BYTES, PDF_MAX_MB } from '../api/pdfs'
@@ -45,22 +45,7 @@ const previewMode = ref<'edit' | 'split' | 'preview'>('split')
  * 草稿预览 HTML（两阶段渲染）：同步渲染立即可见（无公式即最终态）；
  * 含公式时异步加载 KaTeX chunk 后原地升级（同一 v-html 容器，无布局跳动）。
  */
-const draftHtml = ref('')
-let draftSeq = 0
-watchEffect(() => {
-  const text = draft.value?.content || ''
-  const seq = ++draftSeq
-  draftHtml.value = renderMarkdown(text)
-  if (hasMath(text)) {
-    renderMarkdownWithMath(text)
-      .then((r) => {
-        if (seq === draftSeq) draftHtml.value = r
-      })
-      .catch(() => {
-        /* KaTeX chunk 加载失败：保留纯文本占位 */
-      })
-  }
-})
+const draftHtml = useMarkdownHtml(() => draft.value?.content || '')
 
 const selectedId = computed(() => (route.query.id as string) || '')
 
