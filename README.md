@@ -291,6 +291,9 @@ cd zsb-study-tracker
 # 安装项目需要的依赖包（第一次会比较慢，后面就快了）
 npm install
 
+# 复制环境变量示例为本地开发配置（Windows cmd 用 copy 代替 cp；本地开发把 VITE_API_BASE 改为 http://localhost:8787）
+cp .env.example .env.development
+
 # 启动开发服务器，浏览器会自动打开页面
 npm run dev
 ```

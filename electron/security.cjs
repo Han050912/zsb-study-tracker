@@ -9,10 +9,26 @@
 /** 允许交给系统默认浏览器打开的协议（与前端 src/utils/url.ts 的 normalizeUrl 白名单一致） */
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'ftp:'])
 
-/** 通知图标的远程来源 origin 白名单：生产仅应用自身数据源 */
-const ICON_ORIGINS_PROD = new Set(['https://cn.zsbservice.de5.net'])
-/** 开发环境额外允许本地 Worker（.env.development 的 VITE_API_BASE） */
-const ICON_ORIGINS_DEV = new Set(['https://cn.zsbservice.de5.net', 'http://localhost:8787', 'http://127.0.0.1:8787'])
+/**
+ * 通知图标的远程来源 origin 白名单：由调用方传入的 apiBase 推导（API 域名单一来源，
+ * 见 main.cjs 的 API_BASE）；开发环境额外放行本地 Worker。
+ * apiBase 缺失/非法时返回空集合——fail-closed，换域名不会静默放行旧域。
+ */
+function iconOrigins(apiBase, isDev) {
+  const set = new Set()
+  if (apiBase && /^https?:\/\//.test(apiBase)) {
+    try {
+      set.add(new URL(apiBase).origin)
+    } catch {
+      // 非法 apiBase：集合留空，fail-closed
+    }
+  }
+  if (isDev) {
+    set.add('http://localhost:8787')
+    set.add('http://127.0.0.1:8787')
+  }
+  return set
+}
 
 /** 头像资源路径：worker/src/api/uploads.ts 写入的唯一形态 */
 const AVATAR_PATH_RE = /^\/api\/avatar\/[a-f0-9]{16}\.(?:png|jpg|webp)$/
@@ -69,8 +85,9 @@ function isInternalAppUrl(rawUrl, opts = {}) {
 /**
  * 校验通知图标来源：只有应用自身头像资源（或 data:image）才允许交给主进程加载。
  * 目的是阻止渲染进程借主进程网络栈请求任意地址（SSRF / 隐私侧信道）。
+ * 白名单由 opts.apiBase 推导；apiBase 缺失/非法时为空集合，远程图标一律拒绝（fail-closed）。
  * @param {unknown} rawIcon 渲染进程传入的 icon
- * @param {{ isDev?: boolean }} [opts]
+ * @param {{ isDev?: boolean, apiBase?: string }} [opts] apiBase 为 API 域名（空串=远程图标全拒）
  * @returns {string|null} 可用地址；不合规返回 null（调用方回退系统默认图标）
  */
 function resolveNotificationIconUrl(rawIcon, opts = {}) {
@@ -80,7 +97,7 @@ function resolveNotificationIconUrl(rawIcon, opts = {}) {
   if (!url) return null
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
   if (url.username || url.password) return null
-  const allowed = opts.isDev === true ? ICON_ORIGINS_DEV : ICON_ORIGINS_PROD
+  const allowed = iconOrigins(opts.apiBase, opts.isDev === true)
   if (!allowed.has(url.origin)) return null
   if (!AVATAR_PATH_RE.test(url.pathname)) return null
   return url.href

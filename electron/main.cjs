@@ -258,7 +258,7 @@ ipcMain.on('notify:show', async (_e, payload) => {
   const { title, body, icon } = payload || {}
   if (!title) return
   // 图标来源白名单：仅 data:image 与应用自身头像资源（防止渲染进程借主进程网络栈发起任意请求）
-  const allowedIcon = resolveNotificationIconUrl(icon, { isDev })
+  const allowedIcon = resolveNotificationIconUrl(icon, { isDev, apiBase: API_BASE })
   let iconImage
   if (allowedIcon && allowedIcon.startsWith('data:')) {
     try {
