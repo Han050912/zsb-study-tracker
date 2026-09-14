@@ -26,6 +26,8 @@ const CACHE_TTL = 60 // 秒
 /** 构造带用户隔离的缓存 key URL：附加会话 token（Cookie 或 Bearer）的 SHA-256 简略哈希 */
 async function cacheKeyUrl(request: Request): Promise<string> {
   const url = new URL(request.url)
+  // 公开图片/头像内容全站共享：不加 `_c`，避免登录用户带 Cookie 时缓存按会话碎片化、命中率受损
+  if (PUBLIC_PREFIXES.some((p) => url.pathname.startsWith(p))) return url.toString()
   const ext = extractToken(request)
   if (ext) {
     // 哈希后取前 16 个十六进制字符（64 位）作为标识：不把 token 原文放进 URL，
