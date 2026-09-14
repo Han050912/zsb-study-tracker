@@ -65,7 +65,9 @@ export interface Env {
    *  导致 isLocalHost 判定失效，本地 vite 前端来源被 CORS 拒绝；此开关显式放行本机来源 */
   ALLOW_LOCAL_ORIGINS?: string
   /** cron 任务失败告警 webhook（可选，不配=仅 console.error 日志）：
-   *  任一 scheduled 子任务 rejected 时 POST {text: 失败摘要}（兼容飞书/企业微信机器人格式） */
+   *  任一 scheduled 子任务 rejected 时 POST 失败摘要。
+   *  消息体为 `{ "text": "..." }`（Slack incoming webhook 兼容格式；
+   *  飞书/企业微信需各自的包装格式，配置前请确认你的 webhook 端接受该形状） */
   ALERT_WEBHOOK?: string
 }
 
@@ -139,7 +141,11 @@ export default {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text })
-        }).catch((e) => console.error('[cron] webhook 告警发送失败', e))
+        })
+          .then((r) => {
+            if (!r.ok) console.error('[cron] 告警 webhook 返回非 2xx', r.status)
+          })
+          .catch((e) => console.error('[cron] webhook 告警发送失败', e))
       )
     }
   }
