@@ -18,11 +18,17 @@ async function ensureOk(res: Response, action: string): Promise<void> {
 
 /** 上传 PDF 原文（覆盖同 id 对象）。超限时抛出带服务端提示的 Error */
 export async function uploadPdf(id: string, file: File): Promise<void> {
-  const res = await authFetch(`/api/pdfs/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/pdf' },
-    body: file
-  })
+  // 上传与下载同口径 300s 超时：30MB 文件在弱网下超过默认 30s 属常态
+  const res = await authFetch(
+    `/api/pdfs/${id}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/pdf' },
+      body: file
+    },
+    undefined,
+    300_000
+  )
   await ensureOk(res, '上传')
 }
 

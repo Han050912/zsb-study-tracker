@@ -70,12 +70,22 @@ export async function authFetch(
   Object.assign(headers, desktopAuthHeaders())
   // 调用方未指定 signal 时启用超时中断（下载大文件等慢请求由调用方传更大的 timeoutMs）
   const signal = options.signal ?? AbortSignal.timeout(timeoutMs)
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-    signal,
-    ...(isDesktop ? {} : { credentials: 'include' })
-  })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+      signal,
+      ...(isDesktop ? {} : { credentials: 'include' })
+    })
+  } catch (e) {
+    // 默认超时中断触发时 fetch 以英文 DOMException reject，本地化为 ApiError 供 toast 展示；
+    // 调用方自传 signal 的中止由调用方负责，不拦截
+    if (!options.signal && e instanceof DOMException && e.name === 'TimeoutError') {
+      throw new ApiError('请求超时，请重试', 408)
+    }
+    throw e
+  }
   if (res.status === 401 && !CREDENTIAL_PATHS.includes(path)) handleUnauthorized()
   return res
 }

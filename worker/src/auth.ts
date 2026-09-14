@@ -38,7 +38,8 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   if (hash.startsWith('pbkdf2$')) {
     const [, iterStr, saltB64, hashB64] = hash.split('$')
     const iterations = Number(iterStr)
-    if (!iterations || !saltB64 || !hashB64) return false
+    if (!Number.isInteger(iterations) || iterations <= 0 || iterations > 10_000_000) return false
+    if (!saltB64 || !hashB64) return false
     const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
     const bits = await crypto.subtle.deriveBits(
       { name: 'PBKDF2', hash: 'SHA-256', salt: fromB64(saltB64) as BufferSource, iterations },
