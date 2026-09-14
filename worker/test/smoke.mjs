@@ -372,7 +372,7 @@ async function main() {
   const regB = await api('/api/auth/register', { method: 'POST', body: userB })
   const tokenB = regB.data?.token
 
-  // ---- 密码策略（8-14 位 + 字母和数字）----
+  // ---- 密码策略（8-64 位 + 字母和数字）----
   // 注册限流 3 次/分，regA/regDup/regB 已用满窗口：先等窗口滑动，3 个非法密码打满本窗口额度
   console.log('  … 等待 61s 让注册限流窗口滑动')
   await new Promise((r) => setTimeout(r, 61_000))
@@ -392,11 +392,11 @@ async function main() {
   check('注册密码 8 位纯字母被拒绝（400）', pwdLetters.status === 400, JSON.stringify(pwdLetters.data))
   const pwdLong = await api('/api/auth/register', {
     method: 'POST',
-    body: { username: `studyp3_${uniq}`, password: 'a1b2c3d4e5f6g7h' }
+    body: { username: `studyp3_${uniq}`, password: `${'a1'.repeat(32)}b` } // 65 位：超出上限 64
   })
   check(
-    '注册密码 15 位被拒绝（400 密码最多 14 位）',
-    pwdLong.status === 400 && pwdLong.data?.message === '密码最多 14 位',
+    '注册密码 65 位被拒绝（400 密码最多 64 位）',
+    pwdLong.status === 400 && pwdLong.data?.message === '密码最多 64 位',
     JSON.stringify(pwdLong.data)
   )
   // 等待后进入新限流窗口，合法密码用例是新窗口第 1 次注册
@@ -1270,7 +1270,14 @@ async function main() {
     ).status === 200
   )
   check('删除后帖子详情 404', (await api(`/api/community/posts/${postImg.data.id}`, { token: tokenB })).status === 404)
-  check('配图已随删帖从 R2 清理', (await fetchRetry(`${BASE}${imgUrl}`)).status === 404)
+  // 公开图片走边缘缓存 immutable 长缓存（缓存 key = 完整 URL）：imgUrl 在上方已被 GET 过、命中缓存，
+  // 删除后缓存副本在 TTL 内仍可读到是设计接受的窗口（与浏览器 immutable 缓存口径一致）。
+  // 因此这里不直接 GET 原 URL 断言 404，而是附加未见过的 query 参数绕过缓存直查源站，
+  // 断言 R2 对象与上传记录确已删除（更贴近「图片真的没了」的用户语义）。
+  check(
+    '配图已随删帖从 R2 清理（绕过边缘缓存直查源站）',
+    (await fetchRetry(`${BASE}${imgUrl}?_nocache=${Date.now()}`)).status === 404
+  )
 
   // ---- 精华帖 ----
   console.log('[精华帖]')
@@ -1336,7 +1343,12 @@ async function main() {
   )
   const delImgC = await api(`/api/community/comments/${imgC.data?.id}`, { method: 'DELETE', token: tokenA })
   check('删除评论成功', delImgC.status === 200)
-  check('评论配图随删除从 R2 清理', (await fetchRetry(`${BASE}${imgUrl2}`)).status === 404)
+  // 同上的边缘缓存窗口：imgUrl2 虽未被 GET 过（无缓存副本），仍统一用未见过的 query 参数直查源站，
+  // 保证断言验证的是「R2 对象与记录已删除」而非缓存状态，未来新增预热读取也不会引入脆弱性
+  check(
+    '评论配图随删除从 R2 清理（绕过边缘缓存直查源站）',
+    (await fetchRetry(`${BASE}${imgUrl2}?_nocache=${Date.now()}`)).status === 404
+  )
 
   // ---- 敏感词过滤 ----
   // 本节发帖用例共 4 个（加微信/间隔符/标签），加上前面窗口的 3 个（提问缺标签/qPost/sharePost）会超限，
