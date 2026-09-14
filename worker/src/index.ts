@@ -1,5 +1,5 @@
 import { route } from './router'
-import { registerAuthRoutes } from './api/auth'
+import { registerAuthRoutes, cleanupExpiredTokens } from './api/auth'
 import { registerSyncRoutes } from './api/sync'
 import { registerSubjectRoutes } from './api/subjects'
 import { registerRecordRoutes } from './api/records'
@@ -106,12 +106,13 @@ export default {
     }
   },
 
-  /** 每周一 08:00（UTC+8）触发：周报推送与孤图清理 */
+  /** 每周一 08:00（UTC+8）触发：周报推送、孤图清理与黑名单过期清理 */
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-    // 周报推送与孤图清理彼此独立：任一失败不影响另一个（各自 catch 留日志，避免 allSettled 静默吞掉错误）
+    // 三项任务彼此独立：任一失败不影响其他（各自 catch 留日志，避免 allSettled 静默吞掉错误）
     await Promise.allSettled([
       pushWeeklyReports(env).catch((e) => console.error('[cron] 周报推送失败', e)),
-      cleanupOrphanUploads(env).catch((e) => console.error('[cron] 孤图清理失败', e))
+      cleanupOrphanUploads(env).catch((e) => console.error('[cron] 孤图清理失败', e)),
+      cleanupExpiredTokens(env).catch((e) => console.error('[cron] 黑名单清理失败', e))
     ])
   }
 }

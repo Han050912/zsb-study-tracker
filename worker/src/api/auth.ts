@@ -1,6 +1,6 @@
 import { on } from '../router'
 import { hashPassword, verifyPassword, signToken, verifyTokenFull } from '../auth'
-import { first, run, uid, randomCode, HttpError } from '../db'
+import { first, run, batch, uid, randomCode, HttpError } from '../db'
 import { parseBody, registerSchema, loginSchema, timingSafeEqual } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
 import { authCookieHeader, clearAuthCookieHeader, extractToken } from '../middleware/auth'
@@ -89,18 +89,15 @@ export function registerAuthRoutes() {
       role: 'user',
       created_at: Date.now()
     }
-    await run(
-      ctx.env,
-      'INSERT INTO users (id, user_code, username, password_hash, created_at) VALUES (?, ?, ?, ?, ?)',
-      row.id,
-      row.user_code,
-      row.username,
-      row.password_hash,
-      row.created_at
-    )
-    // 初始化用户设置与游戏化数据（昵称取登录用户名，其余默认值由表结构兜底）
-    await run(ctx.env, 'INSERT INTO user_settings (user_id, user_name) VALUES (?, ?)', row.id, row.username)
-    await run(ctx.env, 'INSERT INTO gamification (user_id) VALUES (?)', row.id)
+    // 三条写入合并为一次 batch：D1 保证全成功或全失败，避免半注册状态（顺序不变：users 第一）
+    await batch(ctx.env, [
+      ctx.env.DB.prepare(
+        'INSERT INTO users (id, user_code, username, password_hash, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).bind(row.id, row.user_code, row.username, row.password_hash, row.created_at),
+      // 初始化用户设置与游戏化数据（昵称取登录用户名，其余默认值由表结构兜底）
+      ctx.env.DB.prepare('INSERT INTO user_settings (user_id, user_name) VALUES (?, ?)').bind(row.id, row.username),
+      ctx.env.DB.prepare('INSERT INTO gamification (user_id) VALUES (?)').bind(row.id)
+    ])
     const token = await signToken(row.id, ctx.env.JWT_SECRET, row.role || 'user')
     return Response.json(
       { token, user: toUser(row) },
@@ -136,8 +133,6 @@ export function registerAuthRoutes() {
     if (ext) {
       const payload = await verifyTokenFull(ext.token, ctx.env.JWT_SECRET)
       if (payload?.jti) {
-        // 顺带清理过期条目，避免黑名单无限增长
-        await run(ctx.env, 'DELETE FROM jwt_blacklist WHERE expires_at < ?', Math.floor(Date.now() / 1000))
         await run(
           ctx.env,
           'INSERT OR IGNORE INTO jwt_blacklist (jti, expires_at) VALUES (?, ?)',
@@ -148,4 +143,9 @@ export function registerAuthRoutes() {
     }
     return Response.json({ ok: true }, { headers: { 'Set-Cookie': clearAuthCookieHeader(ctx.request) } })
   })
+}
+
+/** 清理过期黑名单条目（每周 cron 调用，登出处理器不再内联清理） */
+export async function cleanupExpiredTokens(env: Env): Promise<void> {
+  await run(env, 'DELETE FROM jwt_blacklist WHERE expires_at < ?', Math.floor(Date.now() / 1000))
 }
