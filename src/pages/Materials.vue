@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
 import { normalizeUrl } from '../utils/url'
@@ -9,6 +10,7 @@ import type { Material } from '../types'
 
 const store = useAppStore()
 const toast = useToast()
+const confirm = useConfirm()
 
 const filterType = ref('')
 const filterSubject = ref('')
@@ -126,8 +128,8 @@ function openLink(url?: string) {
   window.open(target, '_blank', 'noopener,noreferrer')
 }
 
-function remove() {
-  if (!window.confirm('删除该资料？')) return
+async function remove() {
+  if (!(await confirm('删除该资料？', { danger: true }))) return
   store.deleteMaterial(form.value.id!)
   showModal.value = false
   toast('已删除')

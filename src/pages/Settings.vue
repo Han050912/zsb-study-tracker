@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
 import Modal from '../components/Modal.vue'
 import { isDesktopNotify, notifyPermission, requestNotifyPermission } from '../services/notify'
@@ -9,6 +10,7 @@ import type { NotificationType } from '../types'
 
 const store = useAppStore()
 const toast = useToast()
+const confirm = useConfirm()
 const s = computed(() => store.settings)
 
 const storageUsage = ref('—')
@@ -149,12 +151,13 @@ function onWeightChange(id: string, e: Event) {
 }
 
 /** 删除任意科目（含内置），级联清理关联数据并回收对应积分，删除后对应科目页面自动隐藏 */
-function removeSubject(id: string, name: string) {
+async function removeSubject(id: string, name: string) {
   const extra = id === 'english' ? '，英语专项数据（词汇/阅读/听力/作文模板）也将永久删除' : ''
   if (
-    !window.confirm(
-      `删除「${name}」？其学习记录、笔记、刷题、错题、真题将一并删除${extra}，相关积分同步回收，删除后该科目页面自动隐藏。`
-    )
+    !(await confirm(
+      `删除「${name}」？其学习记录、笔记、刷题、错题、真题将一并删除${extra}，相关积分同步回收，删除后该科目页面自动隐藏。`,
+      { danger: true }
+    ))
   )
     return
   store.removeSubject(id)

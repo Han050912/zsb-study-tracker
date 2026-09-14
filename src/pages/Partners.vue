@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import UserAvatar from '../components/community/UserAvatar.vue'
@@ -13,6 +14,7 @@ const router = useRouter()
 const route = useRoute()
 const { goBack } = useBack()
 const toast = useToast()
+const confirm = useConfirm()
 const suggestions = ref<PartnerSuggestion[]>([])
 const incoming = ref<PartnerItem[]>([])
 const partners = ref<PartnerItem[]>([])
@@ -93,7 +95,7 @@ async function remind(p: PartnerItem) {
 }
 
 async function unbind(p: PartnerItem) {
-  if (!window.confirm(`确认与「${p.userName}」解除搭子关系？`)) return
+  if (!(await confirm(`确认与「${p.userName}」解除搭子关系？`, { danger: true }))) return
   try {
     await communityApi.unbindPartner(p.userId)
     toast('已解除搭子关系')

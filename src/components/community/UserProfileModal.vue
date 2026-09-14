@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
+import { useConfirm } from '../../composables/useConfirm'
 import { useRouter } from 'vue-router'
 import Modal from '../Modal.vue'
 import UserAvatar from './UserAvatar.vue'
@@ -20,6 +21,7 @@ const emit = defineEmits<{ 'update:show': [boolean] }>()
 const router = useRouter()
 
 const toast = useToast()
+const confirm = useConfirm()
 
 const profile = ref<CommunityUserProfile | null>(null)
 const loading = ref(false)
@@ -119,7 +121,7 @@ async function grantVerify() {
 
 async function revokeVerify() {
   if (!profile.value || verifySubmitting.value) return
-  if (!window.confirm(`确认撤销 ${profile.value.userName} 的专家认证？`)) return
+  if (!(await confirm(`确认撤销 ${profile.value.userName} 的专家认证？`))) return
   verifySubmitting.value = true
   try {
     await communityApi.adminUnverifyUser(props.userId)

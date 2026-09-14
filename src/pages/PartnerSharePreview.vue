@@ -3,6 +3,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import UserAvatar from '../components/community/UserAvatar.vue'
@@ -20,6 +21,7 @@ const route = useRoute()
 const router = useRouter()
 const { goBack } = useBack()
 const toast = useToast()
+const confirm = useConfirm()
 const store = useAppStore()
 
 const loading = ref(true)
@@ -129,7 +131,7 @@ async function addComment() {
 async function removeShare() {
   const d = detail.value
   if (!d) return
-  if (!window.confirm('删除这条分享？其中的批注将一并删除。')) return
+  if (!(await confirm('删除这条分享？其中的批注将一并删除。', { danger: true }))) return
   try {
     await communityApi.deleteShare(d.id)
     toast('已删除分享')

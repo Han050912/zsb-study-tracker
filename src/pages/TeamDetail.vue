@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { formatMinutes } from '../utils/date'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import {
   getTeamDetail,
@@ -36,6 +37,7 @@ const route = useRoute()
 const router = useRouter()
 const { goBack } = useBack()
 const toast = useToast()
+const confirm = useConfirm()
 const teamId = route.params.id as string
 
 const inviteInput = ref(typeof route.query.invite === 'string' ? route.query.invite : '')
@@ -168,7 +170,7 @@ async function handleReject() {
 
 async function handleResetCode() {
   if (resettingCode.value) return
-  if (!window.confirm('确认重新生成邀请码？旧邀请码将立即失效。')) return
+  if (!(await confirm('确认重新生成邀请码？旧邀请码将立即失效。'))) return
   resettingCode.value = true
   try {
     await resetInviteCode(teamId)
@@ -252,7 +254,7 @@ async function handleJoin() {
 
 async function handleLeave() {
   if (!team.value || leaveSubmitting.value) return
-  if (!window.confirm('确认退出该小组？')) return
+  if (!(await confirm('确认退出该小组？'))) return
   leaveSubmitting.value = true
   try {
     await leaveTeam(teamId)
@@ -267,7 +269,7 @@ async function handleLeave() {
 
 async function handleTransfer(userId: string, name: string) {
   if (transferSubmitting.value) return
-  if (!window.confirm(`确认将队长转让给 ${name}？`)) return
+  if (!(await confirm(`确认将队长转让给 ${name}？`))) return
   transferSubmitting.value = true
   try {
     await transferLeader(teamId, userId)
@@ -414,7 +416,7 @@ async function handleEdit() {
 
 async function handleDelete(c: TeamChallenge) {
   if (manageSubmitting.value[c.id]) return
-  if (!window.confirm('确认删除该挑战？所有成员进度将一并删除。')) return
+  if (!(await confirm('确认删除该挑战？所有成员进度将一并删除。', { danger: true }))) return
   manageSubmitting.value[c.id] = true
   try {
     await deleteChallenge(c.id)
@@ -429,7 +431,7 @@ async function handleDelete(c: TeamChallenge) {
 
 async function handleCancel(c: TeamChallenge) {
   if (manageSubmitting.value[c.id]) return
-  if (!window.confirm('确认取消该挑战？取消后将暂停进度同步。')) return
+  if (!(await confirm('确认取消该挑战？取消后将暂停进度同步。'))) return
   manageSubmitting.value[c.id] = true
   try {
     await cancelChallenge(c.id)

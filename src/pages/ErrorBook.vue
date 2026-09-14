@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
 import { today } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
@@ -12,6 +13,7 @@ import { ERROR_IMAGE_PREFIX, uploadErrorImage } from '../api/errorImages'
 
 const store = useAppStore()
 const toast = useToast()
+const confirm = useConfirm()
 
 // ---- 分享给搭子（目标错题 id，空 = 关闭弹窗） ----
 const shareTarget = ref('')
@@ -171,8 +173,8 @@ onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 onUnmounted(clearPendingImage)
 
-function removeError(id: string) {
-  if (!window.confirm('确认删除这道错题？')) return
+async function removeError(id: string) {
+  if (!(await confirm('确认删除这道错题？', { danger: true }))) return
   store.deleteError(id)
   toast('已删除')
 }

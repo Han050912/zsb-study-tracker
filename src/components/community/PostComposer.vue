@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
+import { useConfirm } from '../../composables/useConfirm'
 import { useImageUpload } from '../../composables/useImageUpload'
 import Modal from '../Modal.vue'
 import TagBadge from './TagBadge.vue'
@@ -51,6 +52,7 @@ const emit = defineEmits<{ 'update:show': [boolean]; posted: [] }>()
 
 const store = useCommunityStore()
 const toast = useToast()
+const confirm = useConfirm()
 
 /** 提问帖必选的科目标签（与服务端 QUESTION_SUBJECT_TAGS 一致） */
 const QUESTION_SUBJECT_TAGS = ['#高等数学', '#英语']
@@ -155,8 +157,8 @@ const mdActions = [
 /** 经验帖结构化模板文案（科目/方法/心得/建议四段） */
 const EXPERIENCE_TEMPLATE = ['科目：', '学习方法：', '心得体会：', '给后来人的建议：'].join('\n')
 
-function applyExperienceTemplate() {
-  if (content.value.trim() && !window.confirm('替换当前内容为经验帖模板？')) return
+async function applyExperienceTemplate() {
+  if (content.value.trim() && !(await confirm('替换当前内容为经验帖模板？', { danger: true }))) return
   content.value = EXPERIENCE_TEMPLATE
   if (!tags.value.includes('#升本经验') && tags.value.length < 5) tags.value.push('#升本经验')
 }

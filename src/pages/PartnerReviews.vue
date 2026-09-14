@@ -8,6 +8,7 @@
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { communityApi } from '../api/community'
@@ -17,6 +18,7 @@ import type { PartnerItem, PartnerReview } from '../types'
 const route = useRoute()
 const { goBack } = useBack()
 const toast = useToast()
+const confirm = useConfirm()
 
 const loading = ref(true)
 const items = ref<PartnerReview[]>([])
@@ -122,7 +124,7 @@ async function complete(r: PartnerReview) {
 }
 
 async function cancel(r: PartnerReview) {
-  if (!window.confirm('取消这条复盘邀约？')) return
+  if (!(await confirm('取消这条复盘邀约？'))) return
   try {
     await communityApi.deletePartnerReview(r.id)
     if (completingId.value === r.id) completingId.value = ''

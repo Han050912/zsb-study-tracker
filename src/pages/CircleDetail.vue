@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import PostCard from '../components/community/PostCard.vue'
@@ -20,6 +21,7 @@ const route = useRoute()
 const router = useRouter()
 const { goBack } = useBack()
 const toast = useToast()
+const confirm = useConfirm()
 const circleId = route.params.id as string
 
 const detail = ref<CircleDetail | null>(null)
@@ -110,7 +112,7 @@ async function approve(userId: string) {
 }
 
 async function removeMember(userId: string, name: string) {
-  if (!window.confirm(`确认将 ${name} 移出圈子？`)) return
+  if (!(await confirm(`确认将 ${name} 移出圈子？`, { danger: true }))) return
   if (acting.value[userId]) return
   acting.value[userId] = true
   try {

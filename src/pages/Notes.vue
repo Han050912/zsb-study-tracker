@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { renderMarkdown } from '../utils/markdown'
@@ -16,6 +17,7 @@ const store = useAppStore()
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+const confirm = useConfirm()
 
 // ---- 笔记列表（全部科目，按更新时间倒序） ----
 const search = ref('')
@@ -89,14 +91,14 @@ function doSave(silent = false, navigate = true) {
   if (!silent) toast('笔记已保存')
 }
 
-function removeNote() {
+async function removeNote() {
   // 未保存的新草稿：直接丢弃（置 dirty=false 防止 backToList 静默保存）
   if (!draft.value?.id) {
     dirty.value = false
     backToList()
     return
   }
-  if (!window.confirm('删除这篇笔记？')) return
+  if (!(await confirm('删除这篇笔记？', { danger: true }))) return
   store.deleteNote(draft.value.id)
   dirty.value = false
   toast('笔记已删除')

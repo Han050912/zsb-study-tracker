@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
@@ -17,6 +18,7 @@ import { noteBodyExcerpt, noteBodyIncludes, noteBodyIndexVersion } from '../serv
 const props = defineProps<{ subjectId: string }>()
 const store = useAppStore()
 const toast = useToast()
+const confirm = useConfirm()
 
 const subject = computed(() => store.subjectMap[props.subjectId])
 const tab = ref<'chapters' | 'records' | 'problems' | 'exams' | 'notes'>('chapters')
@@ -441,8 +443,8 @@ function saveTopicEdit() {
   showTopicModal.value = false
   toast('知识点已更新')
 }
-function removeChapter(chapterId: string) {
-  if (!window.confirm('删除该章节及其全部知识点？')) return
+async function removeChapter(chapterId: string) {
+  if (!(await confirm('删除该章节及其全部知识点？', { danger: true }))) return
   store.removeChapter(props.subjectId, chapterId)
   toast('章节已删除')
 }

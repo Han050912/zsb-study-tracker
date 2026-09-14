@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
 import { today } from '../utils/date'
 import dayjs from 'dayjs'
@@ -10,6 +11,7 @@ import { VOCAB_HABIT_ID, PROBLEM_HABIT_ID } from '../data/defaults'
 
 const store = useAppStore()
 const toast = useToast()
+const confirm = useConfirm()
 
 /** 输入框自动聚焦指令 */
 const vFocus = { mounted: (el: HTMLElement) => el.focus() }
@@ -102,8 +104,8 @@ const badHeatMaps = computed(() => {
   return Object.fromEntries(badHabits.value.map((h) => [h.id, badHeatData(h)]))
 })
 
-function removeHabit(id: string) {
-  if (!window.confirm('删除该习惯及其记录？')) return
+async function removeHabit(id: string) {
+  if (!(await confirm('删除该习惯及其记录？', { danger: true }))) return
   store.deleteHabit(id)
   toast('已删除')
 }

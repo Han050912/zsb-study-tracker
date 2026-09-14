@@ -10,6 +10,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import dayjs from 'dayjs'
@@ -27,6 +28,7 @@ type Phase = 'idle' | 'focus' | 'done'
 const route = useRoute()
 const { goBack } = useBack()
 const toast = useToast()
+const confirm = useConfirm()
 
 const loading = ref(true)
 const partners = ref<PartnerItem[]>([])
@@ -217,8 +219,8 @@ function choosePause() {
   timer.pause().finally(() => goBack())
 }
 
-function handleEndBtn() {
-  if (!window.confirm('结束本次自习？双方将退出自习室。')) return
+async function handleEndBtn() {
+  if (!(await confirm('结束本次自习？双方将退出自习室。'))) return
   timer.endSession()
 }
 

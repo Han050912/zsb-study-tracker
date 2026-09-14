@@ -2,6 +2,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor } from '../composables/useChart'
@@ -16,6 +17,7 @@ import VocabCheckList from '../components/VocabCheckList.vue'
 const store = useAppStore()
 const route = useRoute()
 const toast = useToast()
+const confirm = useConfirm()
 const eng = computed(() => store.english)
 // 「英语」科目可能被用户在设置页删除，此时页面整体隐藏
 const subjectExists = computed(() => !!store.subjectMap.english)
@@ -41,8 +43,8 @@ function addVocab() {
   toast(`本次背单词打卡成功 +${Math.round((n + r) / 20)} 积分`)
 }
 /** 删除单条打卡记录：本条积分全额回收，同步删除积分流水 */
-function delVocab(id: string) {
-  if (!window.confirm('删除本条背单词打卡记录？对应积分将全额回收。')) return
+async function delVocab(id: string) {
+  if (!(await confirm('删除本条背单词打卡记录？对应积分将全额回收。', { danger: true }))) return
   store.deleteVocabRecord(id)
   toast('记录已删除，积分已回收')
 }

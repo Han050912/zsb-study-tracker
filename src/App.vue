@@ -10,9 +10,11 @@ import { startPartnerReminder, stopPartnerReminder } from './services/partnerRem
 import Toast from './components/Toast.vue'
 import Onboarding from './components/Onboarding.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import { imageUrl, communityApi } from './api/community'
 import { isDndActive } from './utils/dnd'
 import { TOAST_KEY } from './composables/useToast'
+import { CONFIRM_KEY, type ConfirmFn } from './composables/useConfirm'
 
 // 成就分享弹窗按需异步加载：切断入口对 markdown-it/katex 依赖链（AchievementModal → PostComposer → utils/markdown）的静态引用
 const AchievementModal = defineAsyncComponent(() => import('./components/AchievementModal.vue'))
@@ -139,6 +141,20 @@ const mobileNav = computed(() => {
 const toastRef = ref<InstanceType<typeof Toast>>()
 provide(TOAST_KEY, (msg: string) => toastRef.value?.show(msg))
 
+// ---- 全局确认弹窗（替代原生 confirm；App 自身亦直接使用 confirmFn） ----
+const confirmState = ref<{ message: string; danger: boolean; resolve: (ok: boolean) => void } | null>(null)
+const confirmFn: ConfirmFn = (message, options) =>
+  new Promise<boolean>((resolve) => {
+    // 连续调用时新请求覆盖旧状态：旧 Promise 必须 resolve(false) 防悬挂
+    confirmState.value?.resolve(false)
+    confirmState.value = { message, danger: !!options?.danger, resolve }
+  })
+provide(CONFIRM_KEY, confirmFn)
+function resolveConfirm(ok: boolean) {
+  confirmState.value?.resolve(ok)
+  confirmState.value = null
+}
+
 // ---- 主题 ----
 function applyTheme() {
   const t = store.settings.theme
@@ -251,7 +267,7 @@ function goMessages() {
 async function accountLogout(switchAccount: boolean) {
   avatarOpen.value = false
   const tip = switchAccount ? '切换账号？当前数据将被保存。' : '确认退出登录？数据将被保存到云端。'
-  if (!window.confirm(tip)) return
+  if (!(await confirmFn(tip))) return
 
   // ① 阻塞推送全部待保存变更（含笔记正文）：resetState 会清 outbox，必须先等推送完成
   await store.saveAsync()
@@ -487,6 +503,13 @@ if (window.nav) {
     </nav>
 
     <Toast ref="toastRef" />
+    <ConfirmDialog
+      :show="!!confirmState"
+      :message="confirmState?.message ?? ''"
+      :danger="confirmState?.danger ?? false"
+      @confirm="resolveConfirm(true)"
+      @cancel="resolveConfirm(false)"
+    />
     <AchievementModal />
     <Onboarding v-if="showOnboarding" />
     <!-- 桌面端自动更新弹窗（Web 端无 window.updater，自动隐藏） -->

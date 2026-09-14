@@ -2,6 +2,7 @@
 import { computed, inject, nextTick, onMounted, ref, type Ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
@@ -20,6 +21,7 @@ const router = useRouter()
 const { goBack } = useBack()
 const store = useCommunityStore()
 const toast = useToast()
+const confirm = useConfirm()
 /** 侧边栏是否折叠（App.vue 注入），用于底部回复框与主内容区同列对齐 */
 const navCollapsed = inject<Ref<boolean>>('navCollapsed', ref(false))
 
@@ -201,7 +203,7 @@ async function send(text: string, imageUrls: string[]) {
 }
 
 async function removeComment(c: CommunityComment) {
-  if (!window.confirm('确认删除这条评论？')) return
+  if (!(await confirm('确认删除这条评论？', { danger: true }))) return
   const removed = 1 + (c.replies?.length ?? 0)
   try {
     await store.removeComment(c.id, postId, removed)
@@ -229,7 +231,7 @@ async function removeComment(c: CommunityComment) {
 
 // ---- 删帖 ----
 async function removePost() {
-  if (!window.confirm('确认删除这篇帖子？评论和点赞将一并删除。')) return
+  if (!(await confirm('确认删除这篇帖子？评论和点赞将一并删除。', { danger: true }))) return
   try {
     await store.removePost(postId)
     toast('帖子已删除')
@@ -285,11 +287,11 @@ async function accept(c: CommunityComment) {
   if (!post.value || accepting.value) return
   const current = post.value.acceptedAnswerId
   if (current === c.id) {
-    if (!window.confirm('取消采纳这条最佳答案？双方将扣除相应积分。')) return
+    if (!(await confirm('取消采纳这条最佳答案？双方将扣除相应积分。'))) return
   } else if (current) {
-    if (!window.confirm('改采纳这条评论？原最佳答案的采纳将被撤销。')) return
+    if (!(await confirm('改采纳这条评论？原最佳答案的采纳将被撤销。'))) return
   } else {
-    if (!window.confirm(`采纳 @${c.userName} 的回答为最佳答案？对方 +10 积分，你 +3 积分。`)) return
+    if (!(await confirm(`采纳 @${c.userName} 的回答为最佳答案？对方 +10 积分，你 +3 积分。`))) return
   }
   accepting.value = true
   try {

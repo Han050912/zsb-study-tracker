@@ -8,6 +8,7 @@
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute } from 'vue-router'
 import { communityApi } from '../api/community'
 import { useBack } from '../composables/useBack'
@@ -16,6 +17,7 @@ import type { PartnerItem, PartnerPlan, PartnerPlanDetail, PartnerPlanTask } fro
 const route = useRoute()
 const { goBack } = useBack()
 const toast = useToast()
+const confirm = useConfirm()
 
 const loading = ref(true)
 const plans = ref<PartnerPlan[]>([])
@@ -132,7 +134,7 @@ async function addTask() {
 
 async function removeTask(t: PartnerPlanTask) {
   if (!detail.value) return
-  if (!window.confirm(`删除任务「${t.title}」？`)) return
+  if (!(await confirm(`删除任务「${t.title}」？`, { danger: true }))) return
   try {
     await communityApi.deletePlanTask(detail.value.id, t.id)
     toast('任务已删除')
@@ -144,7 +146,7 @@ async function removeTask(t: PartnerPlanTask) {
 
 async function removePlan() {
   if (!detail.value) return
-  if (!window.confirm(`删除计划「${detail.value.title}」？其中的任务将一并删除。`)) return
+  if (!(await confirm(`删除计划「${detail.value.title}」？其中的任务将一并删除。`, { danger: true }))) return
   try {
     await communityApi.deletePartnerPlan(detail.value.id)
     toast('计划已删除')

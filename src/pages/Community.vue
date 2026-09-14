@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRouter } from 'vue-router'
 import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
@@ -22,6 +23,7 @@ import UserAvatar from '../components/community/UserAvatar.vue'
 const store = useCommunityStore()
 const router = useRouter()
 const toast = useToast()
+const confirm = useConfirm()
 
 const showComposer = ref(false)
 const boardTab = ref<'checkin' | 'progress'>('checkin')
@@ -197,7 +199,7 @@ async function toggleHide(id: string) {
 }
 
 async function removePost(id: string) {
-  if (!window.confirm('确认删除这篇帖子？评论和点赞将一并删除。')) return
+  if (!(await confirm('确认删除这篇帖子？评论和点赞将一并删除。', { danger: true }))) return
   try {
     await store.removePost(id)
     toast('帖子已删除')
