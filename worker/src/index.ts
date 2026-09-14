@@ -64,6 +64,9 @@ export interface Env {
    *  wrangler dev 在声明生产 routes 后会把 request.url 的 host 改写为生产域名，
    *  导致 isLocalHost 判定失效，本地 vite 前端来源被 CORS 拒绝；此开关显式放行本机来源 */
   ALLOW_LOCAL_ORIGINS?: string
+  /** cron 任务失败告警 webhook（可选，不配=仅 console.error 日志）：
+   *  任一 scheduled 子任务 rejected 时 POST {text: 失败摘要}（兼容飞书/企业微信机器人格式） */
+  ALERT_WEBHOOK?: string
 }
 
 export default {
@@ -112,13 +115,33 @@ export default {
   },
 
   /** 每周一 08:00（UTC+8）触发：周报推送、孤图清理与黑名单过期清理 */
-  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
-    // 三项任务彼此独立：任一失败不影响其他（各自 catch 留日志，避免 allSettled 静默吞掉错误）
-    await Promise.allSettled([
-      pushWeeklyReports(env).catch((e) => console.error('[cron] 周报推送失败', e)),
-      cleanupOrphanUploads(env).catch((e) => console.error('[cron] 孤图清理失败', e)),
-      cleanupExpiredTokens(env).catch((e) => console.error('[cron] 黑名单清理失败', e))
-    ])
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // 三项任务彼此独立：allSettled 保证任一失败不影响其他；rejected 结果在此统一 console.error 留日志，
+    // 且配置 ALERT_WEBHOOK 时聚合发送 webhook 告警（不配置 = 仅日志，行为同现状）
+    const tasks: [string, Promise<unknown>][] = [
+      ['周报推送', pushWeeklyReports(env)],
+      ['孤图清理', cleanupOrphanUploads(env)],
+      ['黑名单清理', cleanupExpiredTokens(env)]
+    ]
+    const results = await Promise.allSettled(tasks.map(([, p]) => p))
+    const failures: string[] = []
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        const name = tasks[i][0]
+        console.error(`[cron] ${name}失败`, r.reason)
+        failures.push(`${name}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`)
+      }
+    })
+    if (failures.length && env.ALERT_WEBHOOK) {
+      const text = `[zsb-study-api] cron 任务失败 ${failures.length}/${tasks.length}\n${failures.join('\n')}`
+      ctx.waitUntil(
+        fetch(env.ALERT_WEBHOOK, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text })
+        }).catch((e) => console.error('[cron] webhook 告警发送失败', e))
+      )
+    }
   }
 }
 

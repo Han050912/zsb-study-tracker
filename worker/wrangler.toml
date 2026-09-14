@@ -58,6 +58,13 @@ CF_ACCOUNT_ID = "f56530b741377e91f44791c2aecd5855"
 [triggers]
 crons = ["0 0 * * 1"]
 
+# ---------- cron 失败告警（可选）----------
+# ALERT_WEBHOOK：scheduled 子任务（周报推送/孤图清理/黑名单清理）任一失败时，
+#   POST {text: 失败摘要} 到该 URL（兼容飞书/企业微信机器人消息格式）。
+#   不配置 = 现状（仅 console.error 日志，可在 Cloudflare Dashboard / wrangler tail 查看）。
+#   URL 非高敏，可写在本 [vars] 段明文配置；介意暴露则 npx wrangler secret put ALERT_WEBHOOK，
+#   本地调试在 .dev.vars 中写 ALERT_WEBHOOK=xxx。
+
 # ---------- 速率限制（Workers 内置 Rate Limiting binding，2025-09 GA）----------
 # 按限值档位划分绑定；period 仅支持 10/60 秒，计数按 key 分 colo（跨实例共享，非全局精确）。
 # namespace_id 账号内唯一；档位与代码 rateLimit.ts 的 RateLimitTier 一一对应。
