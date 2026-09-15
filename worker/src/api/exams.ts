@@ -31,16 +31,29 @@ export const examsMapping = crudHandlers({
     minutes: b.minutes,
     parts: b.parts ? JSON.stringify(b.parts) : null
   }),
-  fromRow: (r) => ({
-    id: r.id,
-    subjectId: r.subject_id,
-    date: r.date,
-    title: r.title,
-    score: r.score,
-    totalScore: r.total_score,
-    minutes: r.minutes,
-    parts: r.parts ? JSON.parse(r.parts) : undefined
-  })
+  fromRow: (r) => {
+    // parts 为「部分名→得分」的 Record：仅接受纯对象，解析失败或解析出数组/标量时降级为 undefined（等同无该列）
+    let parts: Record<string, number> | undefined
+    if (r.parts) {
+      try {
+        const v = JSON.parse(r.parts)
+        parts = v && typeof v === 'object' && !Array.isArray(v) ? v : undefined
+      } catch {
+        // 数据库中 parts 字段损坏时降级为 undefined，不拖垮整个同步接口
+        parts = undefined
+      }
+    }
+    return {
+      id: r.id,
+      subjectId: r.subject_id,
+      date: r.date,
+      title: r.title,
+      score: r.score,
+      totalScore: r.total_score,
+      minutes: r.minutes,
+      parts
+    }
+  }
 })
 
 export function registerExamRoutes() {

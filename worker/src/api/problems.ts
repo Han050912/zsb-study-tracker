@@ -27,14 +27,25 @@ export const problemsMapping = crudHandlers({
     correct: b.correct,
     types: JSON.stringify(b.types ?? {})
   }),
-  fromRow: (r) => ({
-    id: r.id,
-    subjectId: r.subject_id,
-    date: r.date,
-    total: r.total,
-    correct: r.correct,
-    types: JSON.parse(r.types || '{}')
-  })
+  fromRow: (r) => {
+    let types: Record<string, number>
+    try {
+      const v = JSON.parse(r.types || '{}')
+      // 仅接受「键→数值」的纯对象，解析出数组/标量也视为损坏
+      types = v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+    } catch {
+      // 数据库中 types 字段损坏时降级为空对象，不拖垮整个同步接口
+      types = {}
+    }
+    return {
+      id: r.id,
+      subjectId: r.subject_id,
+      date: r.date,
+      total: r.total,
+      correct: r.correct,
+      types
+    }
+  }
 })
 
 export function registerProblemRoutes() {
