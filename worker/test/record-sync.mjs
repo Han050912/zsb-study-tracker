@@ -1719,7 +1719,7 @@ async function main() {
   })
   check(
     '图片上传成功（64 位 hex id）',
-    upImg.status === 200 && /^[a-f0-9]{64}$/.test(upImg.data?.id ?? ''),
+    upImg.status === 201 && /^[a-f0-9]{64}$/.test(upImg.data?.id ?? ''),
     JSON.stringify(upImg.data)
   )
   const imgId = upImg.data?.id

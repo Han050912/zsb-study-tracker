@@ -67,7 +67,8 @@ export function registerErrorImageRoutes() {
       kind.mime,
       Date.now()
     )
-    return Response.json({ id, size: data.byteLength, contentType: kind.mime })
+    // 创建语义统一 201（与 /api/community/upload 一致）；重复上传同内容为幂等覆盖，同样按创建响应
+    return Response.json({ id, size: data.byteLength, contentType: kind.mime }, { status: 201 })
   })
 
   on('GET', '/api/error-images/:id', true, async (ctx) => {

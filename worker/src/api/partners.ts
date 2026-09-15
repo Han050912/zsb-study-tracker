@@ -258,6 +258,8 @@ export function registerPartnerRoutes() {
   })
 
   // 发起搭子请求（pair_key 唯一约束根治并发；pending 反向 = 互相接受；rejected 后重发回 pending）
+  // 状态码约定：新建或复活请求行（首次发起 / rejected 重发 / 并发冲突时行已由并发孪生请求建成）→ 201；
+  // 仅在既有行上做状态转移（pending 反向互相接受，含并发冲突分支）→ 200
   on('POST', '/api/community/partners/:userId', true, async (ctx) => {
     await rateLimit(ctx, 'community:partner', 10)
     const targetId = ctx.params.userId

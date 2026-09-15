@@ -162,8 +162,8 @@ async function main() {
   console.log('[上传与读取]')
   const up = await postImage(tokenA, png)
   check(
-    '上传返回 200 + 64 位 hex id + size',
-    up.status === 200 && /^[a-f0-9]{64}$/.test(up.data?.id || '') && up.data?.size > 0,
+    '上传返回 201 + 64 位 hex id + size',
+    up.status === 201 && /^[a-f0-9]{64}$/.test(up.data?.id || '') && up.data?.size > 0,
     JSON.stringify(up.data)
   )
   const imageId = up.data?.id
@@ -178,7 +178,7 @@ async function main() {
     0xff, 0xd8, 0xff, 0xe1, 0x00, 0x10, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00, 1, 2, 3, 4, 5, 6, 7, 8, 0xff, 0xd9
   ])
   const upJpg = await postImage(tokenA, jpegExif, 'image/jpeg')
-  check('上传带 EXIF 的 JPEG 返回 200', upJpg.status === 200, JSON.stringify(upJpg.data))
+  check('上传带 EXIF 的 JPEG 返回 201', upJpg.status === 201, JSON.stringify(upJpg.data))
   const jpgGot = await getImage(upJpg.data?.id, tokenA)
   check('EXIF 已被服务端剥离', jpgGot.status === 200 && !jpgGot.bytes.includes(Buffer.from('Exif')))
   check('剥离后字节的 sha256 === 返回的 id（含元数据图片同样成立）', (await sha256Hex(jpgGot.bytes)) === upJpg.data?.id)
@@ -187,7 +187,7 @@ async function main() {
   const upAgain = await postImage(tokenA, png)
   check(
     '重复上传同一内容返回同一 id',
-    upAgain.status === 200 && upAgain.data?.id === imageId,
+    upAgain.status === 201 && upAgain.data?.id === imageId,
     JSON.stringify(upAgain.data)
   )
   check('归属行数为 2（PNG 与 JPEG 各一行）', imageRowCount(userAId) === 2, `实际 ${imageRowCount(userAId)}`)
@@ -213,7 +213,7 @@ async function main() {
 
   // 跨用户隔离前置：B 引用自己上传的同内容图片（同 id、key 按用户隔离）
   const bUp = await postImage(tokenB, png)
-  check('B 上传同内容图片成功', bUp.status === 200, JSON.stringify(bUp.data))
+  check('B 上传同内容图片成功', bUp.status === 201, JSON.stringify(bUp.data))
   await pushErrorQuestions(tokenB, [
     { id: 'b1', subjectId: 'math', date: '2026-09-11', type: '选择', content: 'b', image: `r2:${bUp.data?.id}` }
   ])
