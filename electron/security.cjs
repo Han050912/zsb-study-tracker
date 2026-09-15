@@ -6,6 +6,8 @@
  */
 'use strict'
 
+const path = require('node:path')
+
 /** 允许交给系统默认浏览器打开的协议（与前端 src/utils/url.ts 的 normalizeUrl 白名单一致） */
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'ftp:'])
 
@@ -103,10 +105,35 @@ function resolveNotificationIconUrl(rawIcon, opts = {}) {
   return url.href
 }
 
+/**
+ * 把 app:// 请求路径映射为 distRoot 内的安全绝对路径（registerAppProtocol 的解码/归一化/越界判定）。
+ * 不做文件系统访问：文件是否存在由调用方（main.cjs 的 fs.existsSync）判定。
+ * @param {unknown} rawPathname 未解码的 URL pathname（new URL(request.url).pathname）
+ * @param {string} distRoot dist 目录绝对路径
+ * @returns {{ status: 200, pathname: string, filePath: string } | { status: 400 | 404 }}
+ *   400=非法百分号编码；404=归一化后逃逸出 distRoot；200=安全（pathname 为解码后路径，''/'/' 已归为 /index.html）
+ */
+function resolveAppPath(rawPathname, distRoot) {
+  if (typeof rawPathname !== 'string') return { status: 400 }
+  let pathname
+  try {
+    pathname = decodeURIComponent(rawPathname)
+  } catch {
+    // 非法百分号编码（如 %zz）会抛 URIError
+    return { status: 400 }
+  }
+  if (pathname === '/' || pathname === '') pathname = '/index.html'
+  const filePath = path.join(distRoot, path.normalize(pathname))
+  // 必须以「distRoot + 分隔符」为前缀，防止 C:\x\dist-evil 这类同前缀目录绕过
+  if (!filePath.startsWith(distRoot + path.sep) && filePath !== distRoot) return { status: 404 }
+  return { status: 200, pathname, filePath }
+}
+
 module.exports = {
   EXTERNAL_PROTOCOLS,
   classifyWindowOpen,
   isAllowedExternalUrl,
   isInternalAppUrl,
-  resolveNotificationIconUrl
+  resolveNotificationIconUrl,
+  resolveAppPath
 }

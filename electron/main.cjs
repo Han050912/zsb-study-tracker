@@ -27,7 +27,8 @@ const {
   classifyWindowOpen,
   isAllowedExternalUrl,
   isInternalAppUrl,
-  resolveNotificationIconUrl
+  resolveNotificationIconUrl,
+  resolveAppPath
 } = require('./security.cjs')
 
 const APP_NAME = '专升本学习助手'
@@ -331,19 +332,15 @@ if (!gotLock) {
 /** 自定义 app:// 协议：将请求映射到 dist 目录（含路径穿越防护与非法编码防护） */
 function registerAppProtocol() {
   protocol.handle('app', (request) => {
-    let pathname
-    try {
-      pathname = decodeURIComponent(new URL(request.url).pathname)
-    } catch {
-      // 非法百分号编码（如 %zz）会抛 URIError
+    // 路径解码/归一化/越界判定为纯函数（security.cjs，可单测），此处只做 HTTP 状态映射
+    const resolved = resolveAppPath(new URL(request.url).pathname, DIST_ROOT)
+    if (resolved.status === 400) {
       return new Response('Bad Request', { status: 400 })
     }
-    if (pathname === '/' || pathname === '') pathname = '/index.html'
-    const filePath = path.join(DIST_ROOT, path.normalize(pathname))
-    // 必须以「DIST_ROOT + 分隔符」为前缀，防止 C:\x\dist-evil 这类同前缀目录绕过
-    if ((!filePath.startsWith(DIST_ROOT + path.sep) && filePath !== DIST_ROOT) || !fs.existsSync(filePath)) {
+    if (resolved.status === 404 || !fs.existsSync(resolved.filePath)) {
       return new Response('Not Found', { status: 404 })
     }
+    const { pathname, filePath } = resolved
     // 生产 CSP：仅对 HTML 文档注入严格 CSP 响应头（index.html 已移除 meta CSP，由主进程按环境注入）
     if (pathname.endsWith('.html')) {
       return new Response(fs.readFileSync(filePath), {

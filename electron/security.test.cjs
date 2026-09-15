@@ -1,12 +1,14 @@
 'use strict'
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const path = require('node:path')
 
 const {
   classifyWindowOpen,
   isAllowedExternalUrl,
   isInternalAppUrl,
-  resolveNotificationIconUrl
+  resolveNotificationIconUrl,
+  resolveAppPath
 } = require('./security.cjs')
 
 const AVATAR = '/api/avatar/0123456789abcdef.png'
@@ -128,4 +130,57 @@ test('resolveNotificationIconUrl: 拒绝携带 userinfo 的地址', () => {
   const opts = { isDev: false, apiBase: PROD_API }
   assert.equal(resolveNotificationIconUrl(`https://u:p@cn.zsbservice.de5.net${AVATAR}`, opts), null)
   assert.equal(resolveNotificationIconUrl(`https://cn.zsbservice.de5.net@evil.example${AVATAR}`, opts), null)
+})
+
+// ---------- app:// 路径解析（registerAppProtocol 的路径穿越/非法编码守卫） ----------
+
+// 跨平台造一个绝对 dist 根：POSIX 为 /srv/dist，Windows 取当前盘符的 X:\srv\dist
+const DIST_ROOT = path.join(path.parse(process.cwd()).root, 'srv', 'dist')
+
+test('resolveAppPath: 正常资源映射到 dist 内', () => {
+  const r = resolveAppPath('/assets/index-a1b2.js', DIST_ROOT)
+  assert.equal(r.status, 200)
+  assert.equal(r.pathname, '/assets/index-a1b2.js')
+  assert.equal(r.filePath, path.join(DIST_ROOT, 'assets', 'index-a1b2.js'))
+})
+
+test('resolveAppPath: 根路径与空路径默认指向 index.html', () => {
+  for (const p of ['/', '']) {
+    const r = resolveAppPath(p, DIST_ROOT)
+    assert.equal(r.status, 200)
+    assert.equal(r.pathname, '/index.html')
+    assert.equal(r.filePath, path.join(DIST_ROOT, 'index.html'))
+  }
+})
+
+test('resolveAppPath: 带前导斜杠的 .. 被归一化夹回 dist 内（不逃逸）', () => {
+  // normalize 会丢弃越过根的 ..，这类请求实际落在 dist 内（文件不存在由 main.cjs 的 existsSync 兜底 404）
+  for (const p of ['/../secret', '/..%2f..%2fsecret', '/sub/../../secret', '/%2e%2e/x', '/..%2f..%2f']) {
+    const r = resolveAppPath(p, DIST_ROOT)
+    assert.equal(r.status, 200, p)
+    assert.ok(r.filePath === DIST_ROOT || r.filePath.startsWith(DIST_ROOT + path.sep), `${p} 逃逸出 dist`)
+  }
+})
+
+test('resolveAppPath: 无前导斜杠的相对 .. 穿越直接 404', () => {
+  // 非权威形态 URL（app:...）的 pathname 可能不带前导斜杠，normalize 会保留 ..，必须拒绝
+  for (const p of ['../../secret', '..%2f..%2fsecret', '../%2e%2e/secret']) {
+    assert.equal(resolveAppPath(p, DIST_ROOT).status, 404, p)
+  }
+  // 反斜杠仅在 Windows 上是分隔符（POSIX 上只是普通文件名字符，不构成逃逸）
+  if (process.platform === 'win32') {
+    assert.equal(resolveAppPath('..%5c..%5csecret', DIST_ROOT).status, 404)
+  }
+})
+
+test('resolveAppPath: 同前缀兄弟目录（dist-evil）不能绕过前缀校验', () => {
+  // 守卫必须是 startsWith(distRoot + path.sep)：裸 startsWith(distRoot) 会把 dist-evil 误判为目录内
+  const r = resolveAppPath('..%2fdist-evil%2fsecret.txt', DIST_ROOT)
+  assert.equal(r.status, 404)
+})
+
+test('resolveAppPath: 非法百分号编码返回 400', () => {
+  assert.equal(resolveAppPath('/%zz', DIST_ROOT).status, 400)
+  assert.equal(resolveAppPath('/assets/%', DIST_ROOT).status, 400)
+  assert.equal(resolveAppPath(undefined, DIST_ROOT).status, 400)
 })
