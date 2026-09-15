@@ -36,8 +36,11 @@ const BROADCAST_BADGES: readonly BadgeKey[] = [
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
-/** 发放徽章（幂等）；首次获得时推送 achievement 通知；重大徽章附带成就广播帖语句；返回批处理语句数组（供外部事务调用） */
+/** 发放徽章（幂等）；首次获得时推送 achievement 通知；重大徽章附带成就广播帖语句；返回批处理语句数组（供外部事务调用）。
+ *  两阶段缺口已闭合：徽章行由 run 原子抢占后，效果语句若因调用方批次失败而丢失，
+ *  下次重放会在「已持有但无通知」时补发；广播帖另以 (ref_type, ref_id) 自然键去重。 */
 export async function awardBadge(env: Env, userId: string, key: BadgeKey): Promise<D1PreparedStatement[]> {
+  const content = `🎖️ 你获得了徽章「${BADGE_DEFS[key]}」`
   // 原子抢占：INSERT OR IGNORE 保证并发下仅一次 changes=1，消除「读-检查-写」导致的通知/广播帖重复窗口
   const inserted = await run(
     env,
@@ -46,29 +49,44 @@ export async function awardBadge(env: Env, userId: string, key: BadgeKey): Promi
     key,
     nowSec()
   )
-  if (!inserted.meta.changes) return [] // 已持有，幂等返回空
+  if (!inserted.meta.changes) {
+    // 已持有：通知缺失说明上次调用方的批次整体回滚过（徽章行已提交、效果未提交），此处补发；
+    // 通知已在则视为发放完成，幂等返回空（旧行为，避免重复通知/广播帖）
+    const notified = await first(
+      env,
+      'SELECT 1 AS x FROM community_notifications WHERE user_id = ? AND type = ? AND content = ?',
+      userId,
+      'achievement',
+      content
+    )
+    if (notified) return []
+  }
 
   const stmts: D1PreparedStatement[] = [
     notifyStatement(env, {
       userId,
       type: 'achievement',
-      content: `🎖️ 你获得了徽章「${BADGE_DEFS[key]}」`
+      content
     })
   ]
 
-  // 成就广播帖：服务端模板内容（跳过敏感词校验）、不发放积分（不走发帖路由防刷分）、正常进公共广场
+  // 成就广播帖：服务端模板内容（跳过敏感词校验）、不发放积分（不走发帖路由防刷分）、正常进公共广场。
+  // 插入以 (ref_type='badge', ref_id='<key>:<userId>') 为自然幂等键，补发路径不会重复建帖
   if (BROADCAST_BADGES.includes(key)) {
+    const refId = `${key}:${userId}`
     stmts.push(
       env.DB.prepare(
         'INSERT INTO community_posts (id, user_id, type, content, tags, image_urls, ref_type, ref_id, created_at, updated_at) ' +
-          "VALUES (?, ?, 'achievement', ?, '[]', '[]', 'badge', ?, ?, ?)"
+          "SELECT ?, ?, 'achievement', ?, '[]', '[]', 'badge', ?, ?, ? " +
+          "WHERE NOT EXISTS (SELECT 1 FROM community_posts WHERE ref_type = 'badge' AND ref_id = ?)"
       ).bind(
         uid(),
         userId,
         `🎖️ 达成成就「${BADGE_DEFS[key]}」！每一份坚持都算数，继续加油！`,
-        `${key}:${userId}`,
+        refId,
         nowSec(),
-        nowSec()
+        nowSec(),
+        refId
       )
     )
   }
