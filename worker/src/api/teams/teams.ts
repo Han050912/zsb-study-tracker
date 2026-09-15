@@ -73,22 +73,24 @@ async function validateTeamFields(
   return { name, description, max }
 }
 
-/** 将成员写入小组：原子抢占名额 + 插入成员 + 初始化进行中挑战进度（公开 join 与审批同意复用） */
+/**
+ * 将成员写入小组（公开 join 与审批同意复用）：
+ * 占位判定与入组同批提交，计数在批内按成员表重算，批失败一起回滚（消除抢占成功但插入失败导致计数虚增的窗口）；
+ * 挑战进度初始化保持独立批次（INSERT OR IGNORE 幂等，满员抛错路径不落任何进度行）。
+ */
 async function addMember(env: Env, teamId: string, userId: string): Promise<void> {
-  const claim = await run(
-    env,
-    'UPDATE study_teams SET member_count = member_count + 1 WHERE id = ? AND member_count < max_members',
-    teamId
-  )
-  if (!claim.meta.changes) throw new HttpError(400, '小组人数已满')
-
-  await batch(env, [
-    env.DB.prepare("INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)").bind(
-      teamId,
-      userId,
-      nowSec()
-    )
+  const results = await batch(env, [
+    // 容量判定下推 SQL：仅当前成员数低于上限才插入成员行，changes === 0 即满员
+    env.DB.prepare(
+      "INSERT INTO team_members (team_id, user_id, role, joined_at) SELECT ?, ?, 'member', ? " +
+        'WHERE (SELECT member_count FROM study_teams WHERE id = ?) < (SELECT max_members FROM study_teams WHERE id = ?)'
+    ).bind(teamId, userId, nowSec(), teamId, teamId),
+    // 计数在批内按成员表重算：两种结果下均正确，兼自愈历史漂移（与 removeMemberStmts 的重算口径一致）
+    env.DB.prepare(
+      'UPDATE study_teams SET member_count = (SELECT COUNT(*) FROM team_members WHERE team_id = ?) WHERE id = ?'
+    ).bind(teamId, teamId)
   ])
+  if (!results?.[0]?.meta.changes) throw new HttpError(400, '小组人数已满')
 
   const activeChallenges = await all<{ id: string }>(
     env,

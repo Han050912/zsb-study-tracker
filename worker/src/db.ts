@@ -164,7 +164,8 @@ export function crudHandlers<Body = any>(m: CrudMapping<Body>) {
  * 原子批量执行：D1 保证单个 batch 全成功或全失败。
  * 不分块——分块会破坏「先删后插」全量替换的原子性（中途失败即数据已删未插）。
  * 语句数超出 D1 上限时宁可以错误形式整体失败，也不产生半提交状态。
+ * 返回各语句执行结果（空数组入参返回 undefined），供调用方读取 meta.changes 等；不需要时直接丢弃即可。
  */
 export async function batch(env: Env, statements: D1PreparedStatement[]) {
-  if (statements.length) await env.DB.batch(statements)
+  if (statements.length) return env.DB.batch(statements)
 }
