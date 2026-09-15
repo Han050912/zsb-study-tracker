@@ -269,22 +269,22 @@ async function removeError(id: string) {
       <div class="space-y-3">
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="label">科目</label>
-            <select v-model="form.subjectId" class="input">
+            <label class="label" for="eb-subject">科目</label>
+            <select id="eb-subject" v-model="form.subjectId" class="input">
               <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
             </select>
           </div>
           <div>
-            <label class="label">题型</label>
-            <select v-model="form.type" class="input">
+            <label class="label" for="eb-type">题型</label>
+            <select id="eb-type" v-model="form.type" class="input">
               <option v-for="t in currentTypes" :key="t.key" :value="t.label">{{ t.label }}</option>
             </select>
           </div>
         </div>
         <div>
-          <label class="label">所属章节</label>
+          <label class="label" for="eb-chapter">所属章节</label>
           <div class="grid grid-cols-2 gap-2">
-            <select v-model="chapterPick.chapterName" class="input" @change="onChapterNamePick">
+            <select id="eb-chapter" v-model="chapterPick.chapterName" class="input" @change="onChapterNamePick">
               <option value="">选择章节</option>
               <option v-for="c in currentSubject?.chapters ?? []" :key="c.id" :value="c.name">{{ c.name }}</option>
             </select>
@@ -296,16 +296,22 @@ async function removeError(id: string) {
           <input v-model="form.chapter" class="input mt-2" placeholder="或手动输入章节内容…" />
         </div>
         <div>
-          <label class="label">题目内容</label
-          ><textarea v-model="form.content" rows="3" class="input" placeholder="题干描述…"></textarea>
+          <label class="label" for="eb-content">题目内容</label
+          ><textarea id="eb-content" v-model="form.content" rows="3" class="input" placeholder="题干描述…"></textarea>
         </div>
         <div>
-          <label class="label">解析/正确答案</label
-          ><textarea v-model="form.answer" rows="3" class="input" placeholder="正确解法、易错点…"></textarea>
+          <label class="label" for="eb-answer">解析/正确答案</label
+          ><textarea
+            id="eb-answer"
+            v-model="form.answer"
+            rows="3"
+            class="input"
+            placeholder="正确解法、易错点…"
+          ></textarea>
         </div>
         <div>
-          <label class="label">拍照上传（自动压缩，原图 ≤10MB）</label>
-          <input type="file" accept="image/*" class="text-xs" :disabled="saving" @change="onImage" />
+          <label class="label" for="eb-image">拍照上传（自动压缩，原图 ≤10MB）</label>
+          <input id="eb-image" type="file" accept="image/*" class="text-xs" :disabled="saving" @change="onImage" />
           <img
             v-if="pendingImage"
             :src="pendingImage.preview"

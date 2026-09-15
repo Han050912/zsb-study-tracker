@@ -115,7 +115,7 @@ const tplGroups = computed(() =>
     <div class="space-y-3">
       <input v-model="tplForm.title" class="input" placeholder="模板标题，如：议论文开头万能句" />
       <div>
-        <label class="label">分类</label>
+        <div class="label">分类</div>
         <div class="flex gap-2">
           <button
             v-for="c in TPL_CATEGORIES"
@@ -133,7 +133,7 @@ const tplGroups = computed(() =>
       </div>
       <textarea v-model="tplForm.content" rows="8" class="input !text-xs font-mono" placeholder="模板内容…"></textarea>
       <div>
-        <label class="label">掌握程度</label>
+        <div class="label">掌握程度</div>
         <div class="flex gap-1">
           <button
             v-for="i in 5"

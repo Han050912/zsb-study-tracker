@@ -203,21 +203,21 @@ const priorityColor: Record<string, string> = {
         <input v-model="form.title" class="input" placeholder="标题，如：《高等数学（同济版）》*" />
         <div class="grid grid-cols-3 gap-2">
           <div>
-            <label class="label">类型</label>
-            <select v-model="form.type" class="input">
+            <label class="label" for="mat-type">类型</label>
+            <select id="mat-type" v-model="form.type" class="input">
               <option v-for="t in TYPES" :key="t.k" :value="t.k">{{ t.l }}</option>
             </select>
           </div>
           <div>
-            <label class="label">科目</label>
-            <select v-model="form.subjectId" class="input">
+            <label class="label" for="mat-subject">科目</label>
+            <select id="mat-subject" v-model="form.subjectId" class="input">
               <option :value="undefined">无</option>
               <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ s.name }}</option>
             </select>
           </div>
           <div>
-            <label class="label">优先级</label>
-            <select v-model="form.priority" class="input">
+            <label class="label" for="mat-priority">优先级</label>
+            <select id="mat-priority" v-model="form.priority" class="input">
               <option>高</option>
               <option>中</option>
               <option>低</option>
@@ -299,12 +299,12 @@ const priorityColor: Record<string, string> = {
         </div>
         <div v-if="form.type === 'book'" class="grid grid-cols-2 gap-2">
           <div>
-            <label class="label">总页数</label
-            ><input v-model.number="form.totalPages" type="number" min="0" class="input" />
+            <label class="label" for="mat-total-pages">总页数</label
+            ><input id="mat-total-pages" v-model.number="form.totalPages" type="number" min="0" class="input" />
           </div>
           <div>
-            <label class="label">已读页数</label
-            ><input v-model.number="form.readPages" type="number" min="0" class="input" />
+            <label class="label" for="mat-read-pages">已读页数</label
+            ><input id="mat-read-pages" v-model.number="form.readPages" type="number" min="0" class="input" />
           </div>
         </div>
         <textarea v-model="form.notes" rows="3" class="input" placeholder="阅读笔记摘抄…"></textarea>

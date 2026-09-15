@@ -29,12 +29,12 @@ function addReading() {
     <div class="section-title">阅读理解计时训练</div>
     <div class="grid grid-cols-2 gap-3">
       <div>
-        <label class="label">阅读速度（词/分钟）</label
-        ><input v-model.number="readWpm" type="number" min="0" class="input" />
+        <label class="label" for="en-read-wpm">阅读速度（词/分钟）</label
+        ><input id="en-read-wpm" v-model.number="readWpm" type="number" min="0" class="input" />
       </div>
       <div>
-        <label class="label">正确率（%）</label
-        ><input v-model.number="readAcc" type="number" min="0" max="100" class="input" />
+        <label class="label" for="en-read-acc">正确率（%）</label
+        ><input id="en-read-acc" v-model.number="readAcc" type="number" min="0" max="100" class="input" />
       </div>
     </div>
     <button class="btn-primary w-full" @click="addReading">保存阅读记录</button>

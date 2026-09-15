@@ -169,8 +169,9 @@ function toggleMutedType(t: NotificationType) {
       <div v-if="s.doNotDisturb" class="space-y-3">
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="label">开始时间（留空=全天）</label
+            <label class="label" for="set-dnd-start">开始时间（留空=全天）</label
             ><input
+              id="set-dnd-start"
               type="time"
               :value="s.dndStartTime"
               class="input"
@@ -178,8 +179,9 @@ function toggleMutedType(t: NotificationType) {
             />
           </div>
           <div>
-            <label class="label">结束时间（留空=全天）</label
+            <label class="label" for="set-dnd-end">结束时间（留空=全天）</label
             ><input
+              id="set-dnd-end"
               type="time"
               :value="s.dndEndTime"
               class="input"
@@ -188,7 +190,7 @@ function toggleMutedType(t: NotificationType) {
           </div>
         </div>
         <div>
-          <label class="label">屏蔽的提醒类型（勿扰期间不提示）</label>
+          <div class="label">屏蔽的提醒类型（勿扰期间不提示）</div>
           <div class="flex flex-wrap gap-2 mt-1">
             <button
               v-for="t in notifTypeOptions"

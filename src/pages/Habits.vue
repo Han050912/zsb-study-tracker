@@ -253,10 +253,11 @@ async function removeHabit(id: string) {
     <Modal title="新建习惯" :show="showModal" @close="showModal = false">
       <div class="space-y-3">
         <div>
-          <label class="label">习惯名称</label><input v-model="form.name" class="input" placeholder="如：每日复盘" />
+          <label class="label" for="habit-name">习惯名称</label
+          ><input id="habit-name" v-model="form.name" class="input" placeholder="如：每日复盘" />
         </div>
         <div>
-          <label class="label">量化方式</label>
+          <div class="label">量化方式</div>
           <div class="grid grid-cols-4 gap-1.5">
             <button
               v-for="t in [
@@ -275,8 +276,8 @@ async function removeHabit(id: string) {
           </div>
         </div>
         <div v-if="form.type !== 'checkbox'">
-          <label class="label">每日目标</label
-          ><input v-model.number="form.target" type="number" min="1" class="input" />
+          <label class="label" for="habit-target">每日目标</label
+          ><input id="habit-target" v-model.number="form.target" type="number" min="1" class="input" />
         </div>
         <label class="flex items-center gap-2 text-sm"
           ><input type="checkbox" v-model="form.bad" class="accent-red-500" /> 这是坏习惯（监督模式）</label

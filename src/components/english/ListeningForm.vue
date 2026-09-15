@@ -30,20 +30,20 @@ function addListening() {
     <div class="section-title">听力练习</div>
     <div class="grid grid-cols-2 gap-3">
       <div>
-        <label class="label">时长（分钟）</label
-        ><input v-model.number="lisMinutes" type="number" min="1" class="input" />
+        <label class="label" for="en-lis-minutes">时长（分钟）</label
+        ><input id="en-lis-minutes" v-model.number="lisMinutes" type="number" min="1" class="input" />
       </div>
       <div>
-        <label class="label">模式</label>
-        <select v-model="lisMode" class="input">
+        <label class="label" for="en-lis-mode">模式</label>
+        <select id="en-lis-mode" v-model="lisMode" class="input">
           <option>精听</option>
           <option>泛听</option>
         </select>
       </div>
     </div>
     <div>
-      <label class="label">材料</label
-      ><input v-model="lisMaterial" class="input" placeholder="如：历年真题听力 Section A" />
+      <label class="label" for="en-lis-material">材料</label
+      ><input id="en-lis-material" v-model="lisMaterial" class="input" placeholder="如：历年真题听力 Section A" />
     </div>
     <button class="btn-primary w-full" @click="addListening">保存听力记录</button>
   </div>

@@ -276,8 +276,8 @@ async function confirmCopy() {
     <Modal title="添加到我的笔记" :show="copyDialog" @close="copyDialog = false">
       <div class="space-y-3">
         <p class="text-xs text-slate-500 dark:text-slate-400">将会生成一份笔记副本保存到你的笔记列表</p>
-        <label class="block text-xs text-slate-500 dark:text-slate-300">归属科目（必选）</label>
-        <select v-model="copySubjectId" class="input !text-xs">
+        <label class="block text-xs text-slate-500 dark:text-slate-300" for="psp-copy-subject">归属科目（必选）</label>
+        <select id="psp-copy-subject" v-model="copySubjectId" class="input !text-xs">
           <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
         </select>
       </div>

@@ -314,17 +314,32 @@ function cancelEdit() {
         </div>
         <div v-if="mode === 'countdown'" class="grid grid-cols-2 gap-3">
           <div>
-            <label class="label">专注（分钟）</label
-            ><input v-model.number="focusMinutes" type="number" min="1" max="120" class="input" />
+            <label class="label" for="pomo-focus-minutes">专注（分钟）</label
+            ><input
+              id="pomo-focus-minutes"
+              v-model.number="focusMinutes"
+              type="number"
+              min="1"
+              max="120"
+              class="input"
+            />
           </div>
           <div>
-            <label class="label">休息（分钟）</label
-            ><input v-model.number="breakMinutes" type="number" min="1" max="30" class="input" />
+            <label class="label" for="pomo-break-minutes">休息（分钟）</label
+            ><input
+              id="pomo-break-minutes"
+              v-model.number="breakMinutes"
+              type="number"
+              min="1"
+              max="30"
+              class="input"
+            />
           </div>
         </div>
         <div>
-          <label class="label">任务描述（选填）</label>
+          <label class="label" for="pomo-task">任务描述（选填）</label>
           <input
+            id="pomo-task"
             v-model="taskDescription"
             maxlength="50"
             class="input"

@@ -55,8 +55,15 @@ const emit = defineEmits<{ invite: [] }>()
           </button>
         </div>
         <div v-if="mode === 'countdown'">
-          <label class="label">专注（分钟）</label
-          ><input v-model.number="focusMinutes" type="number" min="1" max="120" class="input !text-xs" />
+          <label class="label" for="pp-focus-minutes">专注（分钟）</label
+          ><input
+            id="pp-focus-minutes"
+            v-model.number="focusMinutes"
+            type="number"
+            min="1"
+            max="120"
+            class="input !text-xs"
+          />
         </div>
       </div>
       <button class="btn-primary w-full !text-xs" :disabled="!selectedId || creating" @click="emit('invite')">

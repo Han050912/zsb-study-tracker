@@ -110,10 +110,11 @@
       <form @submit.prevent="handleCreate">
         <div class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="team-name">
               小组名称 <span class="text-red-500">*</span>
             </label>
             <input
+              id="team-name"
               v-model="form.name"
               type="text"
               maxlength="30"
@@ -123,8 +124,11 @@
             />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">小组描述</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="team-desc"
+              >小组描述</label
+            >
             <textarea
+              id="team-desc"
               v-model="form.description"
               maxlength="200"
               rows="3"
@@ -133,8 +137,11 @@
             ></textarea>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">最大人数</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="team-max-members"
+              >最大人数</label
+            >
             <input
+              id="team-max-members"
               v-model.number="form.maxMembers"
               type="number"
               min="2"

@@ -110,17 +110,21 @@ function restoreDefaults() {
   <Modal title="添加扩展科目" :show="showSubject" @close="showSubject = false">
     <div class="space-y-3">
       <div>
-        <label class="label">科目名称</label
-        ><input v-model="subForm.name" class="input" placeholder="如：计算机基础、政治、专业课" />
+        <label class="label" for="set-sub-name">科目名称</label
+        ><input id="set-sub-name" v-model="subForm.name" class="input" placeholder="如：计算机基础、政治、专业课" />
       </div>
       <div class="grid grid-cols-3 gap-2">
-        <div><label class="label">图标 emoji</label><input v-model="subForm.icon" class="input" maxlength="4" /></div>
         <div>
-          <label class="label">颜色</label><input v-model="subForm.color" type="color" class="input !p-1 h-9" />
+          <label class="label" for="set-sub-icon">图标 emoji</label
+          ><input id="set-sub-icon" v-model="subForm.icon" class="input" maxlength="4" />
         </div>
         <div>
-          <label class="label">考核权重%</label
-          ><input v-model.number="subForm.weight" type="number" min="1" max="100" class="input" />
+          <label class="label" for="set-sub-color">颜色</label
+          ><input id="set-sub-color" v-model="subForm.color" type="color" class="input !p-1 h-9" />
+        </div>
+        <div>
+          <label class="label" for="set-sub-weight">考核权重%</label
+          ><input id="set-sub-weight" v-model.number="subForm.weight" type="number" min="1" max="100" class="input" />
         </div>
       </div>
     </div>

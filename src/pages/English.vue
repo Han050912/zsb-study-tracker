@@ -210,12 +210,12 @@ async function loadTodayWords() {
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="label">本次新学</label
-              ><input v-model.number="newWords" type="number" min="0" class="input" />
+              <label class="label" for="en-vocab-new">本次新学</label
+              ><input id="en-vocab-new" v-model.number="newWords" type="number" min="0" class="input" />
             </div>
             <div>
-              <label class="label">本次复习</label
-              ><input v-model.number="reviewWords" type="number" min="0" class="input" />
+              <label class="label" for="en-vocab-review">本次复习</label
+              ><input id="en-vocab-review" v-model.number="reviewWords" type="number" min="0" class="input" />
             </div>
           </div>
           <button class="btn-primary w-full mt-3" @click="addVocab">

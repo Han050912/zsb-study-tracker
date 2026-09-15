@@ -262,7 +262,7 @@ function openCommunityShare() {
 
         <div class="card space-y-4">
           <div>
-            <label class="label">今日心情</label>
+            <div class="label">今日心情</div>
             <div class="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
               <button
                 v-for="m in MOODS"
@@ -276,8 +276,9 @@ function openCommunityShare() {
             </div>
           </div>
           <div>
-            <label class="label">今日收获</label>
+            <label class="label" for="ds-harvest">今日收获</label>
             <textarea
+              id="ds-harvest"
               v-model="form.harvest"
               rows="3"
               class="input"
@@ -285,12 +286,18 @@ function openCommunityShare() {
             ></textarea>
           </div>
           <div>
-            <label class="label">不足反思</label>
-            <textarea v-model="form.improve" rows="3" class="input" placeholder="哪里做得不够好？如何改进？"></textarea>
+            <label class="label" for="ds-improve">不足反思</label>
+            <textarea
+              id="ds-improve"
+              v-model="form.improve"
+              rows="3"
+              class="input"
+              placeholder="哪里做得不够好？如何改进？"
+            ></textarea>
           </div>
           <div>
-            <label class="label">明日计划</label>
-            <textarea v-model="form.plan" rows="3" class="input" placeholder="明天要完成什么？"></textarea>
+            <label class="label" for="ds-plan">明日计划</label>
+            <textarea id="ds-plan" v-model="form.plan" rows="3" class="input" placeholder="明天要完成什么？"></textarea>
           </div>
           <button class="btn-primary w-full" @click="save">保存总结</button>
         </div>
