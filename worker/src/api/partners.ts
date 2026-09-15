@@ -48,6 +48,86 @@ async function weeklyStats(env: Env, uid: string, weekStart: string, weekEnd: st
   }
 }
 
+/** IN (...) 分块大小：留出日期等其它绑定参数余量，避免超 D1 100 绑定上限（与社区域 REVOKE_CHUNK 同口径） */
+const IN_CHUNK = 90
+
+/** 批量取展示名（用户设置昵称优先，回退用户名；与 displayName 同口径，缺失回退「升本人」） */
+async function displayNamesBatch(env: Env, uids: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  for (let i = 0; i < uids.length; i += IN_CHUNK) {
+    const part = uids.slice(i, i + IN_CHUNK)
+    const rows = await all<{ id: string; name: string }>(
+      env,
+      `SELECT u.id, COALESCE(s.user_name, u.username) AS name FROM users u
+       LEFT JOIN user_settings s ON s.user_id = u.id
+       WHERE u.id IN (${part.map(() => '?').join(',')})`,
+      ...part
+    )
+    for (const r of rows) map.set(r.id, r.name || '升本人')
+  }
+  return map
+}
+
+/** 批量周统计（cron 专用）：分块 GROUP BY 一次取全部用户的四项指标，替代逐用户 4 次查询 */
+async function weeklyStatsBatch(
+  env: Env,
+  uids: string[],
+  weekStart: string,
+  weekEnd: string
+): Promise<Map<string, WeeklyStats>> {
+  const map = new Map<string, WeeklyStats>()
+  for (const u of uids) map.set(u, { minutes: 0, problems: 0, pomodoroMinutes: 0, streak: 0 })
+  for (let i = 0; i < uids.length; i += IN_CHUNK) {
+    const part = uids.slice(i, i + IN_CHUNK)
+    const ph = part.map(() => '?').join(',')
+    const [study, problems, pomodoro, gam] = await Promise.all([
+      all<{ user_id: string; v: number }>(
+        env,
+        `SELECT user_id, COALESCE(SUM(minutes), 0) AS v FROM study_records WHERE user_id IN (${ph}) AND date >= ? AND date <= ? GROUP BY user_id`,
+        ...part,
+        weekStart,
+        weekEnd
+      ),
+      all<{ user_id: string; v: number }>(
+        env,
+        `SELECT user_id, COALESCE(SUM(total), 0) AS v FROM problem_sessions WHERE user_id IN (${ph}) AND date >= ? AND date <= ? GROUP BY user_id`,
+        ...part,
+        weekStart,
+        weekEnd
+      ),
+      all<{ user_id: string; v: number }>(
+        env,
+        `SELECT user_id, COALESCE(SUM(minutes), 0) AS v FROM pomodoro_daily WHERE user_id IN (${ph}) AND date >= ? AND date <= ? GROUP BY user_id`,
+        ...part,
+        weekStart,
+        weekEnd
+      ),
+      all<{ user_id: string; v: number }>(
+        env,
+        `SELECT user_id, streak AS v FROM gamification WHERE user_id IN (${ph})`,
+        ...part
+      )
+    ])
+    for (const r of study) {
+      const s = map.get(r.user_id)
+      if (s) s.minutes = r.v ?? 0
+    }
+    for (const r of problems) {
+      const s = map.get(r.user_id)
+      if (s) s.problems = r.v ?? 0
+    }
+    for (const r of pomodoro) {
+      const s = map.get(r.user_id)
+      if (s) s.pomodoroMinutes = r.v ?? 0
+    }
+    for (const r of gam) {
+      const s = map.get(r.user_id)
+      if (s) s.streak = r.v ?? 0
+    }
+  }
+  return map
+}
+
 /** 搭子上限：最多 3 位，防止社交泛滥 */
 const MAX_PARTNERS = 3
 
@@ -495,13 +575,38 @@ function weeklyReportContent(name: string, s: WeeklyStats): string {
   return `${name} 上周学习周报：学习 ${s.minutes} 分钟 · 连续打卡 ${s.streak} 天 · 刷题 ${s.problems} 道 · 番茄 ${s.pomodoroMinutes} 分钟`
 }
 
-/** 每周一 cron 触发：双向推送上周学习周报通知（去重 INSERT 与通知 INSERT 同批原子写入，避免标记与落库脱节） */
+/** 每周一 cron 触发：双向推送上周学习周报通知（去重 INSERT 与通知 INSERT 同批原子写入，避免标记与落库脱节）。
+ *  查询已批量化（原为逐关系 12 次查询：随搭子关系数线性增长，大规模时会撞 Workers 单次调用查询上限）：
+ *  已推送标记 1 次、展示名与四项周统计按涉及用户去重后分块 GROUP BY。 */
 export async function pushWeeklyReports(env: Env): Promise<void> {
   const { weekStart, weekEnd, weekKey } = lastWeekRange()
   const rels = await all<{ from_id: string; to_id: string }>(
     env,
-    `SELECT from_id, to_id FROM study_partners WHERE status = 'accepted'`
+    // JOIN users 过滤双方均已不存在的关系行（人工改库等留下的孤儿行）：否则单条孤儿关系会让
+    // 通知 INSERT 撞 FK，整批失败、所有用户的周报一起推不出去
+    `SELECT sp.from_id, sp.to_id FROM study_partners sp
+     JOIN users u1 ON u1.id = sp.from_id
+     JOIN users u2 ON u2.id = sp.to_id
+     WHERE sp.status = 'accepted'`
   )
+  if (!rels.length) return
+
+  // 本周已推送标记（一次查询替代逐关系 2 次存在性查询）
+  const pushedRows = await all<{ from_id: string; to_id: string }>(
+    env,
+    `SELECT from_id, to_id FROM weekly_report_push_log WHERE week_key = ?`,
+    weekKey
+  )
+  const pushed = new Set(pushedRows.map((r) => `${r.from_id}:${r.to_id}`))
+
+  // 涉及用户去重后批量取展示名与周统计
+  const uids = [...new Set(rels.flatMap((r) => [r.from_id, r.to_id]))]
+  const [names, stats] = await Promise.all([
+    displayNamesBatch(env, uids),
+    weeklyStatsBatch(env, uids, weekStart, weekEnd)
+  ])
+  const nameOf = (uid: string) => names.get(uid) ?? '升本人'
+  const statsOf = (uid: string) => stats.get(uid) ?? { minutes: 0, problems: 0, pomodoroMinutes: 0, streak: 0 }
 
   const stmts: D1PreparedStatement[] = []
   const pushLog = (fromId: string, toId: string) =>
@@ -511,18 +616,7 @@ export async function pushWeeklyReports(env: Env): Promise<void> {
 
   for (const r of rels) {
     // 我的周报 → 推给搭子
-    const pushedAB = await first(
-      env,
-      `SELECT 1 AS x FROM weekly_report_push_log WHERE week_key = ? AND from_id = ? AND to_id = ?`,
-      weekKey,
-      r.from_id,
-      r.to_id
-    )
-    if (!pushedAB) {
-      const [s, name] = await Promise.all([
-        weeklyStats(env, r.from_id, weekStart, weekEnd),
-        displayName(env, r.from_id)
-      ])
+    if (!pushed.has(`${r.from_id}:${r.to_id}`)) {
       stmts.push(pushLog(r.from_id, r.to_id))
       stmts.push(
         notifyStatement(env, {
@@ -531,20 +625,12 @@ export async function pushWeeklyReports(env: Env): Promise<void> {
           actorId: r.from_id,
           targetType: 'partner_weekly',
           targetId: r.from_id,
-          content: weeklyReportContent(name, s)
+          content: weeklyReportContent(nameOf(r.from_id), statsOf(r.from_id))
         })
       )
     }
     // 搭子的周报 → 推给我
-    const pushedBA = await first(
-      env,
-      `SELECT 1 AS x FROM weekly_report_push_log WHERE week_key = ? AND from_id = ? AND to_id = ?`,
-      weekKey,
-      r.to_id,
-      r.from_id
-    )
-    if (!pushedBA) {
-      const [s, name] = await Promise.all([weeklyStats(env, r.to_id, weekStart, weekEnd), displayName(env, r.to_id)])
+    if (!pushed.has(`${r.to_id}:${r.from_id}`)) {
       stmts.push(pushLog(r.to_id, r.from_id))
       stmts.push(
         notifyStatement(env, {
@@ -553,7 +639,7 @@ export async function pushWeeklyReports(env: Env): Promise<void> {
           actorId: r.to_id,
           targetType: 'partner_weekly',
           targetId: r.to_id,
-          content: weeklyReportContent(name, s)
+          content: weeklyReportContent(nameOf(r.to_id), statsOf(r.to_id))
         })
       )
     }
