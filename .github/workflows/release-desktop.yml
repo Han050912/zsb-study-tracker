@@ -38,6 +38,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
       # mac 不进 CI：无签名 + 无更新通道（见 docs/superpowers/specs/2026-09-13-cleanup-batch-design.md）
       # electron-builder 不执行 vite build，渲染层需显式先构建
       # DESKTOP_TOKEN 在渲染层构建期被消费（vite.config.ts 编译为 __DESKTOP_TOKEN__），
@@ -47,6 +53,15 @@ jobs:
         env:
           # 桌面端共享令牌：未配置 secret 时桌面端回退人机验证（fail-closed，不阻塞发版）
           DESKTOP_TOKEN: ${{ secrets.DESKTOP_TOKEN }}
+
+      # 桌面端运行时（electron/main.cjs）依赖该产物读取 API 地址：缺失或为空直接中断发版
+      # runner 为 ubuntu-latest，默认 shell 为 bash，test -s 即可覆盖「不存在 / 空文件」
+      - name: Verify api-base.json artifact
+        run: |
+          if [ ! -s dist/api-base.json ]; then
+            echo "::error::dist/api-base.json 缺失或为空，emit-api-base 插件未产出"
+            exit 1
+          fi
 
       # 注意：electron-builder 默认发布为 draft Release，需在 GitHub Releases 手动 publish 后 electron-updater 才可见
       - name: Build & publish Windows installer
