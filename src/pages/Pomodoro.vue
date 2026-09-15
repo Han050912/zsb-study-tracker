@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useClock } from '../composables/useClock'
 import { useToast } from '../composables/useToast'
 import { useWallpaperRotation } from '../composables/useWallpaperRotation'
 import dayjs from 'dayjs'
@@ -175,17 +176,7 @@ function submitInterrupt() {
 const { bgUrl, startBgRotation, stopBgRotation } = useWallpaperRotation()
 
 // ---- 实时时钟 ----
-const now = ref(new Date())
-let clockHandle: ReturnType<typeof setInterval> | null = null
-const clockText = computed(() => {
-  const d = now.value
-  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':')
-})
-const dateText = computed(() => {
-  const d = now.value
-  const week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()]
-  return `${d.getMonth() + 1}月${d.getDate()}日 星期${week}`
-})
+const { now, clockText, dateText } = useClock()
 
 // ---- 随机名人名言 ----
 const FAMOUS_QUOTES = [
@@ -217,15 +208,11 @@ function randomQuote() {
 
 onMounted(() => {
   randomQuote()
-  clockHandle = setInterval(() => {
-    now.value = new Date()
-  }, 1000)
   window.addEventListener('mousemove', handleMouseMove)
   document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 onUnmounted(() => {
   stopTimer()
-  if (clockHandle) clearInterval(clockHandle)
   if (hideControlsTimer) clearTimeout(hideControlsTimer)
   window.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('visibilitychange', handleVisibilityChange)

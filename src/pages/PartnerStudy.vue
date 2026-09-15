@@ -7,8 +7,9 @@
  * - 沉浸式全屏：壁纸轮播（哲风壁纸，预加载成功才切换，失败渐变降级）+ 大号倒计时 + 底部自动隐藏按钮
  * - 强制约束：不做聊天界面，仅展示对方状态
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { getErrorMessage } from '../utils/error'
+import { useClock } from '../composables/useClock'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
@@ -41,17 +42,7 @@ const timer = useStudyTimerStore()
 const { session, phase, running, myMinutes, onlineSeconds, display, pendingChoice } = storeToRefs(timer)
 
 // ---- 实时系统时钟 ----
-const now = ref(new Date())
-let clockHandle: ReturnType<typeof setInterval> | null = null
-const clockText = computed(() => {
-  const d = now.value
-  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':')
-})
-const dateText = computed(() => {
-  const d = now.value
-  const week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()]
-  return `${d.getMonth() + 1}月${d.getDate()}日 星期${week}`
-})
+const { clockText, dateText } = useClock()
 
 // ---- 历史开黑记录 ----
 const history = ref<PartnerStudyRecord[]>([])
@@ -202,9 +193,6 @@ async function handleEndBtn() {
 }
 
 onMounted(() => {
-  clockHandle = setInterval(() => {
-    now.value = new Date()
-  }, 1000)
   window.addEventListener('mousemove', handleMouseMove)
   init()
 })
@@ -234,7 +222,6 @@ async function init() {
 }
 
 onUnmounted(() => {
-  if (clockHandle) clearInterval(clockHandle)
   if (hideControlsTimer) clearTimeout(hideControlsTimer)
   window.removeEventListener('mousemove', handleMouseMove)
 })
