@@ -241,7 +241,7 @@
 | 原编号 | 结论 | 处理 |
 |---|---|---|
 | 1 远程索引 | **需你手动操作** | 三条 `CREATE INDEX`（schema.sql 已附命令）。需你的 Cloudflare 凭据且属生产 D1 写操作，未代跑 |
-| 2 另一会话 WIP | **部分已处理，其余交回** | 其 `ProblemsTab.vue` lint error（`_accuracy` 占位）与 `ChapterTree.vue` prettier 漂移已就地修正（均未提交）；本地 lint/格式自此全绿。WIP 主体（App.vue/SubjectPanel/community store/PWA 预缓存）仍需该会话完成提交 |
+| 2 另一会话 WIP | **部分已处理，其余交回** | 其 `ProblemsTab.vue` lint error（`_accuracy` 占位）与 `ChapterTree.vue` prettier 漂移已就地修正（均未提交）；本地 lint/格式自此全绿。WIP 的 `vite.config.ts`（PWA 部分）已按用户决策定稿并提交（见下）；其余（App.vue/SubjectPanel/community store）仍需该会话完成提交 |
 | 3 积分窗口化语义 | **已修（小）** | `Rewards.vue` 累计基线改为「权威总积分 − 区间内新增」，区间前历史在窗口截断下仍精确、折线终点恒等于 `SUM(points_log)`（`c7c33dd`）。窗口/上限本身仍是展示取舍，保持 |
 | 4 黑名单缓存窗口 | **可省略** | 无任何代码路径绕过登出直写 `jwt_blacklist`；cron 只删过期行（token 已过期时 `verifyTokenFull` 先失败，与缓存无关）。仅当未来新增「管理员强制吊销」时需调用 `purgeRevokedCache`（已在注释写明） |
 | 5 exams.parts 类型标注 | **已修** | 前端 `ExamRecord.parts` 与 worker zod 校验一并对齐真实数组形状 `[{name, score}]`（`4908f8b`，record-sync 用例 14 复绿） |
@@ -249,3 +249,21 @@
 | 7 CI 现状 | **无需操作** | 陈述性说明，已与 README 对齐 |
 
 复核后回归：record-sync **250/250**、smoke **411/411**、`npm test` **57/57**、lint 0 error、无 REAL-DRIFT 格式漂移。
+
+## 10. PWA 预缓存策略定稿（用户决策，2026-09-15）
+
+背景：WIP 中的方案把 markdown/katex 渲染器也排除出预缓存，与「笔记正文存 IndexedDB 不过期」形成错配（30 天按需缓存过期后，离线能读到正文但渲染不了）。量化后由用户拍板**折中方案**并落地（`acbe4af`）：
+
+| | 预缓存 | 首装传输 |
+|---|---|---|
+| 定稿（折中） | app shell + 路由 chunk + **katex js/css + useMarkdownHtml** + public 静态资源（81 条目 / 1604 KiB） | 基准 |
+| 全部预缓存 | 再加 echarts 178KB + pdf 157KB + html2canvas 46KB + KaTeX 字体 292KB（均已 gzip/woff2 口径） | +~670KB |
+| 全按需（原 WIP） | 再排除 katex/markdown（404 KiB 原始体积） | −~130KB |
+
+同时保留并修正了 WIP 新增的 runtimeCaching 规则意义：不预缓存的懒加载大件与 KaTeX 字体首次使用后离线可用；并**修复了 `pdf.worker.min.mjs` 从未被任何规则缓存的盲区**（旧 globPatterns 不含 `.mjs`，此前 PDF 离线阅读实际不可用）。
+
+**验证（构建期 + 真实浏览器运行期）**：
+1. `npm run build` → `precache 81 entries (1604.07 KiB)`；`dist/sw.js` 清单核查含 `katex-*.js`/`katex-*.css`/`useMarkdownHtml-*.js`，不含 echarts/pdf/html2canvas/KaTeX_*/.mjs。
+2. `vite preview` + 真实浏览器（Service Worker 激活后实测）：预缓存缓存 80 条目，含 app shell（`index-*.js/css`）、`katex-*.js/css`、`useMarkdownHtml-*.js`；不含 echarts、KaTeX 字体、`pdf.worker` ✓
+3. 按需规则实测：首次 `fetch` echarts / pdf / `pdf.worker.min.mjs` 后三者均进入 `static-assets-runtime` 缓存（首次使用后离线可用）✓
+4. **离线判定性验证**：停掉 preview 服务器（`curl` 返回 000）后 `reload`，页面仍完整渲染登录界面（app root 有内容、SW 处于 controlling）——app shell 完全由预缓存提供 ✓
