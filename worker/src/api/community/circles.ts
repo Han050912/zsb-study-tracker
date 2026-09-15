@@ -2,7 +2,7 @@ import { on, body } from '../../router'
 import { all, first, run, batch, uid, HttpError } from '../../db'
 import { rateLimit } from '../../middleware/rateLimit'
 import { assertCleanAsync } from '../sensitive'
-import { mapCircle, nowSec, displayName, notifyStatement, escapeLike } from './shared'
+import { mapCircle, nowSec, displayName, notifyStatement, escapeLike, isAdmin } from './shared'
 
 /**
  * 社区广场话题圈子域路由：圈子列表 / 建圈 / 详情 / 加入退圈 / 审批 / 移除成员。
@@ -65,10 +65,24 @@ export function registerCirclesRoutes() {
     })
   })
 
-  // 圈子详情：基本信息 + 活跃成员（前 50）；圈主可见待审批列表
+  // 圈子详情：基本信息 + 活跃成员（前 50）；圈主可见待审批列表。
+  // 成员名单脱敏：审核圈（非公开）且调用者既非活跃成员/圈主也非管理员时，
+  // 仅返回圈子基本信息与 myStatus（供前端展示「申请加入」），members/pending 恒为空数组且不执行成员查询；
+  // 公开圈任何人可见名单，圈子列表本就可发现圈子，故详情不做整体 403。
   on('GET', '/api/community/circles/:id', true, async (ctx) => {
     const circle = await first<any>(ctx.env, 'SELECT * FROM community_circles WHERE id = ?', ctx.params.id)
     if (!circle) throw new HttpError(404, '圈子不存在')
+    const mine = await first<{ role: string; status: string }>(
+      ctx.env,
+      'SELECT role, status FROM circle_members WHERE circle_id = ? AND user_id = ?',
+      ctx.params.id,
+      ctx.userId
+    )
+    const myStatus = !mine ? null : mine.role === 'owner' ? 'owner' : mine.status === 'active' ? 'member' : 'pending'
+    // 脱敏判定与 assertCircleReadable 的成员可读口径一致（活跃成员/圈主 status 均为 active）
+    if (!circle.is_public && mine?.status !== 'active' && !(await isAdmin(ctx.env, ctx.userId, ctx.role))) {
+      return Response.json({ circle: mapCircle(circle, myStatus), members: [], pending: [] })
+    }
     const members = await all<any>(
       ctx.env,
       `
@@ -81,13 +95,6 @@ export function registerCirclesRoutes() {
       LIMIT 50`,
       ctx.params.id
     )
-    const mine = await first<{ role: string; status: string }>(
-      ctx.env,
-      'SELECT role, status FROM circle_members WHERE circle_id = ? AND user_id = ?',
-      ctx.params.id,
-      ctx.userId
-    )
-    const myStatus = !mine ? null : mine.role === 'owner' ? 'owner' : mine.status === 'active' ? 'member' : 'pending'
     // 待审批列表仅圈主可见
     let pending: any[] = []
     if (mine?.role === 'owner') {
