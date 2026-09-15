@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
+import { useWallpaperRotation } from '../composables/useWallpaperRotation'
 import dayjs from 'dayjs'
 import { useAppStore } from '../stores/app'
 import { formatMinutes } from '../utils/date'
-import { API_BASE } from '../api/client'
 import type { PomodoroRecord } from '../types'
 
 const store = useAppStore()
@@ -171,33 +171,8 @@ function submitInterrupt() {
   toast('已记录中断')
 }
 
-// ---- 背景图（进入专注全屏后经 Worker 代理从哲风壁纸拉取静态壁纸，每 2 分钟自动轮播；预加载成功才切换，失败保持渐变降级） ----
-const bgUrl = ref('')
-let bgTimer: ReturnType<typeof setInterval> | null = null
-
-function fetchBackground() {
-  // r 参数防缓存；Worker 每次 302 到一张随机静态壁纸
-  const url = `${API_BASE}/api/proxy/wallpaper?r=${Date.now()}`
-  const img = new Image()
-  img.onload = () => {
-    bgUrl.value = url
-  }
-  img.src = url
-}
-
-function startBgRotation() {
-  if (bgTimer) return
-  fetchBackground()
-  bgTimer = setInterval(fetchBackground, 300_000)
-}
-
-function stopBgRotation() {
-  if (bgTimer) {
-    clearInterval(bgTimer)
-    bgTimer = null
-  }
-  bgUrl.value = ''
-}
+// ---- 背景图（进入专注全屏后开启壁纸轮播，实现见 useWallpaperRotation） ----
+const { bgUrl, startBgRotation, stopBgRotation } = useWallpaperRotation()
 
 // ---- 实时时钟 ----
 const now = ref(new Date())
@@ -250,7 +225,6 @@ onMounted(() => {
 })
 onUnmounted(() => {
   stopTimer()
-  stopBgRotation()
   if (clockHandle) clearInterval(clockHandle)
   if (hideControlsTimer) clearTimeout(hideControlsTimer)
   window.removeEventListener('mousemove', handleMouseMove)

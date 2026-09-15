@@ -15,10 +15,10 @@ import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import dayjs from 'dayjs'
 import { communityApi } from '../api/community'
-import { API_BASE } from '../api/client'
 import Modal from '../components/Modal.vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import { useBack } from '../composables/useBack'
+import { useWallpaperRotation } from '../composables/useWallpaperRotation'
 import { useStudyTimerStore } from '../stores/studyTimer'
 import { formatMinutes } from '../utils/date'
 import type { PartnerItem, PartnerStudyRecord } from '../types'
@@ -73,9 +73,8 @@ function fmtDateTime(sec: number): string {
   return dayjs(sec * 1000).format('MM-DD HH:mm')
 }
 
-// ---- 壁纸轮播（复用番茄专注机制） ----
-const bgUrl = ref('')
-let bgTimer: ReturnType<typeof setInterval> | null = null
+// ---- 壁纸轮播（与番茄专注共用，见 useWallpaperRotation） ----
+const { bgUrl, startBgRotation } = useWallpaperRotation()
 
 // ---- 控制按钮自动隐藏 ----
 const controlsVisible = ref(true)
@@ -87,28 +86,6 @@ const STATE_CLS: Record<Phase, string> = {
   idle: 'opacity-70',
   focus: 'text-emerald-300',
   done: 'text-emerald-400'
-}
-
-// ---- 壁纸轮播 ----
-function fetchBackground() {
-  const url = `${API_BASE}/api/proxy/wallpaper?r=${Date.now()}`
-  const img = new Image()
-  img.onload = () => {
-    bgUrl.value = url
-  }
-  img.src = url
-}
-function startBgRotation() {
-  if (bgTimer) return
-  fetchBackground()
-  bgTimer = setInterval(fetchBackground, 300_000)
-}
-function stopBgRotation() {
-  if (bgTimer) {
-    clearInterval(bgTimer)
-    bgTimer = null
-  }
-  bgUrl.value = ''
 }
 
 // ---- 控制按钮自动隐藏 ----
@@ -257,7 +234,6 @@ async function init() {
 }
 
 onUnmounted(() => {
-  stopBgRotation()
   if (clockHandle) clearInterval(clockHandle)
   if (hideControlsTimer) clearTimeout(hideControlsTimer)
   window.removeEventListener('mousemove', handleMouseMove)
