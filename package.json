@@ -24,6 +24,7 @@
   "build": {
     "appId": "com.han.zsb-study-tracker",
     "productName": "专升本学习助手",
+    "artifactName": "zsb-study-tracker-setup-${version}.${ext}",
     "directories": {
       "output": "release"
     },
