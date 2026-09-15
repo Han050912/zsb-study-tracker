@@ -32,14 +32,13 @@ export const examsMapping = crudHandlers({
     parts: b.parts ? JSON.stringify(b.parts) : null
   }),
   fromRow: (r) => {
-    // parts 为「部分名→得分」的 Record：仅接受纯对象，解析失败或解析出数组/标量时降级为 undefined（等同无该列）
+    // parts 实际以「部分名→得分」数组（[{name, score}]）落库：仅做容错解析，不二次限定形状，
+    // 解析失败才降级为 undefined（等同无该列），不拖垮整个同步接口
     let parts: Record<string, number> | undefined
     if (r.parts) {
       try {
-        const v = JSON.parse(r.parts)
-        parts = v && typeof v === 'object' && !Array.isArray(v) ? v : undefined
+        parts = JSON.parse(r.parts)
       } catch {
-        // 数据库中 parts 字段损坏时降级为 undefined，不拖垮整个同步接口
         parts = undefined
       }
     }
