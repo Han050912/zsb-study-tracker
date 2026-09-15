@@ -57,6 +57,22 @@ const HOMOPHONE_MAP: Record<string, string> = {
   卖da: '卖答案'
 }
 
+/**
+ * 谐音归一规则（模块加载时预计算一次）：
+ * normalize 处于发帖/评论/私信等内容校验热路径，逐文本调用，
+ * 若每次都重排键序、重复编译正则会产生无谓开销，故提升到模块作用域。
+ * 键按长度降序，避免短 key 提前吞掉长 key（如「vx」先于「v」）。
+ */
+const HOMOPHONE_RULES: { key: string; value: string; wordRe?: RegExp }[] = Object.keys(HOMOPHONE_MAP)
+  .sort((a, b) => b.length - a.length)
+  .map((key) => ({
+    key,
+    value: HOMOPHONE_MAP[key],
+    // 纯英文缩写（sb/nc/vx）若用子串替换会误伤英文单词（since/USB/sync 等），
+    // 仅按词边界（前后非字母）替换；中文谐音 key 无此风险，保持子串替换
+    wordRe: /^[a-z]+$/.test(key) ? new RegExp(`\\b${key}\\b`, 'g') : undefined
+  }))
+
 function normalize(s: string): string {
   let t = toHalfWidth(s).toLowerCase()
   // 去除空白、间隔符、零宽字符、变体选择符与常见标点/括号
@@ -65,14 +81,9 @@ function normalize(s: string): string {
     /[\s\-_.*#@!?,，。！？~·、（）()【】[\]<>《》"'“”‘’:：;；|\\/+=￥$&^%\u200b-\u200f\ufeff\ufe0e\ufe0f]+/g,
     ''
   )
-  // 谐音归一：按 key 长度降序替换，避免短 key 提前吞掉长 key（如「vx」先于「v」）
-  const keys = Object.keys(HOMOPHONE_MAP).sort((a, b) => b.length - a.length)
-  for (const k of keys) {
-    // 纯英文缩写（sb/nc/vx）若用子串替换会误伤英文单词（since/USB/sync 等），
-    // 仅按词边界（前后非字母）替换；中文谐音 key 无此风险，保持子串替换
-    t = /^[a-z]+$/.test(k)
-      ? t.replace(new RegExp(`\\b${k}\\b`, 'g'), HOMOPHONE_MAP[k])
-      : t.split(k).join(HOMOPHONE_MAP[k])
+  // 谐音归一：替换规则与顺序见模块级 HOMOPHONE_RULES
+  for (const r of HOMOPHONE_RULES) {
+    t = r.wordRe ? t.replace(r.wordRe, r.value) : t.split(r.key).join(r.value)
   }
   return t
 }
