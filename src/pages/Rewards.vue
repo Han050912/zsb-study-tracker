@@ -33,15 +33,15 @@ const rankDays = computed(() =>
 // 提取为响应式数据，供 useChart 依赖追踪（积分新增时自动重绘）
 const pointsTrend = computed(() => {
   const logs = store.gamification.pointsLog
-  // 基准：所选区间第一天之前的历史累计积分（折线起点不从 0 开始）
   const start = rankDays.value[0]
-  let cum = 0
   const dailyByDate: Record<string, number> = {}
   for (const l of logs) {
-    if (l.date < start) cum += l.points
-    else dailyByDate[l.date] = (dailyByDate[l.date] || 0) + l.points
+    if (l.date >= start) dailyByDate[l.date] = (dailyByDate[l.date] || 0) + l.points
   }
   const daily = rankDays.value.map((d) => dailyByDate[d] || 0)
+  // 基准 = 全量总积分 - 区间内新增：回传流水被时间窗/条数截断（见 getGamification）时，
+  // 仍能精确还原「区间前历史累计」，折线终点恒等于服务端权威总积分
+  let cum = store.gamification.points - daily.reduce((s, v) => s + v, 0)
   const cumulative = daily.map((v) => (cum += v))
   return { daily, cumulative }
 })
