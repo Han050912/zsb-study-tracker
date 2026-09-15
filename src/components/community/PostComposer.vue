@@ -347,6 +347,7 @@ async function submit() {
             :src="img.localUrl"
             class="w-full h-full object-cover"
             :class="{ 'opacity-50': !img.url && !img.error }"
+            alt="待发送图片"
           />
           <!-- 上传进度 -->
           <div v-if="!img.url && !img.error" class="absolute inset-x-1 bottom-1 h-1 rounded bg-white/50">

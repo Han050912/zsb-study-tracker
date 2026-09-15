@@ -382,6 +382,7 @@ async function removeHotTopic(id: string) {
               :key="u"
               :src="imageUrl(u)"
               class="w-16 h-16 object-cover rounded-lg border border-slate-200 dark:border-slate-700"
+              alt="反馈截图"
             />
           </div>
           <div v-if="fb.contact" class="text-xs text-slate-500 dark:text-slate-400">联系方式：{{ fb.contact }}</div>

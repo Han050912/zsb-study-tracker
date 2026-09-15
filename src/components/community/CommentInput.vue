@@ -105,7 +105,12 @@ function send() {
         :key="img.localUrl"
         class="relative w-16 h-16 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700"
       >
-        <img :src="img.localUrl" class="w-full h-full object-cover" :class="{ 'opacity-50': !img.url && !img.error }" />
+        <img
+          :src="img.localUrl"
+          class="w-full h-full object-cover"
+          :class="{ 'opacity-50': !img.url && !img.error }"
+          alt="待发送图片"
+        />
         <div v-if="!img.url && !img.error" class="absolute inset-x-1 bottom-1 h-1 rounded bg-white/50">
           <div
             class="h-full rounded bg-primary-500 transition-all"

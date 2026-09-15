@@ -126,6 +126,7 @@ async function submit() {
             <img
               :src="imageUrl(img.url)"
               class="w-20 h-20 object-cover rounded-lg border border-slate-200 dark:border-slate-700"
+              alt="反馈截图"
             />
             <button
               class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-slate-800 text-white text-xs leading-none"
