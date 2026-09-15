@@ -117,7 +117,9 @@ export function crudHandlers<Body = any>(m: CrudMapping<Body>) {
     /** 原始映射，供全量同步（sync）复用同一套 snake↔camel 转换 */
     mapping: m,
     async list(ctx: Ctx): Promise<Response> {
-      const rows = await all(ctx.env, `SELECT * FROM ${m.table} WHERE user_id = ?`, ctx.userId)
+      // 防御性上限（非分页能力）：与同步协议单域记录上限 MAX_ITEMS_PER_COLLECTION（sync.ts，10000）同口径。
+      // 全量 hydration 走 /api/data/pull，这些 list 端点仅承载单用户小数据量，实践中永远不会触顶。
+      const rows = await all(ctx.env, `SELECT * FROM ${m.table} WHERE user_id = ? LIMIT 10000`, ctx.userId)
       return Response.json(rows.map(m.fromRow))
     },
 
