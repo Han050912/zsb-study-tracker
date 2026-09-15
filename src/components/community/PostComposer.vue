@@ -6,6 +6,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { useImageUpload } from '../../composables/useImageUpload'
 import Modal from '../Modal.vue'
 import TagBadge from './TagBadge.vue'
+import ImageUploadPreview from './ImageUploadPreview.vue'
 import { useCommunityStore } from '../../stores/community'
 import { COMMUNITY_TAGS } from '../../data/defaults'
 import { communityApi, IMAGE_MAX_PER_POST } from '../../api/community'
@@ -337,42 +338,14 @@ async function submit() {
         >
       </div>
       <input ref="fileInput" type="file" :accept="IMAGE_ACCEPT" multiple class="hidden" @change="onFileChange" />
-      <div v-if="images.length" class="grid grid-cols-3 gap-2 mt-2">
-        <div
-          v-for="(img, i) in images"
-          :key="img.localUrl"
-          class="relative aspect-video rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700"
-        >
-          <img
-            :src="img.localUrl"
-            class="w-full h-full object-cover"
-            :class="{ 'opacity-50': !img.url && !img.error }"
-            alt="待发送图片"
-          />
-          <!-- 上传进度 -->
-          <div v-if="!img.url && !img.error" class="absolute inset-x-1 bottom-1 h-1 rounded bg-white/50">
-            <div
-              class="h-full rounded bg-primary-500 transition-all"
-              :style="{ width: `${Math.round(img.progress * 100)}%` }"
-            ></div>
-          </div>
-          <!-- 失败态 -->
-          <div
-            v-if="img.error"
-            class="absolute inset-0 flex flex-col items-center justify-center gap-0.5 text-xs bg-white/70 dark:bg-slate-900/70"
-          >
-            <button class="text-red-500 font-medium" @click="retryImage(i)">重试</button>
-            <button class="text-slate-500" @click="removeImage(i)">移除</button>
-          </div>
-          <!-- 删除 -->
-          <button
-            class="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/50 text-white text-xs leading-none"
-            @click="removeImage(i)"
-          >
-            ×
-          </button>
-        </div>
-      </div>
+      <ImageUploadPreview
+        :images="images"
+        list-class="grid grid-cols-3 gap-2 mt-2"
+        item-class="relative aspect-video rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700"
+        size="md"
+        @remove="removeImage"
+        @retry="retryImage"
+      />
     </div>
 
     <!-- 提问帖科目标签（必选，单选） -->

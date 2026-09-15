@@ -4,6 +4,7 @@ import { useToast } from '../../composables/useToast'
 import { useImageUpload } from '../../composables/useImageUpload'
 import { IMAGE_MAX_PER_COMMENT } from '../../api/community'
 import { isLoggedIn } from '../../services/auth'
+import ImageUploadPreview from './ImageUploadPreview.vue'
 
 /**
  * 评论输入框：支持配图（最多 3 张）：点击按钮选择 / Ctrl+V 粘贴；上传中禁止发送。
@@ -99,38 +100,12 @@ function send() {
       class="hidden"
       @change="onFileChange"
     />
-    <div v-if="images.length" class="flex gap-2">
-      <div
-        v-for="(img, i) in images"
-        :key="img.localUrl"
-        class="relative w-16 h-16 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700"
-      >
-        <img
-          :src="img.localUrl"
-          class="w-full h-full object-cover"
-          :class="{ 'opacity-50': !img.url && !img.error }"
-          alt="待发送图片"
-        />
-        <div v-if="!img.url && !img.error" class="absolute inset-x-1 bottom-1 h-1 rounded bg-white/50">
-          <div
-            class="h-full rounded bg-primary-500 transition-all"
-            :style="{ width: `${Math.round(img.progress * 100)}%` }"
-          ></div>
-        </div>
-        <div
-          v-if="img.error"
-          class="absolute inset-0 flex flex-col items-center justify-center gap-0.5 text-[10px] bg-white/70 dark:bg-slate-900/70"
-        >
-          <button class="text-red-500 font-medium" @click="retryImage(i)">重试</button>
-          <button class="text-slate-500" @click="removeImage(i)">移除</button>
-        </div>
-        <button
-          class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/50 text-white text-[10px] leading-none"
-          @click="removeImage(i)"
-        >
-          ×
-        </button>
-      </div>
-    </div>
+    <ImageUploadPreview
+      :images="images"
+      list-class="flex gap-2"
+      item-class="relative w-16 h-16 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700"
+      @remove="removeImage"
+      @retry="retryImage"
+    />
   </div>
 </template>

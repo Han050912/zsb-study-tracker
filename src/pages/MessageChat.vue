@@ -6,6 +6,7 @@ import { useImageUpload } from '../composables/useImageUpload'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi, imageUrl, IMAGE_MAX_PER_MESSAGE } from '../api/community'
 import UserAvatar from '../components/community/UserAvatar.vue'
+import ImageUploadPreview from '../components/community/ImageUploadPreview.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import Lightbox from '../components/community/Lightbox.vue'
 import { useBack } from '../composables/useBack'
@@ -319,28 +320,15 @@ function openReport(msgId: string) {
 
     <!-- 输入区 -->
     <div class="pt-2 border-t border-slate-100 dark:border-slate-700">
-      <div v-if="images.length" class="flex gap-2 mb-2 flex-wrap">
-        <div
-          v-for="(img, i) in images"
-          :key="img.localUrl"
-          class="relative w-16 h-16 rounded-lg overflow-hidden shrink-0"
-        >
-          <img :src="img.localUrl" class="w-full h-full object-cover" alt="待发送图片" />
-          <div
-            v-if="img.progress < 1 && !img.error"
-            class="absolute inset-0 bg-black/40 flex items-center justify-center text-[10px] text-white"
-          >
-            {{ Math.round(img.progress * 100) }}%
-          </div>
-          <div
-            v-if="img.error"
-            class="absolute inset-0 flex flex-col items-center justify-center gap-0.5 text-[10px] bg-white/70 dark:bg-slate-900/70"
-          >
-            <button class="text-red-500 font-medium" @click="retryImage(i)">重试</button>
-            <button class="text-slate-500" @click="removeImage(i)">移除</button>
-          </div>
-        </div>
-      </div>
+      <ImageUploadPreview
+        :images="images"
+        list-class="flex gap-2 mb-2 flex-wrap"
+        item-class="relative w-16 h-16 rounded-lg overflow-hidden shrink-0"
+        progress="percent"
+        :removable="false"
+        @remove="removeImage"
+        @retry="retryImage"
+      />
       <div class="flex gap-2">
         <input ref="fileInput" type="file" :accept="ACCEPT" multiple class="hidden" @change="onFileChange" />
         <button
