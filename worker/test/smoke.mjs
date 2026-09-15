@@ -2219,7 +2219,7 @@ async function main() {
     token: tokenA,
     body: { name: '高数打卡队', description: '一起刷高数', maxMembers: 2, isPublic: true }
   })
-  check('创建公开小组', teamPub.status === 200 && !!teamPub.data?.id, JSON.stringify(teamPub.data))
+  check('创建公开小组', teamPub.status === 201 && !!teamPub.data?.id, JSON.stringify(teamPub.data))
   const teamId = teamPub.data.id
   const teamPriv = await api('/api/teams', {
     method: 'POST',
@@ -2261,7 +2261,7 @@ async function main() {
     token: tokenA,
     body: { type: 'streak', target: 7, durationDays: 7, startDate: todayUtc8 }
   })
-  check('队长创建挑战成功', ch.status === 200 && !!ch.data?.id, JSON.stringify(ch.data))
+  check('队长创建挑战成功', ch.status === 201 && !!ch.data?.id, JSON.stringify(ch.data))
   const chId = ch.data.id
 
   const sync1 = await api(`/api/teams/challenges/${chId}/sync`, { method: 'POST', token: tokenA })
@@ -2406,7 +2406,7 @@ async function main() {
     body: { name: '私密邀请组', maxMembers: 2, isPublic: false }
   })
   const invTeamId = invTeam.data?.id
-  check('创建私密组(200)', invTeam.status === 200)
+  check('创建私密组(201)', invTeam.status === 201)
 
   const invTeamDetail = await api(`/api/teams/${invTeamId}`, { token: tokenA })
   const invCode = invTeamDetail.data?.inviteCode

@@ -87,7 +87,7 @@ export function registerChallengeRoutes() {
 
     await batch(ctx.env, stmts)
 
-    return Response.json({ id: challengeId })
+    return Response.json({ id: challengeId }, { status: 201 })
   })
 
   /** POST /api/teams/challenges/:id/sync - 同步挑战进度 */
@@ -297,7 +297,7 @@ export function registerChallengeRoutes() {
       ).bind(challengeId, challengeId)
     ])
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** DELETE /api/teams/challenges/:id - 删除挑战（仅队长；任意状态；级联删进度） */
@@ -312,7 +312,7 @@ export function registerChallengeRoutes() {
       ctx.env.DB.prepare('DELETE FROM team_challenges WHERE id = ?').bind(challengeId)
     ])
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** POST /api/teams/challenges/:id/cancel - 取消挑战（仅队长；仅进行中） */
@@ -336,7 +336,7 @@ export function registerChallengeRoutes() {
       challengeId
     )
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** POST /api/teams/challenges/:id/resume - 恢复挑战（仅队长；仅已取消；顺延 endDate） */
@@ -358,6 +358,6 @@ export function registerChallengeRoutes() {
       challengeId
     )
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 }

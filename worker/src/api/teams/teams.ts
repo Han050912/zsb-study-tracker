@@ -227,7 +227,7 @@ export function registerTeamsRoutes() {
       ).bind(teamId, ctx.userId, now)
     ])
 
-    return Response.json({ id: teamId })
+    return Response.json({ id: teamId }, { status: 201 })
   })
 
   /** GET /api/teams/by-invite - 按邀请码查询私密小组（须注册在 /api/teams/:id 之前） */
@@ -359,7 +359,7 @@ export function registerTeamsRoutes() {
 
     await addMember(ctx.env, teamId, ctx.userId)
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** POST /api/teams/:id/apply - 通过邀请码申请加入私密小组 */
@@ -418,7 +418,7 @@ export function registerTeamsRoutes() {
       })
     ])
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** POST /api/teams/:id/leave - 退出小组 */
@@ -439,7 +439,7 @@ export function registerTeamsRoutes() {
 
     await batch(ctx.env, removeMemberStmts(ctx.env, teamId, ctx.userId))
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** POST /api/teams/:id/remove-member - 踢出成员（仅队长） */
@@ -470,7 +470,7 @@ export function registerTeamsRoutes() {
       })
     )
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** POST /api/teams/:id/transfer-leader - 转让队长（仅队长） */
@@ -513,7 +513,7 @@ export function registerTeamsRoutes() {
       })
     ])
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** PUT /api/teams/:id - 编辑小组信息（名称/描述/人数上限，仅队长） */
@@ -543,7 +543,7 @@ export function registerTeamsRoutes() {
       teamId
     )
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** GET /api/teams/:id/requests - 队长查看待审核申请 */
@@ -604,7 +604,7 @@ export function registerTeamsRoutes() {
       })
     ])
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** POST /api/teams/:id/requests/:userId/reject - 队长拒绝申请 */
@@ -640,7 +640,7 @@ export function registerTeamsRoutes() {
       })
     ])
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** POST /api/teams/:id/requests/withdraw - 申请人撤回申请 */
@@ -656,7 +656,7 @@ export function registerTeamsRoutes() {
 
     await run(ctx.env, 'DELETE FROM team_join_requests WHERE team_id = ? AND user_id = ?', teamId, ctx.userId)
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 
   /** POST /api/teams/:id/invite-code - 队长重新生成邀请码 */
@@ -695,6 +695,6 @@ export function registerTeamsRoutes() {
       ctx.env.DB.prepare('DELETE FROM study_teams WHERE id = ?').bind(teamId)
     ])
 
-    return Response.json({ success: true })
+    return Response.json({ ok: true })
   })
 }
