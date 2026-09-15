@@ -5,7 +5,7 @@ import { parseBody, trimMax, imageUrlsSchema } from '../../schemas'
 import { rateLimit } from '../../middleware/rateLimit'
 import { IMAGE_MAX_PER_MESSAGE } from '../uploads'
 import { assertCleanAsync } from '../sensitive'
-import { parseStrArray, nowSec } from './shared'
+import { parseStrArray, nowSec, parseCursor } from './shared'
 
 /**
  * 社区广场私信域路由：会话列表 / 消息记录 / 发送私信 / 未读总数。
@@ -74,9 +74,11 @@ export function registerMessagesRoutes() {
     const cursor = url.searchParams.get('cursor') || ''
     const params: unknown[] = [ctx.userId, peerId, peerId, ctx.userId]
     let where = '((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?))'
-    if (cursor) {
-      where += ' AND created_at < ?'
-      params.push(Number(cursor))
+    // 游标 `${created_at}_${id}`：同秒消息按 id 决胜，非法游标按无游标处理（与帖子流同口径）
+    const c = cursor ? parseCursor(cursor) : null
+    if (c) {
+      where += ' AND (created_at < ? OR (created_at = ? AND id < ?))'
+      params.push(c.ts, c.ts, c.id)
     }
     const rows = await all<any>(
       ctx.env,
@@ -103,7 +105,7 @@ export function registerMessagesRoutes() {
         createdAt: r.created_at,
         fromMe: r.from_id === ctx.userId
       })),
-      nextCursor: rows.length > limit ? String(items[items.length - 1].created_at) : null,
+      nextCursor: rows.length > limit ? `${items[items.length - 1].created_at}_${items[items.length - 1].id}` : null,
       markedRead: markRes.meta.changes
     })
   })
