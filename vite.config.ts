@@ -24,13 +24,23 @@ export default defineConfig(({ mode }) => {
         includeAssets: ['logo.png'],
         manifest: false, // 复用 public/manifest.json（已包含完整配置），避免双份维护
         workbox: {
-          // 预缓存所有构建产物 + public 静态资源
+          // 预缓存 app shell（index js/css、小路由 chunk、图标）+ 笔记正文渲染器 + public 静态资源。
+          // 策略（2026-09-15 决定）：核心阅读路径必须预缓存——离线读笔记/公式是学习类 PWA 的核心价值，
+          // 且笔记正文存 IndexedDB 不过期，若渲染器按需缓存（30 天过期）会出现「正文读得到、渲染不了」的错配
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-          // 排除截图目录（仅 README 用，体积大且与运行无关）
-          globIgnores: ['**/screenshots/**', '**/donate/**'],
+          globIgnores: [
+            // 截图/捐赠目录：仅 README 用，体积大且与运行无关
+            '**/screenshots/**',
+            '**/donate/**',
+            // 懒加载大件不预缓存（首装省 ~670KB 传输，gzip 口径）：统计图表/PDF 阅读器/分享图/KaTeX 字体
+            // 均为「非首次必用」重件，首次使用后经 runtimeCaching 离线可用
+            'assets/echarts-*.js',
+            'assets/pdf-*.js',
+            'assets/html2canvas*.js',
+            'assets/KaTeX_*'
+          ],
           // 单页应用路由兜底
           navigateFallback: 'index.html',
-          // 运行时缓存：仅对 API 域名做 NetworkFirst，数据以服务端为准、断网可读旧数据
           runtimeCaching: [
             {
               // 域名点号需转义；apiBase 为空时正则退化为 /^\/api\/.*/i（本地 dev 无 API 域名，可接受）
@@ -40,6 +50,18 @@ export default defineConfig(({ mode }) => {
                 cacheName: 'api-cache',
                 expiration: { maxEntries: 64, maxAgeSeconds: 60 * 60 * 24 },
                 networkTimeoutSeconds: 10
+              }
+            },
+            {
+              // 同源静态资源按需缓存：不预缓存的懒加载大件（echarts/pdf/html2canvas）与 KaTeX 字体
+              // 首次使用后离线可用；同时覆盖 pdf.worker.mjs——旧 globPatterns 不含 .mjs，
+              // 该文件此前从未被任何规则缓存，PDF 离线阅读实际不可用
+              urlPattern: /\/assets\/.+\.(?:js|mjs|css|woff2?|ttf)$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'static-assets-runtime',
+                // chunk 带内容 hash，跨版本靠条目上限清理旧文件
+                expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 }
               }
             }
           ]
