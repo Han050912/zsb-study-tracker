@@ -53,9 +53,7 @@ export default defineConfig(({ mode }) => {
       __DESKTOP_BUILD__: JSON.stringify(mode === 'desktop'),
       // 桌面端认证令牌：优先取 CI 环境变量 DESKTOP_TOKEN，其次读 .env.desktop.local（已 gitignore）；
       // 与 Worker env.DESKTOP_TOKEN 保持一致，不写死源码；都未配置时桌面端回退人机验证（fail-closed）
-      __DESKTOP_TOKEN__: JSON.stringify(
-        mode === 'desktop' ? process.env.DESKTOP_TOKEN || env.DESKTOP_TOKEN || '' : ''
-      )
+      __DESKTOP_TOKEN__: JSON.stringify(mode === 'desktop' ? process.env.DESKTOP_TOKEN || env.DESKTOP_TOKEN || '' : '')
     },
     build: {
       chunkSizeWarningLimit: 1500
