@@ -369,6 +369,20 @@ function setupDevCSP() {
   })
 }
 
+/**
+ * Web 权限默认拒绝（Electron 默认会放行大量权限请求）：仅放行通知。
+ * 白名单服务于浏览器端平行的 Web Notification 兜底路径（src/services/notify.ts）；
+ * 桌面原生通知走 preload 桥接的 IPC（notify:show），不经过本处理器。
+ * 其余权限（media / geolocation / clipboard-read / pointerLock / fullscreen / midi 等）一律拒绝。
+ * 挂在 defaultSession 上：主窗口、blob 子窗口与启动画面同属该会话，但它们本就不申请权限，行为不变。
+ */
+const ALLOWED = new Set(['notifications'])
+function setupPermissions() {
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(ALLOWED.has(permission)))
+  // 权限查询（如 Notification.permission）与请求保持同一判定，避免两端状态不一致
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => ALLOWED.has(permission))
+}
+
 /** 外链统一交给系统默认浏览器；失败仅记日志，不影响应用本身 */
 function openExternal(url) {
   shell.openExternal(url).catch((e) => console.error('[nav] openExternal 失败:', url, e))
@@ -618,6 +632,7 @@ function init() {
   // 一致性由 electron/app-id.test.cjs 断言保护，改动其一必须同步另一处。
   app.setAppUserModelId('com.han.zsb-study-tracker')
   setupNavigationGuards()
+  setupPermissions()
   if (!isDev) registerAppProtocol()
   else setupDevCSP() // 开发环境注入含 'unsafe-eval' 的 CSP（保障 HMR）
   createSplash()
