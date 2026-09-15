@@ -100,6 +100,8 @@ let quitForUpdate = false
 // 主窗口加载失败提示是否已弹出：loadURL rejection 与 did-fail-load 是两条独立通道，
 // 同一次失败可能先后触发，靠该标记去重避免弹窗叠罗汉；每次发起加载前复位
 let mainLoadFailedDialogOpen = false
+// 渲染进程崩溃提示是否已弹出：与加载失败提示同理去重，避免崩溃循环时弹窗叠罗汉
+let renderCrashDialogOpen = false
 
 // ---- 自动更新（electron-updater，仅 Windows 打包端启用） ----
 let autoUpdater = null
@@ -555,6 +557,46 @@ function createMainWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+  })
+
+  // 渲染进程崩溃兜底：托盘常驻应用，崩溃后窗口永久白屏且界面无任何反馈，
+  // 与加载失败同一套可恢复弹窗（重载 / 退出），去重标记防崩溃循环时弹窗叠罗汉
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    // clean-exit 为正常退出（如窗口正常关闭），仅 crashed / oom / killed 等真实崩溃需要兜底
+    if (details.reason === 'clean-exit') return
+    console.error('[render] 渲染进程异常退出:', details.reason, `exitCode=${details.exitCode}`)
+    // 窗口已销毁（含主动 destroy 触发的 killed）：没有可恢复的对象，仅记日志
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (renderCrashDialogOpen) return
+    renderCrashDialogOpen = true
+    // 崩溃时窗口可能正收在托盘里，先显出来，否则弹窗会被压在不可见的父窗口后面
+    if (!mainWindow.isVisible()) mainWindow.show()
+
+    dialog
+      .showMessageBox(mainWindow, {
+        type: 'error',
+        title: APP_NAME,
+        message: '页面出现异常',
+        detail: `应用界面意外中断，可尝试重新加载；反复出现请退出后重启应用。\n\n技术信息：${details.reason} (exitCode=${details.exitCode})`,
+        buttons: ['重载', '退出'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true
+      })
+      .then(({ response }) => {
+        renderCrashDialogOpen = false
+        if (response === 0) {
+          // 弹窗期间窗口可能已被销毁（如用户从托盘退出）
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload()
+        } else {
+          isQuitting = true
+          app.quit()
+        }
+      })
+      .catch((e) => {
+        renderCrashDialogOpen = false
+        console.error('[render] 崩溃提示弹窗异常:', e)
+      })
   })
 
   // 兜底：app:// 协议处理器返回 404 等场景不会让 loadURL rejection，但会触发 did-fail-load
