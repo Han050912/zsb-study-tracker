@@ -25,8 +25,10 @@
 
 <br/>
 
+[![CI](https://github.com/Han050912/zsb-study-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/ci.yml)
 [![Pages Deploy](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-pages.yml)
 [![Worker Deploy](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-worker.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-worker.yml)
+[![Desktop Release](https://github.com/Han050912/zsb-study-tracker/actions/workflows/release-desktop.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/release-desktop.yml)
 
 <br/>
 
@@ -265,7 +267,7 @@
 | PWA | vite-plugin-pwa (installable + Service Worker offline cache, NetworkFirst for API calls) |
 | Backend | Cloudflare Workers (TypeScript), in-house router and middleware, bcryptjs password hashing, jose for JWT |
 | Data | Cloudflare D1 (50+ tables, see `worker/schema.sql`), R2 (community images), D1 cron trigger (weekly report every Monday) |
-| Tooling | `tsc --noEmit` type checks, Worker smoke tests (`node test/smoke.mjs`), two GitHub Actions pipelines |
+| Tooling | `tsc --noEmit` type checks, `node --test` unit tests, Worker smoke tests (`node test/smoke.mjs`), four GitHub Actions pipelines |
 
 </div>
 
@@ -275,7 +277,7 @@
 
 <div style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:20px 24px;margin:16px 0;">
 
-> Prerequisites: **Node.js 18+** (CI and Worker deployment use Node 22) — download from [nodejs.org](https://nodejs.org).
+> Prerequisites: **Node.js 18+** (running the unit tests via `npm test` requires Node ≥ 22.18, because the Worker tests import `.ts` sources directly; CI and Worker deployment use Node 22) — download from [nodejs.org](https://nodejs.org).
 
 </div>
 
@@ -383,12 +385,14 @@ zsb-study-tracker/
 
 <div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:20px 24px;margin:16px 0;">
 
-Two GitHub Actions pipelines, both watching the **`master`** branch:
+Four GitHub Actions pipelines: one CI check, two deployments, and one desktop release.
 
 | Workflow | Trigger | What it does |
 | :--- | :--- | :--- |
-| `deploy-pages.yml` | Push to `master` | `npm ci` → `npm run build` → deploy `dist/` to GitHub Pages |
-| `deploy-worker.yml` | Push to `master` with `worker/**` changes | `npm ci` inside `worker/` → `npx wrangler deploy` |
+| `ci.yml` | Push to `development` / `master`, or any PR | Frontend typecheck / lint / format / unit tests / build, plus Worker typecheck |
+| `deploy-pages.yml` | Push to `master` (or manual) | `npm ci` → `npm run build` → deploy `dist/` to GitHub Pages |
+| `deploy-worker.yml` | Push to `master` with `worker/**` changes (or manual) | `npm ci` inside `worker/` → typecheck gate → `npx wrangler deploy` |
+| `release-desktop.yml` | Tag `v*` (or manual) | Verify tag matches package.json version → lint / unit tests → build desktop app and verify the `dist/api-base.json` artifact → publish the Windows installer to GitHub Releases (draft, publish manually) |
 
 Required repository secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. At runtime the Worker also needs `JWT_SECRET`, `TURNSTILE_SECRET`, `DESKTOP_TOKEN`, plus a D1 database (`zsb-study-db`) and an R2 bucket (`zsb-study-images`).
 
