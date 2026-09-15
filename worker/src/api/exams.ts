@@ -12,7 +12,8 @@ const examBodySchema = z
     score: z.number(),
     totalScore: z.number(),
     minutes: z.number(),
-    parts: z.record(z.string(), z.number()).optional()
+    // parts 线上实际形状为「部分名→得分」数组（[{name, score}]，与同步测试用例 14 一致），非 Record
+    parts: z.array(z.object({ name: z.string(), score: z.number() })).optional()
   })
   .passthrough()
 

@@ -79,7 +79,8 @@ export interface ExamRecord {
   score: number
   totalScore: number
   minutes: number
-  parts?: Record<string, number>
+  /** 部分名→得分（同步线上实际形状为数组，见 worker tests/record-sync 用例 14） */
+  parts?: { name: string; score: number }[]
   /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
   updatedAt?: number
 }
