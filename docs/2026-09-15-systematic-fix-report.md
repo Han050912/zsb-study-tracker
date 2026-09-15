@@ -235,3 +235,17 @@
 | 500 | 给用户造 120 条关注（D1：`INSERT INTO user_follows ...`）→ `GET /api/community/recommend` → 200 且返回三块结构（旧实现必 500） |
 | 死屏 | 不启动 Vite dev server 直接 `electron .` → 不再启动画面永驻：日志输出加载失败、弹出「重试/退出」 |
 | 泄漏 | 私信页选图后不发 → 路由跳走 → `chrome://blob-internals` 无残留该 blob；设置页导出 JSON 下载完整；轮询慢请求下 Network 无并发重复拉取 |
+
+## 9. 遗留项复核与处理（2026-09-15 追加，按「需修 / 可省略 / 需手动」三分类）
+
+| 原编号 | 结论 | 处理 |
+|---|---|---|
+| 1 远程索引 | **需你手动操作** | 三条 `CREATE INDEX`（schema.sql 已附命令）。需你的 Cloudflare 凭据且属生产 D1 写操作，未代跑 |
+| 2 另一会话 WIP | **部分已处理，其余交回** | 其 `ProblemsTab.vue` lint error（`_accuracy` 占位）与 `ChapterTree.vue` prettier 漂移已就地修正（均未提交）；本地 lint/格式自此全绿。WIP 主体（App.vue/SubjectPanel/community store/PWA 预缓存）仍需该会话完成提交 |
+| 3 积分窗口化语义 | **已修（小）** | `Rewards.vue` 累计基线改为「权威总积分 − 区间内新增」，区间前历史在窗口截断下仍精确、折线终点恒等于 `SUM(points_log)`（`c7c33dd`）。窗口/上限本身仍是展示取舍，保持 |
+| 4 黑名单缓存窗口 | **可省略** | 无任何代码路径绕过登出直写 `jwt_blacklist`；cron 只删过期行（token 已过期时 `verifyTokenFull` 先失败，与缓存无关）。仅当未来新增「管理员强制吊销」时需调用 `purgeRevokedCache`（已在注释写明） |
+| 5 exams.parts 类型标注 | **已修** | 前端 `ExamRecord.parts` 与 worker zod 校验一并对齐真实数组形状 `[{name, score}]`（`4908f8b`，record-sync 用例 14 复绿） |
+| 6 cron 路径 N+1 | **已修** | 周报 cron 批量化：每关系 12 次查询 → 全量约 7 次（与关系数解耦，含分块 ≤90 绑定参数）；并加 `JOIN users` 守卫跳过孤儿关系行（单条坏行原会 FK 报错拖垮整批）。端到端 13/13（真实统计内容、双向推送、重复触发去重、孤儿行跳过）（`e6a8a23`） |
+| 7 CI 现状 | **无需操作** | 陈述性说明，已与 README 对齐 |
+
+复核后回归：record-sync **250/250**、smoke **411/411**、`npm test` **57/57**、lint 0 error、无 REAL-DRIFT 格式漂移。
