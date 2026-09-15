@@ -150,9 +150,10 @@ async function submit() {
 
         <form class="space-y-3" @submit.prevent="submit">
           <div>
-            <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">用户名</label>
+            <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block" for="username">用户名</label>
             <input
               v-model="username"
+              id="username"
               name="username"
               class="input"
               placeholder="2~20 个字符"
@@ -161,10 +162,11 @@ async function submit() {
             />
           </div>
           <div>
-            <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">密码</label>
+            <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block" for="password">密码</label>
             <div class="relative">
               <input
                 v-model="password"
+                id="password"
                 name="password"
                 :type="showPassword ? 'text' : 'password'"
                 class="input pr-10"
@@ -193,10 +195,11 @@ async function submit() {
             </p>
           </div>
           <div v-if="mode === 'register'">
-            <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">确认密码</label>
+            <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block" for="confirm-password">确认密码</label>
             <div class="relative">
               <input
                 v-model="confirmPassword"
+                id="confirm-password"
                 name="confirm-password"
                 :type="showConfirmPassword ? 'text' : 'password'"
                 class="input pr-10"

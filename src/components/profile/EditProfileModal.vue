@@ -83,17 +83,18 @@ async function save() {
 
       <!-- 昵称 -->
       <div>
-        <label class="block text-sm font-medium mb-1.5">昵称</label>
-        <input v-model="userName" maxlength="30" class="input" placeholder="输入昵称" />
+        <label class="block text-sm font-medium mb-1.5" for="nickname">昵称</label>
+        <input v-model="userName" id="nickname" maxlength="30" class="input" placeholder="输入昵称" />
         <p class="text-[11px] text-slate-400 mt-1">登录用户名：{{ user?.username }}（不可修改）</p>
       </div>
 
       <!-- 简介 -->
       <div>
-        <label class="block text-sm font-medium mb-1.5">个人简介</label>
+        <label class="block text-sm font-medium mb-1.5" for="bio">个人简介</label>
         <div class="relative">
           <textarea
             v-model="bio"
+            id="bio"
             maxlength="100"
             rows="3"
             class="input resize-none"
