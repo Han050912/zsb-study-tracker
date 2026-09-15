@@ -1,7 +1,6 @@
 import dayjs from 'dayjs'
 
 export const today = () => dayjs().format('YYYY-MM-DD')
-export const fmtDate = (d: string | Date) => dayjs(d).format('YYYY-MM-DD')
 export const now = () => Date.now()
 
 export function uid(): string {

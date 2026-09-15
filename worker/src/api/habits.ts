@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on } from '../router'
-import { all, uid } from '../db'
+import { all } from '../db'
 
 /**
  * 习惯追踪：
@@ -51,42 +51,6 @@ export async function getHabits(env: Env, userId: string): Promise<HabitFull[]> 
       checkins
     }
   })
-}
-
-/** 生成某用户全部习惯数据的替换语句（先删后插） */
-export function habitReplaceStatements(env: Env, userId: string, habits: HabitFull[]): D1PreparedStatement[] {
-  const stmts: D1PreparedStatement[] = [
-    env.DB.prepare('DELETE FROM habit_records WHERE user_id = ?').bind(userId),
-    env.DB.prepare('DELETE FROM habits WHERE user_id = ?').bind(userId)
-  ]
-  for (const h of habits) {
-    const id = h.id || uid()
-    stmts.push(
-      env.DB.prepare('INSERT INTO habits (id, user_id, name, type, target, bad) VALUES (?, ?, ?, ?, ?, ?)').bind(
-        id,
-        userId,
-        h.name,
-        h.type,
-        h.target ?? null,
-        h.bad ? 1 : 0
-      )
-    )
-    for (const [date, value] of Object.entries(h.records ?? {})) {
-      stmts.push(
-        env.DB.prepare(
-          'INSERT OR REPLACE INTO habit_records (user_id, habit_id, date, value, checkin) VALUES (?, ?, ?, ?, 0)'
-        ).bind(userId, id, date, String(value))
-      )
-    }
-    for (const date of Object.keys(h.checkins ?? {})) {
-      stmts.push(
-        env.DB.prepare(
-          'INSERT OR REPLACE INTO habit_records (user_id, habit_id, date, value, checkin) VALUES (?, ?, ?, NULL, 1)'
-        ).bind(userId, id, date)
-      )
-    }
-  }
-  return stmts
 }
 
 /**

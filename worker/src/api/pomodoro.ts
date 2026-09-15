@@ -106,51 +106,6 @@ export function pomodoroRecordStatement(
   )
 }
 
-/** 生成番茄钟数据的替换语句 */
-export function pomodoroReplaceStatements(env: Env, userId: string, p: PomodoroFull): D1PreparedStatement[] {
-  const stmts: D1PreparedStatement[] = [
-    env.DB.prepare('DELETE FROM pomodoro_daily WHERE user_id = ?').bind(userId),
-    env.DB.prepare('DELETE FROM pomodoro_interruptions WHERE user_id = ?').bind(userId),
-    env.DB.prepare('DELETE FROM pomodoro_records WHERE user_id = ?').bind(userId)
-  ]
-  for (const [date, d] of Object.entries(p.daily ?? {})) {
-    stmts.push(
-      env.DB.prepare(
-        'INSERT INTO pomodoro_daily (user_id, date, count, minutes, interruptions) VALUES (?, ?, ?, ?, ?)'
-      ).bind(userId, date, d.count ?? 0, d.minutes ?? 0, d.interruptions ?? 0)
-    )
-  }
-  for (const i of p.interruptions ?? []) {
-    stmts.push(
-      env.DB.prepare('INSERT INTO pomodoro_interruptions (user_id, date, reason, time) VALUES (?, ?, ?, ?)').bind(
-        userId,
-        i.date,
-        i.reason,
-        i.time
-      )
-    )
-  }
-  for (const r of p.records ?? []) {
-    // 跳过字段不完整的记录：D1 bind 不接受 undefined，否则整批 batch 原子回滚成 500
-    if (!r?.id || !r.date || r.time == null) continue
-    stmts.push(
-      env.DB.prepare(
-        'INSERT INTO pomodoro_records (id, user_id, date, time, minutes, description, source, partner_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(
-        r.id,
-        userId,
-        r.date,
-        r.time,
-        r.minutes ?? 0,
-        r.description ?? '',
-        r.source ?? 'solo',
-        r.partnerName ?? null
-      )
-    )
-  }
-  return stmts
-}
-
 export function registerPomodoroRoutes() {
   on('GET', '/api/pomodoro', true, async (ctx) => {
     return Response.json(await getPomodoro(ctx.env, ctx.userId))

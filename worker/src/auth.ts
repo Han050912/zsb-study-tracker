@@ -93,9 +93,3 @@ export async function verifyTokenFull(token: string, secret: string): Promise<To
     return null
   }
 }
-
-/** 验证 JWT 并返回 user_id；无效/过期返回 null */
-export async function verifyToken(token: string, secret: string): Promise<string | null> {
-  const p = await verifyTokenFull(token, secret)
-  return p?.userId ?? null
-}
