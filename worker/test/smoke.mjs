@@ -410,11 +410,11 @@ async function main() {
   check('注册密码 8 位纯字母被拒绝（400）', pwdLetters.status === 400, JSON.stringify(pwdLetters.data))
   const pwdLong = await api('/api/auth/register', {
     method: 'POST',
-    body: { username: `studyp3_${uniq}`, password: `${'a1'.repeat(32)}b` } // 65 位：超出上限 64
+    body: { username: `studyp3_${uniq}`, password: `${'a1'.repeat(32)}b` } // 65 位：超出上限 14
   })
   check(
-    '注册密码 65 位被拒绝（400 密码最多 64 位）',
-    pwdLong.status === 400 && pwdLong.data?.message === '密码最多 64 位',
+    '注册密码 65 位被拒绝（400 密码最多 14 位）',
+    pwdLong.status === 400 && pwdLong.data?.message === '密码最多 14 位',
     JSON.stringify(pwdLong.data)
   )
   // 等待后进入新限流窗口，合法密码用例是新窗口第 1 次注册
