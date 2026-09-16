@@ -275,21 +275,13 @@ export function registerPostsRoutes() {
     if (!awarded) stmts.push(...awardStatements(ctx.env, ctx.userId, 5, '社区打卡', id))
     await batch(ctx.env, stmts)
 
-    // 徽章：首次发帖 / 首次提问（主键去重，仅首次发放并通知）
-    const myPostCount = await first<{ n: number }>(
-      ctx.env,
-      'SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ?',
-      ctx.userId
-    )
-    if (myPostCount?.n === 1) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_post'))
-    if (type === 'question') {
-      const myQCount = await first<{ n: number }>(
-        ctx.env,
-        "SELECT COUNT(*) AS n FROM community_posts WHERE user_id = ? AND type = 'question'",
-        ctx.userId
-      )
-      if (myQCount?.n === 1) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_question'))
-    }
+    // 徽章：首次发帖 / 首次提问。判定改为**未持有即补发**（幂等），不再依赖「刚好第一次」这种
+    // 一次性条件——否则该徽章 batch 一旦抛错，后续发帖计数已 >1，徽章与成就通知将永久丢失（issue #41）。
+    // awardBadge 主键去重保证只发放一次，失败后下次发帖自动重试可自愈。
+    if (!(await hasBadge(ctx.env, ctx.userId, 'first_post')))
+      await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_post'))
+    if (type === 'question' && !(await hasBadge(ctx.env, ctx.userId, 'first_question')))
+      await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_question'))
 
     // 刚写入的帖子被并发删除/隐藏时读不回，明确报错而非 500 崩溃
     const created = await first(ctx.env, `${POST_SELECT} WHERE p.id = ?`, ctx.userId, ctx.userId, id)

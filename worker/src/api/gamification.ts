@@ -78,6 +78,71 @@ export interface PointsAward {
 }
 
 /**
+ * 积分发放白名单（服务端权威口径，issue #11）。
+ *
+ * `award` 事件的 `points` 原本完全由客户端决定，可任意铸造（`1e8`…，甚至 `1e308` 让
+ * `SUM(points)` 溢出为 `null`）。改为：客户端只上报「行为（`reason`）+ 引用（`refId`）」，
+ * **行为的合法性与其分值上限由服务端白名单决定**：未登记 / 形状非法的 award 事件一律**不落账**，
+ * 落账分值一律钳制到 `min(points, 该行为上限, MAX_AWARD_POINTS)`——正常用户的值本就 ≤ 上限，
+ * 口径不变；伪造的超额值被压回上限，`1e308` 这类整数值浮点也不再可能污染 `SUM(points)`。
+ *
+ * - 动态 reason（含时长 / 题量 / 习惯名）用正则匹配，静态 reason 精确匹配；上限取该行为的正常
+ *   分值上界（略高于实际值），既能容纳「学习 1440 分钟」这类极值，又不给伪造留出量级空间。
+ * - 服务端自身产生、且会随 pull 回传、再经「导出 → 导入」重推的 reason（社区行为 / 派生积分）
+ *   同样在册，保证 round-trip 不被拒绝。
+ */
+const AWARD_RULES: readonly { test: RegExp; max: number }[] = [
+  // —— 客户端行为（src/stores/app/** 的 addPoints 调用点）——
+  { test: /^学习 [\d.]+ 分钟$/, max: 150 },
+  { test: /^刷题 [\d.]+ 道$/, max: 200 },
+  { test: /^背单词$/, max: 100 },
+  { test: /^听力练习$/, max: 100 },
+  { test: /^阅读训练$/, max: 5 },
+  { test: /^完成真题\/套卷$/, max: 20 },
+  { test: /^完成番茄钟$/, max: 5 },
+  { test: /^完成待办$/, max: 3 },
+  { test: /^完成习惯「.*」$/, max: 2 },
+  { test: /^每日打卡$/, max: 10 },
+  { test: /^完成每日总结$/, max: 5 },
+  { test: /^复习错题$/, max: 2 },
+  // —— 服务端行为（社区 / 派生；随 pull 回传后经导入重推，需同样可被接受）——
+  { test: /^社区打卡$/, max: 5 },
+  { test: /^评论帖子$/, max: 1 },
+  { test: /^收到评论$/, max: 2 },
+  { test: /^获赞$/, max: 1 },
+  { test: /^回答被采纳$/, max: 10 },
+  { test: /^提问被解答$/, max: 3 },
+  { test: /^今日学习满 60 分钟$/, max: 3 },
+  { test: /^连续学习满 \d{1,3} 天$/, max: 20 }
+]
+
+/** 单笔 award 分值硬上界：兜底防止 `1e308` 这类「整数值浮点」落账导致 `SUM(points)` 溢出为 `null` */
+export const MAX_AWARD_POINTS = 200
+
+/**
+ * 服务端权威地裁定一条 `award` 事件（issue #11）：校验行为合法性并将其分值钳制到上限。
+ *
+ * 无法裁定的事件返回 `null`，由调用方**忽略该事件**（不落账、不报错）：
+ * - `reason` 不是非空字符串，或未命中白名单（伪造的行为，如 `'free'`）；
+ * - `points` 非安全正整数（`NaN`/`Infinity`/小数/0/负数/`1e308` 这类超出安全整数范围的浮点）。
+ *
+ * 为什么不是 400 整批拒绝：award 事件来自客户端本地 outbox，一条永远无法通过校验的事件会把**整批**
+ * push 变成毒记录（与 issue #4/#5 同类故障），该账号所有域的同步会被永久阻塞；而安全目标
+ * 「客户端无法伪造分值」由「服务端白名单 + 上限钳制 + 不落账」已经完全达成。
+ *
+ * 分值**超额**同样不报错，而是钳制到 `min(points, 该行为上限, MAX_AWARD_POINTS)`：
+ * 正常用户的值本就 ≤ 上限（口径不变），而客户端学习时长 / 刷题量输入无上界（`<input type="number">`
+ * 仅 `min="1"`），若对超额直接报错会让 outbox 里的该事件永远推送失败。
+ */
+export function resolveAwardPoints(reason: unknown, points: unknown): { reason: string; points: number } | null {
+  if (typeof reason !== 'string' || !reason) return null
+  const rule = AWARD_RULES.find((r) => r.test.test(reason))
+  if (!rule) return null
+  if (typeof points !== 'number' || !Number.isSafeInteger(points) || points < 1) return null
+  return { reason, points: Math.min(points, rule.max, MAX_AWARD_POINTS) }
+}
+
+/**
  * 按 `ref_id` 幂等落账积分流水：`WHERE NOT EXISTS` 让「判重 + 插入」在**单条语句**内完成，
  * 因此重放、并发 push 都不会重复记账（客户端事件与 `migrateLegacyData` 的补齐天然安全）。
  */

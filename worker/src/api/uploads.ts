@@ -21,30 +21,56 @@ export const IMAGE_MAX_PER_MESSAGE = 3
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
-// ---------- 删帖时的图片清理（community.ts 复用） ----------
+// ---------- 上传引用源（单点口径：孤图清理与删帖/删评论共用） ----------
 
-/** 从帖子 image_urls JSON 中提取上传 id（仅认本系统路径，忽略外部 URL） */
-export function uploadIdsOf(raw: unknown): string[] {
-  try {
-    const v = JSON.parse(String(raw || '[]'))
-    if (!Array.isArray(v)) return []
-    return v
-      .map((u) => (typeof u === 'string' ? u.match(/\/api\/community\/images\/([a-f0-9]{16})$/)?.[1] : undefined))
-      .filter((x): x is string => !!x)
-  } catch {
-    return []
+/**
+ * 引用社区图片（`/api/community/images/<id>`）的**全部**真实来源表（口径单点，勿在别处另立一份）。
+ * 孤图判定（周 cron）与删除上传前的引用统计共用此列表，避免两处漂移（issue #10 / #37）。
+ * 每张表都有一个 JSON 数组列 `image_urls`；`partner_shares` / `partner_share_comments` 等表不引用图片。
+ */
+const UPLOAD_REF_TABLES = ['community_posts', 'community_comments', 'community_messages', 'feedback'] as const
+
+/** D1 单条语句绑定参数上限 100；UNION 4 张来源表 → 每块候选最多 20 个 URL（4×20=80 参数） */
+const REF_CHECK_CHUNK = 20
+
+/** 本系统图片路径 → 上传 id（仅认自身路径，忽略外部 URL / 头像路径） */
+const IMAGE_ID_RE = /\/api\/community\/images\/([a-f0-9]{16})/
+
+/**
+ * 在给定候选上传 id 中筛出**仍被引用**的 id（posts / comments / messages / feedback）。
+ *
+ * 用 `json_each` 展开各来源表的 `image_urls` 后按 `IN` **等值**匹配整批候选，取代原先「每个候选行
+ * 跑 3 次 `LIKE '%…%'`」的前缀通配写法——后者对每张来源表都是全表扫描，最坏放大成 N×3 次全表扫描
+ * （issue #42）。此处每张来源表每块候选只扫一次，复杂度与候选批大小线性。
+ */
+async function referencedUploadIds(env: Env, ids: string[]): Promise<Set<string>> {
+  const unique = [...new Set(ids)]
+  const found = new Set<string>()
+  for (let i = 0; i < unique.length; i += REF_CHECK_CHUNK) {
+    const urls = unique.slice(i, i + REF_CHECK_CHUNK).map((id) => `/api/community/images/${id}`)
+    const ph = urls.map(() => '?').join(',')
+    // json_valid 兜底：单行损坏的 image_urls 不至于让整条清理查询报错（与历史 LIKE 写法的容错一致）
+    const sql = UPLOAD_REF_TABLES.map(
+      (t) =>
+        `SELECT j.value AS url FROM ${t} t` +
+        `, json_each(CASE WHEN json_valid(t.image_urls) THEN t.image_urls ELSE '[]' END) j` +
+        ` WHERE j.value IN (${ph})`
+    ).join(' UNION ')
+    const rows = await all<{ url: string }>(env, sql, ...UPLOAD_REF_TABLES.flatMap(() => urls))
+    for (const r of rows) {
+      const m = IMAGE_ID_RE.exec(String(r.url))
+      if (m) found.add(m[1])
+    }
   }
+  return found
 }
 
-/** 删除一组上传记录及对应 R2 对象；R2 删除失败仅记日志，不阻塞 DB 清理 */
-export async function deleteUploads(env: Env, ids: string[]): Promise<void> {
-  if (!ids.length) return
-  const ph = ids.map(() => '?').join(',')
-  const rows = await all<{ r2_key: string; thumb_r2_key: string | null }>(
-    env,
-    `SELECT r2_key, thumb_r2_key FROM community_uploads WHERE id IN (${ph})`,
-    ...ids
-  )
+/** 删除给定上传行的 R2 对象（含缩略图）与归属行；R2 删除失败仅记日志，不阻塞 DB 清理 */
+async function deleteUploadRows(
+  env: Env,
+  rows: { id: string; r2_key: string; thumb_r2_key: string | null }[]
+): Promise<void> {
+  if (!rows.length) return
   await Promise.all(
     rows.flatMap((r) => {
       const dels: Promise<void>[] = [
@@ -55,44 +81,88 @@ export async function deleteUploads(env: Env, ids: string[]): Promise<void> {
       return dels
     })
   )
-  await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...ids)
+  const ph = rows.map(() => '?').join(',')
+  await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...rows.map((r) => r.id))
 }
 
-/** 惰性清理：删除 30 天前且未被帖子/评论/反馈引用的孤图。由每周 cron 调用（已从上传路径移除）。 */
+/** 从帖子/评论/私信/反馈的 image_urls JSON 中提取上传 id（仅认本系统路径，忽略外部 URL） */
+export function uploadIdsOf(raw: unknown): string[] {
+  try {
+    const v = JSON.parse(String(raw || '[]'))
+    if (!Array.isArray(v)) return []
+    return v.map((u) => (typeof u === 'string' ? IMAGE_ID_RE.exec(u)?.[1] : undefined)).filter((x): x is string => !!x)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 删除一组上传记录及对应 R2 对象。
+ *
+ * **仍有其它引用时不删**（issue #37）：同一张图可被多个帖子 / 评论 / 私信 / 反馈复用，
+ * 删除其中一个引用方（其引用关系已随级联删除先行解除）不得连带删掉其它引用方仍在使用的
+ * R2 对象与 `community_uploads` 归属行。R2 删除失败仅记日志，不阻塞 DB 清理。
+ */
+export async function deleteUploads(env: Env, ids: string[]): Promise<void> {
+  const candidates = [...new Set(ids)]
+  if (!candidates.length) return
+  const referenced = await referencedUploadIds(env, candidates)
+  const deletable = candidates.filter((id) => !referenced.has(id))
+  if (!deletable.length) return
+  const ph = deletable.map(() => '?').join(',')
+  const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null }>(
+    env,
+    `SELECT id, r2_key, thumb_r2_key FROM community_uploads WHERE id IN (${ph})`,
+    ...deletable
+  )
+  await deleteUploadRows(env, rows)
+}
+
+/** 单轮清理的候选批大小（游标推进的步长） */
+const CLEANUP_BATCH = 200
+/** 单轮 cron 最多处理的候选行数：约束单次执行耗时（避免 cron 超时），游标保证下次接着推进 */
+const CLEANUP_MAX_ROWS = 1000
+
+/**
+ * 惰性清理：删除 30 天前且**未被帖子 / 评论 / 私信 / 反馈引用**的孤图。由每周 cron 调用。
+ *
+ * 两处修复（issue #10 / #42）：
+ * - 引用判定并入 `community_messages`（以及全部真实来源，见 `UPLOAD_REF_TABLES`），
+ *   历史私信配图不再被误判为孤图；
+ * - 按 `(created_at, id)` 升序取候选并**向后滚动游标**：被引用而未被删除的行同样推进游标，
+ *   避免「前若干条都被引用 → 每周取到同一批 → 真正靠后的孤图永远轮不到」的清理饥饿。
+ */
 export async function cleanupOrphanUploads(env: Env): Promise<void> {
   const cutoff = nowSec() - 30 * 86400
-  // 单条查询带引用标记：三个 EXISTS 子查询逐字保留原 LIKE 口径（16 位 hex ID 无子串误匹配）
-  const rows = await all<{
-    id: string
-    r2_key: string
-    thumb_r2_key: string | null
-    ref_post: number | null
-    ref_comment: number | null
-    ref_feedback: number | null
-  }>(
-    env,
-    `SELECT cu.id, cu.r2_key, cu.thumb_r2_key,
-       (SELECT 1 FROM community_posts   WHERE image_urls LIKE '%/api/community/images/' || cu.id || '%' LIMIT 1) AS ref_post,
-       (SELECT 1 FROM community_comments WHERE image_urls LIKE '%/api/community/images/' || cu.id || '%' LIMIT 1) AS ref_comment,
-       (SELECT 1 FROM feedback          WHERE image_urls LIKE '%/api/community/images/' || cu.id || '%' LIMIT 1) AS ref_feedback
-     FROM community_uploads cu
-     WHERE cu.created_at < ? LIMIT 200`,
-    cutoff
-  )
-  const orphans = rows.filter((r) => !r.ref_post && !r.ref_comment && !r.ref_feedback)
-  if (!orphans.length) return
-  await Promise.all(
-    orphans.flatMap((r) => {
-      const dels: Promise<void>[] = [
-        env.IMAGES.delete(r.r2_key).catch((e) => console.error('R2 删除失败', r.r2_key, e))
-      ]
-      if (r.thumb_r2_key)
-        dels.push(env.IMAGES.delete(r.thumb_r2_key).catch((e) => console.error('R2 删除失败', r.thumb_r2_key, e)))
-      return dels
-    })
-  )
-  const ph = orphans.map(() => '?').join(',')
-  await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...orphans.map((r) => r.id))
+  let cursorCreatedAt = -1
+  let cursorId = ''
+  for (let processed = 0; processed < CLEANUP_MAX_ROWS;) {
+    const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null; created_at: number }>(
+      env,
+      `SELECT id, r2_key, thumb_r2_key, created_at FROM community_uploads
+       WHERE created_at < ? AND (created_at > ? OR (created_at = ? AND id > ?))
+       ORDER BY created_at ASC, id ASC LIMIT ?`,
+      cutoff,
+      cursorCreatedAt,
+      cursorCreatedAt,
+      cursorId,
+      CLEANUP_BATCH
+    )
+    if (!rows.length) break
+    const last = rows[rows.length - 1]
+    cursorCreatedAt = last.created_at
+    cursorId = last.id
+    processed += rows.length
+    const referenced = await referencedUploadIds(
+      env,
+      rows.map((r) => r.id)
+    )
+    await deleteUploadRows(
+      env,
+      rows.filter((r) => !referenced.has(r.id))
+    )
+    if (rows.length < CLEANUP_BATCH) break
+  }
 }
 
 // ---------- 路由 ----------
