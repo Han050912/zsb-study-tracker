@@ -66,6 +66,7 @@ export function registerMessagesRoutes() {
 
   // 与某用户的消息记录（倒序游标分页；打开即把对方发来的消息标为已读）
   on('GET', '/api/community/messages/with/:peerId', true, async (ctx) => {
+    await rateLimit(ctx, 'community:msg-history', 60)
     const peerId = ctx.params.peerId
     const peer = await first<{ id: string }>(ctx.env, 'SELECT id FROM users WHERE id = ?', peerId)
     if (!peer) throw new HttpError(404, '用户不存在')

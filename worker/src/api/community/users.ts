@@ -356,11 +356,10 @@ export function registerUsersRoutes() {
     }
     const myName = await displayName(ctx.env, ctx.userId)
     await batch(ctx.env, [
-      ctx.env.DB.prepare('INSERT INTO user_follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)').bind(
-        ctx.userId,
-        targetId,
-        nowSec()
-      ),
+      // INSERT OR IGNORE 幂等（P4-10）：并发双击撞 PRIMARY KEY(follower_id, followee_id) 时返回 200 而非 500
+      ctx.env.DB.prepare(
+        'INSERT OR IGNORE INTO user_follows (follower_id, followee_id, created_at) VALUES (?, ?, ?)'
+      ).bind(ctx.userId, targetId, nowSec()),
       notifyStatement(ctx.env, { userId: targetId, type: 'follow', actorId: ctx.userId, content: `${myName} 关注了你` })
     ])
     return Response.json({ following: true })
@@ -368,6 +367,7 @@ export function registerUsersRoutes() {
 
   // 用户发布的帖子（公开广场帖口径：排除圈子帖/知识点讨论帖；游标分页，与 feed latest 同模式）
   on('GET', '/api/community/users/:id/posts', false, async (ctx) => {
+    await rateLimit(ctx, 'community:user-posts', 60)
     // 帖子默认对外可见：仅校验目标用户存在，不按主页可见性过滤（主页可见性只控主页访问，不控帖子）
     const target = await first<{ id: string }>(ctx.env, 'SELECT u.id FROM users u WHERE u.id = ?', ctx.params.id)
     if (!target) throw new HttpError(404, '用户不存在')
@@ -401,6 +401,7 @@ export function registerUsersRoutes() {
 
   // 我点赞过的帖子（按点赞时间倒序；游标 `${lk.created_at}_${p.id}`）
   on('GET', '/api/community/me/liked-posts', true, async (ctx) => {
+    await rateLimit(ctx, 'community:liked-posts', 60)
     const url = new URL(ctx.request.url)
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const c = parseCursor(url.searchParams.get('cursor') || '')

@@ -1,5 +1,5 @@
 import { on, body } from '../../router'
-import { all, first, run, batch, uid, HttpError } from '../../db'
+import { all, first, batch, uid, HttpError } from '../../db'
 import { rateLimit } from '../../middleware/rateLimit'
 import { assertCleanAsync } from '../sensitive'
 import { mapCircle, nowSec, displayName, notifyStatement, escapeLike, isAdmin } from './shared'
@@ -148,9 +148,10 @@ export function registerCirclesRoutes() {
           ctx.params.id,
           ctx.userId
         ),
-        ctx.env.DB.prepare('UPDATE community_circles SET member_count = MAX(member_count - 1, 0) WHERE id = ?').bind(
-          ctx.params.id
-        )
+        // 计数在批内按成员表重算（P4-11）：批失败一起回滚，且自愈历史漂移
+        ctx.env.DB.prepare(
+          "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+        ).bind(ctx.params.id, ctx.params.id)
       ])
       return Response.json({ status: null })
     }
@@ -173,15 +174,18 @@ export function registerCirclesRoutes() {
     const status = circle.is_public ? 'active' : 'pending'
     const myName = await displayName(ctx.env, ctx.userId)
     const stmts: D1PreparedStatement[] = [
+      // INSERT OR IGNORE 幂等（P4-11）：并发双击撞 PRIMARY KEY(circle_id, user_id) 时返回 200 而非 500
       ctx.env.DB.prepare(
-        'INSERT INTO circle_members (circle_id, user_id, role, status, created_at) VALUES (?, ?, ?, ?, ?)'
+        'INSERT OR IGNORE INTO circle_members (circle_id, user_id, role, status, created_at) VALUES (?, ?, ?, ?, ?)'
       ).bind(ctx.params.id, ctx.userId, 'member', status, nowSec())
     ]
     if (status === 'active') {
+      // 成员写入与计数重算同一 batch（P4-11，复用 teams/teams.ts addMember 范式）：批内按成员表重算，
+      // 批失败一起回滚，INSERT 被忽略时重算结果不变（幂等），不再用 +1 递增
       stmts.push(
-        ctx.env.DB.prepare('UPDATE community_circles SET member_count = member_count + 1 WHERE id = ?').bind(
-          ctx.params.id
-        )
+        ctx.env.DB.prepare(
+          "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+        ).bind(ctx.params.id, ctx.params.id)
       )
     } else {
       stmts.push(
@@ -209,17 +213,15 @@ export function registerCirclesRoutes() {
     )
     if (!circle) throw new HttpError(404, '圈子不存在')
     if (circle.creator_id !== ctx.userId) throw new HttpError(403, '仅圈主可审批')
-    const updated = await run(
-      ctx.env,
-      "UPDATE circle_members SET status = 'active' WHERE circle_id = ? AND user_id = ? AND status = 'pending'",
-      ctx.params.id,
-      ctx.params.uid
-    )
-    if (!updated.meta.changes) throw new HttpError(404, '申请不存在或已处理')
-    await batch(ctx.env, [
-      ctx.env.DB.prepare('UPDATE community_circles SET member_count = member_count + 1 WHERE id = ?').bind(
-        ctx.params.id
-      ),
+    // 置 active + 计数重算 + 通知同一 batch（P4-11）：中途失败整体回滚，消除「计数少 1 且不可自愈」；
+    // 计数按成员表重算而非 +1，自愈历史漂移。changes === 0 说明申请不存在或已被并发处理。
+    const results = await batch(ctx.env, [
+      ctx.env.DB.prepare(
+        "UPDATE circle_members SET status = 'active' WHERE circle_id = ? AND user_id = ? AND status = 'pending'"
+      ).bind(ctx.params.id, ctx.params.uid),
+      ctx.env.DB.prepare(
+        "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+      ).bind(ctx.params.id, ctx.params.id),
       notifyStatement(ctx.env, {
         userId: ctx.params.uid,
         type: 'system',
@@ -228,6 +230,7 @@ export function registerCirclesRoutes() {
         content: `🎉 你加入圈子「${circle.name}」的申请已通过`
       })
     ])
+    if (!results?.[0]?.meta.changes) throw new HttpError(404, '申请不存在或已处理')
     return Response.json({ ok: true })
   })
 
@@ -252,9 +255,10 @@ export function registerCirclesRoutes() {
       ),
       ...(target.status === 'active'
         ? [
+            // 计数在批内按成员表重算（P4-11 同口径），替代 -1 递增并自愈历史漂移
             ctx.env.DB.prepare(
-              'UPDATE community_circles SET member_count = MAX(member_count - 1, 0) WHERE id = ?'
-            ).bind(ctx.params.id)
+              "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+            ).bind(ctx.params.id, ctx.params.id)
           ]
         : [])
     ])

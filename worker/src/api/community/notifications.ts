@@ -1,6 +1,6 @@
 import { on } from '../../router'
-import { all, first, run } from '../../db'
-import { parseMutedTypes } from '../settings'
+import { all, first, run, HttpError } from '../../db'
+import { NOTIF_TYPES, parseMutedTypes } from '../settings'
 import { mapNotification, parseCursor, MAX_PAGE } from './shared'
 
 /**
@@ -15,6 +15,10 @@ export function registerNotificationsRoutes() {
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const cursor = url.searchParams.get('cursor') || ''
     const type = url.searchParams.get('type') || ''
+    // type 枚举白名单校验（P4-03）：非法值 400 中文提示，而非返回 200 空列表
+    if (type && !(NOTIF_TYPES as readonly string[]).includes(type)) {
+      throw new HttpError(400, '通知类型无效')
+    }
 
     let sql = `
       SELECT n.*, COALESCE(s.user_name, u.username) AS actor_name, s.avatar AS actor_avatar,
