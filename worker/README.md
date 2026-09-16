@@ -56,8 +56,20 @@ npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXI
 npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id)"
 npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS community_reports ( id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL REFERENCES users(id), target_type TEXT NOT NULL, target_id TEXT NOT NULL, reason TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL )"
 npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at)"
-npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS community_moderation_log ( id TEXT PRIMARY KEY, admin_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, report_id TEXT, reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL )"
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS community_moderation_log ( id TEXT PRIMARY KEY, admin_id TEXT REFERENCES users(id), action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, report_id TEXT, reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL )"
 npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at)"
+```
+
+已有线上库升级（举报自动隐藏修复 #38：`admin_id` 需可空以承载系统动作；孤图清理索引 #42）。
+SQLite 改列约束需重建表，按顺序执行一次：
+
+```bash
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE community_moderation_log_new ( id TEXT PRIMARY KEY, admin_id TEXT REFERENCES users(id), action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, report_id TEXT, reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL )"
+npx wrangler d1 execute zsb-study-db --remote --command "INSERT INTO community_moderation_log_new SELECT id, admin_id, action, target_type, target_id, report_id, reason, created_at FROM community_moderation_log"
+npx wrangler d1 execute zsb-study-db --remote --command "DROP TABLE community_moderation_log"
+npx wrangler d1 execute zsb-study-db --remote --command "ALTER TABLE community_moderation_log_new RENAME TO community_moderation_log"
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at)"
+npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_uploads_created ON community_uploads(created_at, id)"
 ```
 
 ## 部署风险提示

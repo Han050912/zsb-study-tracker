@@ -554,6 +554,8 @@ CREATE TABLE IF NOT EXISTS community_uploads (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id);
+-- 孤图清理按 (created_at, id) 升序 + 游标推进取候选（issue #42）：缺此索引会全表扫描 + 无确定顺序
+CREATE INDEX IF NOT EXISTS idx_uploads_created ON community_uploads(created_at, id);
 
 -- 内容举报：举报人匿名（列表仅管理员可见）；status: 'pending' | 'resolved' | 'rejected'
 CREATE TABLE IF NOT EXISTS community_reports (
@@ -620,10 +622,11 @@ CREATE TABLE IF NOT EXISTS user_badges (
   PRIMARY KEY (user_id, badge_key)
 );
 
--- 审核操作日志：所有治理动作留痕（action: 'hide' | 'delete' | 'reject' 等）
+-- 审核操作日志：所有治理动作留痕（action: 'hide' | 'delete' | 'reject' | 'auto-hide' 等）
+-- admin_id 可空：NULL 表示系统动作（如举报达阈值自动隐藏，无对应管理员），非空为真实管理员 id
 CREATE TABLE IF NOT EXISTS community_moderation_log (
   id TEXT PRIMARY KEY,
-  admin_id TEXT NOT NULL REFERENCES users(id),
+  admin_id TEXT REFERENCES users(id),
   action TEXT NOT NULL,
   target_type TEXT NOT NULL,        -- 'post' | 'comment' | 'report'
   target_id TEXT NOT NULL,
@@ -688,6 +691,21 @@ CREATE TABLE IF NOT EXISTS jwt_blacklist (
   expires_at INTEGER NOT NULL
 );
 
+-- 已签发会话登记（每签发一次 token 登记一行，登出即删除）：
+-- 吊销只能按 jti 精确命中，其它设备的 jti 服务端无从得知，故签发时留档；
+-- 修改密码时按 user_id 取出全部 jti 一次性写入 jwt_blacklist，使其它会话立即失效。
+-- 过期行由 api/auth.ts 的 cleanupExpiredTokens（每周 cron）清理。
+CREATE TABLE IF NOT EXISTS user_sessions (
+  jti TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  expires_at INTEGER NOT NULL,   -- token 过期时间（Unix 秒），与 jwt_blacklist 同口径
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS user_sessions (jti TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL)"
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)"
+
 -- ========== 学习搭子协作（轻量化双向学习协作关系） ==========
 
 -- 错题/笔记定向分享（单向分享给搭子，双方可批注交流，与公开社区帖子隔离）
@@ -731,6 +749,7 @@ CREATE TABLE IF NOT EXISTS partner_study_sessions (
   to_elapsed_seconds INTEGER NOT NULL DEFAULT 0,   -- 搭子当前阶段已消耗秒数
   from_running INTEGER NOT NULL DEFAULT 0,          -- 发起人是否在计时（1=计时中，0=暂停）
   to_running INTEGER NOT NULL DEFAULT 0,            -- 搭子是否在计时
+  last_active_at INTEGER NOT NULL DEFAULT 0,        -- 最后活跃时间（任一参与方心跳时刷新，超时未刷新视为僵尸会话并回收）
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
