@@ -19,6 +19,67 @@ type ImportExportActionsShape = {
   clearAll(): void
 }
 
+/** 备份文本的形状：state 快照 + 笔记正文（正文不在 $state 内，导出时单独携带） */
+type Backup = AppState & { noteBodies?: Record<string, { content: string; updatedAt: number }> }
+
+/** 备份必需字段：数组域（导入会逐条打删除墓碑并逐条上行） */
+const BACKUP_ARRAY_FIELDS = [
+  'subjects',
+  'records',
+  'problemSessions',
+  'errorQuestions',
+  'exams',
+  'notes',
+  'materials',
+  'todos',
+  'habits'
+] as const
+
+/** 备份必需字段：对象域 */
+const BACKUP_OBJECT_FIELDS = ['settings', 'summaries', 'english', 'gamification', 'pomodoro'] as const
+
+/** 纯对象判定（数组与 null 不算），用于对象域的字段 */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** 数组域判定：元素必须是可以取字段的对象（导入逐条读 `record.id` 的运行时前提） */
+function isRecordArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every(isPlainObject)
+}
+
+/**
+ * 备份结构校验：导入是「先给全部旧记录打删除墓碑、再写入新数据」且会即时推送到云端，
+ * 误判的代价是**不可恢复的数据清空**，因此只有确认「是本系统的备份」才允许进入导入流程——
+ * 任意合法 JSON（`package.json`、其它软件的配置）一律拒绝。
+ * 逐层校验导入流程真正消费到的形状：缺任何一层都会在打完墓碑之后才抛错，留下无法回滚的删除。
+ */
+export function isValidBackup(data: unknown): data is Backup {
+  if (!isPlainObject(data)) return false
+  if (!BACKUP_ARRAY_FIELDS.every((field) => isRecordArray(data[field]))) return false
+  if (!BACKUP_OBJECT_FIELDS.every((field) => isPlainObject(data[field]))) return false
+  const english = data.english as Record<string, unknown>
+  const pomodoro = data.pomodoro as Record<string, unknown>
+  const gamification = data.gamification as Record<string, unknown>
+  return (
+    ['vocab', 'reading', 'listening', 'templates'].every((field) => isRecordArray(english[field])) &&
+    isPlainObject(pomodoro.daily) &&
+    isRecordArray(pomodoro.interruptions) &&
+    isRecordArray(pomodoro.records) &&
+    Array.isArray(gamification.achievements)
+  )
+}
+
+/** 解析并校验备份文本：JSON 语法错误或结构不符一律返回 null */
+export function parseBackup(json: string): Backup | null {
+  try {
+    const parsed: unknown = JSON.parse(json)
+    return isValidBackup(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 export const importExportActions: ImportExportActionsShape = {
   /** 导出/导入/清空 */
   /** 导出：状态快照 + 笔记正文（正文存 IndexedDB/云端分片，不在 $state 内，需单独收集） */
@@ -33,10 +94,10 @@ export const importExportActions: ImportExportActionsShape = {
   },
 
   importJSON(this: AppStoreThis, json: string): boolean {
+    // 结构校验必须先于任何 stageAllDeletes / stagePoints：校验失败时绝不允许落下删除墓碑
+    const data = parseBackup(json)
+    if (!data) return false
     try {
-      const data = JSON.parse(json) as AppState & {
-        noteBodies?: Record<string, { content: string; updatedAt: number }>
-      }
       const now = Date.now()
       // 记录级协议没有整域替换：旧状态中被整批覆盖的记录逐条 stage 删除墓碑
       stageAllDeletes(this.$state, now)
@@ -65,7 +126,8 @@ export const importExportActions: ImportExportActionsShape = {
       stageLogAwards(this.gamification.pointsLog)
       this.save()
       return true
-    } catch {
+    } catch (e) {
+      console.error('导入备份失败', e)
       return false
     }
   },

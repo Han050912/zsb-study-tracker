@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
+import { MAX_FIELD_CHARS } from '../stores/app/sync'
 import Modal from '../components/Modal.vue'
 import { normalizeUrl } from '../utils/url'
 import { subjectLabel } from '../utils/subject'
@@ -33,13 +34,20 @@ const showModal = ref(false)
 const form = ref<Partial<Material>>({ type: 'book', priority: '中' })
 function open(m?: Material) {
   form.value = m ? { ...m } : { type: 'book', priority: '中', title: '' }
-  // 编辑已有资料时，根据 url 形态还原链接模式
-  linkMode.value = m?.fileName || (m?.url && m.url.startsWith('data:')) ? 'file' : 'url'
+  // 编辑已有资料时按 fileName 还原模式：有 fileName 即文件模式，否则链接模式。
+  // 不再以「url 是否以 data: 开头」判定模式（那会把链接字段里的 base64 误判成文件上传）。
+  linkMode.value = form.value.fileName ? 'file' : 'url'
   showModal.value = true
 }
 function save() {
-  if (!form.value.title?.trim()) {
+  const title = form.value.title?.trim() ?? ''
+  if (!title) {
     toast('请填写标题')
+    return
+  }
+  // 超限内容落库后会让每次推送都被服务端 413 整批拒绝（且永远重试），必须在写入前拦下并指明是哪条
+  if ((form.value.url ?? '').length > MAX_FIELD_CHARS) {
+    toast(`「${title}」的内容超过云端单条 1MB 上限，无法保存：请移除附件或改用链接方式引用`)
     return
   }
   if (linkMode.value === 'url') form.value.fileName = undefined
@@ -51,16 +59,32 @@ function save() {
 
 // ---- 链接输入 / 文件上传 双模式 ----
 const linkMode = ref<'url' | 'file'>('url')
+/**
+ * 切换链接/文件模式时清空两个模式的字段（url 同时承载链接与文件 dataURL，无法按字段隔离）。
+ * 否则会出现「切到链接模式却把之前附加文件的 dataURL 留在 url 字段」的混合态（issue #35）。
+ */
+function setLinkMode(mode: 'url' | 'file') {
+  if (linkMode.value === mode) return
+  linkMode.value = mode
+  form.value.url = ''
+  form.value.fileName = undefined
+}
 const fileInput = ref<HTMLInputElement>()
 const fileDragging = ref(false)
 let fileDragDepth = 0
-/** 上传文件大小上限（dataURL 内嵌存储，过大影响云端同步性能） */
-const FILE_SIZE_LIMIT = 8 * 1024 * 1024
+/**
+ * 上传文件大小上限：文件以 dataURL 整段存入 `materials.url`，而该字段随记录参与**整批**推送
+ * （一条超限记录会让服务端以 413 拒绝本次推送的全部域：笔记 / 错题 / 学习记录全被连累）。
+ * 服务端单条字符串上限为 MAX_FIELD_CHARS，base64 体积是原始字节的 4/3，扣除 `data:<mime>;base64,` 前缀后
+ * 即为可安全内嵌的最大文件字节数（≈732KB）。
+ */
+const FILE_SIZE_LIMIT = Math.floor(((MAX_FIELD_CHARS - 64) * 3) / 4)
+const FILE_SIZE_LIMIT_KB = Math.floor(FILE_SIZE_LIMIT / 1024)
 
 function readMaterialFile(file: File | undefined) {
   if (!file) return
   if (file.size > FILE_SIZE_LIMIT) {
-    toast(`「${file.name}」超过 8MB，建议改用链接方式引用`)
+    toast(`「${file.name}」超过 ${FILE_SIZE_LIMIT_KB}KB 内嵌上限，请改用链接方式引用`)
     return
   }
   const reader = new FileReader()
@@ -233,7 +257,7 @@ const priorityColor: Record<string, string> = {
               type="button"
               class="text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
               :class="linkMode === 'url' ? 'bg-white dark:bg-slate-600 shadow-sm' : 'text-slate-500'"
-              @click="linkMode = 'url'"
+              @click="setLinkMode('url')"
             >
               URL 链接
             </button>
@@ -241,7 +265,7 @@ const priorityColor: Record<string, string> = {
               type="button"
               class="text-xs px-3 py-1.5 rounded-md font-medium transition-colors"
               :class="linkMode === 'file' ? 'bg-white dark:bg-slate-600 shadow-sm' : 'text-slate-500'"
-              @click="linkMode = 'file'"
+              @click="setLinkMode('file')"
             >
               文件上传
             </button>
@@ -275,7 +299,9 @@ const priorityColor: Record<string, string> = {
                 ＋
               </div>
               <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">点击选择文件，或将文件拖拽到此处</p>
-              <p class="text-[10px] text-slate-400 mt-0.5">单个文件 ≤ 8MB（PDF / 图片 / 文档等）</p>
+              <p class="text-[10px] text-slate-400 mt-0.5">
+                单个文件 ≤ {{ FILE_SIZE_LIMIT_KB }}KB（内嵌云端同步上限 1MB，更大的文件请改用链接引用）
+              </p>
             </div>
             <div
               v-else

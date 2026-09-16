@@ -1,8 +1,11 @@
 <script setup lang="ts">
 /** 数据管理卡：云端用量、手动同步、导出/导入备份、清除全部数据（含确认弹窗）、检查更新 */
 import { onMounted, ref } from 'vue'
+import { TriangleAlert } from '@lucide/vue'
 import { useToast } from '../../composables/useToast'
 import { useAppStore } from '../../stores/app'
+import { parseBackup } from '../../stores/app/importExport'
+import { syncIssue } from '../../stores/app/sync'
 import Modal from '../Modal.vue'
 
 const store = useAppStore()
@@ -50,16 +53,20 @@ async function onImport(e: Event) {
   if (!file) return
   const reader = new FileReader()
   reader.onload = async () => {
-    if (store.importJSON(reader.result as string)) {
-      toast('导入成功！')
-      // 立即推送到云端，避免防抖 save() 与 location.reload() 竞态导致数据丢失
-      try {
-        await store.saveAsync()
-      } catch {
-        toast('云端同步失败，请稍后重试')
-      }
-      setTimeout(() => location.reload(), 300)
-    } else toast('导入失败：文件格式不正确')
+    const raw = reader.result as string
+    // 先校验备份结构再走成功分支：导入是「先删后写入」，错误文件一旦进流程会清空本地与云端数据
+    if (!parseBackup(raw)) {
+      toast('导入失败：文件格式不正确')
+      return
+    }
+    if (!store.importJSON(raw)) {
+      toast('导入失败：请稍后重试')
+      return
+    }
+    toast('导入成功！')
+    // 立即推送到云端，避免防抖 save() 与 location.reload() 竞态导致数据丢失
+    if (!(await store.saveAsync())) toast(syncIssue.value ?? '云端同步失败，变更将在下次同步时重试')
+    setTimeout(() => location.reload(), 300)
   }
   reader.readAsText(file)
 }
@@ -87,7 +94,8 @@ async function syncNow() {
   syncing.value = true
   try {
     const r = await store.syncNow()
-    if (!r.ok) toast('同步失败，请检查网络后重试')
+    // 4xx 是服务端明确拒绝（毒记录），原因已由 store 写入 syncIssue：直接展示，别误导成网络问题
+    if (!r.ok) toast(syncIssue.value ?? '同步失败，请检查网络后重试')
     else if (r.rejected > 0)
       toast(`同步完成：上传 ${r.applied} 条，${r.rejected} 条被服务端拒绝（本地保留，待下次拉取覆盖）`)
     else toast(`同步完成：上传 ${r.applied} 条，拉取 ${r.changed} 条`)
@@ -103,6 +111,14 @@ async function syncNow() {
   <!-- 数据管理 -->
   <div class="card space-y-3">
     <div class="section-title">数据管理</div>
+    <!-- 推送失败（尤其 4xx 毒记录）会让云同步长期静默停止，必须常驻可见，直到下一次推送成功 -->
+    <div
+      v-if="syncIssue"
+      class="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-600 dark:text-amber-400"
+    >
+      <TriangleAlert class="w-4 h-4 shrink-0 mt-px" />
+      <span>{{ syncIssue }}</span>
+    </div>
     <div class="text-xs text-slate-400">云端数据大小：{{ storageUsage }}</div>
     <div class="flex gap-2 flex-wrap">
       <button class="btn-primary" :disabled="syncing" @click="syncNow">
