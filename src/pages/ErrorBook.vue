@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
+import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 import { useAppStore } from '../stores/app'
 import { today } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
@@ -158,6 +159,11 @@ async function add() {
 const expandedAnswer = ref<Record<string, boolean>>({})
 const reviewCount = computed(() => store.errorQuestions.reduce((s, e) => s + e.reviewCount, 0))
 
+/** 复习一次：提示文案取自 store 的返回值，保证「提示 == 实际到账」（仅首次复习发放 +2 积分） */
+function onReview(id: string) {
+  toast(store.reviewError(id) ? '复习 +1，积分 +2' : '复习 +1')
+}
+
 // 图片灯箱：点击错题图片全屏放大查看，点击任意处或按 Esc 关闭
 const zoomImage = ref('')
 function openZoom(src: string) {
@@ -166,11 +172,10 @@ function openZoom(src: string) {
 function closeZoom() {
   zoomImage.value = ''
 }
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') closeZoom()
-}
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+// Esc 关闭下沉到弹层栈：只有灯箱位于栈顶时才响应（灯箱叠在收录弹窗之上时，Esc 先关灯箱再关弹窗，
+// 不会多层同时响应）；点击任意处关闭保留原有交互，不使用遮罩自点击判定
+const zoomPanelRef = ref<HTMLElement | null>(null)
+useOverlayDismiss(closeZoom, { show: () => !!zoomImage.value, panel: () => zoomPanelRef.value })
 onUnmounted(clearPendingImage)
 
 async function removeError(id: string) {
@@ -247,12 +252,8 @@ async function removeError(id: string) {
         <div class="flex gap-2 mt-3 pt-2 border-t border-slate-100 dark:border-slate-700">
           <button
             class="btn-ghost !py-1 !text-xs"
-            @click="
-              () => {
-                store.reviewError(q.id)
-                toast('复习 +1，积分 +2')
-              }
-            "
+            title="首次复习奖励积分 +2，之后仅计入复习次数"
+            @click="onReview(q.id)"
           >
             复习({{ q.reviewCount }})
           </button>
@@ -335,7 +336,9 @@ async function removeError(id: string) {
     <Teleport to="body">
       <div
         v-if="zoomImage"
-        class="fixed inset-0 z-[60] bg-black/85 flex items-center justify-center p-4 cursor-zoom-out"
+        ref="zoomPanelRef"
+        class="fixed inset-0 bg-black/85 flex items-center justify-center p-4 cursor-zoom-out"
+        :class="OVERLAY_LAYER.lightbox"
         @click="closeZoom"
       >
         <img :src="zoomImage" class="max-w-full max-h-full object-contain rounded-lg select-none" alt="放大查看" />

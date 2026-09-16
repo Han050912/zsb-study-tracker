@@ -13,7 +13,7 @@ import type { ErrorQuestion } from '../../types'
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type ErrorsActionsShape = {
   addErrorQuestion(q: Omit<ErrorQuestion, 'id' | 'createdAt' | 'reviewCount' | 'mastered'>): void
-  reviewError(id: string): void
+  reviewError(id: string): boolean
   toggleErrorMastered(id: string): void
   deleteError(id: string): void
   migrateErrorImages(): Promise<void>
@@ -27,14 +27,22 @@ export const errorsActions: ErrorsActionsShape = {
     this.save()
   },
 
-  reviewError(this: AppStoreThis, id: string) {
+  /**
+   * 复习一次：复习次数始终 +1（供「复习次数」统计与 error_50 成就），但**每道题只计一次复习积分**。
+   * refId 保持确定性的 `error:<id>`，与服务端删除时的撤销口径（pointsRefOfDeleted → `error:<key>`）一致；
+   * 只在首次复习时发放积分，避免重复复习的 award 被服务端按 ref_id 幂等过滤后，
+   * 本地 +2 又被权威快照抹掉的「先跳后落」（issue #32）。
+   * @returns 本次是否发放了积分（true=首次复习），供 UI 对齐提示文案使「提示 == 实际到账」。
+   */
+  reviewError(this: AppStoreThis, id: string): boolean {
     const q = this.errorQuestions.find((e) => e.id === id)
-    if (q) {
-      q.reviewCount++
-      touchRecord('errorQuestions', q)
-      this.addPoints(2, '复习错题', `error:${id}`)
-      this.save()
-    }
+    if (!q) return false
+    const firstReview = q.reviewCount === 0
+    q.reviewCount++
+    touchRecord('errorQuestions', q)
+    if (firstReview) this.addPoints(2, '复习错题', `error:${id}`)
+    this.save()
+    return firstReview
   },
 
   toggleErrorMastered(this: AppStoreThis, id: string) {
