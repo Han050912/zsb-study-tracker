@@ -38,15 +38,23 @@ const DIST_ROOT = path.join(__dirname, '..', 'dist')
 
 // API 域名单一来源：构建期由 vite 写入 dist/api-base.json（源自 .env 的 VITE_API_BASE）。
 // 读取失败时 API_BASE 为空串：CSP 不含 API 域、更新检查报错——比静默指向旧域名更可诊断
-function readApiBase() {
+function readBuildConfig() {
   try {
-    return JSON.parse(fs.readFileSync(path.join(DIST_ROOT, 'api-base.json'), 'utf8')).apiBase || ''
+    return JSON.parse(fs.readFileSync(path.join(DIST_ROOT, 'api-base.json'), 'utf8')) || {}
   } catch (e) {
     console.error('[api-base] 读取 dist/api-base.json 失败，桌面端将无法连接 API', e && e.message)
-    return ''
+    return {}
   }
 }
-const API_BASE = readApiBase()
+const BUILD_CONFIG = readBuildConfig()
+const API_BASE = BUILD_CONFIG.apiBase || ''
+
+// 桌面端认证令牌：仅存于主进程（经 IPC 提供给渲染进程换取，不编译进前端 JS 产物，见 preload.cjs）。
+// 取值优先级：运行时环境变量（与 Worker env.DESKTOP_TOKEN 同名注入，便于 CI/本地覆盖）>
+// 构建期产物 dist/api-base.json 的 desktopToken 字段（源自打包时环境变量/.env.desktop.local，与旧
+// define 注入同一来源，保证打包产物离线可用）。都未配置时为空串，Worker 侧 fail-closed 要求
+// 人机验证——桌面端无 Turnstile 组件，此时登录会失败，属部署配置错误。
+const DESKTOP_TOKEN = process.env.DESKTOP_TOKEN || BUILD_CONFIG.desktopToken || ''
 
 /**
  * Content-Security-Policy：开发 / 生产两套策略，由 isDev 环境自动切换，无需人工改代码。
@@ -69,7 +77,7 @@ const DEV_CSP = [
   "manifest-src 'self'",
   'frame-src https://challenges.cloudflare.com',
   "style-src 'self' 'unsafe-inline'",
-  `connect-src 'self' http://localhost:* https://zsb-study-tracker.sryze.cc ${API_BASE} https://challenges.cloudflare.com`,
+  `connect-src 'self' http://localhost:* ${API_BASE} https://challenges.cloudflare.com`,
   `img-src 'self' data: blob: http://localhost:* ${API_BASE}`,
   "font-src 'self' data:"
 ].join('; ')
@@ -82,7 +90,7 @@ const PROD_CSP = [
   "manifest-src 'self'",
   'frame-src https://challenges.cloudflare.com',
   "style-src 'self' 'unsafe-inline'",
-  `connect-src 'self' https://zsb-study-tracker.sryze.cc ${API_BASE} https://challenges.cloudflare.com`,
+  `connect-src 'self' ${API_BASE} https://challenges.cloudflare.com`,
   `img-src 'self' data: blob: http://localhost:* ${API_BASE}`,
   "font-src 'self' data:"
 ].join('; ')
@@ -310,6 +318,11 @@ ipcMain.on('notify:show', async (_e, payload) => {
 })
 
 const gotLock = app.requestSingleInstanceLock()
+
+// 桌面端认证令牌 IPC：渲染进程在发起登录/注册等需跳过人机验证的请求前，经此通道换取令牌
+//（invoke 一次性换取后由渲染进程缓存在内存中，不落盘、不进产物）
+ipcMain.handle('auth:desktop-token', () => DESKTOP_TOKEN)
+
 if (!gotLock) {
   app.quit()
 } else {

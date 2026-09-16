@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import { authApi } from '../api/auth'
-import { expireSession } from '../api/client'
+import { expireSession, loginRedirectPath } from '../api/client'
 import {
   TOKEN_KEY,
   SESSION_FLAG,
@@ -160,8 +160,8 @@ window.addEventListener('storage', (e) => {
 
 /** 跳转登录页并携带回跳地址（当前 hash 路由，登录成功后返回原页面） */
 export function goLogin(router: { push: (p: string) => void }) {
-  const current = window.location.hash.replace(/^#/, '') || '/'
-  router.push(`/login?redirect=${encodeURIComponent(current)}`)
+  // 与 401 会话过期跳转共用同一拼接逻辑（client.ts 的 loginRedirectPath）
+  router.push(loginRedirectPath())
 }
 
 /** 访客触发需登录操作时跳转登录页；返回 true 表示「已因未登录而拦截」 */

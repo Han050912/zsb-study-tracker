@@ -35,3 +35,10 @@ contextBridge.exposeInMainWorld('desktopNotify', {
 contextBridge.exposeInMainWorld('nav', {
   onNav: (cb) => ipcRenderer.on('nav', (_e, route) => cb(route))
 })
+
+// 桌面端认证令牌桥接：令牌仅存于主进程，渲染进程经 IPC 换取后自行缓存在内存中，
+// 用于登录/注册等请求的 X-Desktop-Token 头（跳过人机验证），不编译进渲染进程产物
+contextBridge.exposeInMainWorld('desktopAuth', {
+  /** 从主进程换取桌面端认证令牌（与 Worker 共享的 DESKTOP_TOKEN；未配置时为空串） */
+  getToken: () => ipcRenderer.invoke('auth:desktop-token')
+})

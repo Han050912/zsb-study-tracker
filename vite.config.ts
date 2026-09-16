@@ -8,13 +8,20 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   // API 域名单一来源：.env 的 VITE_API_BASE（process.env 优先，供 CI 覆盖）
   const apiBase = process.env.VITE_API_BASE || env.VITE_API_BASE || ''
+  // 桌面端认证令牌：与旧 __DESKTOP_TOKEN__ define 同一来源（仅 --mode desktop 写入产物）。
+  // 不再内联进前端 JS bundle，而是落进 dist/api-base.json 由 Electron 主进程运行时读取——
+  // 渲染进程经 IPC 向主进程换取（见 electron/main.cjs / preload.cjs），令牌不进入渲染进程静态产物
+  const desktopToken = mode === 'desktop' ? process.env.DESKTOP_TOKEN || env.DESKTOP_TOKEN || '' : ''
   return {
     plugins: [
-      // 把 API 域名落为构建产物，供 Electron 主进程运行时读取（域名单一来源 = .env 的 VITE_API_BASE）
+      // 把 API 域名与桌面端令牌落为构建产物，供 Electron 主进程运行时读取（单一来源 = 构建期环境变量）
       {
         name: 'emit-api-base',
         closeBundle() {
-          writeFileSync(path.resolve(__dirname, 'dist/api-base.json'), JSON.stringify({ apiBase }))
+          writeFileSync(
+            path.resolve(__dirname, 'dist/api-base.json'),
+            JSON.stringify({ apiBase, desktopToken })
+          )
         }
       },
       vue(),
@@ -70,11 +77,9 @@ export default defineConfig(({ mode }) => {
     base: './',
     // 编译期常量：桌面端（Electron）构建标识。
     // --mode desktop 时为 true，Login.vue 中的 Turnstile 组件分支被整体 tree-shake，不进入桌面产物
+    // （桌面认证令牌不在此注入：仅存于 Electron 主进程，渲染进程运行时经 IPC 换取，见 electron/main.cjs）
     define: {
-      __DESKTOP_BUILD__: JSON.stringify(mode === 'desktop'),
-      // 桌面端认证令牌：优先取 CI 环境变量 DESKTOP_TOKEN，其次读 .env.desktop.local（已 gitignore）；
-      // 与 Worker env.DESKTOP_TOKEN 保持一致，不写死源码；都未配置时桌面端回退人机验证（fail-closed）
-      __DESKTOP_TOKEN__: JSON.stringify(mode === 'desktop' ? process.env.DESKTOP_TOKEN || env.DESKTOP_TOKEN || '' : '')
+      __DESKTOP_BUILD__: JSON.stringify(mode === 'desktop')
     },
     build: {
       chunkSizeWarningLimit: 1500

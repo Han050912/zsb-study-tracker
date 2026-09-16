@@ -10,7 +10,7 @@
  * - 去重：同一 URL 的在飞 GET 复用同一个 Promise
  * - 并发闸门：单域名在飞请求数上限
  */
-import { hasActiveSession, clearSession, desktopAuthHeaders } from '../utils/session'
+import { hasActiveSession, clearSession, desktopAuthHeaders, ensureDesktopToken } from '../utils/session'
 import { isNetworkError } from '../utils/error'
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8787'
@@ -142,13 +142,23 @@ function isTransientError(e: unknown): boolean {
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /**
+ * 登录页路径（携带当前页面作为回跳地址）：会话过期跳转与主动跳登录（services/auth.ts 的 goLogin）
+ * 共用同一条拼接逻辑，保证两种入口重新登录后都能回到原页面。
+ */
+export function loginRedirectPath(): string {
+  const current = window.location.hash.replace(/^#/, '') || '/'
+  return `/login?redirect=${encodeURIComponent(current)}`
+}
+
+/**
  * 会话失效的统一收尾：清理本地会话、通知应用清空内存中的用户数据、回登录页。
  * 供 401 全局处理与多标签页登出同步（services/auth.ts 的 storage 监听）复用。
  */
 export function expireSession(): void {
   clearSession()
   window.dispatchEvent(new CustomEvent('auth:expired'))
-  window.location.hash = '#/login'
+  // 与 goLogin() 同一 redirect 逻辑：重新登录后回到原页面，不丢用户正在编辑的页面
+  window.location.hash = `#${loginRedirectPath()}`
 }
 
 /** 401 全局处理：清除会话、通知清空内存数据、跳转登录页（导出供 XHR 上传等非 fetch 通道复用）。 */
@@ -173,6 +183,8 @@ export async function authFetch(
   /** 默认 30s 超时，防止弱网下请求永久挂起；下载大文件等慢请求由调用方传更大的 timeoutMs */
   timeoutMs = 30_000
 ): Promise<Response> {
+  // 桌面端先经 IPC 换取桌面令牌（幂等，命中内存缓存即返回），再附加认证头
+  if (isDesktop) await ensureDesktopToken()
   const headers: Record<string, string> = {
     ...baseHeaders,
     ...((options.headers as Record<string, string>) || {})
@@ -248,6 +260,7 @@ const KEEPALIVE_MAX_BYTES = 60_000
  */
 export function requestKeepalive(path: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): void {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  // 卸载兜底必须同步发出，无法 await IPC：桌面令牌由 session.ts 模块加载时预热进内存缓存
   Object.assign(headers, desktopAuthHeaders())
   const payload = JSON.stringify(body)
   if (payload.length > KEEPALIVE_MAX_BYTES) {
