@@ -1,20 +1,21 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import { useCommunityStore } from './stores/community'
-import { sessionUser, logout, isLoggedIn, isAdmin, goLogin } from './services/auth'
-import { restartReminder } from './services/reminder'
-import { startTodoReminder, checkTodoReminders } from './services/todoReminder'
-import { startPartnerReminder, stopPartnerReminder } from './services/partnerReminder'
+import { sessionUser, logout, isLoggedIn, goLogin } from './services/auth'
 import Toast from './components/Toast.vue'
 import Onboarding from './components/Onboarding.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
-import { imageUrl, communityApi } from './api/community'
+import { imageUrl } from './api/community'
 import { isDndActive } from './utils/dnd'
 import { TOAST_KEY } from './composables/useToast'
-import { CONFIRM_KEY, type ConfirmFn } from './composables/useConfirm'
+import { useConfirmProvider } from './composables/useConfirm'
+import { useUnreadPolling } from './composables/useUnreadPolling'
+import { useReminders } from './composables/useReminders'
+import { useNavigation } from './composables/useNavigation'
+import { useAppReady } from './composables/useAppBoot'
 
 // 成就分享弹窗按需异步加载：切断入口对 markdown-it/katex 依赖链（AchievementModal → PostComposer → utils/markdown）的静态引用
 const AchievementModal = defineAsyncComponent(() => import('./components/AchievementModal.vue'))
@@ -24,136 +25,22 @@ const community = useCommunityStore()
 const route = useRoute()
 const router = useRouter()
 
-// 登录后定时拉取社区未读通知数 + 消息未读数（实时红点）；切后台暂停、回前台立即补拉；退出/过期时停止轮询
-let unreadTimer: ReturnType<typeof setInterval> | null = null
-/** 消息未读数（私信模块独立，不与通知未读混算） */
-const messageUnread = ref(0)
-function fetchUnread() {
-  community.fetchUnreadCount().catch(() => {})
-  communityApi
-    .messageUnreadCount()
-    .then((r) => {
-      messageUnread.value = r.count
-    })
-    .catch(() => {})
-}
-function startUnreadTimer() {
-  if (unreadTimer) clearInterval(unreadTimer)
-  unreadTimer = setInterval(fetchUnread, 30000)
-}
-function stopUnreadTimer() {
-  if (unreadTimer) {
-    clearInterval(unreadTimer)
-    unreadTimer = null
-  }
-}
-function onUnreadVisibilityChange() {
-  if (document.visibilityState === 'visible') {
-    fetchUnread()
-    if (isLoggedIn.value) startUnreadTimer()
-  } else {
-    stopUnreadTimer()
-  }
-}
-function startUnreadPolling() {
-  stopUnreadPolling()
-  fetchUnread()
-  startUnreadTimer()
-  document.addEventListener('visibilitychange', onUnreadVisibilityChange)
-  window.addEventListener('message:read', onMessageRead)
-}
-function stopUnreadPolling() {
-  stopUnreadTimer()
-  document.removeEventListener('visibilitychange', onUnreadVisibilityChange)
-  window.removeEventListener('message:read', onMessageRead)
-}
-/** 打开聊天页标记已读后即时扣减消息未读数，无需等下一轮轮询 */
-function onMessageRead(e: Event) {
-  const n = (e as CustomEvent<number>).detail || 0
-  if (n > 0) messageUnread.value = Math.max(0, messageUnread.value - n)
-}
-watch(
-  isLoggedIn,
-  (v) => {
-    if (v) startUnreadPolling()
-    else stopUnreadPolling()
-  },
-  { immediate: true }
-)
-onBeforeUnmount(() => {
-  stopUnreadPolling()
-  stopPartnerReminder()
-})
-
-// 导航动态生成：科目项随科目列表实时增减（删除科目自动隐藏，新增科目自动出现）
-// 侧边栏展示科目全名；移动端由 CSS truncate 截断
-const NAV = computed(() => {
-  // 访客态：社区 + 组队（公开小组列表可浏览；其余为个人学习功能，需登录）
-  if (!isLoggedIn.value) {
-    return [
-      { path: '/community', icon: '💬', label: '社区', subject: false },
-      { path: '/teams', icon: '👥', label: '组队', subject: false }
-    ]
-  }
-  const subjectItems = store.subjects.map((s) => ({
-    path: s.id === 'math' ? '/math' : s.id === 'english' ? '/english' : `/subject/${s.id}`,
-    icon: s.icon,
-    label: s.name,
-    subject: true
-  }))
-  return [
-    { path: '/', icon: '🏠', label: '首页', subject: false },
-    { path: '/community', icon: '💬', label: '社区', subject: false },
-    { path: '/teams', icon: '👥', label: '组队', subject: false },
-    ...subjectItems,
-    { path: '/pomodoro', icon: '🍅', label: '专注', subject: false },
-    { path: '/notes', icon: '📔', label: '笔记', subject: false },
-    { path: '/daily-summary', icon: '📝', label: '总结', subject: false },
-    { path: '/statistics', icon: '📊', label: '统计', subject: false },
-    { path: '/error-book', icon: '📕', label: '错题本', subject: false },
-    { path: '/habits', icon: '✅', label: '习惯', subject: false },
-    { path: '/rewards', icon: '🏆', label: '成就', subject: false },
-    { path: '/materials', icon: '📚', label: '资料', subject: false },
-    { path: '/settings', icon: '⚙️', label: '设置', subject: false },
-    // 管理员专属：审核中心（举报队列）
-    ...(isAdmin.value ? [{ path: '/admin', icon: '🛡️', label: '审核', subject: false }] : [])
-  ]
-})
-// 移动端底部导航：首页 + 第一个科目 + 社区/专注/总结/设置（最多 6 项，超出时减少科目位，避免挤压截断）
-const mobileNav = computed(() => {
-  // 访客态：社区 + 组队 + 登录（登录是移动端主要转化入口，携带回跳地址）
-  if (!isLoggedIn.value) {
-    return [
-      { path: '/community', icon: '💬', label: '社区', subject: false },
-      { path: '/teams', icon: '👥', label: '组队', subject: false },
-      { path: `/login?redirect=${encodeURIComponent(route.path || '/community')}`, label: '登录', subject: false }
-    ]
-  }
-  const subjectPaths = NAV.value
-    .filter((n) => n.subject)
-    .slice(0, 1)
-    .map((n) => n.path)
-  const picks = ['/', ...subjectPaths, '/community', '/pomodoro', '/daily-summary', '/settings']
-  return picks.map((p) => NAV.value.find((n) => n.path === p)).filter((n): n is NonNullable<typeof n> => !!n)
-})
-
 // ---- Toast 全局服务 ----
 const toastRef = ref<InstanceType<typeof Toast>>()
 provide(TOAST_KEY, (msg: string) => toastRef.value?.show(msg))
 
 // ---- 全局确认弹窗（替代原生 confirm；App 自身亦直接使用 confirmFn） ----
-const confirmState = ref<{ message: string; danger: boolean; resolve: (ok: boolean) => void } | null>(null)
-const confirmFn: ConfirmFn = (message, options) =>
-  new Promise<boolean>((resolve) => {
-    // 连续调用时新请求覆盖旧状态：旧 Promise 必须 resolve(false) 防悬挂
-    confirmState.value?.resolve(false)
-    confirmState.value = { message, danger: !!options?.danger, resolve }
-  })
-provide(CONFIRM_KEY, confirmFn)
-function resolveConfirm(ok: boolean) {
-  confirmState.value?.resolve(ok)
-  confirmState.value = null
-}
+const { confirmState, confirmFn, resolveConfirm } = useConfirmProvider()
+
+// ---- 未读轮询（登录后拉取社区/消息未读数；见 composables/useUnreadPolling.ts） ----
+const { messageUnread } = useUnreadPolling()
+// ---- 提醒调度（每日提醒 + 待办提醒 + 搭子提醒；见 composables/useReminders.ts） ----
+useReminders()
+// ---- 导航（动态生成 + 激活判断 + 折叠持久化；见 composables/useNavigation.ts） ----
+const { nav: NAV, mobileNav, isNavActive, navCollapsed, toggleNav } = useNavigation()
+
+// ---- 首屏补水门控（main.ts 把云端数据拉取移出挂载路径；未就绪前只渲染骨架） ----
+const ready = useAppReady()
 
 // ---- 主题 ----
 function applyTheme() {
@@ -161,8 +48,10 @@ function applyTheme() {
   const dark = t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
   document.documentElement.classList.toggle('dark', dark)
 }
+// 主题在补水完成后才随 settings.theme 从云端就位，且 index.html 会先按 prefers-color-scheme 预置 dark 类，
+// 因此必须 watch 而不是只在 onMounted 应用一次（immediate 负责用用户显式选择的主题纠正预置值）
+watch(() => store.settings.theme, applyTheme, { immediate: true })
 onMounted(() => {
-  applyTheme()
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme)
 })
 
@@ -174,58 +63,6 @@ window.addEventListener('auth:expired', () => {
   community.resetState()
 })
 
-// ---- 每日学习提醒（浏览器 + 桌面端共用 src/services/reminder.ts 一套逻辑） ----
-// 监听设置变更即时重调度：开关切换、时间修改均无需重启应用即可生效
-watch(
-  () => [store.settings.reminderEnabled, store.settings.reminderTime] as const,
-  () => {
-    restartReminder(
-      () => ({
-        enabled: store.settings.reminderEnabled,
-        time: store.settings.reminderTime,
-        suppressed: isDndActive(store.settings)
-      }),
-      (shown) => {
-        if (!shown) toastRef.value?.show('提醒时间到！该开始学习啦')
-      }
-    )
-  },
-  { immediate: true }
-)
-
-// ---- 待办开始 / 最晚截止提醒（见 src/services/todoReminder.ts）----
-// 应用运行期间后台轮询，到点弹系统通知；桌面端最小化到托盘后仍可收到
-onMounted(() => {
-  startTodoReminder({
-    getTodos: () => store.todos,
-    onNotified: (ids, kind) => store.markTodosNotified(ids, kind),
-    onFallback: (msg) => toastRef.value?.show(msg),
-    isSuppressed: () => isDndActive(store.settings)
-  })
-})
-// 云端数据到位、新增待办或改动时间后立即检查一次，无需等下一轮轮询
-watch(
-  () => store.todos.map((t) => `${t.id}:${t.startAt ?? ''}:${t.dueAt ?? ''}:${t.done ? 1 : 0}`).join('|'),
-  () => checkTodoReminders()
-)
-
-// ---- 学习搭子提醒推送（见 src/services/partnerReminder.ts）----
-// 登录后轮询未读的搭子通知并推系统通知（与每日学习提醒同机制），退出/过期时停止
-watch(
-  isLoggedIn,
-  (v) => {
-    if (v) {
-      startPartnerReminder({
-        onFallback: (msg) => toastRef.value?.show(msg),
-        isSuppressed: () => isDndActive(store.settings)
-      })
-    } else {
-      stopPartnerReminder()
-    }
-  },
-  { immediate: true }
-)
-
 const dndActive = computed(() => isDndActive(store.settings))
 
 // 全屏沉浸页：番茄钟 + 开黑自习室（进入后隐藏全局导航，实现真正全屏）
@@ -233,16 +70,8 @@ const isFullscreenPage = computed(() => route.path === '/pomodoro' || route.path
 const isAuthPage = computed(() => route.path === '/login')
 // 笔记页打开具体笔记时隐藏右上角头像浮层，把顶部右侧让给编辑工具栏
 const isNotesEditing = computed(() => route.path === '/notes' && (!!route.query.id || route.query.new === '1'))
-
-// ---- 侧边栏折叠 / 展开（状态持久化，刷新后保持） ----
-const NAV_COLLAPSED_KEY = 'zsb-nav-collapsed'
-const navCollapsed = ref(localStorage.getItem(NAV_COLLAPSED_KEY) === '1')
-function toggleNav() {
-  navCollapsed.value = !navCollapsed.value
-  localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed.value ? '1' : '0')
-}
-// 侧边栏宽度状态注入给子页面（如帖子详情底部回复框），使其与主内容区同一列对齐
-provide('navCollapsed', navCollapsed)
+const hideNav = computed(() => isFullscreenPage.value || isAuthPage.value)
+const showOnboarding = computed(() => isLoggedIn.value && !isAuthPage.value && !store.settings.onboarded)
 
 // ---- 右上角账号头像下拉菜单 ----
 const avatarOpen = ref(false)
@@ -280,14 +109,6 @@ async function accountLogout(switchAccount: boolean) {
   router.replace('/login')
 }
 
-/** 导航激活判断：精确匹配或子路径匹配（避免 '/materials' 误激活 '/math' 这类前缀碰撞） */
-function isNavActive(path: string) {
-  if (path === '/') return route.path === '/'
-  return route.path === path || route.path.startsWith(path + '/')
-}
-const hideNav = computed(() => isFullscreenPage.value || isAuthPage.value)
-const showOnboarding = computed(() => isLoggedIn.value && !isAuthPage.value && !store.settings.onboarded)
-
 // Electron IPC: 托盘菜单触发页面导航
 if (window.nav) {
   window.nav.onNav((route) => router.push(route))
@@ -295,11 +116,20 @@ if (window.nav) {
 </script>
 
 <template>
-  <div class="min-h-screen">
+  <!-- 首屏补水门控：视觉与 index.html 内联骨架一致；数据未就位前不渲染主界面（骨架态 ≠ 空态） -->
+  <div
+    v-if="!ready"
+    class="fixed inset-0 z-[100] flex flex-col gap-3 bg-slate-50 dark:bg-slate-900 pt-content-top px-4"
+  >
+    <div class="h-4 w-2/5 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+    <div class="h-24 rounded-2xl bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+    <div class="h-24 rounded-2xl bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+  </div>
+  <div v-else class="min-h-screen">
     <!-- 桌面侧边栏（支持折叠/展开） -->
     <aside
       v-if="!hideNav"
-      class="hidden md:flex fixed inset-y-0 left-0 flex-col bg-white dark:bg-slate-800 border-r border-slate-100 dark:border-slate-700 z-30 transition-all duration-200"
+      class="hidden md:flex fixed inset-y-0 left-0 pl-safe-left flex-col bg-white dark:bg-slate-800 border-r border-slate-100 dark:border-slate-700 z-30 transition-all duration-200"
       :class="navCollapsed ? 'w-16' : 'w-56'"
     >
       <div class="px-5 py-5" :class="navCollapsed ? '!px-3' : ''">
@@ -379,7 +209,10 @@ if (window.nav) {
     </aside>
 
     <!-- 右上角：登录态显示账号头像入口（含未读通知角标，通知中心已并入头像下拉菜单）；访客态显示登录按钮 -->
-    <div v-if="!hideNav && !isNotesEditing" class="fixed top-3 right-4 z-40 flex items-center gap-3">
+    <div
+      v-if="!hideNav && !isNotesEditing"
+      class="fixed top-header-top right-header-right z-40 flex items-center gap-3"
+    >
       <template v-if="isLoggedIn">
         <button
           class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
@@ -470,12 +303,23 @@ if (window.nav) {
     <!-- 主内容（非全屏页顶部预留头像入口空间，避免遮挡页面标题栏右侧操作区；笔记编辑态不预留，工具栏置顶） -->
     <main
       :class="
-        hideNav ? '' : (navCollapsed ? 'md:pl-16' : 'md:pl-56') + ' pb-20 md:pb-6' + (isNotesEditing ? '' : ' pt-14')
+        hideNav
+          ? ''
+          : (navCollapsed ? 'md:pl-16' : 'md:pl-56') +
+            ' pl-safe-left pr-safe-right pb-content-bottom md:pb-6' +
+            (isNotesEditing ? '' : ' pt-content-top')
       "
     >
+      <!--
+        按 route.path 作 key：同一路由记录内仅参数变化（/profile/a → /profile/b、/messages/a → /messages/b）
+        时路由复用组件实例、onMounted 不再触发，而多个页面（ProfilePage / FollowsPage / UserWorksTabs /
+        MessageChat）在 setup 中一次性捕获了路由参数，会导致 URL 已变内容仍旧。
+        这里以 path（已包含全部路径参数）区分实例，强制重建以消除该类缺陷。
+        用 route.path 而非 route.fullPath：仅 query 变化（/notes?id=…、列表页 tab）不应重建页面、丢失页内状态。
+      -->
       <RouterView v-slot="{ Component }">
         <Transition name="fade">
-          <component :is="Component" />
+          <component :is="Component" :key="route.path" />
         </Transition>
       </RouterView>
     </main>
@@ -483,8 +327,7 @@ if (window.nav) {
     <!-- 移动端底部导航 -->
     <nav
       v-if="!hideNav"
-      class="md:hidden fixed bottom-0 inset-x-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 z-30 flex justify-around py-1.5"
-      style="padding-bottom: env(safe-area-inset-bottom)"
+      class="md:hidden fixed bottom-0 inset-x-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 z-30 flex justify-around pt-1.5 pb-safe-bottom pl-safe-left pr-safe-right"
     >
       <RouterLink
         v-for="item in mobileNav"
