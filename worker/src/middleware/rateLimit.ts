@@ -25,16 +25,18 @@ const TIER_BINDINGS: Record<RateLimitTier, keyof Env> = {
 }
 
 /**
- * 按 IP + 操作名进行速率限制：超限抛 HttpError(429)，计数由 binding 跨实例共享。
+ * 按操作名进行速率限制：超限抛 HttpError(429)，计数由 binding 跨实例共享。
+ * key 取值来源（P4-01）：已登录请求用 userId（前缀 `u:` 区分身份空间）——
+ * NAT 下同一出口 IP 的用户不再互相挤占配额，轮换 IP 也无法刷新额度；
+ * 匿名请求回退到 Cloudflare 连接层注入的 CF-Connecting-IP（该头由 Cloudflare 设置，
+ * 客户端伪造会被覆盖），不再读取客户端可控的 X-Forwarded-For；两者都拿不到时
+ * 统一归入 'unknown' 桶（仅出现在无 CF 头的本地开发等场景，共享配额即为 fail-closed）。
  * 绑定字段缺失时 fail-open（记日志后放行）：限流失效好过请求全挂，auth 仍有 Turnstile 兜底；
  * binding 调用本身出错则上抛，由全局 catch 统一处理（500），不静默掩盖。
  */
 export async function rateLimit(ctx: Ctx, action: string, max: RateLimitTier): Promise<void> {
-  const ip =
-    ctx.request.headers.get('CF-Connecting-IP') ||
-    ctx.request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
-    'unknown'
-  const key = `${ip}:${action}`
+  const principal = ctx.userId ? `u:${ctx.userId}` : ctx.request.headers.get('CF-Connecting-IP') || 'unknown'
+  const key = `${principal}:${action}`
 
   const binding = ctx.env[TIER_BINDINGS[max]] as RateLimit | undefined
   if (!binding) {

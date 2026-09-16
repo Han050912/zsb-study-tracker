@@ -31,7 +31,7 @@ import { registerPdfRoutes } from './api/pdfs'
 import { registerUploadRoutes, cleanupOrphanUploads } from './api/uploads'
 import { registerFeedbackRoutes } from './api/feedback'
 import { registerTeamRoutes } from './api/teams'
-import { HttpError } from './db'
+import { HttpError, isConstraintError } from './db'
 import { canCache, canCachePublic, getCached, purgeUserCache, putCache } from './middleware/cache'
 import { corsHeaders, isLocalHost } from './cors'
 
@@ -108,9 +108,18 @@ export default {
 
       return res
     } catch (e) {
-      const status = e instanceof HttpError ? e.status : 500
-      // 内部错误细节仅记录日志，不外泄给客户端
-      const message = e instanceof HttpError ? e.message : '服务器内部错误'
+      // P4-06：SQLite 约束类错误（UNIQUE/FOREIGN KEY/...）源于客户端输入违反数据完整性，
+      // 统一映射为 400 提示自查输入，避免被当成服务端故障（500）无限重试。
+      // 500（含散落的 HttpError(500)）统一对外文案「服务器内部错误」，不泄露内部语义（如域序号分配）；
+      // 原始错误细节仅写入日志供诊断。
+      const constraint = isConstraintError(e)
+      const status = e instanceof HttpError ? e.status : constraint ? 400 : 500
+      const message =
+        e instanceof HttpError && e.status !== 500
+          ? e.message
+          : constraint
+            ? '数据与现有记录冲突，请检查输入后重试'
+            : '服务器内部错误'
       if (status === 500) console.error(e)
       return Response.json({ message }, { status, headers: cors })
     }

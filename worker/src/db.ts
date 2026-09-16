@@ -16,6 +16,17 @@ export class HttpError extends Error {
 }
 
 /**
+ * 识别 SQLite 约束类错误（UNIQUE / FOREIGN KEY / CHECK / NOT NULL，P4-06）。
+ * D1 未暴露结构化错误码，只能按错误消息识别（形如 `UNIQUE constraint failed: ...: SQLITE_CONSTRAINT`）。
+ * 这类错误源于客户端输入违反数据完整性约束，由全局 catch 统一映射为 400，
+ * 避免客户端把输入错误当服务端故障（500）无限重试。
+ */
+export function isConstraintError(e: unknown): boolean {
+  const message = e instanceof Error ? e.message : String(e)
+  return message.includes('SQLITE_CONSTRAINT') || message.includes('constraint failed')
+}
+
+/**
  * JSON 请求体默认字节上限（issue #52）。
  * 未显式指定上限的端点（社区 / 搭子 / 团队 / 管理 / 设置 / 数据拉取 …）统一按此预检，
  * 杜绝「先把最大 100MB 的请求体读进 isolate、读完再校验」；这些端点的真实载荷都是 KB 级 JSON 文本。
@@ -24,8 +35,13 @@ export class HttpError extends Error {
 export const JSON_BODY_MAX_BYTES = 256 * 1024
 
 /**
- * 读取请求体文本：先按 Content-Length 预检快速失败，读完再按实际长度复核
+ * 读取请求体文本：先按 Content-Length 预检快速失败，读完后再复核实际大小
  * （防止分块传输 / 谎报长度的客户端绕过预检）。超限抛 413。
+ * 复核用 UTF-8 真实字节数（TextEncoder，P4-04）：字符数按 UTF-16 码元计，
+ * 对多字节内容（如纯中文每码元 3 字节）会低估约 3 倍，可被分块传输绕过。
+ * 开销控制：每个 UTF-16 码元的 UTF-8 字节数至多 3（ASCII 1、BMP 3、增补平面按代理对折算 2，
+ * 孤立代理被替换为 3 字节 U+FFFD），故字符数 ≤ maxBytes/3 的请求必不超限，直接跳过编码；
+ * 仅当字符数接近上限时才执行一次真实字节复核。
  */
 export async function readBodyText(request: Request, maxBytes: number = JSON_BODY_MAX_BYTES): Promise<string> {
   const declared = Number(request.headers.get('Content-Length') || 0)
@@ -36,8 +52,9 @@ export async function readBodyText(request: Request, maxBytes: number = JSON_BOD
   } catch {
     throw new HttpError(400, '请求体读取失败')
   }
-  // text.length 按字符计，对多字节字符最多低估约 3 倍，作为上限复核足够
-  if (text.length > maxBytes) throw new HttpError(413, '请求体超过大小上限')
+  if (text.length > maxBytes / 3 && new TextEncoder().encode(text).byteLength > maxBytes) {
+    throw new HttpError(413, '请求体超过大小上限')
+  }
   return text
 }
 
