@@ -959,22 +959,41 @@ async function orphanCleanupStatements(
   }
 
   if (domain === 'errorQuestions') {
-    // 图片内容寻址：同一 sha256 可能被多条错题引用，仅在「本用户已无其它引用」时才删归属行与对象，
-    // 否则会删掉其它错题仍在展示的图片（原整域差集清理天然具备该语义）
-    const rows = await allByKeys<{ id: string; image: string | null; refs: number }>(
+    // 图片内容寻址：同一 sha256 可能被多条错题引用，仅在「排除本批待删键后已无其它引用」时才删
+    // 归属行与对象，否则会删掉其它错题仍在展示的图片（原整域差集清理天然具备该语义）。
+    // P5-02：引用计数必须排除本批待删键——同一图被本批多条将删除的错题引用时仍要判为可清理，
+    // 否则 error_images 行与 R2 对象永久泄漏。实现为「全量引用数 − 本批引用数」：
+    // 两段都是可分片的 IN 查询，规避 D1 绑定参数上限下无法一次 NOT IN 全部待删键的问题。
+    const rows = await allByKeys<{ id: string; image: string | null }>(
       env,
-      (ph) =>
-        `SELECT q.id AS id, q.image AS image, ` +
-        `(SELECT COUNT(*) FROM error_questions o WHERE o.user_id = q.user_id AND o.image = q.image) AS refs ` +
-        `FROM error_questions q WHERE q.user_id = ? AND q.id IN (${ph})`,
+      (ph) => `SELECT id, image FROM error_questions WHERE user_id = ? AND id IN (${ph})`,
       userId,
       keys
     )
+    // 本批待删键按图分桶（只关心 r2: 内容寻址引用）
+    const batchRefs = new Map<string, number>()
+    for (const r of rows) {
+      if (typeof r.image === 'string' && r.image.startsWith('r2:'))
+        batchRefs.set(r.image, (batchRefs.get(r.image) ?? 0) + 1)
+    }
+    if (!batchRefs.size) return []
+    // 各图全量引用数（含本批；去重后的 image 列表分片查询，每个 image 只落在一个分片，直接覆盖写）
+    const totalRows = await allByKeys<{ image: string; refs: number }>(
+      env,
+      (ph) =>
+        'SELECT image, COUNT(*) AS refs FROM error_questions ' +
+        `WHERE user_id = ? AND image IN (${ph}) GROUP BY image`,
+      userId,
+      [...batchRefs.keys()]
+    )
+    const totals = new Map<string, number>()
+    for (const r of totalRows) totals.set(String(r.image), Number(r.refs))
+    // 排除本批待删键后仍被引用（差值 > 0）的图不可清理
     const imageIds = [
       ...new Set(
-        rows
-          .filter((r) => Number(r.refs) <= 1 && typeof r.image === 'string' && r.image.startsWith('r2:'))
-          .map((r) => String(r.image).slice(3))
+        [...batchRefs.keys()]
+          .filter((img) => (totals.get(img) ?? 0) - (batchRefs.get(img) ?? 0) === 0)
+          .map((img) => img.slice(3))
           .filter(Boolean)
       )
     ]
@@ -1073,6 +1092,10 @@ function computeStreak(dates: string[]): number {
  * 在内存里叠加，得出确定性的「今日学习分钟数」与「连续学习天数」，再把发放语句并入主 batch——
  * 不做「先写记录、再单独 batch 发放」（那会重现「积分已发/徽章未发」的非原子窗口）。
  *
+ * 按日聚合只对本批涉及的日期执行（P5-01：`WHERE date IN (...)`，不再对全部历史 GROUP BY）；
+ * streak/lastCheckin 需要全量学习日集合（连续段可延伸到本批未触碰的日期），走 (user_id, date)
+ * 索引上的纯日期投影补齐——两者叠加后与原「全量聚合」产出完全一致（见下方注释）。
+ *
  * 并发下靠 `ref_id` 幂等（`srv:study-minutes:<date>` / `srv:streak:<days>`）保证不重复发放；
  * 若主 batch 失败，下次推送会按同一派生结果重算并补发（流水未落则判重通过）。
  *
@@ -1090,14 +1113,6 @@ async function deriveServerAwards(
   if (!records || (!records.upserts.length && !records.deletes.length))
     return { awards: [], streak: null, statements: [] }
 
-  const agg = new Map<string, DayAggregate>()
-  const dayRows = await all<{ date: string; n: number; m: number }>(
-    env,
-    'SELECT date AS date, COUNT(*) AS n, COALESCE(SUM(minutes), 0) AS m FROM study_records WHERE user_id = ? GROUP BY date',
-    userId
-  )
-  for (const r of dayRows) agg.set(String(r.date), { count: Number(r.n), minutes: Number(r.m) })
-
   // 本批被覆盖/删除行的原值：先回退旧值再写入新值，才能得到「本批之后」的确定性聚合
   const touched = [...records.upserts.map((op) => op.item.key), ...records.deletes.map((d) => d.key)]
   const stored = new Map(
@@ -1110,6 +1125,35 @@ async function deriveServerAwards(
       )
     ).map((r) => [String(r.id), r])
   )
+
+  // 受影响日期 = 本批 upsert 的新日期 ∪ 被覆盖/删除行的原日期 ∪ 今日（Set 去重）。
+  // 今日恒在集合内：分钟奖励口径是「每次 records 推送都按当前聚合重算」，今日记录未被本批触碰时
+  // 其聚合值虽不变，但 revokeAll 等场景清掉流水后仍需在下次推送按同一结果补发（ref_id 判重兜底）。
+  const today = utc8Today()
+  const affectedDates = new Set<string>([today])
+  for (const op of records.upserts) {
+    const d = studyDateOf(op.item.value)
+    if (d) affectedDates.add(d)
+  }
+  for (const old of stored.values()) {
+    const d = studyDateOf(old)
+    if (d) affectedDates.add(d)
+  }
+
+  const agg = new Map<string, DayAggregate>()
+  // 空集合短路（不产生 IN ()）；今日恒在集合内，实际不会为空
+  if (affectedDates.size) {
+    const dayRows = await allByKeys<{ date: string; n: number; m: number }>(
+      env,
+      (ph) =>
+        'SELECT date AS date, COUNT(*) AS n, COALESCE(SUM(minutes), 0) AS m FROM study_records ' +
+        `WHERE user_id = ? AND date IN (${ph}) GROUP BY date`,
+      userId,
+      [...affectedDates]
+    )
+    for (const r of dayRows) agg.set(String(r.date), { count: Number(r.n), minutes: Number(r.m) })
+  }
+
   for (const op of records.upserts) {
     const old = stored.get(op.item.key)
     if (old) removeStudyDay(agg, studyDateOf(old), minutesOf(old.minutes))
@@ -1120,8 +1164,16 @@ async function deriveServerAwards(
     if (old) removeStudyDay(agg, studyDateOf(old), minutesOf(old.minutes))
   }
 
-  const today = utc8Today()
-  const dates = [...agg.keys()].sort()
+  // streak/lastCheckin 口径保持全量：连续段可延伸到本批未触碰的学习日，不能只看受影响日期的 agg。
+  // 借 (user_id, date) 索引做纯日期投影（无 COUNT/SUM 聚合、无表回读）取全量学习日，再剔除受影响
+  // 日期——它们「本批之后是否仍有记录」已由上面的 agg 精确给出——叠加 agg 键后与原
+  // 「全量聚合后取全部日期键」产出完全一致的日期集合。
+  const storedDates = new Set(
+    (await all<{ date: string }>(env, 'SELECT DISTINCT date FROM study_records WHERE user_id = ?', userId)).map((r) =>
+      String(r.date)
+    )
+  )
+  const dates = [...new Set([...storedDates].filter((d) => !affectedDates.has(d)).concat([...agg.keys()]))].sort()
   const streak = computeStreak(dates)
   const awards: PointsAward[] = []
   if ((agg.get(today)?.minutes ?? 0) >= STUDY_MINUTE_THRESHOLD)
