@@ -168,8 +168,13 @@ export function crudHandlers<Body = any>(m: CrudMapping<Body>) {
     async list(ctx: Ctx): Promise<Response> {
       // 防御性上限（非分页能力）：与同步协议单域记录上限 MAX_ITEMS_PER_COLLECTION（sync.ts，10000）同口径。
       // 全量 hydration 走 /api/data/pull，这些 list 端点仅承载单用户小数据量，实践中永远不会触顶。
-      const rows = await all(ctx.env, `SELECT * FROM ${m.table} WHERE user_id = ? LIMIT 10000`, ctx.userId)
-      return Response.json(rows.map(m.fromRow))
+      const listLimit = 10000
+      const rows = await all(ctx.env, `SELECT * FROM ${m.table} WHERE user_id = ? LIMIT ${listLimit}`, ctx.userId)
+      // P5-03：行数达到上限时无法区分「恰好 1 万条」与「更多被截断」，一律按截断标记，
+      // 经响应头告知客户端（正文保持裸数组不变，smoke 断言与既有调用方依赖数组形状）。
+      const res = Response.json(rows.map(m.fromRow))
+      res.headers.set('X-Truncated', rows.length >= listLimit ? 'true' : 'false')
+      return res
     },
 
     async create(ctx: Ctx): Promise<Response> {
