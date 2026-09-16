@@ -14,17 +14,18 @@ const props = withDefaults(
 /** 点击某个日期格子时触发，携带日期 YYYY-MM-DD */
 const emit = defineEmits<{ select: [date: string] }>()
 
-/** GitHub 风格贡献热力图 */
+/** GitHub 风格贡献热力图：严格生成 weeks 列，末列止于今天（之后的日期不存在，不渲染占位） */
 const cells = computed(() => {
   const result: { date: string; value: number; level: number }[][] = []
   // 网格终点取 UTC+8 业务日期（不随系统时区变化）；dayjs 仅在该纯日期串上做日历算术（等价于本地解析）
   const end = dayjs(businessDate())
-  const start = end.subtract(props.weeks * 7 - 1, 'day')
-  const startSunday = start.subtract(start.day(), 'day')
+  // 首列对齐到周日，向前铺满 weeks 个整周：起点 = 本周周日 - (weeks-1)*7，
+  // 天数恰落在 (weeks-1)*7+1 ~ weeks*7 之间，列数恒等于 weeks（末列为当天所在的不完整周）
+  const start = end.subtract(end.day() + (props.weeks - 1) * 7, 'day')
   let week: { date: string; value: number; level: number }[] = []
-  for (let d = startSunday; !d.isAfter(end); d = d.add(1, 'day')) {
+  for (let d = start; !d.isAfter(end); d = d.add(1, 'day')) {
     const key = d.format('YYYY-MM-DD')
-    const v = d.isAfter(end) ? -1 : props.data[key] || 0
+    const v = props.data[key] || 0
     const level = v <= 0 ? 0 : v < 60 ? 1 : v < 120 ? 2 : v < 240 ? 3 : 4
     week.push({ date: key, value: v, level })
     if (week.length === 7) {
@@ -44,12 +45,12 @@ const colors = [
   'bg-primary-700'
 ]
 
-/** 可交互日期集合（负值占位格除外），方向键导航时用于校验目标格是否存在 */
+/** 可交互日期集合，方向键导航时用于校验目标格是否存在 */
 const dateSet = computed(() => {
   const dates = new Set<string>()
   for (const week of cells.value) {
     for (const cell of week) {
-      if (cell.value >= 0) dates.add(cell.date)
+      dates.add(cell.date)
     }
   }
   return dates
@@ -79,26 +80,23 @@ function moveFocus(e: KeyboardEvent, date: string) {
   <div class="overflow-x-auto">
     <div ref="gridEl" class="flex gap-[3px] w-max" role="group" aria-label="学习热力图">
       <div v-for="(week, wi) in cells" :key="wi" class="flex flex-col gap-[3px]">
-        <template v-for="cell in week" :key="cell.date">
-          <!-- 负值日期仅占位对齐周列，不参与交互 -->
-          <span v-if="cell.value < 0" class="w-3 h-3"></span>
-          <!-- 日期格改用 button：原生可聚焦 + Enter/Space 触发，视觉仍 12×12。
-               命中区只能扩到 14×14：相邻格中心距仅 15px，扩得更多会被后绘制的邻格
-               抢占（点到可见的本格却选中邻格），44×44 需要 44px 的格距（整图会变成 880px 宽） -->
-          <button
-            v-else
-            type="button"
-            :data-date="cell.date"
-            :tabindex="cell.date === activeDate ? 0 : -1"
-            class="relative w-3 h-3 rounded-sm transition-transform hover:scale-125 after:absolute after:-inset-px after:content-[''] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-            :class="colors[cell.level]"
-            :title="`${cell.date}：${cell.value}分钟（点击查看明细）`"
-            :aria-label="cell.value > 0 ? `${cell.date}，学习 ${cell.value} 分钟` : `${cell.date}，无学习记录`"
-            @focus="activeDate = cell.date"
-            @click="emit('select', cell.date)"
-            @keydown="moveFocus($event, cell.date)"
-          ></button>
-        </template>
+        <!-- 日期格改用 button：原生可聚焦 + Enter/Space 触发，视觉仍 12×12。
+             命中区只能扩到 14×14：相邻格中心距仅 15px，扩得更多会被后绘制的邻格
+             抢占（点到可见的本格却选中邻格），44×44 需要 44px 的格距（整图会变成 880px 宽） -->
+        <button
+          v-for="cell in week"
+          :key="cell.date"
+          type="button"
+          :data-date="cell.date"
+          :tabindex="cell.date === activeDate ? 0 : -1"
+          class="relative w-3 h-3 rounded-sm transition-transform hover:scale-125 after:absolute after:-inset-px after:content-[''] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+          :class="colors[cell.level]"
+          :title="`${cell.date}：${cell.value}分钟（点击查看明细）`"
+          :aria-label="cell.value > 0 ? `${cell.date}，学习 ${cell.value} 分钟` : `${cell.date}，无学习记录`"
+          @focus="activeDate = cell.date"
+          @click="emit('select', cell.date)"
+          @keydown="moveFocus($event, cell.date)"
+        ></button>
       </div>
     </div>
     <div class="flex items-center gap-1 mt-2 text-[10px] text-slate-400">

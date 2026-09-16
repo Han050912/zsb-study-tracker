@@ -1,3 +1,4 @@
+import { nextTick } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { isLoggedIn, isAdmin, isGuestMode } from '../services/auth'
 
@@ -147,7 +148,16 @@ const routes = [
 
 export const router = createRouter({
   history: createWebHashHistory(),
-  routes
+  routes,
+  // 滚动复位（P3-04）：页面滚动发生在 window（App 根节点 min-h-screen，<main> 无内部滚动容器），
+  // savedPosition 可用 —— 前进导航回顶部，浏览器后退/前进恢复历史位置。
+  // 仅 query 变化的页内导航（如关系列表 tab 同步 URL）不做复位，避免切 tab 被强行拉回顶部；
+  // 恢复位置时等新页面完成渲染再执行，避免懒加载页内容未挂载、高度不足导致恢复失败
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return nextTick().then(() => savedPosition)
+    if (to.path === from.path) return {}
+    return { left: 0, top: 0 }
+  }
 })
 
 // 登录守卫（访问控制）：

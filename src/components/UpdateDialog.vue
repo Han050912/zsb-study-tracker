@@ -164,11 +164,16 @@ onBeforeUnmount(() => {
       >
         <div
           ref="panelRef"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="update-dialog-title"
           class="update-pop bg-white dark:bg-slate-800 w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[85vh]"
         >
           <!-- 头部：版本标题 + 前往发布页 -->
           <div class="flex items-center justify-between px-6 pt-5 pb-3">
-            <h3 class="text-2xl font-bold text-slate-800 dark:text-slate-100">新版本 v{{ info.version }}</h3>
+            <h3 id="update-dialog-title" class="text-2xl font-bold text-slate-800 dark:text-slate-100">
+              新版本 v{{ info.version }}
+            </h3>
             <button
               class="px-4 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors shrink-0"
               @click="goReleasePage"

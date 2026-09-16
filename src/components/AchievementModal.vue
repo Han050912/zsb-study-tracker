@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { X } from '@lucide/vue'
 import PostComposer from './community/PostComposer.vue'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
@@ -23,17 +24,42 @@ const SHOW_MS = 3500
 const panelRef = ref<HTMLElement | null>(null)
 
 let hideTimer: ReturnType<typeof setTimeout> | null = null
+/** 当前成就的剩余展示时长：悬停/聚焦暂停时冻结，离开后从剩余时长恢复 */
+let remainingMs = SHOW_MS
+/** 本轮倒计时的启动时刻，用于把已流逝时间从剩余时长中扣除 */
+let timerStartedAt = 0
 
 function clearTimer() {
   if (hideTimer) clearTimeout(hideTimer)
   hideTimer = null
 }
 
+/** 启动/恢复当前成就的自动关闭倒计时 */
+function scheduleHide(ms: number) {
+  clearTimer()
+  timerStartedAt = Date.now()
+  remainingMs = ms
+  hideTimer = setTimeout(next, ms)
+}
+
+/** 鼠标悬停或键盘聚焦弹窗时暂停自动关闭（仅当前计时在走时生效） */
+function pauseAutoHide() {
+  if (!current.value || hideTimer === null) return
+  clearTimer()
+  remainingMs = Math.max(0, remainingMs - (Date.now() - timerStartedAt))
+}
+
+/** 离开弹窗后恢复倒计时 */
+function resumeAutoHide() {
+  if (!current.value || hideTimer !== null) return
+  scheduleHide(remainingMs)
+}
+
 /** 展示下一条；队列清空即关闭弹层 */
 function next() {
   clearTimer()
   queue.value.shift()
-  if (queue.value.length) hideTimer = setTimeout(next, SHOW_MS)
+  if (queue.value.length) scheduleHide(SHOW_MS)
 }
 
 /** 关闭弹层并丢弃待展示队列（用户主动关闭 / ESC / 点击遮罩） */
@@ -61,7 +87,7 @@ function onUnlock(e: Event) {
   if (!ach) return
   queue.value.push(ach)
   // 只有从空闲转入展示时才启动计时：追加进队不打断当前成就的展示节奏
-  if (queue.value.length === 1) hideTimer = setTimeout(next, SHOW_MS)
+  if (queue.value.length === 1) scheduleHide(SHOW_MS)
 }
 
 // 弹层行为接入全局弹层栈（ESC 关闭 + 焦点陷阱 + 滚动锁定），与其它弹窗共用同一套键盘仲裁，
@@ -99,10 +125,29 @@ onUnmounted(() => {
           animation: `confetti-fall ${2 + (i % 5) * 0.3}s linear ${(i % 10) * 0.15}s forwards`
         }"
       ></span>
-      <div ref="panelRef" class="card !p-8 text-center animate-pop max-w-xs mx-4">
+      <!-- role="dialog" + aria-modal + aria-labelledby：弹窗语义；悬停/聚焦时暂停自动关闭 -->
+      <div
+        ref="panelRef"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="achievement-title"
+        class="card !p-8 text-center animate-pop max-w-xs mx-4 relative"
+        @mouseenter="pauseAutoHide"
+        @mouseleave="resumeAutoHide"
+        @focusin="pauseAutoHide"
+        @focusout="resumeAutoHide"
+      >
+        <button
+          type="button"
+          class="absolute top-2 right-2 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:text-slate-500 dark:hover:text-slate-300 dark:hover:bg-slate-700 transition-colors"
+          aria-label="关闭"
+          @click="close"
+        >
+          <X class="w-4 h-4" aria-hidden="true" />
+        </button>
         <div class="text-6xl mb-3">{{ current.icon }}</div>
         <div class="text-xs text-primary-500 font-semibold mb-1">成就解锁！</div>
-        <div class="text-xl font-bold">{{ current.name }}</div>
+        <div id="achievement-title" class="text-xl font-bold">{{ current.name }}</div>
         <div class="text-sm text-slate-500 mt-1">{{ current.desc }}</div>
         <button class="btn-primary w-full mt-4" @click="share">炫耀一下</button>
       </div>

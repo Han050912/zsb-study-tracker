@@ -58,15 +58,15 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
     <div class="flex gap-1 overflow-x-auto bg-slate-100 dark:bg-slate-800 rounded-xl p-1">
       <button
         v-for="t in [
-          { k: 'chapters', l: ' 章节掌握' },
-          { k: 'records', l: ' 学习记录' },
-          { k: 'problems', l: ' 刷题' },
-          { k: 'exams', l: ' 真题' },
-          { k: 'notes', l: ' 笔记' }
+          { k: 'chapters', l: '章节掌握' },
+          { k: 'records', l: '学习记录' },
+          { k: 'problems', l: '刷题' },
+          { k: 'exams', l: '真题' },
+          { k: 'notes', l: '笔记' }
         ]"
         :key="t.k"
         class="flex-1 whitespace-nowrap text-xs px-3 py-2 rounded-lg font-medium transition-colors"
-        :class="tab === t.k ? 'bg-white dark:bg-slate-700 shadow-sm' : 'text-slate-500'"
+        :class="tab === t.k ? 'bg-white dark:bg-slate-700 shadow-sm' : 'text-slate-500 dark:text-slate-400'"
         @click="tab = t.k as any"
       >
         {{ t.l }}
