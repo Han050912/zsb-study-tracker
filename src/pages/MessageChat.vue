@@ -29,7 +29,12 @@ const peerId = route.params.peerId as string
 const GREETING = '你好，很高兴认识你'
 
 const messages = ref<CommunityMessage[]>([]) // 服务端返回倒序，渲染时正序
+/** 更早历史的翻页游标；null 表示已无更早消息（到底） */
 const nextCursor = ref<string | null>(null)
+/** 首屏是否已建立游标：建立后翻页游标只由翻页推进，轮询刷新不得再改写它 */
+const cursorEstablished = ref(false)
+/** 翻页请求在飞：给出 loading 反馈并防重复点击 */
+const loadingOlder = ref(false)
 const peerName = ref('')
 const peerAvatar = ref('')
 const loading = ref(true)
@@ -57,10 +62,14 @@ async function load(reset = false) {
       const latestIds = new Set(res.messages.map((m) => m.id))
       const older = messages.value.filter((m) => !latestIds.has(m.id))
       messages.value = [...res.messages, ...older]
-      // 翻页游标只在首屏建立；轮询刷新不得回退已推进的游标
-      if (nextCursor.value === null) nextCursor.value = res.nextCursor
+      // 翻页游标只在首屏建立一次：轮询刷新不得再改写它——否则翻到底（nextCursor 已为 null）后
+      // 会被「最新一页」的游标写回，凭空复活一个点了也加载不出任何消息的假按钮
+      if (!cursorEstablished.value) {
+        nextCursor.value = res.nextCursor
+        cursorEstablished.value = true
+      }
     } else {
-      // 向上翻页：追加更早的消息（按 id 去重）
+      // 向上翻页：追加更早的消息（按 id 去重），游标随服务端推进；null 即到底
       const known = new Set(messages.value.map((m) => m.id))
       messages.value = [...messages.value, ...res.messages.filter((m) => !known.has(m.id))]
       nextCursor.value = res.nextCursor
@@ -72,9 +81,21 @@ async function load(reset = false) {
       peerAvatar.value = p.avatar || ''
     }
   } catch (e) {
-    if (loading.value) toast(getErrorMessage(e, '加载失败'))
+    // 轮询失败静默（否则每 5s 弹一次）；首屏与翻页失败给出提示
+    if (loading.value || loadingOlder.value) toast(getErrorMessage(e, '加载失败'))
   } finally {
     loading.value = false
+  }
+}
+
+/** 加载更早的消息：按钮可见即点击可用（nextCursor 为 null 时按钮根本不渲染） */
+async function loadOlder() {
+  if (loadingOlder.value || !nextCursor.value) return
+  loadingOlder.value = true
+  try {
+    await load()
+  } finally {
+    loadingOlder.value = false
   }
 }
 
@@ -259,7 +280,13 @@ function openReport(msgId: string) {
         <div v-if="loading" class="text-center text-xs text-slate-400 py-8">加载中…</div>
         <template v-else>
           <div v-if="nextCursor" class="text-center">
-            <button class="text-xs text-primary-500 hover:underline" @click="load()">加载更早的消息</button>
+            <button
+              class="text-xs text-primary-500 hover:underline disabled:text-slate-400 disabled:no-underline"
+              :disabled="loadingOlder"
+              @click="loadOlder"
+            >
+              {{ loadingOlder ? '加载中…' : '加载更早的消息' }}
+            </button>
           </div>
           <div v-if="!ordered.length" class="text-center text-xs text-slate-400 py-8">打个招呼吧～</div>
           <div v-for="m in ordered" :key="m.id" class="flex gap-2" :class="m.fromMe ? 'flex-row-reverse' : ''">

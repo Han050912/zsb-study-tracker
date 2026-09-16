@@ -182,6 +182,15 @@ function cancelReply() {
 /** 评论提交中：承载 AI 复审约 1-3s 延迟，禁用发送按钮防重复提交 */
 const commentSubmitting = ref(false)
 
+/**
+ * 本页详情帖的评论计数增减。详情帖（communityApi.post()）与 store.posts 中的列表条目是两个不同对象，
+ * store 的评论动作只同步列表条目，本页必须**无条件**同步自己持有的 post.commentsCount，
+ * 否则帖子在广场列表时详情页计数会一直不动（两处显示不一致）。
+ */
+function bumpCommentsCount(delta: number) {
+  if (post.value) post.value.commentsCount = Math.max(0, post.value.commentsCount + delta)
+}
+
 async function send(text: string, imageUrls: string[]) {
   if (requireLogin(router)) return
   if (commentSubmitting.value) return
@@ -189,8 +198,7 @@ async function send(text: string, imageUrls: string[]) {
   try {
     const c = await store.postComment(postId, text, replyTarget.value?.id, imageUrls)
     comments.value.push(c)
-    // store.postComment 已同步广场列表内的计数，此处仅当本帖不在列表时手动 +1，避免重复计数
-    if (post.value && !store.posts.some((p) => p.id === postId)) post.value.commentsCount++
+    bumpCommentsCount(1) // store 同步广场列表条目，本页详情帖各自更新，两处计数保持一致
     replyTarget.value = null
     replySource.value = null
     // 发送成功后清空输入框（失败时保留用户输入，避免重打内容）
@@ -210,10 +218,7 @@ async function removeComment(c: CommunityComment) {
     // 本地移除该评论及其回复
     const ids = new Set([c.id, ...(c.replies?.map((r) => r.id) ?? [])])
     comments.value = comments.value.filter((x) => !ids.has(x.id) && x.parentId !== c.id)
-    // 同上：仅当本帖不在广场列表时手动回退，避免与 store 重复扣减
-    if (post.value && !store.posts.some((p) => p.id === postId)) {
-      post.value.commentsCount = Math.max(0, post.value.commentsCount - removed)
-    }
+    bumpCommentsCount(-removed) // 同发表：store 回退列表条目，本页详情帖各自回退
     // 删除的若为最佳答案：服务端级联已解除采纳并回退为待解答，本地同步（含广场列表副本）
     if (c.isAccepted && post.value) {
       post.value.acceptedAnswerId = undefined

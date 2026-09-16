@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { ChevronDown, ChevronUp } from '@lucide/vue'
 import type { CommunityPost, PostType } from '../../types'
 import { levelOf } from '../../data/defaults'
 import { fromNow } from '../../utils/date'
@@ -45,6 +46,61 @@ const isMine = computed(() => props.post.userId === sessionUser.value?.id)
  * 两阶段：同步渲染立即可见（无公式场景即最终态）；含公式时异步加载 KaTeX chunk 后原地升级。
  */
 const contentHtml = useMarkdownHtml(() => props.post.content)
+
+// ---- 列表态正文折叠（详情页不参与）----
+/** 是否已展开全文（仅列表态生效） */
+const expanded = ref(false)
+/** 折叠态正文是否超出截断行数：只在真的溢出时才给展开入口，避免出现点了没反应的死按钮 */
+const overflow = ref(false)
+/** 折叠态正文元素 */
+const bodyEl = ref<HTMLElement | null>(null)
+let resizeObserver: ResizeObserver | null = null
+
+/** 量测折叠态溢出：line-clamp 下 clientHeight 为截断后高度、scrollHeight 为全文高度。
+ *  展开态两者相等量不出溢出，故展开期间保持上次折叠量测的结果，收起后再量。 */
+function measureOverflow() {
+  const el = bodyEl.value
+  if (!el || expanded.value) return
+  overflow.value = el.scrollHeight > el.clientHeight + 1
+}
+
+/** 折叠行数随正文宽度变化（窗口缩放、侧栏折叠、组件复用换帖），跟随元素尺寸重算 */
+watch(
+  bodyEl,
+  (el) => {
+    resizeObserver?.disconnect()
+    resizeObserver = null
+    if (!el) return
+    resizeObserver = new ResizeObserver(measureOverflow)
+    resizeObserver.observe(el)
+    measureOverflow()
+  },
+  { flush: 'post' }
+)
+
+/** 展开/收起；收起后必须重新量测（展开态量不出溢出） */
+async function toggleExpanded() {
+  expanded.value = !expanded.value
+  if (!expanded.value) {
+    await nextTick()
+    measureOverflow()
+  }
+}
+
+/** 组件复用换帖（列表刷新替换对象）时回到折叠态并重新量测 */
+watch(
+  () => props.post.content,
+  async () => {
+    expanded.value = false
+    await nextTick()
+    measureOverflow()
+  }
+)
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
+})
 </script>
 
 <template>
@@ -134,8 +190,27 @@ const contentHtml = useMarkdownHtml(() => props.post.content)
       >
     </div>
 
-    <!-- 正文：列表页纯文本截断预览；详情页 Markdown 富文本渲染（renderMarkdown 防 XSS） -->
-    <p v-if="!detail" class="text-sm whitespace-pre-wrap leading-relaxed break-words">{{ post.content }}</p>
+    <!-- 正文：列表页折叠为 4 行纯文本（溢出时才给展开/收起入口）；详情页 Markdown 富文本渲染（renderMarkdown 防 XSS） -->
+    <template v-if="!detail">
+      <p
+        ref="bodyEl"
+        class="text-sm whitespace-pre-wrap leading-relaxed break-words"
+        :class="expanded ? '' : 'line-clamp-4'"
+      >
+        {{ post.content }}
+      </p>
+      <button
+        v-if="overflow"
+        type="button"
+        class="inline-flex items-center gap-0.5 text-xs text-primary-500 hover:underline"
+        :aria-expanded="expanded"
+        @click.stop="toggleExpanded"
+      >
+        {{ expanded ? '收起' : '展开全文' }}
+        <ChevronUp v-if="expanded" :size="12" />
+        <ChevronDown v-else :size="12" />
+      </button>
+    </template>
     <div v-else class="text-sm md-body break-words" v-html="contentHtml"></div>
 
     <!-- 配图：列表页仅首图 16:9 裁剪缩略；详情页全部展示，点击进灯箱 -->

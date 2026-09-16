@@ -8,6 +8,7 @@ import { useCommunityStore } from '../stores/community'
 import { communityApi } from '../api/community'
 import { isAdmin, isLoggedIn, requireLogin } from '../services/auth'
 import { COMMUNITY_TAGS } from '../data/defaults'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import type { CommunityPost, HotTopic } from '../types'
 import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
@@ -29,8 +30,16 @@ const showComposer = ref(false)
 const boardTab = ref<'checkin' | 'progress'>('checkin')
 const hotTopics = ref<HotTopic[]>([])
 
+/**
+ * 拉取动态流：失败时 store 会写入 error（供内联错误态与重试按钮使用）并抛出异常，
+ * 此处统一 toast 即时反馈，避免失败被静默吞掉。
+ */
+function loadFeed(reset = true) {
+  store.fetchFeed(reset).catch((e) => toast(getErrorMessage(e, '加载失败')))
+}
+
 onMounted(() => {
-  store.fetchFeed(true).catch((e) => toast(getErrorMessage(e, '加载失败')))
+  loadFeed(true)
   if (isLoggedIn.value) store.fetchUnreadCount().catch(() => {})
   loadDaily()
   loadHotTopics()
@@ -40,7 +49,8 @@ onMounted(() => {
 const sentinel = ref<HTMLElement | null>(null)
 const observer = new IntersectionObserver(
   (entries) => {
-    if (entries.some((e) => e.isIntersecting)) store.fetchFeed().catch(() => {})
+    // 加载更多失败同样走 loadFeed：toast + 列表底部内联错误态（含重试），不再静默
+    if (entries.some((e) => e.isIntersecting)) loadFeed(false)
   },
   { rootMargin: '200px' }
 )
@@ -431,15 +441,6 @@ async function removePost(id: string) {
       </div>
     </div>
 
-    <!-- 推荐加载失败提示（仅 recommend 分类下显示） -->
-    <div
-      v-if="store.category === 'recommend' && store.error"
-      class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400"
-    >
-      <span>{{ store.error }}</span>
-      <button class="ml-auto btn-ghost !text-xs shrink-0" @click="store.fetchFeed(true)">重试</button>
-    </div>
-
     <!-- 帖子列表 -->
     <div class="space-y-3">
       <PostCard
@@ -463,14 +464,28 @@ async function removePost(id: string) {
       </PostCard>
     </div>
 
-    <div v-if="!store.posts.length && !store.feedLoading" class="card text-center py-10 text-slate-400 text-sm">
+    <!-- 空态：仅在「确实没有内容且未失败」时展示，与加载失败区分开 -->
+    <div
+      v-if="!store.posts.length && !store.feedLoading && !store.error"
+      class="card text-center py-10 text-slate-400 text-sm"
+    >
       <div class="text-3xl mb-2">🌱</div>
       <p>还没有动态，来发第一帖吧！</p>
     </div>
 
     <!-- 无限滚动哨兵 -->
     <div ref="sentinel" class="h-1"></div>
-    <div v-if="store.feedLoading" class="text-center text-xs text-slate-400 py-2">加载中…</div>
+
+    <!-- 加载失败：任意分类 / 筛选切换 / 加载更多失败均可见（紧邻列表底部），并提供重试 -->
+    <div v-if="store.error" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+      <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+      <span>{{ store.error }}</span>
+      <button class="ml-auto btn-ghost !text-xs shrink-0" @click="loadFeed(true)">
+        <RefreshCw :size="14" aria-hidden="true" />
+        重试
+      </button>
+    </div>
+    <div v-else-if="store.feedLoading" class="text-center text-xs text-slate-400 py-2">加载中…</div>
     <div v-else-if="!store.hasMore && store.posts.length" class="text-center text-xs text-slate-400 py-2">
       没有更多了
     </div>
