@@ -119,7 +119,7 @@ export interface AssertCleanOptions {
 }
 
 export interface AssertCleanAsyncResult {
-  /** 是否命中 soft 违规、应标记 is_flagged 待审（仅 allowSoft=true 时可能为 true） */
+  /** 是否命中 soft 违规、应标记 is_flagged 待审（assertCleanAsync 需 allowSoft=true；assertCleanLocal 恒可能） */
   flagged: boolean
 }
 
@@ -152,5 +152,23 @@ export async function assertCleanAsync(
     if (opts?.allowSoft) return { flagged: true }
     throw new HttpError(400, '内容疑似包含违规信息，请修改后再发布')
   }
+  return { flagged: false }
+}
+
+/**
+ * 仅本地词库的校验（不调 AI），soft 命中降级为 flagged：
+ *  - hard → 拒绝发布（400，文案与 assertCleanAsync 一致）；
+ *  - soft → { flagged: true }（与正文 soft 命中同一口径，标记待审而非拒绝）。
+ *
+ * 用于发帖标签等短文本场景：一次发帖最多带 5 个标签，逐个走 assertCleanAsync 会在
+ * 本地词库未命中时串行触发 Workers AI（每次超时 5 秒），最坏拖慢发帖 30 秒；
+ * 标签文本短、匹配面窄，本地词库已足够覆盖。
+ */
+export function assertCleanLocal(text: string): AssertCleanAsyncResult {
+  const local = moderate(text)
+  if (local.hard) {
+    throw new HttpError(400, '内容包含违规信息，请修改后再发布')
+  }
+  if (local.soft) return { flagged: true }
   return { flagged: false }
 }

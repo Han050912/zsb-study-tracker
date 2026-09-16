@@ -1,10 +1,11 @@
 import { z } from 'zod'
 import { on, body } from '../../router'
 import { all, first, run, batch, uid, utc8Today, HttpError } from '../../db'
+import type { Env } from '../../index'
 import { parseBody, POST_TYPES, QUESTION_SUBJECT_TAGS, trimMax, imageUrlsSchema } from '../../schemas'
 import { rateLimit } from '../../middleware/rateLimit'
 import { deleteUploads, uploadIdsOf, IMAGE_MAX_PER_POST, IMAGE_MAX_PER_COMMENT } from '../uploads'
-import { assertCleanAsync } from '../sensitive'
+import { assertCleanAsync, assertCleanLocal } from '../sensitive'
 import { awardBadge, hasBadge } from '../badges'
 import {
   nowSec,
@@ -31,6 +32,35 @@ import {
  * 由 community/index.ts 的 registerCommunityRoutes 聚合注册。
  * 零逻辑改动：on(...) 块从原 community.ts 逐字搬迁，仅调整 import 路径与包一层 registerPostsRoutes()。
  */
+
+/**
+ * 每日首帖 +5「社区打卡」的幂等发放语句（发帖写入与发放放同一 batch）：
+ *  - 流水：判重（user_id + date + reason）与写入在同一条 INSERT ... SELECT ... WHERE NOT EXISTS
+ *    内完成（同 gamification.ts pointsAwardStatements 的单语句幂等范式），并发发帖不会重复发放；
+ *  - 积分：仅当本帖流水（ref_id 为本帖唯一键）真正落账时 +5（无 gamification 行则创建），
+ *    与流水在同一 batch 内原子生效，消除「判重通过 → 并发重复发放」的读后写窗口。
+ */
+export function firstPostAwardStatements(
+  env: Env,
+  userId: string,
+  postId: string,
+  date: string
+): D1PreparedStatement[] {
+  const refId = `srv:${postId}`
+  return [
+    env.DB.prepare(
+      'INSERT INTO points_log (user_id, date, points, reason, ref_id) ' +
+        "SELECT ?, ?, 5, '社区打卡', ? WHERE NOT EXISTS (" +
+        "SELECT 1 FROM points_log WHERE user_id = ? AND date = ? AND reason = '社区打卡')"
+    ).bind(userId, date, refId, userId, date),
+    env.DB.prepare(
+      'INSERT INTO gamification (user_id, points) SELECT ?, 5 WHERE EXISTS ' +
+        '(SELECT 1 FROM points_log WHERE user_id = ? AND ref_id = ?) ' +
+        'ON CONFLICT(user_id) DO UPDATE SET points = points + excluded.points'
+    ).bind(userId, userId, refId)
+  ]
+}
+
 export function registerPostsRoutes() {
   // 帖子列表（游标分页；默认仅广场公开帖，circle 参数显式指定圈内流）
   on('GET', '/api/community/posts', false, async (ctx) => {
@@ -193,11 +223,15 @@ export function registerPostsRoutes() {
       }
     }
     const content = b.content
-    // 软违规（本地或 AI）：先发布但标记待审（仅作者/管理员可见），由管理员复核
-    const flagged = content ? ((await assertCleanAsync(content, ctx.env, { allowSoft: true })).flagged ? 1 : 0) : 0
     const type = b.type
     const tags = b.tags
-    for (const t of tags) await assertCleanAsync(t, ctx.env, { allowSoft: true }) // 标签同样过敏感词，防止绕过内容过滤
+    // 软违规（本地或 AI）：先发布但标记待审（仅作者/管理员可见），由管理员复核
+    let flagged = content ? ((await assertCleanAsync(content, ctx.env, { allowSoft: true })).flagged ? 1 : 0) : 0
+    // 标签同样过敏感词，防止绕过内容过滤：仅走本地词库（soft 命中与正文一致置 flagged），
+    // 不调 AI——多标签逐个走 assertCleanAsync 最坏触发多次串行模型调用，拖垮发帖延迟
+    for (const t of tags) {
+      if (assertCleanLocal(t).flagged) flagged = 1
+    }
     if (type === 'question' && !tags.some((t) => (QUESTION_SUBJECT_TAGS as readonly string[]).includes(t))) {
       throw new HttpError(400, '提问帖请选择科目标签（#高等数学 或 #英语）')
     }
@@ -265,14 +299,8 @@ export function registerPostsRoutes() {
         now
       )
     ]
-    const awarded = await first(
-      ctx.env,
-      'SELECT id FROM points_log WHERE user_id = ? AND date = ? AND reason = ?',
-      ctx.userId,
-      utc8Today(),
-      '社区打卡'
-    )
-    if (!awarded) stmts.push(...awardStatements(ctx.env, ctx.userId, 5, '社区打卡', id))
+    // 每日首帖 +5：幂等发放（判重 + 流水 + 积分同 batch，见 firstPostAwardStatements）
+    stmts.push(...firstPostAwardStatements(ctx.env, ctx.userId, id, utc8Today()))
     await batch(ctx.env, stmts)
 
     // 徽章：首次发帖 / 首次提问。判定改为**未持有即补发**（幂等），不再依赖「刚好第一次」这种
