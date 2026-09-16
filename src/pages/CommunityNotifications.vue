@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useCommunityStore } from '../stores/community'
@@ -13,6 +13,20 @@ import NotificationGenericItem from '../components/community/NotificationGeneric
 const store = useCommunityStore()
 const toast = useToast()
 
+/** 列表加载中：首屏与切筛选期间显示骨架屏，避免先闪「暂无通知」空态 */
+const loading = ref(false)
+
+async function fetchList(reset: boolean) {
+  loading.value = true
+  try {
+    await store.fetchNotifications(reset)
+  } catch (e) {
+    toast(getErrorMessage(e, '加载失败'))
+  } finally {
+    loading.value = false
+  }
+}
+
 const FILTERS: { k: NotificationType | ''; l: string }[] = [
   { k: '', l: '全部' },
   { k: 'like', l: '点赞' },
@@ -23,11 +37,12 @@ const FILTERS: { k: NotificationType | ''; l: string }[] = [
   { k: 'system', l: '系统' }
 ]
 function switchFilter(k: NotificationType | '') {
-  store.setNotifyFilter(k).catch((e) => toast(getErrorMessage(e, '加载失败')))
+  if (store.notifyFilter === k) return
+  fetchList(true)
 }
 
 onMounted(() => {
-  store.fetchNotifications(true).catch((e) => toast(getErrorMessage(e, '加载失败')))
+  fetchList(true)
 })
 
 function markRead(n: CommunityNotification) {
@@ -63,12 +78,20 @@ async function readAll() {
       </button>
     </div>
 
-    <div v-if="!store.notifications.length" class="card text-center py-10 text-slate-400 text-sm">
+    <!-- 加载中：骨架占位，与「暂无通知」空态明确区分 -->
+    <div v-if="loading" class="card !p-0 divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
+      <div v-for="i in 4" :key="i" class="p-4 space-y-2">
+        <div class="h-4 w-1/3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+        <div class="h-3 w-2/3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+      </div>
+    </div>
+
+    <div v-else-if="!store.notifications.length" class="card text-center py-10 text-slate-400 text-sm">
       <div class="text-3xl mb-2"></div>
       <p>暂无通知</p>
     </div>
 
-    <div class="card !p-0 divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
+    <div v-else class="card !p-0 divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
       <template v-for="n in store.notifications" :key="n.id">
         <NotificationCommentItem v-if="n.type === 'comment'" :n="n" @read="markRead(n)" />
         <NotificationLikeItem v-else-if="n.type === 'like'" :n="n" @read="markRead(n)" />

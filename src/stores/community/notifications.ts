@@ -25,15 +25,20 @@ export const notificationsActions: NotificationsActionsShape = {
   },
 
   async fetchNotifications(this: CommunityStoreThis, reset = false) {
+    // 重置不在请求前清空列表：避免打开页面/切筛选时先闪「暂无通知」（加载中由页面用骨架屏区分）；
+    // 成功后整体替换，失败则保留旧列表
     if (reset) {
-      this.notifications = []
       this.notifyCursor = null
       this.hasMoreNotify = true
     }
     if (!this.hasMoreNotify) return
     const res = await communityApi.notifications(this.notifyCursor, undefined, this.notifyFilter || undefined)
-    const existing = new Set(this.notifications.map((n) => n.id))
-    this.notifications.push(...res.items.filter((n) => !existing.has(n.id)))
+    if (reset) {
+      this.notifications = res.items
+    } else {
+      const existing = new Set(this.notifications.map((n) => n.id))
+      this.notifications.push(...res.items.filter((n) => !existing.has(n.id)))
+    }
     this.unreadCount = res.unreadCount
     this.unreadExcludingMuted = res.unreadExcludingMuted
     this.notifyCursor = res.nextCursor

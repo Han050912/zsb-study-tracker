@@ -4,6 +4,7 @@ import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import { fromNow } from '../utils/date'
 import type { MessageConversation } from '../types'
@@ -14,16 +15,25 @@ const toast = useToast()
 
 const conversations = ref<MessageConversation[]>([])
 const loading = ref(true)
+/** 加载失败信息：持久错误态（区别于「还没有消息」空态），提供重试 */
+const loadError = ref('')
 
-onMounted(async () => {
+async function load() {
+  loading.value = true
+  loadError.value = ''
   try {
     const res = await communityApi.conversations()
     conversations.value = res.conversations
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
+}
+
+onMounted(() => {
+  load()
 })
 </script>
 
@@ -32,6 +42,15 @@ onMounted(async () => {
     <h2 class="text-lg font-bold">消息</h2>
 
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+    <!-- 加载失败：持久错误态 + 重试，不落「还没有消息」空态 -->
+    <div v-else-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+      <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+      <span class="flex-1">{{ loadError }}</span>
+      <button class="btn-ghost !text-xs shrink-0" @click="load">
+        <RefreshCw :size="14" aria-hidden="true" />
+        重试
+      </button>
+    </div>
     <div v-else-if="!conversations.length" class="card text-center text-sm text-slate-400 py-10">
       还没有消息。到社区里找聊得来的同学，点头像 → 发消息吧～
     </div>

@@ -5,6 +5,7 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
@@ -248,8 +249,15 @@ function openReport(postId: string) {
         <div class="text-sm text-slate-400">在「{{ circle.name }}」分享你的想法…</div>
       </button>
 
-      <!-- 圈内帖子流 -->
-      <div v-if="feedError" class="card text-center text-sm text-slate-400 py-8">{{ feedError }}</div>
+      <!-- 圈内帖子流：首屏失败提供重试（与广场推荐错误块口径一致） -->
+      <div v-if="feedError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+        <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+        <span class="flex-1">{{ feedError }}</span>
+        <button class="btn-ghost !text-xs shrink-0" @click="loadFeed(true)">
+          <RefreshCw :size="14" aria-hidden="true" />
+          重试
+        </button>
+      </div>
       <template v-else>
         <div v-if="!posts.length && !feedLoading" class="card text-center text-sm text-slate-400 py-8">
           {{ isActiveMember ? '圈内还没有帖子，来发第一帖吧～' : '加入圈子后查看圈内讨论' }}

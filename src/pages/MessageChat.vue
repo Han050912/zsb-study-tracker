@@ -5,6 +5,7 @@ import { useToast } from '../composables/useToast'
 import { useImageUpload } from '../composables/useImageUpload'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi, imageUrl, IMAGE_MAX_PER_MESSAGE } from '../api/community'
+import { ImageOff, RefreshCw } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import ImageUploadPreview from '../components/community/ImageUploadPreview.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
@@ -35,6 +36,8 @@ const nextCursor = ref<string | null>(null)
 const cursorEstablished = ref(false)
 /** 翻页请求在飞：给出 loading 反馈并防重复点击 */
 const loadingOlder = ref(false)
+/** 翻页（加载更早）失败标记：toast 即时提示之外，按钮位置常驻变为「加载失败，点击重试」 */
+const olderError = ref(false)
 const peerName = ref('')
 const peerAvatar = ref('')
 const loading = ref(true)
@@ -74,6 +77,7 @@ async function load(reset = false) {
       messages.value = [...messages.value, ...res.messages.filter((m) => !known.has(m.id))]
       nextCursor.value = res.nextCursor
     }
+    olderError.value = false
     // 会话列表接口拿不到对方名/头像，从资料卡补
     if (!peerName.value) {
       const p = await communityApi.profile(peerId)
@@ -82,7 +86,11 @@ async function load(reset = false) {
     }
   } catch (e) {
     // 轮询失败静默（否则每 5s 弹一次）；首屏与翻页失败给出提示
-    if (loading.value || loadingOlder.value) toast(getErrorMessage(e, '加载失败'))
+    if (loading.value || loadingOlder.value) {
+      toast(getErrorMessage(e, '加载失败'))
+      // 翻页失败：除 toast 外置失败标记，按钮常驻变为「加载失败，点击重试」供再次发起
+      if (loadingOlder.value) olderError.value = true
+    }
   } finally {
     loading.value = false
   }
@@ -213,6 +221,19 @@ const thumbShown = computed(() => (isHovering.value || isScrollingRecently.value
 // ---- 图片 ----
 const ACCEPT = 'image/jpeg,image/png,image/webp'
 
+// ---- 消息图片占位（P1-04）：按「消息id:序号」记录每张图的加载态；加载中由容器固定尺寸+底色占位，失败回退提示 ----
+type MessageImgState = 'loading' | 'loaded' | 'failed'
+const imgStates = ref<Record<string, MessageImgState>>({})
+function imgKey(msgId: string, i: number) {
+  return `${msgId}:${i}`
+}
+function imgState(m: CommunityMessage, i: number): MessageImgState {
+  return imgStates.value[imgKey(m.id, i)] ?? 'loading'
+}
+function setImgState(msgId: string, i: number, s: MessageImgState) {
+  imgStates.value[imgKey(msgId, i)] = s
+}
+
 // ---- 图片预览（浮层内嵌，不跳转 / 不打开外部链接）----
 const showLightbox = ref(false)
 const lightboxIndex = ref(0)
@@ -281,11 +302,13 @@ function openReport(msgId: string) {
         <template v-else>
           <div v-if="nextCursor" class="text-center">
             <button
-              class="text-xs text-primary-500 hover:underline disabled:text-slate-400 disabled:no-underline"
+              class="text-xs inline-flex items-center gap-1 hover:underline disabled:text-slate-400 disabled:no-underline"
+              :class="olderError ? 'text-red-500 dark:text-red-400' : 'text-primary-500'"
               :disabled="loadingOlder"
               @click="loadOlder"
             >
-              {{ loadingOlder ? '加载中…' : '加载更早的消息' }}
+              <RefreshCw v-if="olderError" :size="12" aria-hidden="true" />
+              {{ loadingOlder ? '加载中…' : olderError ? '加载失败，点击重试' : '加载更早的消息' }}
             </button>
           </div>
           <div v-if="!ordered.length" class="text-center text-xs text-slate-400 py-8">打个招呼吧～</div>
@@ -314,14 +337,32 @@ function openReport(msgId: string) {
                   class="grid gap-1.5"
                   :class="[m.imageUrls.length > 1 ? 'grid-cols-2' : 'grid-cols-1', m.content ? 'mt-1' : '']"
                 >
-                  <img
+                  <!-- 固定尺寸 + 底色容器占位（参考 PostCard），加载完成前高度稳定，失败回退提示 -->
+                  <div
                     v-for="(u, i) in m.imageUrls"
                     :key="i"
-                    :src="imageUrl(u)"
-                    alt="图片"
-                    class="rounded-lg max-w-[220px] object-cover cursor-zoom-in"
-                    @click="openImage(m.imageUrls, i)"
-                  />
+                    class="rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700 aspect-square"
+                    :class="m.imageUrls.length > 1 ? '' : 'w-[220px] max-w-full'"
+                  >
+                    <img
+                      v-if="imgState(m, i) !== 'failed'"
+                      v-show="imgState(m, i) === 'loaded'"
+                      :src="imageUrl(u)"
+                      alt="图片"
+                      class="w-full h-full object-cover cursor-zoom-in"
+                      @load="setImgState(m.id, i, 'loaded')"
+                      @error="setImgState(m.id, i, 'failed')"
+                      @click="openImage(m.imageUrls, i)"
+                    />
+                    <div
+                      v-else
+                      class="w-full h-full flex flex-col items-center justify-center gap-1 text-slate-400"
+                      title="图片加载失败"
+                    >
+                      <ImageOff :size="18" aria-hidden="true" />
+                      <span class="text-[10px]">图片加载失败</span>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div class="flex items-center gap-2 mt-0.5 px-1" :class="m.fromMe ? 'justify-end' : ''">

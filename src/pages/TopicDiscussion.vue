@@ -4,6 +4,7 @@ import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
@@ -120,8 +121,15 @@ function openReport(postId: string) {
         <div class="text-sm text-slate-400">在「{{ chapterName }}」发起讨论或求助…</div>
       </button>
 
-      <!-- 讨论帖流 -->
-      <div v-if="feedError" class="card text-center text-sm text-slate-400 py-8">{{ feedError }}</div>
+      <!-- 讨论帖流：首屏失败提供重试（与广场推荐错误块口径一致） -->
+      <div v-if="feedError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+        <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+        <span class="flex-1">{{ feedError }}</span>
+        <button class="btn-ghost !text-xs shrink-0" @click="loadFeed(true)">
+          <RefreshCw :size="14" aria-hidden="true" />
+          重试
+        </button>
+      </div>
       <template v-else>
         <div v-if="!posts.length && !feedLoading" class="card text-center text-sm text-slate-400 py-8">
           还没有讨论，来发第一帖吧～
