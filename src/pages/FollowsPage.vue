@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 粉丝/关注/互关关系列表页：路由 /follows/:id?tab=fans|following|mutual；游标分页 + 切 tab 令牌防竞态 */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
 import UserRelationItem from '../components/profile/UserRelationItem.vue'
@@ -13,11 +13,14 @@ const router = useRouter()
 const { goBack } = useBack()
 const userId = route.params.id as string
 const isSelf = computed(() => userId === sessionUser.value?.id)
-const tab = ref<'fans' | 'following' | 'mutual'>(
-  ['fans', 'following', 'mutual'].includes(route.query.tab as string)
-    ? (route.query.tab as 'fans' | 'following' | 'mutual')
-    : 'fans'
-)
+
+const TABS = ['fans', 'following', 'mutual'] as const
+type Tab = (typeof TABS)[number]
+/** URL query.tab → 合法 tab（非法值回退 fans），初始化与浏览器前进/后退同步共用 */
+function parseTab(v: unknown): Tab {
+  return (TABS as readonly string[]).includes(v as string) ? (v as Tab) : 'fans'
+}
+const tab = ref<Tab>(parseTab(route.query.tab))
 const ownerName = ref('')
 
 const items = ref<FollowListItem[]>([])
@@ -30,7 +33,6 @@ const FETCHERS = {
   following: communityApi.following,
   mutual: communityApi.mutualFollows
 } as const
-const TABS = ['fans', 'following', 'mutual'] as const
 const TITLES = { fans: '粉丝', following: '关注', mutual: '互关' } as const
 const EMPTY_TEXTS = {
   fans: '还没有粉丝，去社区逛逛吧',
@@ -57,10 +59,8 @@ async function loadMore() {
   }
 }
 
-function switchTab(t: 'fans' | 'following' | 'mutual') {
-  if (t === tab.value) return
-  tab.value = t
-  router.replace({ query: { tab: t } }) // tab 与 URL 同步，可分享
+/** 清空当前列表并按 tab 重新拉取 */
+function resetAndLoad() {
   items.value = []
   cursor.value = null
   loadError.value = false
@@ -68,6 +68,23 @@ function switchTab(t: 'fans' | 'following' | 'mutual') {
   loading.value = false
   loadMore()
 }
+
+/** tab 变化统一走 URL：点击切换写 query，浏览器前进/后退改 query 后由 watch 同步回来 */
+function switchTab(t: Tab) {
+  if (t === tab.value) return
+  router.replace({ query: { tab: t } }) // tab 与 URL 同步，可分享
+}
+
+// P3-01：反向监听 URL（含浏览器前进/后退），同步 Tab 并重新拉取
+watch(
+  () => route.query.tab,
+  (v) => {
+    const t = parseTab(v)
+    if (t === tab.value) return
+    tab.value = t
+    resetAndLoad()
+  }
+)
 
 onMounted(async () => {
   loadMore()

@@ -112,14 +112,23 @@ async function scrollToBottom() {
   listRef.value?.scrollTo({ top: listRef.value.scrollHeight })
 }
 
-/** 拉取一次最新消息，若数量变化则滚动到底部；上次未返回则跳过本次（失败也不阻塞后续轮询） */
+/** P3-06：距底部多少像素内视为「接近底部」，轮询到新消息才自动滚底，避免打断向上翻阅历史 */
+const NEAR_BOTTOM_PX = 120
+function isNearBottom() {
+  const el = listRef.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
+}
+
+/** 拉取一次最新消息，仅当轮询前用户已接近底部时才自动滚底；上次未返回则跳过本次（失败也不阻塞后续轮询） */
 async function pollOnce() {
   if (pollInFlight) return
   pollInFlight = true
   try {
     const before = messages.value.length
+    const nearBottom = isNearBottom()
     await load(true)
-    if (messages.value.length !== before) await scrollToBottom()
+    if (messages.value.length !== before && nearBottom) await scrollToBottom()
   } finally {
     pollInFlight = false
   }

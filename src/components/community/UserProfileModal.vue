@@ -6,6 +6,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { useRouter } from 'vue-router'
 import Modal from '../Modal.vue'
 import UserAvatar from './UserAvatar.vue'
+import FollowButton from '../profile/FollowButton.vue'
 import { communityApi } from '../../api/community'
 import { COMMUNITY_BADGES, levelOf } from '../../data/defaults'
 import { isAdmin, sessionUser, goLogin, requireLogin } from '../../services/auth'
@@ -17,7 +18,7 @@ import type { CommunityUserProfile } from '../../types'
  * 管理员可在此授予/更新/撤销专家认证（含专长领域）。
  */
 const props = defineProps<{ show: boolean; userId: string }>()
-const emit = defineEmits<{ 'update:show': [boolean] }>()
+const emit = defineEmits<{ 'update:show': [boolean]; changed: [] }>()
 const router = useRouter()
 
 const toast = useToast()
@@ -68,24 +69,13 @@ watch(
   }
 )
 
-// ---- 关注/取关 ----
-const followSubmitting = ref(false)
-
-async function toggleFollow() {
-  if (requireLogin(router)) return
-  if (!profile.value || followSubmitting.value) return
-  followSubmitting.value = true
-  try {
-    const res = await communityApi.follow(props.userId)
-    profile.value.followedByMe = res.following
-    // 私密主页降级视图缺少 followers 字段（undefined），跳过计数修正避免产生 NaN
-    if (typeof profile.value.followers === 'number') profile.value.followers += res.following ? 1 : -1
-    toast(res.following ? '已关注，对方的帖子会出现在「关注」Tab' : '已取消关注')
-  } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
-  } finally {
-    followSubmitting.value = false
-  }
+// ---- 关注/取关（P3-02）：复用四态 FollowButton，弹窗只回写本地资料并透出 changed 供调用方刷新 ----
+function onFollowChange(following: boolean) {
+  if (!profile.value) return
+  profile.value.followedByMe = following
+  // 私密主页降级视图缺少 followers 字段（undefined），跳过计数修正避免产生 NaN
+  if (typeof profile.value.followers === 'number') profile.value.followers += following ? 1 : -1
+  emit('changed')
 }
 
 /** 发起私聊：访客先引导登录 */
@@ -202,18 +192,12 @@ async function revokeVerify() {
           >
             消息
           </button>
-          <button
-            class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors"
-            :class="
-              profile.followedByMe
-                ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-red-500'
-                : 'bg-primary-500 text-white hover:bg-primary-600'
-            "
-            :disabled="followSubmitting"
-            @click="toggleFollow"
-          >
-            {{ profile.followedByMe ? '已关注' : '+ 关注' }}
-          </button>
+          <FollowButton
+            :user-id="userId"
+            :followed-by-me="profile.followedByMe"
+            :follows-me="profile.followsMe"
+            @change="onFollowChange"
+          />
         </div>
       </div>
 
