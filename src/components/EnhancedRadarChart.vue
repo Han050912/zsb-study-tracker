@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useChart, chartTextColor } from '../composables/useChart'
+import ChartFallback from './ChartFallback.vue'
 import StarRating from './StarRating.vue'
 import type { TopicImportance } from '../types'
 
@@ -114,7 +115,11 @@ function prevPage() {
 }
 
 // 雷达图配置
-const { el: radarEl } = useChart(() => {
+const {
+  el: radarEl,
+  status: radarStatus,
+  retry: retryRadar
+} = useChart(() => {
   if (currentGroup.value.topics.length === 0) return null
 
   return {
@@ -239,7 +244,8 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
     </div>
 
     <!-- 雷达图 -->
-    <div ref="radarEl" class="h-64 sm:h-72 md:h-80"></div>
+    <ChartFallback v-if="radarStatus === 'error'" class="h-64 sm:h-72 md:h-80" @retry="retryRadar" />
+    <div v-else ref="radarEl" class="h-64 sm:h-72 md:h-80"></div>
 
     <!-- 分页控制 -->
     <div v-if="hasMultiplePages" class="mt-4 space-y-3">

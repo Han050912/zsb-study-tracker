@@ -4,8 +4,8 @@ import { BookOpenCheck, Clock3, Flame, Pencil } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import { ACHIEVEMENTS, LEVELS, levelOf } from '../data/defaults'
 import { useChart, chartTextColor } from '../composables/useChart'
-import { formatMinutes } from '../utils/date'
-import dayjs from 'dayjs'
+import ChartFallback from '../components/ChartFallback.vue'
+import { businessDate, formatMinutes } from '../utils/date'
 
 const store = useAppStore()
 
@@ -23,11 +23,7 @@ const levelIndex = computed(() => LEVELS.indexOf(levelOf(store.gamification.poin
 // ---- 积分走势（自我排行榜：周/月） ----
 const rankRange = ref<7 | 30>(7)
 const rankDays = computed(() =>
-  Array.from({ length: rankRange.value }, (_, i) =>
-    dayjs()
-      .subtract(rankRange.value - 1 - i, 'day')
-      .format('YYYY-MM-DD')
-  )
+  Array.from({ length: rankRange.value }, (_, i) => businessDate(Date.now() - (rankRange.value - 1 - i) * 86400_000))
 )
 
 // 提取为响应式数据，供 useChart 依赖追踪（积分新增时自动重绘）
@@ -46,7 +42,11 @@ const pointsTrend = computed(() => {
   return { daily, cumulative }
 })
 
-const { el: pointsEl } = useChart(() => {
+const {
+  el: pointsEl,
+  status: pointsStatus,
+  retry: retryPoints
+} = useChart(() => {
   const { daily, cumulative } = pointsTrend.value
   return {
     grid: { left: 40, right: 40, top: 30, bottom: 24 },
@@ -218,7 +218,8 @@ const stats = computed(() => [
           </button>
         </div>
       </div>
-      <div ref="pointsEl" class="h-56"></div>
+      <ChartFallback v-if="pointsStatus === 'error'" class="h-56" @retry="retryPoints" />
+      <div v-else ref="pointsEl" class="h-56"></div>
       <p class="text-[10px] text-slate-400 mt-2">柱为每日新增积分，折线为当日累计积分（含区间前历史积分）</p>
     </div>
 

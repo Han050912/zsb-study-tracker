@@ -3,6 +3,7 @@
 import { computed } from 'vue'
 import { useAppStore } from '../../stores/app'
 import { useChart, chartTextColor } from '../../composables/useChart'
+import ChartFallback from '../ChartFallback.vue'
 
 const store = useAppStore()
 const eng = computed(() => store.english)
@@ -26,7 +27,11 @@ const vocabByDate = computed(() => {
 })
 
 // ---- 词汇图表（按日聚合） ----
-const { el: vocabEl } = useChart(() => {
+const {
+  el: vocabEl,
+  status: vocabStatus,
+  retry: retryVocab
+} = useChart(() => {
   const data = vocabByDate.value
   return {
     grid: { left: 40, right: 16, top: 30, bottom: 24 },
@@ -49,6 +54,7 @@ const { el: vocabEl } = useChart(() => {
 <template>
   <div class="card">
     <div class="section-title">近 14 个打卡日词汇量</div>
-    <div ref="vocabEl" class="h-52"></div>
+    <ChartFallback v-if="vocabStatus === 'error'" class="h-52" @retry="retryVocab" />
+    <div v-else ref="vocabEl" class="h-52"></div>
   </div>
 </template>

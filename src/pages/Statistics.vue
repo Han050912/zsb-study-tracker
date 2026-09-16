@@ -2,22 +2,18 @@
 import { computed, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor } from '../composables/useChart'
-import { formatMinutes } from '../utils/date'
+import { businessDate, formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import { MOODS } from '../data/defaults'
 import { PROBLEM_TYPE_LABELS } from '../data/problemTypes'
+import ChartFallback from '../components/ChartFallback.vue'
 import Modal from '../components/Modal.vue'
-import dayjs from 'dayjs'
 
 const store = useAppStore()
 const range = ref<7 | 30>(7)
 
 const days = computed(() =>
-  Array.from({ length: range.value }, (_, i) =>
-    dayjs()
-      .subtract(range.value - 1 - i, 'day')
-      .format('YYYY-MM-DD')
-  )
+  Array.from({ length: range.value }, (_, i) => businessDate(Date.now() - (range.value - 1 - i) * 86400_000))
 )
 
 // ---- 柱状图点击：当日各科目学习时长细分详情 ----
@@ -59,7 +55,11 @@ const barDetail = computed(() => {
 })
 
 // ---- 学习时长 ----
-const { el: timeEl } = useChart(
+const {
+  el: timeEl,
+  status: timeStatus,
+  retry: retryTime
+} = useChart(
   () => ({
     grid: { left: 44, right: 16, top: 28, bottom: 24 },
     xAxis: {
@@ -133,7 +133,11 @@ const subjectMinutes = computed(() => {
     .filter((s) => map[s.id])
     .map((s) => ({ name: s.name, value: map[s.id], itemStyle: { color: s.color } }))
 })
-const { el: pieEl } = useChart(
+const {
+  el: pieEl,
+  status: pieStatus,
+  retry: retryPie
+} = useChart(
   () => ({
     series: [
       {
@@ -149,7 +153,11 @@ const { el: pieEl } = useChart(
 )
 
 // ---- 正确率趋势 ----
-const { el: accEl } = useChart(() => {
+const {
+  el: accEl,
+  status: accStatus,
+  retry: retryAcc
+} = useChart(() => {
   const series = store.subjects.map((s) => {
     const sessions = store.problemSessions.filter((p) => p.subjectId === s.id)
     const byDate: Record<string, { t: number; c: number }> = {}
@@ -194,7 +202,11 @@ const typeStats = computed(() => {
     .map(([k, v]) => ({ name: PROBLEM_TYPE_LABELS[k] || k, value: v }))
     .filter((x) => x.value > 0)
 })
-const { el: typeEl } = useChart(
+const {
+  el: typeEl,
+  status: typeStatus,
+  retry: retryType
+} = useChart(
   () => ({
     series: [
       {
@@ -226,7 +238,11 @@ const { el: typeEl } = useChart(
 )
 
 // ---- 专注分析 ----
-const { el: pomoEl } = useChart(
+const {
+  el: pomoEl,
+  status: pomoStatus,
+  retry: retryPomo
+} = useChart(
   () => ({
     grid: { left: 40, right: 40, top: 30, bottom: 24 },
     legend: { textStyle: { color: chartTextColor(), fontSize: 10 } },
@@ -263,7 +279,11 @@ const { el: pomoEl } = useChart(
 )
 
 // ---- 情绪曲线 ----
-const { el: moodEl } = useChart(() => {
+const {
+  el: moodEl,
+  status: moodStatus,
+  retry: retryMood
+} = useChart(() => {
   const moodScore: Record<string, number> = {}
   MOODS.forEach((m, i) => (moodScore[m] = MOODS.length - i))
   const data = days.value.map((d) => {
@@ -304,11 +324,7 @@ const { el: moodEl } = useChart(() => {
 
 // ---- 周报 ----
 const report = computed(() => {
-  const weekDays = Array.from({ length: 7 }, (_, i) =>
-    dayjs()
-      .subtract(6 - i, 'day')
-      .format('YYYY-MM-DD')
-  )
+  const weekDays = Array.from({ length: 7 }, (_, i) => businessDate(Date.now() - (6 - i) * 86400_000))
   const min = weekDays.reduce((s, d) => s + (store.minutesByDate[d] || 0), 0)
   const problems = store.problemSessions.filter((p) => weekDays.includes(p.date))
   const pTotal = problems.reduce((s, p) => s + p.total, 0)
@@ -376,36 +392,42 @@ const report = computed(() => {
 
     <div class="card">
       <div class="section-title">⏱ 学习时长（近{{ range }}天）</div>
-      <div ref="timeEl" class="h-60"></div>
+      <ChartFallback v-if="timeStatus === 'error'" class="h-60" @retry="retryTime" />
+      <div v-else ref="timeEl" class="h-60"></div>
       <p class="text-[10px] text-slate-400 mt-2">悬浮查看当日各科目总学习时长，点击柱子查看科目细分耗时详情</p>
     </div>
 
     <div class="grid md:grid-cols-2 gap-4">
       <div class="card">
         <div class="section-title">科目时长占比</div>
-        <div v-if="subjectMinutes.length" ref="pieEl" class="h-56"></div>
+        <ChartFallback v-if="pieStatus === 'error'" class="h-56" @retry="retryPie" />
+        <div v-else-if="subjectMinutes.length" ref="pieEl" class="h-56"></div>
         <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
       </div>
       <div class="card">
         <div class="section-title">题型分布（累计 {{ store.totalProblems }} 题）</div>
-        <div v-if="typeStats.length" ref="typeEl" class="h-56"></div>
+        <ChartFallback v-if="typeStatus === 'error'" class="h-56" @retry="retryType" />
+        <div v-else-if="typeStats.length" ref="typeEl" class="h-56"></div>
         <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
       </div>
     </div>
 
     <div class="card">
       <div class="section-title">各科目正确率趋势</div>
-      <div ref="accEl" class="h-56"></div>
+      <ChartFallback v-if="accStatus === 'error'" class="h-56" @retry="retryAcc" />
+      <div v-else ref="accEl" class="h-56"></div>
     </div>
 
     <div class="card">
       <div class="section-title">专注力分析</div>
-      <div ref="pomoEl" class="h-56"></div>
+      <ChartFallback v-if="pomoStatus === 'error'" class="h-56" @retry="retryPomo" />
+      <div v-else ref="pomoEl" class="h-56"></div>
     </div>
 
     <div class="card">
       <div class="section-title">情绪曲线</div>
-      <div ref="moodEl" class="h-48"></div>
+      <ChartFallback v-if="moodStatus === 'error'" class="h-48" @retry="retryMood" />
+      <div v-else ref="moodEl" class="h-48"></div>
     </div>
 
     <!-- 柱状图点击：当日各科目学习细分耗时详情卡片 -->
