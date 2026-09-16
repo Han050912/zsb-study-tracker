@@ -43,14 +43,13 @@ export default defineConfig(({ mode }) => {
           navigateFallback: 'index.html',
           runtimeCaching: [
             {
+              // /api/* 一律不缓存：这些响应全按账号隔离（/api/auth/me、通知、私信、成长主页、待办、设置……），
+              // 一旦进 SW 缓存，同一设备换账号或网络慢时会把上一账号的数据展示给下一个用户（跨账号串数据）。
+              // NetworkOnly 让请求直连网络，离线时直接失败——离线可用性由「预缓存的 app shell + IndexedDB 中的
+              // 笔记正文」保证，不依赖 API 缓存。
               // 域名点号需转义；apiBase 为空时正则退化为 /^\/api\/.*/i（本地 dev 无 API 域名，可接受）
               urlPattern: new RegExp(`^${apiBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/api/.*`, 'i'),
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'api-cache',
-                expiration: { maxEntries: 64, maxAgeSeconds: 60 * 60 * 24 },
-                networkTimeoutSeconds: 10
-              }
+              handler: 'NetworkOnly'
             },
             {
               // 同源静态资源按需缓存：不预缓存的懒加载大件（echarts/pdf/html2canvas）与 KaTeX 字体
