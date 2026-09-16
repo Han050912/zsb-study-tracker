@@ -18,10 +18,7 @@ export default defineConfig(({ mode }) => {
       {
         name: 'emit-api-base',
         closeBundle() {
-          writeFileSync(
-            path.resolve(__dirname, 'dist/api-base.json'),
-            JSON.stringify({ apiBase, desktopToken })
-          )
+          writeFileSync(path.resolve(__dirname, 'dist/api-base.json'), JSON.stringify({ apiBase, desktopToken }))
         }
       },
       vue(),

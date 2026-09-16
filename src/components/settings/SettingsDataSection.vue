@@ -141,14 +141,7 @@ async function syncNow() {
         清除全部数据
       </button>
       <button v-if="updater" class="btn-ghost" @click="checkUpdate">检查更新</button>
-      <button
-        v-else-if="desktopPlatform"
-        class="btn-ghost"
-        disabled
-        title="当前平台暂不支持自动更新"
-      >
-        检查更新
-      </button>
+      <button v-else-if="desktopPlatform" class="btn-ghost" disabled title="当前平台暂不支持自动更新">检查更新</button>
     </div>
     <p v-if="!updater && desktopPlatform" class="mt-2 text-xs text-slate-400">
       当前平台暂不支持自动更新，请前往 GitHub Releases 手动下载新版本。

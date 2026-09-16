@@ -1451,10 +1451,8 @@ export function registerSyncRoutes() {
     // 非法分值形状被整体忽略（issue #11），若按解析结果判断，这条「合法但无效」的推送会被
     // 误判为空并返回 400，重新制造出我们要消灭的毒记录路径。
     const hasPoints = Array.isArray(payload?.points) && (payload?.points as unknown[]).length > 0
-    const hasAchievements =
-      Array.isArray(payload?.achievements) && (payload?.achievements as unknown[]).length > 0
-    if (!names.length && !hasPoints && !hasAchievements)
-      throw new HttpError(400, '没有需要同步的变更')
+    const hasAchievements = Array.isArray(payload?.achievements) && (payload?.achievements as unknown[]).length > 0
+    if (!names.length && !hasPoints && !hasAchievements) throw new HttpError(400, '没有需要同步的变更')
 
     // 1. 全部校验先于任何数据库访问（多域单请求原子：任一域非法 → 整批 400）
     const validated: { domain: string; strategy: DomainStrategy; upserts: ChangeItem[]; deletes: DeleteInput[] }[] = []
