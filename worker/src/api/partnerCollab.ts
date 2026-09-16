@@ -3,15 +3,59 @@ import { on, body } from '../router'
 import { all, first, run, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { displayName, notifyStatement } from './community'
-import { assertPartner } from './partners'
+import { assertPartner, currentPartnerIds } from './partners'
 
 const nowSec = () => Math.floor(Date.now() / 1000)
+
+/**
+ * 开黑会话「最后活跃」时间窗（秒）：超过此时长无任何心跳即视为僵尸会话。
+ * 前端每 10s 心跳一次（PUT），浏览器后台标签页定时器被节流至约 1 次/分钟，取 5 分钟 = 5 倍余量：
+ * 既容忍后台节流，又能在用户关页 / 杀进程后约 5 分钟内自动解除对双方新会话的阻塞。
+ */
+const SESSION_IDLE_TIMEOUT = 300
+
+/** 会话是否已超时无心跳（僵尸会话）：last_active_at 久未刷新 */
+function isSessionStale(session: { last_active_at: number }): boolean {
+  return nowSec() - session.last_active_at > SESSION_IDLE_TIMEOUT
+}
+
+/** 回收超时会话：置 done（保留已累计的在线秒数），供访问惰性回收与 cron 定时清理共用 */
+async function reapSession(env: Env, id: string) {
+  const now = nowSec()
+  await run(
+    env,
+    `UPDATE partner_study_sessions SET status = 'done', ended_at = ?, updated_at = ? WHERE id = ? AND status = 'active'`,
+    now,
+    now,
+    id
+  )
+}
+
+/** cron 定时清理僵尸开黑会话（超时无心跳 → 置 done）：与周报 / 孤图 / 黑名单并入同一套调度 */
+export async function cleanupStaleSessions(env: Env): Promise<void> {
+  const now = nowSec()
+  await run(
+    env,
+    `UPDATE partner_study_sessions SET status = 'done', ended_at = ?, updated_at = ? WHERE status = 'active' AND last_active_at < ?`,
+    now,
+    now,
+    now - SESSION_IDLE_TIMEOUT
+  )
+}
 
 /** 返回双方中"我"对应的前缀（from_/to_），用于区分会话/计划中的己方字段 */
 function sideOf(row: { from_id: string; to_id: string }, userId: string): 'from' | 'to' {
   if (row.from_id === userId) return 'from'
   if (row.to_id === userId) return 'to'
   throw new HttpError(403, '无权访问')
+}
+
+/**
+ * 协作数据（计划 / 复盘）鉴权单点：对手方仍须是「当前搭子」，解绑后读写一律 403。
+ * 与列表侧 currentPartnerIds 过滤同一口径，消除解绑后的「半可用」残留。
+ */
+async function assertPairStillPartners(env: Env, row: { from_id: string; to_id: string }, userId: string) {
+  await assertPartner(env, userId, row.from_id === userId ? row.to_id : row.from_id)
 }
 
 /** 用户自定义头像相对 URL（未设置返回 undefined，前端回退首字母） */
@@ -47,6 +91,8 @@ interface StudySessionRow {
   to_elapsed_seconds: number
   from_running: number
   to_running: number
+  /** 最后活跃时间（任一参与方心跳时刷新），用于判定僵尸会话 */
+  last_active_at: number
 }
 
 // ============================================================
@@ -66,22 +112,38 @@ export function registerPartnerStudy() {
     const focusMinutes = sanitizeMinutes(b?.focusMinutes, 25, 120)
     const mode = b?.mode === 'countup' ? 'countup' : 'countdown'
 
-    const busy = await first<{ id: string }>(
+    // 阻塞判定带时间窗：只统计「仍活跃」（窗口内有心跳）的会话，超时无更新的僵尸会话不再阻塞
+    const busy = await first<{ id: string; from_id: string; to_id: string }>(
       ctx.env,
-      `SELECT id FROM partner_study_sessions WHERE status = 'active' AND (from_id IN (?, ?) OR to_id IN (?, ?)) LIMIT 1`,
+      `SELECT id, from_id, to_id FROM partner_study_sessions
+       WHERE status = 'active' AND last_active_at >= ? AND (from_id IN (?, ?) OR to_id IN (?, ?)) LIMIT 1`,
+      nowSec() - SESSION_IDLE_TIMEOUT,
       ctx.userId,
       partnerId,
       ctx.userId,
       partnerId
     )
-    if (busy) throw new HttpError(400, '有一方正在专注中，稍后再试')
+    if (busy) {
+      // 明确说明是哪个会话 / 谁在专注，并给出可操作的恢复路径（进入自习室结束该会话）
+      if (busy.from_id === ctx.userId || busy.to_id === ctx.userId) {
+        const withId = busy.from_id === ctx.userId ? busy.to_id : busy.from_id
+        throw new HttpError(
+          400,
+          `你正与「${await displayName(ctx.env, withId)}」开黑自习中（会话 ${busy.id}），请先进入自习室结束它再发起新的开黑`
+        )
+      }
+      throw new HttpError(
+        400,
+        `「${await displayName(ctx.env, partnerId)}」正在开黑自习中（会话 ${busy.id}），请稍后再试或让对方先结束`
+      )
+    }
 
     const id = uid()
     const now = nowSec()
     await batch(ctx.env, [
       ctx.env.DB.prepare(
-        `INSERT INTO partner_study_sessions (id, from_id, to_id, status, mode, focus_minutes, from_state, to_state, created_at, updated_at) VALUES (?, ?, ?, 'active', ?, ?, 'idle', 'idle', ?, ?)`
-      ).bind(id, ctx.userId, partnerId, mode, focusMinutes, now, now),
+        `INSERT INTO partner_study_sessions (id, from_id, to_id, status, mode, focus_minutes, from_state, to_state, created_at, updated_at, last_active_at) VALUES (?, ?, ?, 'active', ?, ?, 'idle', 'idle', ?, ?, ?)`
+      ).bind(id, ctx.userId, partnerId, mode, focusMinutes, now, now, now),
       notifyStatement(ctx.env, {
         userId: partnerId,
         type: 'partner',
@@ -103,6 +165,11 @@ export function registerPartnerStudy() {
       ctx.userId
     )
     if (!s) return Response.json({ session: null })
+    // 僵尸会话（超时无心跳）：访问时惰性回收为 done 并视为无进行中会话，避免前端恢复已失效会话
+    if (isSessionStale(s)) {
+      await reapSession(ctx.env, s.id)
+      return Response.json({ session: null })
+    }
     return Response.json({ session: await mapSession(ctx.env, s, ctx.userId) })
   })
 
@@ -182,15 +249,17 @@ export function registerPartnerStudy() {
     if (s.status !== 'active') throw new HttpError(400, '会话已结束')
     const side = sideOf(s, ctx.userId)
 
+    const now = nowSec()
     await run(
       ctx.env,
-      `UPDATE partner_study_sessions SET ${side}_state = ?, ${side}_minutes = ?, ${side}_online_seconds = ?, ${side}_elapsed_seconds = ?, ${side}_running = ?, updated_at = ? WHERE id = ?`,
+      `UPDATE partner_study_sessions SET ${side}_state = ?, ${side}_minutes = ?, ${side}_online_seconds = ?, ${side}_elapsed_seconds = ?, ${side}_running = ?, updated_at = ?, last_active_at = ? WHERE id = ?`,
       state,
       minutes,
       onlineSeconds,
       elapsedSeconds,
       running,
-      nowSec(),
+      now,
+      now,
       s.id
     )
 
@@ -332,18 +401,22 @@ export function registerPartnerPlans() {
       for (const n of nameRows) partnerNames.set(n.id, n.name)
     }
 
-    const items = rows.map((r) => {
-      const partnerId = r.from_id === ctx.userId ? r.to_id : r.from_id
-      return {
-        id: r.id,
-        title: r.title,
-        partnerId,
-        partnerName: partnerNames.get(partnerId) || '升本人',
-        taskTotal: r.total,
-        myDone: r.my_done,
-        createdAt: r.created_at
-      }
-    })
+    // 列表口径：只保留对手方仍是当前搭子的计划，解绑后即从列表消失（无「半可用」）
+    const partners = await currentPartnerIds(ctx.env, ctx.userId)
+    const items = rows
+      .filter((r) => partners.has(r.from_id === ctx.userId ? r.to_id : r.from_id))
+      .map((r) => {
+        const partnerId = r.from_id === ctx.userId ? r.to_id : r.from_id
+        return {
+          id: r.id,
+          title: r.title,
+          partnerId,
+          partnerName: partnerNames.get(partnerId) || '升本人',
+          taskTotal: r.total,
+          myDone: r.my_done,
+          createdAt: r.created_at
+        }
+      })
     return Response.json({ items })
   })
 
@@ -351,6 +424,7 @@ export function registerPartnerPlans() {
   on('GET', '/api/partner-plans/:id', true, async (ctx) => {
     const plan = await getPlan(ctx.env, ctx.params.id)
     const side = sideOf(plan, ctx.userId)
+    await assertPairStillPartners(ctx.env, plan, ctx.userId)
     const partnerId = side === 'from' ? plan.to_id : plan.from_id
 
     const tasks = await all<{
@@ -386,6 +460,7 @@ export function registerPartnerPlans() {
     if (title.length > 50) throw new HttpError(400, '标题最多 50 字')
     const plan = await getPlan(ctx.env, ctx.params.id)
     sideOf(plan, ctx.userId)
+    await assertPairStillPartners(ctx.env, plan, ctx.userId)
     await run(ctx.env, `UPDATE partner_plans SET title = ?, updated_at = ? WHERE id = ?`, title, nowSec(), plan.id)
     return Response.json({ ok: true })
   })
@@ -394,6 +469,7 @@ export function registerPartnerPlans() {
   on('DELETE', '/api/partner-plans/:id', true, async (ctx) => {
     const plan = await getPlan(ctx.env, ctx.params.id)
     sideOf(plan, ctx.userId)
+    await assertPairStillPartners(ctx.env, plan, ctx.userId)
     await batch(ctx.env, [
       ctx.env.DB.prepare(`DELETE FROM partner_plan_tasks WHERE plan_id = ?`).bind(plan.id),
       ctx.env.DB.prepare(`DELETE FROM partner_plans WHERE id = ?`).bind(plan.id)
@@ -411,6 +487,7 @@ export function registerPartnerPlans() {
     if (title.length > 100) throw new HttpError(400, '任务标题最多 100 字')
     const plan = await getPlan(ctx.env, ctx.params.id)
     sideOf(plan, ctx.userId)
+    await assertPairStillPartners(ctx.env, plan, ctx.userId)
 
     const id = uid()
     await batch(ctx.env, [
@@ -428,6 +505,7 @@ export function registerPartnerPlans() {
     const done = b?.done ? 1 : 0
     const plan = await getPlan(ctx.env, ctx.params.id)
     const side = sideOf(plan, ctx.userId)
+    await assertPairStillPartners(ctx.env, plan, ctx.userId)
     const res = await run(
       ctx.env,
       `UPDATE partner_plan_tasks SET done_by_${side} = ? WHERE id = ? AND plan_id = ?`,
@@ -443,6 +521,7 @@ export function registerPartnerPlans() {
   on('DELETE', '/api/partner-plans/:id/tasks/:taskId', true, async (ctx) => {
     const plan = await getPlan(ctx.env, ctx.params.id)
     sideOf(plan, ctx.userId)
+    await assertPairStillPartners(ctx.env, plan, ctx.userId)
     const res = await run(
       ctx.env,
       `DELETE FROM partner_plan_tasks WHERE id = ? AND plan_id = ?`,
@@ -527,20 +606,24 @@ export function registerPartnerReviews() {
       for (const n of nameRows) partnerNames.set(n.id, n.name)
     }
 
-    const items = rows.map((r) => {
-      const isFrom = r.from_id === ctx.userId
-      const partnerId = isFrom ? r.to_id : r.from_id
-      return {
-        id: r.id,
-        partnerId,
-        partnerName: partnerNames.get(partnerId) || '升本人',
-        scheduledAt: r.scheduled_at,
-        status: r.status,
-        note: r.note,
-        isFrom,
-        createdAt: r.created_at
-      }
-    })
+    // 列表口径：只保留对手方仍是当前搭子的邀约，解绑后即从列表消失（无「半可用」）
+    const partners = await currentPartnerIds(ctx.env, ctx.userId)
+    const items = rows
+      .map((r) => {
+        const isFrom = r.from_id === ctx.userId
+        const partnerId = isFrom ? r.to_id : r.from_id
+        return {
+          id: r.id,
+          partnerId,
+          partnerName: partnerNames.get(partnerId) || '升本人',
+          scheduledAt: r.scheduled_at,
+          status: r.status,
+          note: r.note,
+          isFrom,
+          createdAt: r.created_at
+        }
+      })
+      .filter((r) => partners.has(r.partnerId))
     return Response.json({ items })
   })
 
@@ -557,6 +640,7 @@ export function registerPartnerReviews() {
       ctx.params.id
     )
     if (!r) throw new HttpError(404, '邀约不存在')
+    await assertPairStillPartners(ctx.env, r, ctx.userId)
 
     if (action === 'accept') {
       if (r.to_id !== ctx.userId) throw new HttpError(403, '仅受邀方可接受')
@@ -585,6 +669,7 @@ export function registerPartnerReviews() {
     )
     if (!r) throw new HttpError(404, '邀约不存在')
     sideOf(r, ctx.userId)
+    await assertPairStillPartners(ctx.env, r, ctx.userId)
     await run(ctx.env, `DELETE FROM partner_reviews WHERE id = ?`, r.id)
     return Response.json({ ok: true })
   })

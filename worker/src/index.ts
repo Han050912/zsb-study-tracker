@@ -24,7 +24,7 @@ import { registerReleaseRoutes } from './api/release'
 import { registerCommunityRoutes } from './api/community'
 import { registerPartnerRoutes, pushWeeklyReports } from './api/partners'
 import { registerPartnerShareRoutes } from './api/partnerShares'
-import { registerPartnerCollabRoutes } from './api/partnerCollab'
+import { registerPartnerCollabRoutes, cleanupStaleSessions } from './api/partnerCollab'
 import { registerAdminRoutes } from './api/admin'
 import { registerLearningPathRoutes } from './api/learningPath'
 import { registerPdfRoutes } from './api/pdfs'
@@ -116,14 +116,15 @@ export default {
     }
   },
 
-  /** 每周一 08:00（UTC+8）触发：周报推送、孤图清理与黑名单过期清理 */
+  /** 定时触发：周报推送、孤图清理、黑名单过期清理与僵尸开黑会话回收 */
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    // 三项任务彼此独立：allSettled 保证任一失败不影响其他；rejected 结果在此统一 console.error 留日志，
+    // 各项任务彼此独立：allSettled 保证任一失败不影响其他；rejected 结果在此统一 console.error 留日志，
     // 且配置 ALERT_WEBHOOK 时聚合发送 webhook 告警（不配置 = 仅日志，行为同现状）
     const tasks: [string, Promise<unknown>][] = [
       ['周报推送', pushWeeklyReports(env)],
       ['孤图清理', cleanupOrphanUploads(env)],
-      ['黑名单清理', cleanupExpiredTokens(env)]
+      ['黑名单清理', cleanupExpiredTokens(env)],
+      ['僵尸会话清理', cleanupStaleSessions(env)]
     ]
     const results = await Promise.allSettled(tasks.map(([, p]) => p))
     const failures: string[] = []

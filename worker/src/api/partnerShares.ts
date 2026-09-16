@@ -3,13 +3,13 @@ import { on, body } from '../router'
 import { all, first, run, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { displayName, notifyStatement } from './community'
-import { assertPartner } from './partners'
+import { assertPartner, currentPartnerIds } from './partners'
 import { readNoteBody } from './noteBodies'
 import { allocateSeq } from './sync'
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
-/** 校验用户是否开启了搭子数据共享（分享/查看均需 owner 开启） */
+/** 校验 owner 是否开启了搭子数据共享（创建分享、他人查看均需 owner 开启） */
 async function assertShareEnabled(env: Env, ownerId: string) {
   const s = await first<{ partner_share_enabled: number }>(
     env,
@@ -17,6 +17,25 @@ async function assertShareEnabled(env: Env, ownerId: string) {
     ownerId
   )
   if (!s?.partner_share_enabled) throw new HttpError(403, '分享者未开放学习数据共享')
+}
+
+/**
+ * 查看者视角的共享开关校验：分享属主本人豁免。
+ * 本人始终可查看/管理自己的分享，避免关闭开关后把自己也锁在门外（无法查看更无法删除）。
+ */
+async function assertShareVisible(env: Env, ownerId: string, viewerId: string) {
+  if (viewerId === ownerId) return
+  await assertShareEnabled(env, ownerId)
+}
+
+/** 分享的对手方 id（owner 之外的接收/查看方） */
+function counterpartId(share: { owner_id: string; partner_id: string }, userId: string): string {
+  return share.owner_id === userId ? share.partner_id : share.owner_id
+}
+
+/** 分享内容鉴权单点：分享双方仍须是当前搭子，解绑后读写一律 403（与列表侧 currentPartnerIds 同口径） */
+async function assertShareStillPartners(env: Env, share: { owner_id: string; partner_id: string }, userId: string) {
+  await assertPartner(env, userId, counterpartId(share, userId))
 }
 
 /** 获取分享项内容（错题/笔记），归属校验 */
@@ -143,9 +162,11 @@ export function registerPartnerShareRoutes() {
       ctx.userId
     )
 
+    // 列表口径：只保留对手方仍是当前搭子的分享，解绑后即从列表消失（无「半可用」）
+    const partners = await currentPartnerIds(ctx.env, ctx.userId)
     return Response.json({
-      received: rows.filter((r) => r.partner_id === ctx.userId).map(mapShare),
-      sent: rows.filter((r) => r.owner_id === ctx.userId).map(mapShare)
+      received: rows.filter((r) => r.partner_id === ctx.userId && partners.has(r.owner_id)).map(mapShare),
+      sent: rows.filter((r) => r.owner_id === ctx.userId && partners.has(r.partner_id)).map(mapShare)
     })
   })
 
@@ -165,9 +186,10 @@ export function registerPartnerShareRoutes() {
     )
     if (!share) throw new HttpError(404, '分享不存在')
     if (share.owner_id !== ctx.userId && share.partner_id !== ctx.userId) throw new HttpError(403, '无权查看')
+    await assertShareStillPartners(ctx.env, share, ctx.userId)
 
-    // 内容受 owner 隐私开关管控
-    await assertShareEnabled(ctx.env, share.owner_id)
+    // 内容受 owner 隐私开关管控（属主本人豁免）
+    await assertShareVisible(ctx.env, share.owner_id, ctx.userId)
     const item = await getItem(ctx.env, share.item_type, share.item_id, share.owner_id)
 
     const comments = await all<{ id: string; user_id: string; content: string; created_at: number; user_name: string }>(
@@ -218,7 +240,8 @@ export function registerPartnerShareRoutes() {
     if (!share) throw new HttpError(404, '分享不存在')
     if (share.owner_id !== ctx.userId && share.partner_id !== ctx.userId) throw new HttpError(403, '无权查看')
     if (share.item_type !== 'note') throw new HttpError(400, '非笔记分享')
-    await assertShareEnabled(ctx.env, share.owner_id)
+    await assertShareStillPartners(ctx.env, share, ctx.userId)
+    await assertShareVisible(ctx.env, share.owner_id, ctx.userId)
 
     const note = await first<{ id: string; type: string | null }>(
       ctx.env,
@@ -266,7 +289,8 @@ export function registerPartnerShareRoutes() {
     if (!share) throw new HttpError(404, '分享不存在')
     if (share.owner_id !== ctx.userId && share.partner_id !== ctx.userId) throw new HttpError(403, '无权查看')
     if (share.item_type !== 'error') throw new HttpError(400, '非错题分享')
-    await assertShareEnabled(ctx.env, share.owner_id)
+    await assertShareStillPartners(ctx.env, share, ctx.userId)
+    await assertShareVisible(ctx.env, share.owner_id, ctx.userId)
 
     const q = await first<{ image: string | null }>(
       ctx.env,
@@ -308,6 +332,7 @@ export function registerPartnerShareRoutes() {
     )
     if (!share) throw new HttpError(404, '分享不存在')
     if (share.owner_id !== ctx.userId && share.partner_id !== ctx.userId) throw new HttpError(403, '无权批注')
+    await assertShareStillPartners(ctx.env, share, ctx.userId)
 
     const id = uid()
     const otherId = share.owner_id === ctx.userId ? share.partner_id : share.owner_id
@@ -342,7 +367,8 @@ export function registerPartnerShareRoutes() {
     if (!share) throw new HttpError(404, '分享不存在')
     if (share.partner_id !== ctx.userId) throw new HttpError(403, '仅接收者可收藏')
     if (share.item_type !== 'note') throw new HttpError(400, '仅笔记可收藏')
-    await assertShareEnabled(ctx.env, share.owner_id)
+    await assertShareStillPartners(ctx.env, share, ctx.userId)
+    await assertShareVisible(ctx.env, share.owner_id, ctx.userId)
 
     const note = await first<{ title: string; tags: string; type: string | null }>(
       ctx.env,

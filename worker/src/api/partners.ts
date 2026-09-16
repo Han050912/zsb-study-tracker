@@ -131,15 +131,41 @@ async function weeklyStatsBatch(
 /** 搭子上限：最多 3 位，防止社交泛滥 */
 const MAX_PARTNERS = 3
 
-/** 校验当前用户搭子数是否已达上限（accepted 状态计入） */
-async function checkPartnerLimit(env: Env, userId: string) {
-  const row = await first<{ n: number }>(
+/**
+ * 搭子上限单点校验（所有「成为搭子」入口共用：发起 / 互相接受 / 接受 / 并发互相接受）。
+ * userIds 中任一用户已满 MAX_PARTNERS 即抛 400；actorId 为当前操作者，用于区分
+ * 「你的上限已满」与「对方上限已满」的提示文案。因接受侧也校验发起方，故「我的搭子 x/3」永不越界。
+ */
+async function assertPartnersUnderLimit(env: Env, userIds: string[], actorId: string) {
+  for (const id of new Set(userIds)) {
+    const row = await first<{ n: number }>(
+      env,
+      `SELECT COUNT(*) AS n FROM study_partners WHERE (from_id = ? OR to_id = ?) AND status = 'accepted'`,
+      id,
+      id
+    )
+    if ((row?.n ?? 0) >= MAX_PARTNERS) {
+      throw new HttpError(
+        400,
+        id === actorId
+          ? `你的搭子已达上限 ${MAX_PARTNERS} 人，请先解绑后再添加`
+          : `对方的搭子已达上限 ${MAX_PARTNERS} 人，暂时无法成为搭子`
+      )
+    }
+  }
+}
+
+/** 我当前的已确认搭子 id 集合（协作列表口径单点：只展示对手方仍是搭子的行，解绑后即消失，无「半可用」） */
+export async function currentPartnerIds(env: Env, userId: string): Promise<Set<string>> {
+  const rows = await all<{ id: string }>(
     env,
-    `SELECT COUNT(*) AS n FROM study_partners WHERE (from_id = ? OR to_id = ?) AND status = 'accepted'`,
+    `SELECT CASE WHEN from_id = ? THEN to_id ELSE from_id END AS id
+     FROM study_partners WHERE status = 'accepted' AND (from_id = ? OR to_id = ?)`,
+    userId,
     userId,
     userId
   )
-  if ((row?.n ?? 0) >= MAX_PARTNERS) throw new HttpError(400, `搭子上限 ${MAX_PARTNERS} 人，请先解绑后再添加`)
+  return new Set(rows.map((r) => r.id))
 }
 
 /** 校验两用户是否为已确认搭子（双向绑定），返回关系行（供协作模块复用） */
@@ -353,12 +379,14 @@ export function registerPartnerRoutes() {
       'SELECT id, from_id, to_id, status FROM study_partners WHERE pair_key = ?',
       pairKey
     )
+    if (existing?.status === 'accepted') throw new HttpError(400, '你们已是搭子')
+    // 发起方上限（新建 / 重发 / 互相接受均需发起方未满）：超限即刻给出明确提示，避免对方接受后越界
+    await assertPartnersUnderLimit(ctx.env, [ctx.userId], ctx.userId)
     if (existing) {
-      if (existing.status === 'accepted') throw new HttpError(400, '你们已是搭子')
       if (existing.status === 'pending') {
         if (existing.to_id === ctx.userId) {
-          // 对方已向我发 pending → 互相接受（立即成为搭子，校验上限）
-          await checkPartnerLimit(ctx.env, ctx.userId)
+          // 对方已向我发 pending → 互相接受（双方均校验上限）
+          await assertPartnersUnderLimit(ctx.env, [ctx.userId, targetId], ctx.userId)
           await batch(ctx.env, [
             ctx.env.DB.prepare('UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?').bind(
               'accepted',
@@ -412,8 +440,8 @@ export function registerPartnerRoutes() {
         pairKey
       )
       if (dup && dup.status === 'pending' && dup.to_id === ctx.userId) {
-        // 并发冲突互相接受（立即成为搭子，校验上限）
-        await checkPartnerLimit(ctx.env, ctx.userId)
+        // 并发冲突互相接受（双方均校验上限）
+        await assertPartnersUnderLimit(ctx.env, [ctx.userId, targetId], ctx.userId)
         await batch(ctx.env, [
           ctx.env.DB.prepare('UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?').bind(
             'accepted',
@@ -455,8 +483,8 @@ export function registerPartnerRoutes() {
       ctx.userId
     )
     if (!req) throw new HttpError(404, '请求不存在')
-    // 接受请求 → 立即成为搭子，校验我的上限
-    if (action === 'accept') await checkPartnerLimit(ctx.env, ctx.userId)
+    // 接受请求 → 立即成为搭子，双方均校验上限（发起方也可能已满，故不能只查接受方）
+    if (action === 'accept') await assertPartnersUnderLimit(ctx.env, [ctx.userId, req.from_id], ctx.userId)
     const stmts = [
       ctx.env.DB.prepare(`UPDATE study_partners SET status = ?, updated_at = ? WHERE id = ?`).bind(
         action === 'accept' ? 'accepted' : 'rejected',
@@ -485,8 +513,14 @@ export function registerPartnerRoutes() {
     const pairKey = [ctx.userId, partnerId].sort().join(':')
     const res = await run(ctx.env, `DELETE FROM study_partners WHERE pair_key = ?`, pairKey)
     if (!res.meta.changes) throw new HttpError(404, '搭子关系不存在')
-    // 通知对方：搭子关系已解除（进入通知中心「搭子」分类）
+    const now = nowSec()
+    // 通知对方：搭子关系已解除（进入通知中心「搭子」分类）；
+    // 同批原子结束该对进行中的开黑会话——解绑即协作终止，避免「已非搭子却仍共用活跃会话」
     await batch(ctx.env, [
+      ctx.env.DB.prepare(
+        `UPDATE partner_study_sessions SET status = 'done', ended_at = ?, updated_at = ?
+         WHERE status = 'active' AND from_id IN (?, ?) AND to_id IN (?, ?)`
+      ).bind(now, now, ctx.userId, partnerId, ctx.userId, partnerId),
       notifyStatement(ctx.env, {
         userId: partnerId,
         type: 'partner',

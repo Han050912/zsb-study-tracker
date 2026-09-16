@@ -268,16 +268,15 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   async function poll() {
     if (!session.value) return
     try {
-      const res = running.value
-        ? await communityApi.updateStudySession(
-            session.value.id,
-            phase.value,
-            myMinutes.value,
-            onlineSeconds.value,
-            seconds.value,
-            true
-          )
-        : await communityApi.studySession(session.value.id)
+      // 心跳：无论是否计时中都上报（服务端据此刷新最后活跃时间；超时无心跳的会话按僵尸会话回收）
+      const res = await communityApi.updateStudySession(
+        session.value.id,
+        phase.value,
+        myMinutes.value,
+        onlineSeconds.value,
+        seconds.value,
+        running.value
+      )
       if (!session.value) return
       session.value.partnerState = res.session.partnerState
       session.value.partnerMinutes = res.session.partnerMinutes

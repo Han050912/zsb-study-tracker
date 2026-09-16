@@ -26,6 +26,8 @@ const store = useAppStore()
 
 const loading = ref(true)
 const detail = ref<PartnerShareDetail | null>(null)
+/** 详情加载失败原因（非 404）：避免无 detail 时页面空白，给出可读状态而非仅一次性 toast */
+const loadError = ref('')
 const pdfBytes = ref<Uint8Array | null>(null)
 const pdfError = ref('')
 
@@ -75,6 +77,7 @@ onUnmounted(() => {
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   const id = String(route.params.id)
   try {
     detail.value = await communityApi.partnerShare(id)
@@ -99,7 +102,8 @@ async function load() {
       router.replace('/community/partners')
       return
     }
-    toast(getErrorMessage(e, '加载失败'))
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
@@ -185,6 +189,10 @@ async function confirmCopy() {
     <div class="section-title !mb-0">分享预览</div>
 
     <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
+
+    <div v-else-if="loadError" class="card text-center text-xs text-slate-400 dark:text-slate-500 py-10">
+      {{ loadError }}
+    </div>
 
     <div v-else-if="detail" class="card space-y-3">
       <div class="flex items-center gap-2">
