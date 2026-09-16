@@ -16,9 +16,75 @@
     <meta name="apple-mobile-web-app-title" content="升本助手" />
     <link rel="apple-touch-icon" href="./icon-192.png" />
     <title>专升本学习助手</title>
+    <!--
+      最早时机按系统偏好打上 dark 类：深色用户不会先看到整屏白闪。
+      应用挂载后由 App.vue 按 settings.theme 接管（用户显式选择的主题优先）。
+    -->
+    <script>
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        document.documentElement.classList.add('dark')
+      }
+    </script>
+    <!--
+      首屏兜底样式：Vue 挂载前 #app 为空，先给出与主题一致的底色 + 骨架，
+      避免弱网（会话恢复 / 数据拉取被阻塞）期间长时间纯白屏。
+    -->
+    <style>
+      html {
+        background-color: #f8fafc;
+      }
+      html.dark {
+        background-color: #0f172a;
+      }
+      body {
+        margin: 0;
+      }
+      .boot-skeleton {
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        min-height: 100vh;
+        padding: calc(env(safe-area-inset-top) + 3.5rem) calc(env(safe-area-inset-right) + 1rem) 1rem
+          calc(env(safe-area-inset-left) + 1rem);
+      }
+      .boot-skeleton__bar,
+      .boot-skeleton__card {
+        background-color: #e2e8f0;
+        border-radius: 12px;
+        animation: boot-skeleton-pulse 1.4s ease-in-out infinite;
+      }
+      .boot-skeleton__bar {
+        height: 16px;
+        width: 40%;
+      }
+      .boot-skeleton__card {
+        border-radius: 16px;
+        height: 96px;
+      }
+      html.dark .boot-skeleton__bar,
+      html.dark .boot-skeleton__card {
+        background-color: #1e293b;
+      }
+      @keyframes boot-skeleton-pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="boot-skeleton" aria-hidden="true">
+        <div class="boot-skeleton__bar"></div>
+        <div class="boot-skeleton__card"></div>
+        <div class="boot-skeleton__card"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
