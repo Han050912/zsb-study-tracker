@@ -3,7 +3,11 @@ import { all, batch, first, run, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import type { Env } from '../index'
 
-/** Markdown 正文独立通道：正文不进入 notes 元数据同步；按 UTF-8 字节分片存 D1。 */
+/**
+ * Markdown 正文独立通道：正文不进入 notes 元数据同步；按 UTF-8 字节分片存 D1。
+ * `NOTE_BODY_MAX_BYTES` 是单篇正文上限（字节）的**服务端唯一定义**：前端经
+ * GET /api/note-bodies/limit 读取同一权威值做输入/保存校验，不得在别处再写一份。
+ */
 export const NOTE_BODY_MAX_BYTES = 1024 * 1024
 const CHUNK_SIZE = 95 * 1024
 const MAX_PULL_IDS = 50
@@ -58,6 +62,9 @@ export async function readNoteBody(
 }
 
 export function registerNoteBodyRoutes() {
+  // 公开读取上限：前端据此在上传前拦下超限正文并给出提示，避免前后端各写一份上限值
+  on('GET', '/api/note-bodies/limit', false, () => Response.json({ maxBytes: NOTE_BODY_MAX_BYTES }))
+
   on('PUT', '/api/note-bodies/:id', true, async (ctx) => {
     await rateLimit(ctx, 'note-body:write', 60)
     const noteId = validNoteId(ctx.params.id)

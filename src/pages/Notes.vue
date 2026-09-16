@@ -10,6 +10,7 @@ import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 import { uploadPdf, fetchPdf, PDF_MAX_BYTES, PDF_MAX_MB } from '../api/pdfs'
 import { uid } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
+import { getErrorMessage } from '../utils/error'
 import type { Note } from '../types'
 import { getNoteBody, noteBodyExcerpt, noteBodyIncludes, noteBodyIndexVersion } from '../services/noteBodies'
 
@@ -42,10 +43,12 @@ const dirty = ref(false)
 const previewMode = ref<'edit' | 'split' | 'preview'>('split')
 
 /**
- * 草稿预览 HTML（两阶段渲染）：同步渲染立即可见（无公式即最终态）；
- * 含公式时异步加载 KaTeX chunk 后原地升级（同一 v-html 容器，无布局跳动）。
+ * 草稿预览 HTML（两阶段渲染 + 输入防抖）：空闲后首个变更立即渲染，连续输入期间合并渲染，
+ * 避免长笔记每次按键都全量重排阻塞输入；含公式时异步加载 KaTeX chunk 后原地升级（同一 v-html 容器）。
+ * previewPending：防抖等待 / KaTeX 升级进行中为 true，用于预览区「渲染中」提示。
  */
-const draftHtml = useMarkdownHtml(() => draft.value?.content || '')
+const previewPending = ref(false)
+const draftHtml = useMarkdownHtml(() => draft.value?.content || '', previewPending)
 
 const selectedId = computed(() => (route.query.id as string) || '')
 
@@ -65,36 +68,60 @@ function openNote(n: Note) {
   router.replace({ path: '/notes', query: { id: n.id } })
 }
 
+/** 开始一份全新的空草稿（「＋新建笔记」与 ?new=1 的 watcher 共用，保证两个入口口径一致） */
+function startNewDraft(subjectId: string) {
+  draft.value = { subjectId, title: '', content: '', tags: [] }
+  dirty.value = false
+  previewMode.value = 'edit'
+}
+
 function newNote() {
   flushIfDirty()
   const subjectId = (route.query.subject as string) || store.subjects[0]?.id || ''
+  // 显式丢弃上一份草稿：与当前 ?new=1 同址的 replace 不会触发 watcher，残留内容会被再保存成第二条笔记
+  startNewDraft(subjectId)
   router.replace({ path: '/notes', query: { new: '1', subject: subjectId } })
 }
 
 function backToList() {
   flushIfDirty()
+  // 显式退出编辑态：新建草稿时 selectedId 前后都是 ""，watcher 不会触发——只 replace 路由
+  // 会让移动端一直停在编辑区（空草稿时连保存 / 删除都退不出去）
+  draft.value = null
+  dirty.value = false
   router.replace({ path: '/notes' })
 }
 
-function flushIfDirty() {
-  // 兜底保存（切换笔记/离开页面/关闭页面前）：只写数据，绝不操作路由——
-  // 卸载期间 router.replace 会劫持正在进行的导航，打断 out-in 过渡导致空白页
-  if (dirty.value && draft.value) doSave(true, false)
+/**
+ * 兜底保存（切换笔记 / 返回列表 / 离开页面 / 卸载前）：只写数据。
+ * teardown（卸载 / beforeunload）时禁止操作路由——router.replace 会劫持正在进行的导航，
+ * 打断 out-in 过渡导致空白页。
+ */
+function flushIfDirty(teardown = false) {
+  if (dirty.value && draft.value) doSave(true, !teardown)
 }
 
-function doSave(silent = false, navigate = true) {
-  if (!draft.value) return
+/**
+ * 保存草稿，返回落库的笔记 id（未保存返回 null）。
+ * - silent：兜底静默保存（不 toast）
+ * - navigate：新建笔记落库后是否把 URL 固定到该 id
+ */
+function doSave(silent = false, navigate = true): string | null {
+  if (!draft.value) return null
   if (!draft.value.title?.trim() && !draft.value.content?.trim()) {
     if (!silent) toast('标题与内容均为空，未保存')
-    return
+    return null
   }
+  const created = !draft.value.id
   const savedId = store.saveNote({ ...draft.value, subjectId: draft.value.subjectId || store.subjects[0]?.id || '' })
+  if (!savedId) return null
+  // 把新建出来的 id 写回草稿：此后这份草稿是「已保存」态，再点保存只会更新同一篇
+  // （不回填就会再走一次新建，同一份内容落成两条笔记）
+  draft.value.id = savedId
   dirty.value = false
-  // 新建保存后，将 URL 切换为该笔记的固定链接（仅用户主动点保存时；兜底保存禁止跳转）
-  if (navigate && !draft.value.id) {
-    if (savedId) router.replace({ path: '/notes', query: { id: savedId } })
-  }
+  if (created && navigate) router.replace({ path: '/notes', query: { id: savedId } })
   if (!silent) toast('笔记已保存')
+  return savedId
 }
 
 async function removeNote() {
@@ -132,16 +159,7 @@ watch(
 watch(
   () => route.query.new,
   (v) => {
-    if (v === '1') {
-      draft.value = {
-        subjectId: (route.query.subject as string) || store.subjects[0]?.id || '',
-        title: '',
-        content: '',
-        tags: []
-      }
-      dirty.value = false
-      previewMode.value = 'edit'
-    }
+    if (v === '1') startNewDraft((route.query.subject as string) || store.subjects[0]?.id || '')
   },
   { immediate: true }
 )
@@ -175,7 +193,7 @@ function importPdf(file: File) {
       toast(`已导入 PDF「${file.name}」`)
     })
     .catch((e) => {
-      toast(`导入「${file.name}」失败：${e instanceof Error ? e.message : '网络错误'}`)
+      toast(`导入「${file.name}」失败：${getErrorMessage(e, '网络错误')}`)
     })
     .finally(() => {
       uploadingCount.value--
@@ -241,7 +259,7 @@ watch(
         if (seq === pdfFetchSeq) pdfBytes.value = b
       })
       .catch((e) => {
-        if (seq === pdfFetchSeq) pdfFetchError.value = e instanceof Error ? e.message : 'PDF 加载失败'
+        if (seq === pdfFetchSeq) pdfFetchError.value = getErrorMessage(e, 'PDF 加载失败')
       })
   },
   { immediate: true }
@@ -260,11 +278,14 @@ function shareNote() {
 // ---- 移动端：列表/编辑 视图切换 ----
 const isEditing = computed(() => !!draft.value)
 
-// 离开页面前兜底保存
-onMounted(() => window.addEventListener('beforeunload', flushIfDirty))
+// 离开页面前兜底保存（teardown：不操作路由）
+function flushOnUnload() {
+  flushIfDirty(true)
+}
+onMounted(() => window.addEventListener('beforeunload', flushOnUnload))
 onUnmounted(() => {
-  window.removeEventListener('beforeunload', flushIfDirty)
-  flushIfDirty()
+  window.removeEventListener('beforeunload', flushOnUnload)
+  flushIfDirty(true)
 })
 </script>
 
@@ -416,7 +437,16 @@ onUnmounted(() => {
             placeholder="支持 Markdown 语法（标题/列表/表格/代码块/任务列表）与 $LaTeX$ 公式…"
             @input="dirty = true"
           ></textarea>
-          <div v-show="previewMode !== 'edit'" class="flex-1 min-w-0 overflow-y-auto bg-white dark:bg-slate-800 p-4">
+          <div
+            v-show="previewMode !== 'edit'"
+            class="relative flex-1 min-w-0 overflow-y-auto bg-white dark:bg-slate-800 p-4"
+          >
+            <span
+              v-if="previewPending"
+              class="pointer-events-none absolute right-3 top-3 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-400 dark:bg-slate-700 dark:text-slate-500"
+            >
+              渲染中…
+            </span>
             <div class="md-body" v-html="draftHtml"></div>
           </div>
         </div>

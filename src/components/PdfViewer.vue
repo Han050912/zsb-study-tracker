@@ -2,7 +2,7 @@
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ZoomIn, ZoomOut, Maximize, FileWarning } from '@lucide/vue'
 import { getDocument, classifyPdfError } from '../utils/pdf'
-import type { PDFDocumentLoadingTask } from 'pdfjs-dist/types/src/display/api'
+import type { PDFDocumentLoadingTask, RenderTask } from 'pdfjs-dist/types/src/display/api'
 
 /**
  * PDF 连续滚动查看器：与系统 PDF 查看器一致的阅读体验。
@@ -29,6 +29,10 @@ let observer: IntersectionObserver | null = null
 /** 页码从 1 开始，下标 0 空置 */
 const pageEls: (HTMLElement | null)[] = []
 const renderedPages = new Set<number>()
+/** 进行中的渲染任务（按页）：同页重绘前必须取消——pdf.js 禁止同一 canvas 并发渲染 */
+const renderTasks = new Map<number, RenderTask>()
+/** 每页渲染轮次：缩放重绘作废进行中的旧渲染，避免旧分辨率的画面覆盖新画面 */
+const renderRounds = new Map<number, number>()
 
 async function load() {
   loading.value = true
@@ -76,6 +80,11 @@ function setPageEl(el: any, page: number) {
 async function renderPage(pageNum: number) {
   if (!doc || renderedPages.has(pageNum)) return
   renderedPages.add(pageNum)
+  const round = (renderRounds.get(pageNum) ?? 0) + 1
+  renderRounds.set(pageNum, round)
+  // 同页上一轮渲染还在进行时必须先取消：pdf.js 对同一 canvas 的并发 render 会直接抛错，
+  // 「滚到某页后立刻缩放」这类连贯操作必然撞上它
+  renderTasks.get(pageNum)?.cancel()
   const seq = renderSeq
   const el = pageEls[pageNum]
   const canvas = el?.querySelector('canvas')
@@ -85,7 +94,8 @@ async function renderPage(pageNum: number) {
   }
   try {
     const page = await doc.getPage(pageNum)
-    if (seq !== renderSeq) return
+    // 本轮已被新一轮 load / 缩放重绘取代：画面归新渲染所有，直接让位
+    if (seq !== renderSeq || renderRounds.get(pageNum) !== round) return
     // 占位宽度 × DPR（上限 2），canvas 像素高于显示尺寸保证清晰度
     const displayWidth = el.clientWidth || 640
     const base = page.getViewport({ scale: 1 })
@@ -93,26 +103,43 @@ async function renderPage(pageNum: number) {
     const viewport = page.getViewport({ scale })
     canvas.width = viewport.width
     canvas.height = viewport.height
-    await page.render({ canvasContext: canvas.getContext('2d')!, viewport }).promise
+    const task = page.render({ canvasContext: canvas.getContext('2d')!, viewport })
+    renderTasks.set(pageNum, task)
+    try {
+      await task.promise
+    } finally {
+      if (renderTasks.get(pageNum) === task) renderTasks.delete(pageNum)
+    }
+    if (renderRounds.get(pageNum) !== round) return
     // 校正该页真实纵横比（个别页尺寸不同的文档）
     if (pageRatios.value[pageNum - 1] !== base.width / base.height) {
       pageRatios.value[pageNum - 1] = base.width / base.height
     }
     page.cleanup()
   } catch {
-    renderedPages.delete(pageNum)
+    // 渲染失败或被取消：仅当本轮仍是最新一轮时才回退渲染标记
+    // （被取消的旧轮次不得清掉新一轮刚建立的渲染状态）
+    if (renderRounds.get(pageNum) === round) renderedPages.delete(pageNum)
   }
 }
 
-/** 缩放变化：清空渲染状态，observer 按需重渲染可视页 */
+/**
+ * 缩放变化：清空渲染状态并**立即**按新倍率重绘当前可见页。
+ * IntersectionObserver.observe() 对已观察元素是幂等的——仅 clear + 重新 observe 不会触发任何回调
+ * （可见页的交叉状态没有变化），已渲染的 canvas 会保持旧分辨率被 `w-full` 拉伸变模糊。
+ * 因此必须先 disconnect() 清空目标集：重新 observe 会以「初始状态」再投递一次交叉回调，
+ * 视口内（含 400px 预渲染边距）的页面立即按新宽度重绘，无需手动滚出再滚回。
+ */
 function reRenderAll() {
   if (!doc) return
   renderedPages.clear()
-  nextTick(() => observeAllPages())
+  // 等 zoom 驱动的页面宽度落到 DOM 后再观测，否则读到的还是旧宽度
+  void nextTick(observeAllPages)
 }
 
 function observeAllPages() {
   if (!observer) return
+  observer.disconnect()
   for (let p = 1; p <= pageCount.value; p++) {
     const el = pageEls[p]
     if (el) observer.observe(el)
@@ -170,6 +197,8 @@ function destroy() {
   // 释放 DOM 引用与渲染记录，避免组件反复挂载/卸载时的内存泄漏
   pageEls.length = 0
   renderedPages.clear()
+  renderTasks.clear()
+  renderRounds.clear()
 }
 
 watch(
