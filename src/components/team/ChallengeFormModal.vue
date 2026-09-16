@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { getErrorMessage } from '../../utils/error'
-import { formatMinutes } from '../../utils/date'
+import { formatMinutes, today } from '../../utils/date'
 import { useToast } from '../../composables/useToast'
 import { createChallenge, updateChallenge } from '../../api/teams'
-import { TYPE_LABEL, TYPE_UNIT, TYPE_META, todayUtc8 } from '../../utils/teamChallengeMeta'
+import { TYPE_LABEL, TYPE_UNIT, TYPE_META } from '../../utils/teamChallengeMeta'
 import Modal from '../Modal.vue'
 import type { ChallengeType, TeamChallenge } from '../../types'
 
@@ -24,7 +24,7 @@ const emit = defineEmits<{
 
 const toast = useToast()
 
-const form = ref({ type: 'streak' as ChallengeType, target: 7, durationDays: 7, startDate: todayUtc8() })
+const form = ref({ type: 'streak' as ChallengeType, target: 7, durationDays: 7, startDate: today() })
 const submitting = ref(false)
 
 /** edit 模式打开时用被编辑挑战回填表单（create 模式保持原状，与原页面行为一致：取消不重置、创建成功后才重置） */
@@ -52,7 +52,7 @@ async function handleSubmit() {
       await createChallenge(props.teamId, form.value)
       toast('挑战已创建')
       emit('update:show', false)
-      form.value = { type: 'streak', target: 7, durationDays: 7, startDate: todayUtc8() }
+      form.value = { type: 'streak', target: 7, durationDays: 7, startDate: today() }
     } else {
       await updateChallenge(props.challenge!.id, {
         target: form.value.target,

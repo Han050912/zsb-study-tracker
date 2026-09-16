@@ -3,8 +3,7 @@ import { computed, onUnmounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
-import { today } from '../utils/date'
-import dayjs from 'dayjs'
+import { businessDate, today } from '../utils/date'
 import Modal from '../components/Modal.vue'
 import type { Habit, HabitType } from '../types'
 import { VOCAB_HABIT_ID, PROBLEM_HABIT_ID } from '../data/defaults'
@@ -62,12 +61,10 @@ function saveTarget(h: Habit) {
   toast('目标已更新' + (h.id === VOCAB_HABIT_ID || h.id === PROBLEM_HABIT_ID ? '（已同步到设置页）' : ''))
 }
 
-/** 近 30 天热力 */
+/** 近 30 天热力（日期键为 UTC+8 业务日期，不随系统时区变化） */
 function heatData(h: Habit) {
   return Array.from({ length: 30 }, (_, i) => {
-    const d = dayjs()
-      .subtract(29 - i, 'day')
-      .format('YYYY-MM-DD')
+    const d = businessDate(Date.now() - (29 - i) * 86400_000)
     const v = h.records[d]
     return { date: d, done: h.type === 'checkbox' || h.type === 'time' ? !!v : Number(v) > 0 }
   })
@@ -76,9 +73,7 @@ function heatData(h: Habit) {
 /** 坏习惯近 30 天克制情况：克制打卡=绿，发生=红，无记录=灰 */
 function badHeatData(h: Habit) {
   return Array.from({ length: 30 }, (_, i) => {
-    const d = dayjs()
-      .subtract(29 - i, 'day')
-      .format('YYYY-MM-DD')
+    const d = businessDate(Date.now() - (29 - i) * 86400_000)
     const checked = !!h.checkins?.[d]
     const happened = Number(h.records[d]) > 0
     return {

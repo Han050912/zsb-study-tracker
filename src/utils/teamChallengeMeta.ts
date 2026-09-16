@@ -1,5 +1,6 @@
 import { Flame, Timer, BookOpen } from '@lucide/vue'
 import type { ChallengeType, TeamChallenge } from '../types'
+import { today } from './date'
 
 export const TYPE_LABEL: Record<ChallengeType, string> = { streak: '连续打卡', minutes: '学习时长', problems: '刷题数' }
 export const TYPE_UNIT: Record<ChallengeType, string> = { streak: '天', minutes: '分钟', problems: '题' }
@@ -18,14 +19,10 @@ export const STATUS_LABEL = {
 } as const
 export type ChallengeStatus = keyof typeof STATUS_LABEL
 
-export function todayUtc8(): string {
-  return new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
-}
-
 export function challengeStatus(c: TeamChallenge): ChallengeStatus {
   if (c.isCancelled) return 'cancelled'
   if (c.isCompleted) return 'completed'
-  const t = todayUtc8()
+  const t = today()
   if (t < c.startDate) return 'upcoming'
   if (t > c.endDate) return 'ended'
   return 'active'

@@ -1,5 +1,5 @@
 import { on } from '../router'
-import { all } from '../db'
+import { all, utc8Today } from '../db'
 import { getSettings } from './settings'
 
 /**
@@ -7,11 +7,6 @@ import { getSettings } from './settings'
  * 生成周学习计划卡。计划为「建议值」而非硬约束——按每日目标时长 × 科目权重占比，
  * 把时间分配到各科目；前端可一键分享到社区求监督。
  */
-
-/** 今日（UTC+8）的 YYYY-MM-DD，与 db.ts utc8Today 同口径 */
-function utc8Today(): string {
-  return new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
-}
 
 export function registerLearningPathRoutes() {
   on('GET', '/api/learning-path', true, async (ctx) => {

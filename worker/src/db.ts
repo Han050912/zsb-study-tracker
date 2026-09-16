@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { Env } from './index'
 import type { Ctx } from './router'
 
-// zod 全局中文报错：crud create/update 校验失败的 400 文案直接回给前端
+// zod 全局中文报错：crud create/update 与记录级同步校验失败的 400 文案直接回给前端
 z.config(z.locales.zhCN())
 
 /** 业务错误：message 会原样返回给前端 */
@@ -12,6 +12,42 @@ export class HttpError extends Error {
     message: string
   ) {
     super(message)
+  }
+}
+
+/**
+ * JSON 请求体默认字节上限（issue #52）。
+ * 未显式指定上限的端点（社区 / 搭子 / 团队 / 管理 / 设置 / 数据拉取 …）统一按此预检，
+ * 杜绝「先把最大 100MB 的请求体读进 isolate、读完再校验」；这些端点的真实载荷都是 KB 级 JSON 文本。
+ * 需要更大上限的端点在调用处显式传入（如 /api/data/push 的 10MB）。
+ */
+export const JSON_BODY_MAX_BYTES = 256 * 1024
+
+/**
+ * 读取请求体文本：先按 Content-Length 预检快速失败，读完再按实际长度复核
+ * （防止分块传输 / 谎报长度的客户端绕过预检）。超限抛 413。
+ */
+export async function readBodyText(request: Request, maxBytes: number = JSON_BODY_MAX_BYTES): Promise<string> {
+  const declared = Number(request.headers.get('Content-Length') || 0)
+  if (declared > maxBytes) throw new HttpError(413, '请求体超过大小上限')
+  let text: string
+  try {
+    text = await request.text()
+  } catch {
+    throw new HttpError(400, '请求体读取失败')
+  }
+  // text.length 按字符计，对多字节字符最多低估约 3 倍，作为上限复核足够
+  if (text.length > maxBytes) throw new HttpError(413, '请求体超过大小上限')
+  return text
+}
+
+/** 解析 JSON 请求体：超限 413、非法 JSON 400（router.body / schemas.parseBody / CRUD 共用同一实现） */
+export async function parseJsonBody<T = any>(request: Request, maxBytes: number = JSON_BODY_MAX_BYTES): Promise<T> {
+  const text = await readBodyText(request, maxBytes)
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new HttpError(400, '请求体不是合法 JSON')
   }
 }
 
@@ -37,15 +73,6 @@ export function randomCode(): string {
 /** 业务日期（YYYY-MM-DD）一律按 UTC+8：用户群固定为国内考生，避免 UTC 零点至早八点跨日错位 */
 export function utc8Today(): string {
   return new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
-}
-
-/** 解析 JSON 请求体；非法 JSON 抛出 400（与 router.ts 的 body() 行为一致） */
-async function parseBody(request: Request): Promise<any> {
-  try {
-    return await request.json()
-  } catch {
-    throw new HttpError(400, '请求体不是合法 JSON')
-  }
 }
 
 // ---------- D1 参数化查询封装（禁止字符串拼接 SQL） ----------
@@ -79,14 +106,19 @@ export interface CrudMapping<Body = any> {
   /** 数据库行 → 前端 camelCase 对象 */
   fromRow: (row: any) => any
   /**
-   * 可选请求体校验（建议 z.object(...).passthrough() 宽松模式，仅约束 toRow 消费的字段）：
-   * create/update 时 safeParse，失败抛 400（首个 issue 的字段路径 + 中文文案）；缺席时行为不变。
+   * 该域记录的**唯一**字段定义（建议 z.object(...).passthrough() 宽松模式，仅约束 toRow 消费的字段）：
+   * REST create/update 与记录级同步（api/sync.ts）都经 `assertMappingBody` 用它校验，失败抛 400
+   * （首个 issue 的字段路径 + 中文文案）；缺席时行为不变。
    */
   schema?: z.ZodTypeAny
 }
 
-/** 校验请求体：schema 缺席直接放行；失败取首个 issue 组 400 文案（字段路径 + 中文消息） */
-function validateBody(m: CrudMapping<any>, b: unknown): void {
+/**
+ * 用 `mapping.schema` 校验请求体/记录：schema 缺席直接放行；失败取首个 issue 组 400 文案（字段路径 + 中文消息）。
+ * REST（crudHandlers）与记录级同步（api/sync.ts）共用同一个字段定义与同一套报错口径（issue #39：
+ * 记录级同步不得只判存在性，否则非法类型会被 SQLite 动态类型原样落库，或让 D1 bind 抛 TypeError 变 500）。
+ */
+export function assertMappingBody(m: CrudMapping<any>, b: unknown): void {
   if (!m.schema) return
   const result = m.schema.safeParse(b)
   if (!result.success) {
@@ -124,8 +156,8 @@ export function crudHandlers<Body = any>(m: CrudMapping<Body>) {
     },
 
     async create(ctx: Ctx): Promise<Response> {
-      const b = (await parseBody(ctx.request)) as Body & { id?: string }
-      validateBody(m, b)
+      const b = (await parseJsonBody(ctx.request)) as Body & { id?: string }
+      assertMappingBody(m, b)
       const id = typeof b?.id === 'string' && b.id ? b.id : uid()
       const row = m.toRow(ctx.userId, b, id)
       const { sql, params } = insertStatement(m.table, row)
@@ -138,8 +170,8 @@ export function crudHandlers<Body = any>(m: CrudMapping<Body>) {
       const id = ctx.params.id
       const exists = await first(ctx.env, `SELECT id FROM ${m.table} WHERE id = ? AND user_id = ?`, id, ctx.userId)
       if (!exists) throw new HttpError(404, '记录不存在')
-      const b = (await parseBody(ctx.request)) as Body
-      validateBody(m, b)
+      const b = (await parseJsonBody(ctx.request)) as Body
+      assertMappingBody(m, b)
       const row = m.toRow(ctx.userId, b, id)
       delete row.id
       delete row.user_id

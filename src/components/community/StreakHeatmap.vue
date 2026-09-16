@@ -7,6 +7,7 @@
  */
 import { computed } from 'vue'
 import dayjs from 'dayjs'
+import { businessDate } from '../../utils/date'
 
 const props = defineProps<{
   data: { date: string; minutes: number }[]
@@ -36,7 +37,8 @@ interface Col {
 
 /** 30 周网格：以今天为终点，对齐到本周周日再向前 29 周，恰好 30 列；月份标签每隔 3 个月标注一次 */
 const cols = computed<Col[]>(() => {
-  const end = dayjs()
+  // 网格终点取 UTC+8 业务日期（不随系统时区变化）；dayjs 仅在该纯日期串上做日历算术（等价于本地解析）
+  const end = dayjs(businessDate())
   // 本周周日（end 对齐到最近周日），再往前 29 周 = 30 个周日边界（30 列）
   const startSunday = end.subtract(end.day(), 'day').subtract((WEEKS - 1) * 7, 'day')
   const raw: Cell[][] = []

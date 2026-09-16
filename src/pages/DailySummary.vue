@@ -5,36 +5,50 @@ import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
 import { MOODS } from '../data/defaults'
 import PostComposer from '../components/community/PostComposer.vue'
+import { TriangleAlert } from '@lucide/vue'
 import dayjs from 'dayjs'
-import { useOverlayDismiss } from '../composables/useOverlayDismiss'
+import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 const store = useAppStore()
 const toast = useToast()
 
-// 编辑区固定为「今日」总结；往日总结通过点击日历弹出悬浮卡片查看
-// 定时器驱动：页面挂载跨午夜后自动切换到新的一天，并重载表单内容
+// 编辑区固定为「今日（UTC+8 业务日）」总结；往日总结通过点击日历弹出悬浮卡片查看
 const editDate = ref(today())
+// 跨午夜但仍有未保存内容时置位：editDate 冻结在原日期，明确提示用户先保存（issue #36）
+const editingStaleDay = ref(false)
+const form = ref({ mood: '', harvest: '', improve: '', plan: '' })
+
+/** 当前表单相对该日已保存内容是否存在未保存改动 */
+function isDirty(d: string): boolean {
+  const saved = store.summaries[d]
+  return (
+    form.value.mood !== (saved?.mood || '') ||
+    form.value.harvest !== (saved?.harvest || '') ||
+    form.value.improve !== (saved?.improve || '') ||
+    form.value.plan !== (saved?.plan || '')
+  )
+}
+
+// 跨午夜：无未保存内容时直接切到新的一天；有未保存内容则冻结 editDate（继续在原日期编辑），
+// 待用户保存到原日期后再切换——否则旧内容被写进新日期、原日期总结永久缺失
 const dayTimer = setInterval(() => {
-  if (editDate.value !== today()) editDate.value = today()
+  if (editDate.value === today()) return
+  if (isDirty(editDate.value)) {
+    if (!editingStaleDay.value) {
+      editingStaleDay.value = true
+      toast(`已跨到新的一天，请先保存 ${editDate.value} 的总结`)
+    }
+    return
+  }
+  editDate.value = today()
 }, 60000)
 onUnmounted(() => clearInterval(dayTimer))
 
-const form = ref({ mood: '', harvest: '', improve: '', plan: '' })
+// editDate 变更（首次载入 / 跨日切换 / 保存后回到今天）时按目标日期重载表单
 watch(
   editDate,
-  (d, oldD) => {
-    // 跨午夜切换时若存在未保存的编辑内容则保留，避免静默丢失用户输入
-    // immediate 首次触发无旧值，oldD 为 undefined，直接跳过索引取 prev
-    const prev = oldD === undefined ? undefined : store.summaries[oldD]
-    const dirty =
-      form.value.mood !== (prev?.mood || '') ||
-      form.value.harvest !== (prev?.harvest || '') ||
-      form.value.improve !== (prev?.improve || '') ||
-      form.value.plan !== (prev?.plan || '')
-    if (dirty) {
-      toast('已跨到新的一天，未保存的总结内容已保留，请及时保存')
-      return
-    }
+  (d) => {
+    editingStaleDay.value = false
     const s = store.summaries[d]
     form.value = {
       mood: s?.mood || '',
@@ -80,17 +94,27 @@ function save(): boolean {
     toast('请填写明日计划')
     return false
   }
-  const isNew = !store.summaries[editDate.value]
-  store.saveSummary({ date: editDate.value, ...form.value })
+  const date = editDate.value
+  const isNew = !store.summaries[date]
+  store.saveSummary({ date, ...form.value })
   toast('每日总结已保存' + (isNew ? ' +5 积分' : ''))
+  // 跨日后若 editDate 被冻结在原日期：保存成功即切回今天（watch 重载表单），内容始终归属实际编辑的那天
+  if (date !== today()) editDate.value = today()
   return true
 }
 
 // ---- 往日总结悬浮卡片 ----
 const cardDate = ref('')
-const { onOverlayMousedown: onCardMousedown, onOverlayClick: onCardClick } = useOverlayDismiss(() => {
-  cardDate.value = ''
-})
+/** 卡片面板：Esc / Tab 焦点陷阱的锚点 */
+const cardPanelRef = ref<HTMLElement | null>(null)
+// Esc 关闭 + Tab 焦点陷阱 + body 滚动锁定下沉到弹层栈：只有卡片位于栈顶时响应键盘，
+// 叠加在本页分享弹窗 / 全局确认框之下时不会抢 Esc
+const { onOverlayMousedown: onCardMousedown, onOverlayClick: onCardClick } = useOverlayDismiss(
+  () => {
+    cardDate.value = ''
+  },
+  { show: () => !!cardDate.value, panel: () => cardPanelRef.value }
+)
 /** 明日计划板块开关：用户可选择展示/隐藏，默认不强制显示 */
 const showPlan = ref(false)
 const cardData = computed(() => (cardDate.value ? aggregateDay(cardDate.value) : null))
@@ -102,21 +126,12 @@ function openDayCard(d: string) {
   showPlan.value = false
 }
 
-// Esc 关闭悬浮卡片
-function onCardKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') cardDate.value = ''
-}
-watch(cardDate, (v) => {
-  if (v) window.addEventListener('keydown', onCardKeydown)
-  else window.removeEventListener('keydown', onCardKeydown)
-})
-onUnmounted(() => window.removeEventListener('keydown', onCardKeydown))
-
 // ---- 日历 ----
-const calMonth = ref(dayjs().format('YYYY-MM'))
+// 初始月份取业务日期所在月（本页所有日期键均为 UTC+8，不依赖设备时区）
+const calMonth = ref(editDate.value.slice(0, 7))
 // 跨午夜/跨月后日历自动切换到当前月
 watch(editDate, (d) => {
-  const m = dayjs(d).format('YYYY-MM')
+  const m = d.slice(0, 7)
   if (calMonth.value !== m) calMonth.value = m
 })
 const calendarDays = computed(() => {
@@ -223,6 +238,14 @@ function openCommunityShare() {
     <div class="grid lg:grid-cols-3 gap-4">
       <!-- 编辑区 -->
       <div class="lg:col-span-2 space-y-4">
+        <!-- 跨午夜冻结提示：editDate 仍停在被编辑的那一天，保存后自动切回今天 -->
+        <div
+          v-if="editingStaleDay"
+          class="flex items-center gap-2 text-xs font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl px-3 py-2"
+        >
+          <TriangleAlert :size="14" class="shrink-0" />
+          <span>已跨到新的一天，当前仍在编辑 {{ editDate }} 的总结，保存后将切换到今天</span>
+        </div>
         <div class="card">
           <div class="flex items-center justify-between mb-3">
             <div class="section-title !mb-0">今日数据概览</div>
@@ -359,12 +382,15 @@ function openCommunityShare() {
       <Transition name="fade">
         <div
           v-if="cardDate && cardData"
-          class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          class="fixed inset-0 bg-black/40 flex items-center justify-center p-4"
+          :class="OVERLAY_LAYER.modal"
           @mousedown="onCardMousedown"
           @click="onCardClick"
         >
           <div
-            class="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto shadow-2xl animate-pop"
+            ref="cardPanelRef"
+            tabindex="-1"
+            class="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto shadow-2xl animate-pop outline-none"
             role="dialog"
             aria-modal="true"
             :aria-label="`${cardDate} 总结`"
