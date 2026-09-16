@@ -19,6 +19,8 @@ const showPassword = ref(false)
 const showConfirmPassword = ref(false)
 const errorMsg = ref('')
 const loading = ref(false)
+// 忘记密码说明面板：账号无邮箱/手机号绑定，无自助找回渠道，面板给出可行路径
+const showForgotHint = ref(false)
 
 // ---- Turnstile 人机验证（仅 Web 端） ----
 // __DESKTOP_BUILD__ 为编译期常量：桌面端构建时为 true，
@@ -45,6 +47,7 @@ function enterGuest() {
 function switchMode(m: 'login' | 'register') {
   mode.value = m
   errorMsg.value = ''
+  showForgotHint.value = false
   password.value = ''
   confirmPassword.value = ''
   showPassword.value = false
@@ -269,6 +272,32 @@ async function submit() {
           </button>
         </form>
 
+        <!-- 忘记密码：账号未绑定邮箱/手机号，无自助找回渠道，此处给出可行的处理路径 -->
+        <div v-if="mode === 'login'" class="mt-4 text-center">
+          <button
+            type="button"
+            class="text-xs text-slate-400 hover:text-primary-500 transition-colors"
+            @click="showForgotHint = !showForgotHint"
+          >
+            忘记密码？
+          </button>
+          <div
+            v-if="showForgotHint"
+            class="mt-2 text-left space-y-1.5 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2.5 leading-relaxed"
+          >
+            <p>账号仅使用「用户名 + 密码」，未绑定邮箱或手机号，因此无法自助找回密码。</p>
+            <p>1. 还有其它设备处于登录状态：在「个人中心 → 账号安全」中修改密码。</p>
+            <p>2. 所有设备都已无法登录：请提交 Issue 说明用户名与注册时间，由管理员核实后处理。</p>
+            <a
+              href="https://github.com/Han050912/zsb-study-tracker/issues/new"
+              target="_blank"
+              rel="noopener"
+              class="inline-block text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 underline underline-offset-2"
+              >提交 Issue →</a
+            >
+          </div>
+        </div>
+
         <!-- 访客入口：唯一进入访客浏览模式的路径 -->
         <div class="text-center mt-4">
           <button
@@ -282,7 +311,7 @@ async function submit() {
       </div>
 
       <p class="text-center text-[11px] text-slate-400 mt-4 leading-relaxed">
-        密码经 bcrypt 哈希存储，无法被还原<br />不同账号数据互相隔离
+        密码经 bcrypt 哈希存储，无法被还原，忘记后无法自助找回<br />不同账号数据互相隔离
       </p>
     </div>
   </div>

@@ -85,7 +85,9 @@ async function save() {
       <div>
         <label class="block text-sm font-medium mb-1.5" for="nickname">昵称</label>
         <input v-model="userName" id="nickname" maxlength="30" class="input" placeholder="输入昵称" />
-        <p class="text-[11px] text-slate-400 mt-1">登录用户名：{{ user?.username }}（不可修改）</p>
+        <p class="text-[11px] text-slate-400 mt-1">
+          登录用户名：{{ user?.username }}（不可修改）· 密码请在「个人中心 → 账号安全」中修改
+        </p>
       </div>
 
       <!-- 简介 -->

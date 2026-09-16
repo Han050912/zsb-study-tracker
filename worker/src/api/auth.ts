@@ -1,7 +1,8 @@
+import { z } from 'zod'
 import { on } from '../router'
 import { hashPassword, verifyPassword, signToken, verifyTokenFull } from '../auth'
-import { first, run, batch, uid, randomCode, HttpError } from '../db'
-import { parseBody, registerSchema, loginSchema, timingSafeEqual } from '../schemas'
+import { first, all, run, batch, uid, randomCode, HttpError } from '../db'
+import { parseBody, registerSchema, loginSchema, passwordSchema, timingSafeEqual } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
 import { authCookieHeader, clearAuthCookieHeader, extractToken, purgeRevokedCache } from '../middleware/auth'
 import { assertCleanAsync } from './sensitive'
@@ -62,6 +63,24 @@ function toUser(row: UserRow) {
   }
 }
 
+/**
+ * 登记本次签发的会话（jti ↔ user_id）。
+ * 吊销只能按 jti 精确命中（middleware/auth.ts 查 jwt_blacklist），而其它设备的 jti 服务端无从得知，
+ * 故在签发处留档：修改密码时据此把该用户全部 token 一次性写入黑名单，实现「改密即让其它会话下线」。
+ */
+async function recordSession(env: Env, token: string, userId: string): Promise<void> {
+  const payload = await verifyTokenFull(token, env.JWT_SECRET)
+  if (!payload) return
+  await run(
+    env,
+    'INSERT OR REPLACE INTO user_sessions (jti, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)',
+    payload.jti,
+    userId,
+    payload.exp,
+    Math.floor(Date.now() / 1000)
+  )
+}
+
 /** 生成唯一对外用户 ID：随机 8 位短码（32^8 空间，不可枚举），查重冲突重试，唯一性由 UNIQUE 索引兜底 */
 async function nextUserCode(env: Env): Promise<string> {
   for (let i = 0; i < 10; i++) {
@@ -99,6 +118,7 @@ export function registerAuthRoutes() {
       ctx.env.DB.prepare('INSERT INTO gamification (user_id) VALUES (?)').bind(row.id)
     ])
     const token = await signToken(row.id, ctx.env.JWT_SECRET, row.role || 'user')
+    await recordSession(ctx.env, token, row.id)
     return Response.json(
       { token, user: toUser(row) },
       { status: 201, headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } }
@@ -115,10 +135,58 @@ export function registerAuthRoutes() {
       throw new HttpError(401, '用户名或密码错误')
     }
     const token = await signToken(row.id, ctx.env.JWT_SECRET, row.role || 'user')
+    await recordSession(ctx.env, token, row.id)
     return Response.json(
       { token, user: toUser(row) },
       { headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } }
     )
+  })
+
+  // 修改密码：校验当前密码 → 写入新哈希 → 吊销该用户全部已签发 token → 为本次会话换发新 token
+  on('POST', '/api/auth/password', true, async (ctx) => {
+    // 与登录同属「凭证校验」端点，沿用同一套限流 + 人机验证
+    await rateLimit(ctx, 'change-password', 5) // 每 IP 每分钟最多 5 次改密尝试
+    await requireTurnstile(ctx.request, ctx.env)
+    const { oldPassword, newPassword } = await parseBody(
+      ctx.request,
+      z.object({
+        oldPassword: z.string().min(1, '请输入当前密码'),
+        // 复用注册的密码策略（schemas.ts passwordSchema），不在改密处另立一套口径
+        newPassword: passwordSchema
+      })
+    )
+    const row = await first<UserRow>(ctx.env, 'SELECT * FROM users WHERE id = ?', ctx.userId)
+    if (!row) throw new HttpError(401, '用户不存在')
+    // 旧密码错误返回 400 而非 401：client.ts 把 401 统一视为「会话过期」并全局登出，
+    // 这里只是表单校验失败，不该把用户踢下线（CREDENTIAL_PATHS 在 client.ts，不在本次改动范围）
+    if (!(await verifyPassword(oldPassword, row.password_hash))) throw new HttpError(400, '当前密码错误')
+
+    const sessions = await all<{ jti: string; expires_at: number }>(
+      ctx.env,
+      'SELECT jti, expires_at FROM user_sessions WHERE user_id = ?',
+      ctx.userId
+    )
+    // 改密 + 清空会话登记 + 旧 jti 全部入黑名单：同一 batch 原子完成
+    await batch(ctx.env, [
+      ctx.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(
+        await hashPassword(newPassword),
+        ctx.userId
+      ),
+      ctx.env.DB.prepare('DELETE FROM user_sessions WHERE user_id = ?').bind(ctx.userId),
+      ...sessions.map((s) =>
+        ctx.env.DB.prepare('INSERT OR IGNORE INTO jwt_blacklist (jti, expires_at) VALUES (?, ?)').bind(
+          s.jti,
+          s.expires_at
+        )
+      )
+    ])
+    // 黑名单落库后清掉各 jti 的「未吊销」缓存（顺序不可颠倒，同 logout），下一请求即读到已吊销
+    await Promise.all(sessions.map((s) => purgeRevokedCache(s.jti)))
+
+    // 为本次会话换发新 token：执行改密的设备无需重新登录，其余设备的会话已全部失效
+    const token = await signToken(ctx.userId, ctx.env.JWT_SECRET, row.role || 'user')
+    await recordSession(ctx.env, token, ctx.userId)
+    return Response.json({ ok: true, token }, { headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } })
   })
 
   on('GET', '/api/auth/me', true, async (ctx) => {
@@ -139,6 +207,8 @@ export function registerAuthRoutes() {
           payload.jti,
           payload.exp
         )
+        // 会话登记随登出移除：该 jti 已吊销，无需再被改密的整批吊销遍历到
+        await run(ctx.env, 'DELETE FROM user_sessions WHERE jti = ?', payload.jti)
         // 黑名单落库后删除该 jti 的「未吊销」缓存条目（顺序不可颠倒：先落库再清缓存，
         // 否则并发请求可能在两步之间把「未吊销」重新写回缓存）；TTL 内不清理则已登出的 token 仍被放行
         await purgeRevokedCache(payload.jti)
@@ -148,7 +218,12 @@ export function registerAuthRoutes() {
   })
 }
 
-/** 清理过期黑名单条目（每周 cron 调用，登出处理器不再内联清理） */
+/** 清理过期黑名单条目与过期会话登记（每周 cron 调用，登出处理器不再内联清理） */
 export async function cleanupExpiredTokens(env: Env): Promise<void> {
-  await run(env, 'DELETE FROM jwt_blacklist WHERE expires_at < ?', Math.floor(Date.now() / 1000))
+  const now = Math.floor(Date.now() / 1000)
+  await batch(env, [
+    env.DB.prepare('DELETE FROM jwt_blacklist WHERE expires_at < ?').bind(now),
+    // 会话登记按 token 过期时间清理：token 已过期即无需保留其 jti（再吊销已无意义）
+    env.DB.prepare('DELETE FROM user_sessions WHERE expires_at < ?').bind(now)
+  ])
 }
