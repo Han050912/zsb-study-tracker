@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { BookOpen, GraduationCap, Timer, Trophy } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
+import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 const store = useAppStore()
 const step = ref(0)
@@ -23,11 +24,21 @@ const steps = [
 function finish() {
   store.updateSettings({ onboarded: true })
 }
+
+/** 引导卡片：Esc / Tab 焦点陷阱的锚点 */
+const panelRef = ref<HTMLElement | null>(null)
+
+/**
+ * 引导是「走完或跳过」的强制流程，没有「关闭」语义，故 Esc 不产生动作；
+ * 但仍须占用弹层栈栈顶——否则按 Esc 会穿透到被遮罩盖住的下层弹窗，
+ * 同时借此复用统一的 body 滚动锁定与焦点陷阱。
+ */
+useOverlayDismiss(() => {}, { show: () => true, panel: () => panelRef.value })
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-6">
-    <div class="card !p-8 max-w-sm w-full text-center animate-pop">
+  <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-6" :class="OVERLAY_LAYER.guide">
+    <div ref="panelRef" class="card !p-8 max-w-sm w-full text-center animate-pop">
       <div class="mb-4 flex justify-center">
         <component :is="steps[step].icon" class="w-16 h-16 text-primary-500" />
       </div>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onUnmounted, ref, watch } from 'vue'
 import { imageUrl } from '../../api/community'
-import { useOverlayDismiss } from '../../composables/useOverlayDismiss'
+import { OVERLAY_LAYER, useOverlayDismiss } from '../../composables/useOverlayDismiss'
 
 /** 图片灯箱预览：左右切换 + Esc/点击遮罩关闭 + 缩放查看原图（点击切换 / 滚轮缩放 / 拖拽平移） */
 const props = withDefaults(
@@ -25,23 +25,21 @@ function next() {
   if (props.index < props.urls.length - 1) emit('update:index', props.index + 1)
 }
 
-const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close)
+/** 弹层根节点：Esc / Tab 焦点陷阱的锚点 */
+const panelRef = ref<HTMLElement | null>(null)
 
+// Esc 关闭 + Tab 焦点陷阱 + body 滚动锁定 + 焦点移入/归还全部由弹层栈托管；
+// 灯箱打开期间只有它位于栈顶时响应键盘，被上层弹层盖住时不再抢 Esc
+const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close, {
+  show: () => props.show,
+  panel: () => panelRef.value
+})
+
+// 方向键切换图片：绑在弹层根节点（焦点被陷阱锁在弹层内），被上层弹层盖住时不会误响应
 function onKey(e: KeyboardEvent) {
-  if (!props.show) return
-  if (e.key === 'Escape') close()
-  else if (e.key === 'ArrowLeft') prev()
+  if (e.key === 'ArrowLeft') prev()
   else if (e.key === 'ArrowRight') next()
 }
-
-watch(
-  () => props.show,
-  (v) => {
-    if (v) window.addEventListener('keydown', onKey)
-    else window.removeEventListener('keydown', onKey)
-  }
-)
-onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 // ---- 缩放查看原图 ----
 const scale = ref(1)
@@ -113,10 +111,13 @@ onUnmounted(onPanEnd)
     <Transition name="fade">
       <div
         v-if="show"
-        class="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 p-4 overflow-hidden"
+        ref="panelRef"
+        class="fixed inset-0 flex items-center justify-center bg-black/85 p-4 overflow-hidden"
+        :class="OVERLAY_LAYER.lightbox"
         @mousedown="onOverlayMousedown"
         @click="onOverlayClick"
         @wheel="onWheel"
+        @keydown="onKey"
       >
         <img
           :src="imageUrl(urls[index])"

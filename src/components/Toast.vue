@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { OVERLAY_LAYER } from '../composables/useOverlayDismiss'
 
 const visible = ref(false)
 const message = ref('')
@@ -15,12 +16,23 @@ defineExpose({ show })
 </script>
 
 <template>
-  <Transition name="fade">
+  <Teleport to="body">
+    <!-- 常驻 aria-live 容器：提示注入到「已存在」的 live region 中，读屏器才会可靠播报；
+         z-[100] 保证提示永远浮在所有弹层之上（含 Lightbox 的深色遮罩） -->
     <div
-      v-if="visible"
-      class="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-800 text-sm px-4 py-2 rounded-full shadow-lg"
+      role="status"
+      aria-live="polite"
+      class="fixed top-6 inset-x-0 flex justify-center pointer-events-none"
+      :class="OVERLAY_LAYER.toast"
     >
-      {{ message }}
+      <Transition name="fade">
+        <div
+          v-if="visible"
+          class="bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-800 text-sm px-4 py-2 rounded-full shadow-lg"
+        >
+          {{ message }}
+        </div>
+      </Transition>
     </div>
-  </Transition>
+  </Teleport>
 </template>

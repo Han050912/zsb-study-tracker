@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
-import { useOverlayDismiss } from '../composables/useOverlayDismiss'
+import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 /**
  * 桌面端自动更新弹窗
@@ -110,7 +110,15 @@ function close() {
   show.value = false
 }
 
-const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close)
+/** 弹窗面板：焦点陷阱与 Esc 的锚点 */
+const panelRef = ref<HTMLElement | null>(null)
+
+// Esc 关闭 + Tab 焦点陷阱 + body 滚动锁定 + 焦点移入/归还下沉到弹层栈：
+// 只有位于栈顶时响应键盘，避免被上层弹层盖住时仍抢 Esc
+const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close, {
+  show: () => show.value && !!info.value,
+  panel: () => panelRef.value
+})
 
 onMounted(() => {
   if (!updater) return
@@ -149,11 +157,13 @@ onBeforeUnmount(() => {
     <Transition name="update-fade">
       <div
         v-if="show && info"
-        class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+        class="fixed inset-0 flex items-center justify-center bg-black/40 p-4"
+        :class="OVERLAY_LAYER.lightbox"
         @mousedown="onOverlayMousedown"
         @click="onOverlayClick"
       >
         <div
+          ref="panelRef"
           class="update-pop bg-white dark:bg-slate-800 w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[85vh]"
         >
           <!-- 头部：版本标题 + 前往发布页 -->
