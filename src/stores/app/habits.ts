@@ -10,6 +10,15 @@ import { stageDelete } from '../../services/syncOutbox'
 import { touchRecord, touchSettings } from './staging'
 import type { Habit } from '../../types'
 
+/**
+ * 习惯当日是否达标：有 target 的 count/minutes 型习惯需记录值 ≥ 目标；勾选/时刻型及未设目标的习惯只要记录即算打卡。
+ * 积分判定（recordHabit）与热力图判定（Habits.vue heatData）必须共用本函数，保证口径一致。
+ */
+export function habitDone(h: Pick<Habit, 'target' | 'type'>, value: unknown): boolean {
+  if (!h.target || h.type === 'checkbox' || h.type === 'time') return !!value
+  return Number(value) >= h.target
+}
+
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type HabitsActionsShape = {
   addHabit(h: Omit<Habit, 'id' | 'records'>): void
@@ -37,17 +46,17 @@ export const habitsActions: HabitsActionsShape = {
     this.save()
   },
 
-  /** 记录习惯打卡；好习惯当天从「未完成」变为「完成」奖励 +2 积分，取消完成则全额回收（历史日期仅记数据，不动积分） */
+  /** 记录习惯打卡；好习惯当天从「未达标」变为「达标」奖励 +2 积分（有 target 需达到目标，无 target 只要记录即算），取消达标则全额回收（历史日期仅记数据，不动积分） */
   recordHabit(this: AppStoreThis, id: string, date: string, value: number | string) {
     const h = this.habits.find((x) => x.id === id)
     if (!h) return
-    const hadValue = !!h.records[date]
+    const hadMet = habitDone(h, h.records[date])
     h.records[date] = value
     if (!h.bad && date === today()) {
       const refId = `habit:${id}:${date}`
-      if (value && !hadValue) this.addPoints(2, `完成习惯「${h.name}」`, refId)
+      if (habitDone(h, value) && !hadMet) this.addPoints(2, `完成习惯「${h.name}」`, refId)
       // 取消打卡为非删除场景：服务端不会自动撤销 → 必须显式发 revoke 事件
-      else if (!value && hadValue) this.revokePointsByRef(refId, true)
+      else if (!habitDone(h, value) && hadMet) this.revokePointsByRef(refId, true)
     }
     // 坏习惯发生记录与克制打卡互斥：记录发生即视为当天未克制
     if (h.bad && Number(value) > 0 && h.checkins?.[date]) delete h.checkins[date]

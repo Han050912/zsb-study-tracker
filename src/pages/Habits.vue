@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
+import { habitDone } from '../stores/app/habits'
 import { businessDate, today } from '../utils/date'
 import Modal from '../components/Modal.vue'
 import type { Habit, HabitType } from '../types'
@@ -34,11 +35,20 @@ const dayTimer = setInterval(() => {
 onUnmounted(() => clearInterval(dayTimer))
 
 function record(h: Habit, value: number | string) {
-  const hadValue = !!h.records[today()]
-  // 积分奖励/回收逻辑已内聚在 store.recordHabit 中
+  const hadMet = habitDone(h, h.records[today()])
+  // 积分奖励/回收逻辑已内聚在 store.recordHabit 中（达标口径与 habitDone 一致）
   store.recordHabit(h.id, today(), value)
-  if (!h.bad && value && !hadValue) toast('打卡成功 +2 积分')
-  else toast(h.bad ? '已记录，注意自律！' : '已更新')
+  if (h.bad) {
+    toast('已记录，注意自律！')
+    return
+  }
+  const met = habitDone(h, h.records[today()])
+  if (met && !hadMet) toast('打卡成功 +2 积分')
+  // 达标被取消（勾选撤销 / 记录清零、改小）：积分已由 store 回收，按状态更新提示
+  else if (!met && hadMet) toast('已更新')
+  else if (h.target && (h.type === 'count' || h.type === 'minutes'))
+    toast(`已完成 ${Number(h.records[today()]) || 0}/${h.target}，未达标`)
+  else toast('已记录')
 }
 
 // ---- 坏习惯「每日克制打卡」 ----
@@ -61,12 +71,11 @@ function saveTarget(h: Habit) {
   toast('目标已更新' + (h.id === VOCAB_HABIT_ID || h.id === PROBLEM_HABIT_ID ? '（已同步到设置页）' : ''))
 }
 
-/** 近 30 天热力（日期键为 UTC+8 业务日期，不随系统时区变化） */
+/** 近 30 天热力（日期键为 UTC+8 业务日期，不随系统时区变化；达标口径与 recordHabit 积分判定一致，有 target 需达到目标才满格） */
 function heatData(h: Habit) {
   return Array.from({ length: 30 }, (_, i) => {
     const d = businessDate(Date.now() - (29 - i) * 86400_000)
-    const v = h.records[d]
-    return { date: d, done: h.type === 'checkbox' || h.type === 'time' ? !!v : Number(v) > 0 }
+    return { date: d, done: habitDone(h, h.records[d]) }
   })
 }
 

@@ -18,7 +18,8 @@ export function useUnreadPolling() {
     void Promise.allSettled([
       community.fetchUnreadCount(),
       communityApi.messageUnreadCount().then((r) => {
-        messageUnread.value = r.count
+        // 慢网下响应可能晚于登出到达，回写前校验登录态，避免显示上一账号的未读数
+        if (isLoggedIn.value) messageUnread.value = r.count
       })
     ]).finally(() => {
       unreadInFlight = false
@@ -63,7 +64,12 @@ export function useUnreadPolling() {
     isLoggedIn,
     (v) => {
       if (v) startUnreadPolling()
-      else stopUnreadPolling()
+      else {
+        stopUnreadPolling()
+        // 登出 / 会话过期（auth:expired 亦经 logout 置 isLoggedIn=false）：归零消息未读数，
+        // 避免切号瞬间顶栏与下拉菜单仍显示上一账号的角标（通知未读由 community.resetState 清零）
+        messageUnread.value = 0
+      }
     },
     { immediate: true }
   )

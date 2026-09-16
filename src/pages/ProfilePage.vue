@@ -80,15 +80,19 @@ async function loadStats() {
   }
 }
 
-// FollowButton 乐观更新后的受控回写：同步关注状态 / 粉丝数 / 关系
+// FollowButton 乐观更新后的受控回写：同步关注状态 / 粉丝数 / 互关数 / 关系
 function onFollowChange(following: boolean) {
   const p = profile.value
   if (!p) return
+  const wasMutual = p.followedByMe && p.followsMe
   p.followedByMe = following
-  // 降级视图缺少 followers 字段（undefined），跳过计数修正避免产生 NaN
+  // 降级视图缺少 followers/mutualCount 字段（undefined），跳过计数修正避免产生 NaN
   if (typeof p.followers === 'number') p.followers += following ? 1 : -1
   p.relation =
     p.followedByMe && p.followsMe ? 'mutual' : p.followedByMe ? 'following' : p.followsMe ? 'follower' : 'none'
+  // 互相关注状态变化时同步「互关」数字，保证与四态标签同屏一致
+  const isMutual = p.followedByMe && p.followsMe
+  if (typeof p.mutualCount === 'number' && isMutual !== wasMutual) p.mutualCount += isMutual ? 1 : -1
 }
 
 onMounted(loadAll)
