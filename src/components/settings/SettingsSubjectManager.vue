@@ -5,7 +5,7 @@ import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import { useAppStore } from '../../stores/app'
 import Modal from '../Modal.vue'
-import { subjectLabel } from '../../utils/subject'
+import SubjectIcon, { SUBJECT_ICONS } from '../SubjectIcon.vue'
 
 const store = useAppStore()
 const toast = useToast()
@@ -71,7 +71,9 @@ function restoreDefaults() {
     <div class="space-y-2">
       <div v-for="sub in store.subjects" :key="sub.id" class="flex items-center gap-2 text-sm flex-wrap">
         <span class="w-3 h-3 rounded-full shrink-0" :style="{ background: sub.color }"></span>
-        <span>{{ subjectLabel(sub) }}</span>
+        <span class="inline-flex items-center gap-1">
+          <SubjectIcon v-if="sub.icon" :icon="sub.icon" /><span>{{ sub.name }}</span>
+        </span>
         <span v-if="sub.builtin" class="text-[10px] text-slate-400">（内置）</span>
         <span class="ml-auto flex items-center gap-1 text-xs text-slate-400">
           权重
@@ -113,11 +115,29 @@ function restoreDefaults() {
         <label class="label" for="set-sub-name">科目名称</label
         ><input id="set-sub-name" v-model="subForm.name" class="input" placeholder="如：计算机基础、政治、专业课" />
       </div>
-      <div class="grid grid-cols-3 gap-2">
-        <div>
-          <label class="label" for="set-sub-icon">图标 emoji</label
-          ><input id="set-sub-icon" v-model="subForm.icon" class="input" maxlength="4" />
+      <div>
+        <span class="label">图标</span>
+        <div class="grid grid-cols-8 gap-1">
+          <button
+            v-for="(comp, name) in SUBJECT_ICONS"
+            :key="name"
+            type="button"
+            class="flex items-center justify-center rounded-lg border py-1.5 transition-colors"
+            :class="
+              subForm.icon === name
+                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400'
+                : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
+            "
+            :title="name"
+            :aria-pressed="subForm.icon === name"
+            @click="subForm.icon = name"
+          >
+            <component :is="comp" class="w-4 h-4" />
+          </button>
         </div>
+        <p class="text-[10px] text-slate-400 mt-1">不选择则仅显示科目名称。</p>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
         <div>
           <label class="label" for="set-sub-color">颜色</label
           ><input id="set-sub-color" v-model="subForm.color" type="color" class="input !p-1 h-9" />

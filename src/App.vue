@@ -8,6 +8,7 @@ import Toast from './components/Toast.vue'
 import Onboarding from './components/Onboarding.vue'
 import UpdateDialog from './components/UpdateDialog.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
+import SubjectIcon from './components/SubjectIcon.vue'
 import { imageUrl } from './api/community'
 import { isDndActive } from './utils/dnd'
 import { TOAST_KEY } from './composables/useToast'
@@ -203,8 +204,7 @@ onUnmounted(() => {
           ]"
           :title="navCollapsed ? item.label : ''"
         >
-          <span class="text-lg">{{ item.icon }}</span
-          ><span v-if="!navCollapsed">{{ item.label }}</span>
+          <SubjectIcon :icon="item.icon" class="text-lg" /><span v-if="!navCollapsed">{{ item.label }}</span>
         </RouterLink>
       </nav>
       <button
@@ -371,7 +371,7 @@ onUnmounted(() => {
             : 'text-slate-500 dark:text-slate-400'
         "
       >
-        <span class="text-xl leading-none">{{ item.icon }}</span>
+        <SubjectIcon :icon="item.icon" class="text-xl leading-none" />
         <span class="truncate w-full text-center">{{ item.label }}</span>
       </RouterLink>
     </nav>

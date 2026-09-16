@@ -20,8 +20,10 @@ onMounted(async () => {
   }
 })
 
-// 手动检查更新（仅桌面端打包环境可用）
+// 手动检查更新（仅 Windows 桌面端打包环境可用）
 const updater = (window as any).updater
+/** 桌面端平台标识：存在即为 Electron 桌面端（浏览器端为 undefined），用于置灰不支持自动更新的平台 */
+const desktopPlatform = (window as any).desktopPlatform as string | undefined
 function checkUpdate() {
   if (!updater) return
   updater.check()
@@ -139,7 +141,18 @@ async function syncNow() {
         清除全部数据
       </button>
       <button v-if="updater" class="btn-ghost" @click="checkUpdate">检查更新</button>
+      <button
+        v-else-if="desktopPlatform"
+        class="btn-ghost"
+        disabled
+        title="当前平台暂不支持自动更新"
+      >
+        检查更新
+      </button>
     </div>
+    <p v-if="!updater && desktopPlatform" class="mt-2 text-xs text-slate-400">
+      当前平台暂不支持自动更新，请前往 GitHub Releases 手动下载新版本。
+    </p>
   </div>
 
   <!-- 清除确认 -->

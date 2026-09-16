@@ -7,6 +7,7 @@ import { subjectLabel } from '../utils/subject'
 import { DEFAULT_QUOTES } from '../data/defaults'
 import Heatmap from '../components/Heatmap.vue'
 import ProgressRing from '../components/ProgressRing.vue'
+import SubjectIcon from '../components/SubjectIcon.vue'
 import Modal from '../components/Modal.vue'
 import TodoTimeFields from '../components/TodoTimeFields.vue'
 import PostComposer from '../components/community/PostComposer.vue'
@@ -490,7 +491,7 @@ onUnmounted(() => {
             class="flex flex-col items-center gap-1"
           >
             <ProgressRing :percent="subjectPercent(s.id)" :color="s.color" :size="76" :label="s.name" />
-            <span class="text-xs">{{ subjectLabel(s) }}</span>
+            <span class="text-xs"><SubjectIcon v-if="s.icon" :icon="s.icon" class="mr-1" />{{ s.name }}</span>
           </RouterLink>
         </div>
       </div>

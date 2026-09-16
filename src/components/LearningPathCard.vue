@@ -8,6 +8,7 @@ import { learningPathApi } from '../api/learningPath'
 import { formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import PostComposer from './community/PostComposer.vue'
+import SubjectIcon from './SubjectIcon.vue'
 import type { LearningPath } from '../types'
 
 const data = ref<LearningPath | null>(null)
@@ -83,7 +84,7 @@ function openShare() {
         :key="s.id"
         class="flex items-center gap-2 text-sm"
       >
-        <span v-if="s.icon" class="w-5 text-center">{{ s.icon }}</span>
+        <SubjectIcon v-if="s.icon" :icon="s.icon" class="w-5 text-center" />
         <span class="flex-1 truncate">{{ s.name }}</span>
         <span class="font-semibold text-primary-500 shrink-0">{{ formatMinutes(s.dailyMinutes) }}/天</span>
       </div>
