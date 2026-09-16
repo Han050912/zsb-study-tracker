@@ -1,5 +1,5 @@
 import { on, body } from '../../router'
-import { first, run, batch, HttpError } from '../../db'
+import { first, batch, HttpError } from '../../db'
 import { rateLimit } from '../../middleware/rateLimit'
 import { awardBadge, hasBadge } from '../badges'
 import { nowSec, awardStatements, revokeStatements, notifyStatement, displayName, assertCircleReadable } from './shared'
@@ -66,31 +66,30 @@ export function registerLikesRoutes() {
       targetType,
       targetId
     )
+    // 点赞行 / 计数 / 积分流水 / 通知必须同一 batch 原子提交：任一句失败整体回滚，用户重试可自愈，
+    // 消除原「先 run 提交点赞行、再另一批提交计数/积分/通知」导致的永久不一致（点赞行在但计数为 0、积分未发）。
+    const stmts: D1PreparedStatement[] = []
+    // 与踩互斥的取消踩语句并入同一批：取消踩与点赞要么都生效、要么都不生效
     if (disliked) {
-      await batch(ctx.env, [
+      stmts.push(
         ctx.env.DB.prepare(
           'DELETE FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?'
         ).bind(ctx.userId, targetType, targetId),
         ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = MAX(dislikes_count - 1, 0) WHERE id = ?`).bind(
           targetId
         )
-      ])
+      )
     }
-
-    // 原子 INSERT OR IGNORE 抢占点赞记录，消除并发双击导致的「主键冲突 500」（changes=0 表示已赞，幂等返回）
-    const inserted = await run(
-      ctx.env,
-      'INSERT OR IGNORE INTO community_likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)',
-      ctx.userId,
-      targetType,
-      targetId,
-      nowSec()
+    // 点赞行占位（INSERT OR IGNORE 幂等，消除并发双击导致的「主键冲突 500」）；
+    // 紧随其后的计数自增以 changes() = 1 门控：仅本次真正插入点赞行时才计数，保持原「抢占成功才生效」语义
+    stmts.push(
+      ctx.env.DB.prepare(
+        'INSERT OR IGNORE INTO community_likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)'
+      ).bind(ctx.userId, targetType, targetId, nowSec()),
+      ctx.env.DB.prepare(`UPDATE ${table} SET likes_count = likes_count + 1 WHERE id = ? AND changes() = 1`).bind(
+        targetId
+      )
     )
-    if (!inserted.meta.changes) return Response.json({ liked: true })
-
-    const stmts: D1PreparedStatement[] = [
-      ctx.env.DB.prepare(`UPDATE ${table} SET likes_count = likes_count + 1 WHERE id = ?`).bind(targetId)
-    ]
     // 被赞 +1 积分 + 通知（自己赞自己不加、不通知）；refId 编码点赞者身份，取消点赞时可精确回收
     if (target.user_id !== ctx.userId) {
       const myName = await displayName(ctx.env, ctx.userId)
@@ -170,10 +169,12 @@ export function registerLikesRoutes() {
       targetType,
       targetId
     )
-    let likeRevoked = false
+    // 取消赞（与赞互斥）与踩记录写入同一 batch 原子提交：二者要么都生效、要么都不生效，
+    // 消除原「先 batch 取消赞、再 run 占踩、再 batch 加计数」的多段提交不一致
+    const likeRevoked = !!liked
+    const stmts: D1PreparedStatement[] = []
     if (liked) {
-      likeRevoked = true
-      const unlikeStmts: D1PreparedStatement[] = [
+      stmts.push(
         ctx.env.DB.prepare('DELETE FROM community_likes WHERE user_id = ? AND target_type = ? AND target_id = ?').bind(
           ctx.userId,
           targetType,
@@ -184,24 +185,18 @@ export function registerLikesRoutes() {
           `DELETE FROM community_notifications WHERE type = 'like' AND actor_id = ? AND ${targetType === 'post' ? 'post_id' : 'comment_id'} = ?`
         ).bind(ctx.userId, targetId),
         ...(await revokeStatements(ctx.env, `srv:like:${ctx.userId}:${targetType}:${targetId}`))
-      ]
-      await batch(ctx.env, unlikeStmts)
+      )
     }
-
-    // 原子 INSERT OR IGNORE 抢占踩记录，防并发双击 500（changes=0 表示已踩，幂等返回）
-    const inserted = await run(
-      ctx.env,
-      'INSERT OR IGNORE INTO community_dislikes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)',
-      ctx.userId,
-      targetType,
-      targetId,
-      nowSec()
+    // 踩记录占位（INSERT OR IGNORE 幂等，防并发双击 500）；计数自增以 changes() = 1 门控，避免并发重复加踩
+    stmts.push(
+      ctx.env.DB.prepare(
+        'INSERT OR IGNORE INTO community_dislikes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)'
+      ).bind(ctx.userId, targetType, targetId, nowSec()),
+      ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = dislikes_count + 1 WHERE id = ? AND changes() = 1`).bind(
+        targetId
+      )
     )
-    if (!inserted.meta.changes) return Response.json({ disliked: true, likeRevoked })
-
-    await batch(ctx.env, [
-      ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = dislikes_count + 1 WHERE id = ?`).bind(targetId)
-    ])
+    await batch(ctx.env, stmts)
     return Response.json({ disliked: true, likeRevoked })
   })
 }
