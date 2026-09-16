@@ -7,6 +7,7 @@ import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import { useBack } from '../composables/useBack'
 import { fromNow } from '../utils/date'
@@ -17,6 +18,8 @@ const router = useRouter()
 const toast = useToast()
 
 const loading = ref(true)
+/** 加载失败信息：持久错误态（区别于「还没有收到分享」空态），提供重试 */
+const loadError = ref('')
 const received = ref<PartnerShareItem[]>([])
 const sent = ref<PartnerShareItem[]>([])
 const tab = ref<'received' | 'sent'>('received')
@@ -27,12 +30,14 @@ onMounted(load)
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const res = await communityApi.partnerShares()
     received.value = res.received
     sent.value = res.sent
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
@@ -51,7 +56,17 @@ function openPreview(item: PartnerShareItem) {
     <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
 
     <template v-else>
-      <div class="flex gap-2">
+      <!-- 加载失败：持久错误态 + 重试，不落「还没有收到搭子的分享」空态 -->
+      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+        <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+        <span class="flex-1">{{ loadError }}</span>
+        <button class="btn-ghost !text-xs shrink-0" @click="load">
+          <RefreshCw :size="14" aria-hidden="true" />
+          重试
+        </button>
+      </div>
+
+      <div v-else class="flex gap-2">
         <button
           class="btn !text-xs !py-1 !px-3"
           :class="tab === 'received' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
@@ -68,7 +83,7 @@ function openPreview(item: PartnerShareItem) {
         </button>
       </div>
 
-      <div class="card space-y-2">
+      <div v-if="!loadError" class="card space-y-2">
         <div v-if="!list.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
           {{ tab === 'received' ? '还没有收到搭子的分享' : '还没有分享给搭子，去错题本/笔记页分享一条吧' }}
         </div>

@@ -7,6 +7,7 @@
 import { onMounted, ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { communityApi } from '../api/community'
+import { TriangleAlert } from '@lucide/vue'
 import { COMMUNITY_BADGES } from '../data/defaults'
 import { sessionUser } from '../services/auth'
 import { formatMinutes } from '../utils/date'
@@ -26,6 +27,8 @@ const userId = route.params.id as string
 
 const profile = ref<CommunityUserProfile | null>(null)
 const stats = ref<UserStudyStats | null>(null)
+/** 学习统计加载失败：不用 0 兜底，展示「学习数据加载失败，点击重试」（概览与热力图区域） */
+const statsError = ref(false)
 const loading = ref(true)
 const error = ref('')
 const worksTab = ref<'posts' | 'likes'>('posts')
@@ -62,14 +65,19 @@ async function loadAll() {
     return
   }
   // 私密主页降级视图：跳过学习统计加载（接口会 403）
-  if (!profile.value.profilePrivate) {
-    try {
-      stats.value = await communityApi.stats(userId)
-    } catch {
-      stats.value = null // 统计加载失败不阻塞主页展示
-    }
-  }
+  if (!profile.value.profilePrivate) await loadStats()
   loading.value = false
+}
+
+/** 学习统计单独加载/重试；失败置 statsError（统计与热力图区域显示错误态，不用 0 兜底） */
+async function loadStats() {
+  statsError.value = false
+  stats.value = null
+  try {
+    stats.value = await communityApi.stats(userId)
+  } catch {
+    statsError.value = true // 统计加载失败不阻塞主页展示，但明确告知失败
+  }
 }
 
 // FollowButton 乐观更新后的受控回写：同步关注状态 / 粉丝数 / 关系
@@ -122,7 +130,16 @@ onMounted(loadAll)
         <!-- 学习概览：总学习时长 / 总做题数 / 本月学习 -->
         <div class="card">
           <h3 class="text-sm font-bold mb-3">学习概览</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <!-- 学习统计加载失败：不用 0 兜底，整块显示错误态 + 重试 -->
+          <button
+            v-if="statsError"
+            class="w-full flex items-center gap-2 text-xs text-red-500 dark:text-red-400"
+            @click="loadStats"
+          >
+            <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+            <span class="flex-1 text-left">学习数据加载失败，点击重试</span>
+          </button>
+          <div v-else class="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
               <div class="text-lg font-bold text-blue-600">
                 {{ totalHours }}<span class="text-sm font-normal">h</span> {{ totalMinutes
@@ -146,11 +163,21 @@ onMounted(loadAll)
           </div>
         </div>
 
-        <!-- 学习热力图 -->
+        <!-- 学习热力图（统计失败时同样显示错误态，不渲染空热力图） -->
         <div class="card">
           <h3 class="text-sm font-bold mb-3">学习热力图（近 30 周）</h3>
-          <StreakHeatmap v-if="stats?.heatmap" :data="stats.heatmap" @select="heatDate = $event" />
-          <p class="text-[10px] text-slate-400 mt-2">点击色块可查看当日学习时长</p>
+          <button
+            v-if="statsError"
+            class="w-full flex items-center gap-2 text-xs text-red-500 dark:text-red-400"
+            @click="loadStats"
+          >
+            <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+            <span class="flex-1 text-left">学习数据加载失败，点击重试</span>
+          </button>
+          <template v-else>
+            <StreakHeatmap v-if="stats?.heatmap" :data="stats.heatmap" @select="heatDate = $event" />
+            <p class="text-[10px] text-slate-400 mt-2">点击色块可查看当日学习时长</p>
+          </template>
         </div>
 
         <!-- 科目分布 -->

@@ -14,6 +14,7 @@ import { useToast } from '../composables/useToast'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { communityApi } from '../api/community'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import Modal from '../components/Modal.vue'
 import PartnerPickerCard from '../components/partner/PartnerPickerCard.vue'
 import PartnerStudyHistoryCard from '../components/partner/PartnerStudyHistoryCard.vue'
@@ -43,6 +44,8 @@ const { bgUrl, startBgRotation } = useWallpaperRotation()
 // ---- 历史开黑记录 ----
 const history = ref<PartnerStudyRecord[]>([])
 const historyLoading = ref(false)
+/** 历史记录加载失败信息：持久错误态（区别于「还没有开黑记录」空态），提供重试 */
+const historyError = ref('')
 
 // ---- 会话管理 ----
 async function loadPartners() {
@@ -57,11 +60,13 @@ async function loadPartners() {
 
 async function loadHistory() {
   historyLoading.value = true
+  historyError.value = ''
   try {
     const res = await communityApi.studyHistory()
     history.value = res.records ?? []
-  } catch {
-    /* 历史加载失败静默，不影响主流程 */
+  } catch (e) {
+    historyError.value = getErrorMessage(e, '历史记录加载失败')
+    toast(historyError.value)
   } finally {
     historyLoading.value = false
   }
@@ -210,8 +215,19 @@ watch(
         @invite="invite"
       />
 
-      <!-- 历史开黑记录 -->
-      <PartnerStudyHistoryCard :records="history" :loading="historyLoading" />
+      <!-- 历史开黑记录（加载失败：持久错误态 + 重试，不落「还没有开黑记录」空态） -->
+      <div v-if="historyError" class="card space-y-2">
+        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">历史开黑记录</div>
+        <div class="flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+          <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+          <span class="flex-1">{{ historyError }}</span>
+          <button class="btn-ghost !text-xs shrink-0" @click="loadHistory">
+            <RefreshCw :size="14" aria-hidden="true" />
+            重试
+          </button>
+        </div>
+      </div>
+      <PartnerStudyHistoryCard v-else :records="history" :loading="historyLoading" />
     </div>
 
     <!-- 自习室：沉浸式全屏 -->

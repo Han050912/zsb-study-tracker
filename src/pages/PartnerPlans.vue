@@ -11,6 +11,7 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute } from 'vue-router'
 import { communityApi } from '../api/community'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import { useBack } from '../composables/useBack'
 import type { PartnerItem, PartnerPlan, PartnerPlanDetail, PartnerPlanTask } from '../types'
 
@@ -20,6 +21,8 @@ const toast = useToast()
 const confirm = useConfirm()
 
 const loading = ref(true)
+/** 首屏加载失败信息：持久错误态（区别于「还没有协作计划」空态），提供重试 */
+const loadError = ref('')
 const plans = ref<PartnerPlan[]>([])
 const partners = ref<PartnerItem[]>([])
 
@@ -34,19 +37,23 @@ const detailLoading = ref(false)
 const newTaskTitle = ref('')
 const newTaskPhase = ref('')
 
-onMounted(async () => {
+onMounted(load)
+
+async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const [p, l] = await Promise.all([communityApi.partnerPlans(), communityApi.partners()])
     plans.value = p.items
     partners.value = l.partners
     if (newPartner.value && !l.partners.some((x) => x.userId === newPartner.value)) newPartner.value = ''
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
-})
+}
 
 async function loadPlans() {
   try {
@@ -230,8 +237,18 @@ async function removePlan() {
 
     <!-- 列表视图 -->
     <template v-else>
+      <!-- 首屏加载失败：持久错误态 + 重试，不落「还没有协作计划」空态 -->
+      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+        <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+        <span class="flex-1">{{ loadError }}</span>
+        <button class="btn-ghost !text-xs shrink-0" @click="load">
+          <RefreshCw :size="14" aria-hidden="true" />
+          重试
+        </button>
+      </div>
+
       <!-- 新建计划 -->
-      <div class="card space-y-2">
+      <div v-else class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">新建计划</div>
         <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-2">
           还没有搭子，先去<router-link to="/community/partners" class="text-primary-500">搭子页</router-link>添加一位吧
@@ -255,7 +272,7 @@ async function removePlan() {
       </div>
 
       <!-- 计划列表 -->
-      <div class="card space-y-2">
+      <div v-if="!loadError" class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">我的计划（{{ plans.length }}）</div>
         <div v-if="!plans.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
           还没有协作计划，在上方创建一个吧

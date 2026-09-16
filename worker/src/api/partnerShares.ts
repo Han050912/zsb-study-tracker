@@ -10,13 +10,13 @@ import { allocateSeq } from './sync'
 const nowSec = () => Math.floor(Date.now() / 1000)
 
 /** 校验 owner 是否开启了搭子数据共享（创建分享、他人查看均需 owner 开启） */
-async function assertShareEnabled(env: Env, ownerId: string) {
+async function assertShareEnabled(env: Env, ownerId: string, message = '分享者未开放学习数据共享') {
   const s = await first<{ partner_share_enabled: number }>(
     env,
     `SELECT partner_share_enabled FROM user_settings WHERE user_id = ?`,
     ownerId
   )
-  if (!s?.partner_share_enabled) throw new HttpError(403, '分享者未开放学习数据共享')
+  if (!s?.partner_share_enabled) throw new HttpError(403, message)
 }
 
 /**
@@ -100,7 +100,8 @@ export function registerPartnerShareRoutes() {
     if (partnerId === ctx.userId) throw new HttpError(400, '不能分享给自己')
 
     await assertPartner(ctx.env, ctx.userId, partnerId)
-    await assertShareEnabled(ctx.env, ctx.userId)
+    // 创建分享时 owner 即当前用户，文案直指本人；查看侧（assertShareVisible）仍用「分享者」口径
+    await assertShareEnabled(ctx.env, ctx.userId, '你尚未开启『允许搭子查看我的学习数据』')
     await getItem(ctx.env, itemType, itemId, ctx.userId)
 
     // 防止重复分享同一内容给同一搭子：未强制时返回重复信号由前端二次确认；force 时允许重复分享

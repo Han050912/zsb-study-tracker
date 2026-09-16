@@ -12,6 +12,7 @@ import { useConfirm } from '../composables/useConfirm'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { communityApi } from '../api/community'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import { useBack } from '../composables/useBack'
 import type { PartnerItem, PartnerReview } from '../types'
 
@@ -21,6 +22,8 @@ const toast = useToast()
 const confirm = useConfirm()
 
 const loading = ref(true)
+/** 首屏加载失败信息：持久错误态（区别于「还没有复盘邀约」空态），提供重试 */
+const loadError = ref('')
 const items = ref<PartnerReview[]>([])
 const partners = ref<PartnerItem[]>([])
 
@@ -46,21 +49,27 @@ function fmtTime(sec: number) {
   return dayjs(sec * 1000).format('MM-DD HH:mm')
 }
 
-onMounted(async () => {
+onMounted(load)
+
+/** 首屏全量加载（邀约 + 搭子）；失败置持久错误态供重试 */
+async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const [r, l] = await Promise.all([communityApi.partnerReviews(), communityApi.partners()])
     items.value = r.items
     partners.value = l.partners
     if (newPartner.value && !l.partners.some((x) => x.userId === newPartner.value)) newPartner.value = ''
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
-})
+}
 
-async function load() {
+/** 操作后的增量刷新：仅拉邀约列表，失败时 toast 不清空现有列表 */
+async function reloadItems() {
   try {
     items.value = (await communityApi.partnerReviews()).items
   } catch (e) {
@@ -88,7 +97,7 @@ async function create() {
     await communityApi.createPartnerReview(newPartner.value, scheduledAt)
     newTime.value = ''
     toast('邀约已发送')
-    await load()
+    await reloadItems()
   } catch (e) {
     toast(getErrorMessage(e, '创建失败'))
   } finally {
@@ -100,7 +109,7 @@ async function accept(r: PartnerReview) {
   try {
     await communityApi.updatePartnerReview(r.id, 'accept')
     toast('已接受邀约')
-    await load()
+    await reloadItems()
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   }
@@ -117,7 +126,7 @@ async function complete(r: PartnerReview) {
     completingId.value = ''
     noteText.value = ''
     toast('复盘已完成')
-    await load()
+    await reloadItems()
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   }
@@ -129,7 +138,7 @@ async function cancel(r: PartnerReview) {
     await communityApi.deletePartnerReview(r.id)
     if (completingId.value === r.id) completingId.value = ''
     toast('已取消')
-    await load()
+    await reloadItems()
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   }
@@ -144,8 +153,18 @@ async function cancel(r: PartnerReview) {
     <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
 
     <template v-else>
+      <!-- 首屏加载失败：持久错误态 + 重试，不落「还没有复盘邀约」空态 -->
+      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+        <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+        <span class="flex-1">{{ loadError }}</span>
+        <button class="btn-ghost !text-xs shrink-0" @click="load">
+          <RefreshCw :size="14" aria-hidden="true" />
+          重试
+        </button>
+      </div>
+
       <!-- 新建邀约 -->
-      <div class="card space-y-2">
+      <div v-else class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">新建复盘邀约</div>
         <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-2">
           还没有搭子，先去<router-link to="/community/partners" class="text-primary-500">搭子页</router-link>添加一位吧
@@ -163,7 +182,7 @@ async function cancel(r: PartnerReview) {
       </div>
 
       <!-- 邀约列表 -->
-      <div class="card space-y-2">
+      <div v-if="!loadError" class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">我的邀约（{{ items.length }}）</div>
         <div v-if="!items.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
           还没有复盘邀约，在上方发起一个吧

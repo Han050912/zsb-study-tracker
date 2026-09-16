@@ -5,6 +5,7 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { communityApi } from '../api/community'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import PartnerWeeklyModal from '../components/partner/PartnerWeeklyModal.vue'
 import { useBack } from '../composables/useBack'
@@ -19,6 +20,8 @@ const suggestions = ref<PartnerSuggestion[]>([])
 const incoming = ref<PartnerItem[]>([])
 const partners = ref<PartnerItem[]>([])
 const loading = ref(false)
+/** 列表加载失败信息：持久错误态（区别于「还没有搭子」空态），提供重试 */
+const loadError = ref('')
 
 onMounted(async () => {
   await load()
@@ -31,13 +34,15 @@ onMounted(async () => {
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const [s, l] = await Promise.all([communityApi.partnerSuggestions(), communityApi.partners()])
     suggestions.value = s.suggestions
     incoming.value = l.incoming
     partners.value = l.partners
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
@@ -228,7 +233,16 @@ async function addPartner(userId: string) {
           </div>
           <button class="ml-auto btn-ghost !text-xs" @click="router.push('/partners/shares')">搭子分享 →</button>
         </div>
-        <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">
+        <!-- 加载失败：持久错误态 + 重试，不落「还没有搭子」空态 -->
+        <div v-if="loadError" class="flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+          <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+          <span class="flex-1">{{ loadError }}</span>
+          <button class="btn-ghost !text-xs shrink-0" @click="load">
+            <RefreshCw :size="14" aria-hidden="true" />
+            重试
+          </button>
+        </div>
+        <div v-else-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">
           还没有搭子，去下方推荐里找一个吧
         </div>
         <div
@@ -257,7 +271,16 @@ async function addPartner(userId: string) {
       <!-- 推荐 -->
       <div class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">为你推荐</div>
-        <div v-if="!suggestions.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">
+        <!-- 加载失败：持久错误态 + 重试，不落「暂无可推荐的搭子」空态 -->
+        <div v-if="loadError" class="flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+          <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+          <span class="flex-1">{{ loadError }}</span>
+          <button class="btn-ghost !text-xs shrink-0" @click="load">
+            <RefreshCw :size="14" aria-hidden="true" />
+            重试
+          </button>
+        </div>
+        <div v-else-if="!suggestions.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">
           暂无可推荐的搭子
         </div>
         <div
