@@ -14,12 +14,15 @@ const store = useAppStore()
 const toast = useToast()
 
 const maimemoToken = ref('') // 不回显明文；已配置状态见 store.settings.maimemoConnected
+const saving = ref(false)
 async function saveMaimemoToken() {
+  if (saving.value) return
   const raw = maimemoToken.value.trim()
   if (!raw) {
     toast('请输入墨墨开放 API Token')
     return
   }
+  saving.value = true
   store.updateSettings({ maimemoToken: raw })
   // 立即推送到云端（Worker 加密存储），不等待防抖；此处只改 settings（maimemoToken），无其它切片联动
   const ok = await store.saveAsync()
@@ -28,7 +31,13 @@ async function saveMaimemoToken() {
     store.updateSettings({ maimemoToken: undefined, maimemoConnected: true })
     maimemoToken.value = ''
     toast('墨墨 Token 已保存')
+  } else {
+    // 失败路径不保留明文：立即清空 store 中的 Token 并重新 stage（覆盖 outbox 中已落盘的明文），
+    // 输入框内容保留，用户可直接点击「保存」重试
+    store.updateSettings({ maimemoToken: undefined })
+    toast('墨墨 Token 保存失败，请检查网络后重试')
   }
+  saving.value = false
 }
 </script>
 
@@ -52,7 +61,9 @@ async function saveMaimemoToken() {
             : '墨墨开放 API Token（App：我的→更多设置→实验功能→开放 API）'
         "
       />
-      <button class="btn-ghost shrink-0" @click="saveMaimemoToken">保存</button>
+      <button class="btn-ghost shrink-0" :disabled="saving" @click="saveMaimemoToken">
+        {{ saving ? '保存中…' : '保存' }}
+      </button>
     </div>
     <button class="btn-primary w-full" :disabled="syncing" @click="emit('sync')">
       {{ syncing ? '同步中…' : '同步墨墨今日背诵数据' }}

@@ -92,6 +92,14 @@
                 >
                   成员
                 </span>
+                <!-- 访客：详情需登录（成员名单敏感），提前标注避免点击后才被跳到登录页 -->
+                <span
+                  v-if="!isLoggedIn"
+                  class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-xs rounded"
+                >
+                  <Lock :size="12" aria-hidden="true" />
+                  登录后可查看详情
+                </span>
               </div>
               <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ team.description || '暂无描述' }}</p>
               <div class="flex items-center space-x-4 mt-3 text-xs text-gray-500 dark:text-gray-400">
@@ -189,6 +197,7 @@ import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
 import { getTeams, createTeam, getTeamByInvite } from '../api/teams'
 import { isLoggedIn, requireLogin } from '../services/auth'
+import { Lock } from '@lucide/vue'
 import type { StudyTeam } from '../types'
 import Modal from '../components/Modal.vue'
 

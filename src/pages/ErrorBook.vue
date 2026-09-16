@@ -29,6 +29,13 @@ const list = computed(() => {
   return l
 })
 
+const hasFilter = computed(() => !!filterSubject.value || showOnlyUnmastered.value)
+
+function clearFilters() {
+  filterSubject.value = ''
+  showOnlyUnmastered.value = false
+}
+
 const showModal = ref(false)
 const form = ref({ subjectId: 'math', chapter: '', type: '选择', content: '', answer: '', image: '' })
 
@@ -219,7 +226,13 @@ async function removeError(id: string) {
       </label>
     </div>
 
-    <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">暂无错题，继续保持！</div>
+    <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">
+      <template v-if="hasFilter">
+        <p>没有符合条件的错题</p>
+        <button class="mt-2 text-xs text-primary-500 hover:underline" @click="clearFilters">清除筛选</button>
+      </template>
+      <template v-else>暂无错题，继续保持！</template>
+    </div>
 
     <div class="space-y-3">
       <div v-for="q in list" :key="q.id" class="card" :class="q.mastered ? 'opacity-60' : ''">

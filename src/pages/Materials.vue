@@ -30,6 +30,13 @@ const list = computed(() => {
   return l
 })
 
+const hasFilter = computed(() => !!filterType.value || !!filterSubject.value)
+
+function clearFilters() {
+  filterType.value = ''
+  filterSubject.value = ''
+}
+
 const showModal = ref(false)
 const form = ref<Partial<Material>>({ type: 'book', priority: '中' })
 function open(m?: Material) {
@@ -185,7 +192,11 @@ const priorityColor: Record<string, string> = {
     </div>
 
     <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">
-      资料库空空如也，添加你的第一本教材吧
+      <template v-if="hasFilter">
+        <p>没有符合条件的资料</p>
+        <button class="mt-2 text-xs text-primary-500 hover:underline" @click="clearFilters">清除筛选</button>
+      </template>
+      <template v-else>资料库空空如也，添加你的第一本教材吧</template>
     </div>
 
     <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">

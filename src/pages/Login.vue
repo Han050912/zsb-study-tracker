@@ -87,6 +87,7 @@ async function submit() {
     errorMsg.value = '密码需为 8-14 位且包含字母和数字'
     return
   }
+  // 未完成验证或令牌过期（expired-callback 清空 token）时按钮仍可点，统一在提交时给出明确提示
   if (!isDesktop && !turnstileToken.value) {
     errorMsg.value = '请先完成人机验证'
     return
@@ -104,7 +105,15 @@ async function submit() {
     const redirect = sanitizeInternalPath(route.query.redirect) ?? '/'
     router.replace(redirect)
   } catch (e) {
-    errorMsg.value = getErrorMessage(e, '操作失败，请重试')
+    const msg = getErrorMessage(e, '操作失败，请重试')
+    // 桌面端没有 Turnstile 组件，人机验证完全依赖 X-Desktop-Token：
+    // 服务端仍报「缺少人机验证令牌/人机验证失败」时，说明构建期 Token 未注入或与服务端 Secret 不一致，
+    // 按「完成验证」的原提示用户无法自救，映射为可操作的更新客户端提示
+    if (isDesktop && msg.includes('人机验证')) {
+      errorMsg.value = '客户端与服务器认证配置不一致，请更新客户端'
+    } else {
+      errorMsg.value = msg
+    }
     turnstileWidget.value?.reset()
   } finally {
     loading.value = false
@@ -263,11 +272,7 @@ async function submit() {
             <span></span>{{ errorMsg }}
           </div>
 
-          <button
-            type="submit"
-            class="btn-primary w-full !py-2.5"
-            :disabled="loading || (!isDesktop && !turnstileToken)"
-          >
+          <button type="submit" class="btn-primary w-full !py-2.5" :disabled="loading">
             {{ loading ? '请稍候…' : mode === 'login' ? '登 录' : '注册并登录' }}
           </button>
         </form>

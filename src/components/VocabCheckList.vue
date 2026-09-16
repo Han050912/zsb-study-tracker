@@ -346,8 +346,8 @@ function inputClass(w: AnswerState): string {
           </button>
         </div>
 
-        <!-- 加载骨架 -->
-        <div v-else-if="loading" class="space-y-2.5">
+        <!-- 加载骨架（仅在无已加载数据时显示；有数据时刷新只置灰保留原列表） -->
+        <div v-else-if="loading && !words.length" class="space-y-2.5">
           <div v-for="i in 5" :key="i" class="h-[72px] rounded-2xl bg-white/60 dark:bg-slate-700/40 animate-pulse" />
         </div>
 
