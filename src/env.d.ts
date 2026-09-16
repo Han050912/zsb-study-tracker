@@ -19,22 +19,23 @@ interface Window {
     check: () => void
     download: () => void
     install: () => void
+    /** 订阅更新事件，返回取消订阅函数（组件卸载时调用，避免回调叠加） */
     onAvailable: (
       cb: (info: { version: string; releaseName: string; releaseNotes: string; releaseDate: string }) => void
-    ) => void
+    ) => () => void
     onProgress: (
       cb: (p: { percent: number; transferred: number; total: number; bytesPerSecond: number }) => void
-    ) => void
-    onDownloaded: (cb: (info: { version: string }) => void) => void
-    onError: (cb: (msg: string) => void) => void
+    ) => () => void
+    onDownloaded: (cb: (info: { version: string }) => void) => () => void
+    onError: (cb: (msg: string) => void) => () => void
   }
   desktopNotify?: {
     available: boolean
     /** icon 为 data URL（渲染进程已下载），主进程用 nativeImage.createFromDataURL 解析 */
     show: (title: string, body: string, icon?: string) => void
   }
-  /** 托盘菜单导航桥接：主进程 IPC 触发页面跳转 */
+  /** 托盘菜单导航桥接：主进程 IPC 触发页面跳转；onNav 返回取消订阅函数 */
   nav?: {
-    onNav: (cb: (route: { path: string; query?: Record<string, string> }) => void) => void
+    onNav: (cb: (route: { path: string; query?: Record<string, string> }) => void) => () => void
   }
 }

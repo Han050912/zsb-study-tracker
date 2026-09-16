@@ -8,21 +8,26 @@ export function useUnreadPolling() {
   const community = useCommunityStore()
 
   let unreadTimer: ReturnType<typeof setInterval> | null = null
-  /** 本轮未读拉取是否仍在飞：弱网下 30s 定时器与 visibilitychange 补拉会叠加，已有在飞请求时直接跳过 */
-  let unreadInFlight = false
+  /** 本轮未读拉取的中止令牌（单飞）：新一轮发起前 abort 上一轮，旧轮结果作废不回写，
+   *  保证任意时刻仅最新一轮生效且数据最新（弱网下 30s 定时器与 visibilitychange 补拉不再叠加） */
+  let unreadController: AbortController | null = null
   /** 消息未读数（私信模块独立，不与通知未读混算） */
   const messageUnread = ref(0)
   function fetchUnread() {
-    if (unreadInFlight) return
-    unreadInFlight = true
+    unreadController?.abort()
+    const controller = new AbortController()
+    unreadController = controller
     void Promise.allSettled([
       community.fetchUnreadCount(),
       communityApi.messageUnreadCount().then((r) => {
+        // 旧轮已被新一轮 abort：响应晚到也作废，不覆盖最新一轮的数据
+        if (controller.signal.aborted) return
         // 慢网下响应可能晚于登出到达，回写前校验登录态，避免显示上一账号的未读数
         if (isLoggedIn.value) messageUnread.value = r.count
       })
     ]).finally(() => {
-      unreadInFlight = false
+      // 仅当仍是本轮的令牌时才清空（新一轮可能已接管），避免误清最新一轮
+      if (unreadController === controller) unreadController = null
     })
   }
   function startUnreadTimer() {
@@ -52,6 +57,9 @@ export function useUnreadPolling() {
   }
   function stopUnreadPolling() {
     stopUnreadTimer()
+    // 登出/卸载时中止在飞轮次：旧响应即使晚到也作废
+    unreadController?.abort()
+    unreadController = null
     document.removeEventListener('visibilitychange', onUnreadVisibilityChange)
     window.removeEventListener('message:read', onMessageRead)
   }

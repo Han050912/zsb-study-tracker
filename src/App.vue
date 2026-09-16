@@ -51,17 +51,22 @@ function applyTheme() {
 // 主题在补水完成后才随 settings.theme 从云端就位，且 index.html 会先按 prefers-color-scheme 预置 dark 类，
 // 因此必须 watch 而不是只在 onMounted 应用一次（immediate 负责用用户显式选择的主题纠正预置值）
 watch(() => store.settings.theme, applyTheme, { immediate: true })
+// 系统主题跟随：保存 MediaQueryList 引用，卸载时成对移除 change 监听
+let darkSchemeMql: MediaQueryList | null = null
 onMounted(() => {
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme)
+  darkSchemeMql = window.matchMedia('(prefers-color-scheme: dark)')
+  darkSchemeMql.addEventListener('change', applyTheme)
 })
 
 // 401 登录过期：清空会话与内存中的用户数据，防止串号到下一个登录的账号
 // （logout 置空 currentUser → isLoggedIn 变 false → 触发未读轮询停止）
-window.addEventListener('auth:expired', () => {
+// 命名函数：App 卸载时需按同一引用成对移除
+function onAuthExpired() {
   logout()
   store.resetState()
   community.resetState()
-})
+}
+window.addEventListener('auth:expired', onAuthExpired)
 
 const dndActive = computed(() => isDndActive(store.settings))
 
@@ -124,9 +129,18 @@ async function accountLogout(switchAccount: boolean) {
 }
 
 // Electron IPC: 托盘菜单触发页面导航
-if (window.nav) {
-  window.nav.onNav((route) => router.push(route))
-}
+// （preload 的 onNav 返回取消订阅函数；window.nav 的全局类型声明尚未标注返回值，
+//  此处局部收窄，避免为改类型越权动 src/env.d.ts）
+const navBridge = window.nav as
+  { onNav: (cb: (route: { path: string; query?: Record<string, string> }) => void) => () => void } | undefined
+const offNav = navBridge?.onNav((route) => router.push(route))
+
+onUnmounted(() => {
+  window.removeEventListener('auth:expired', onAuthExpired)
+  darkSchemeMql?.removeEventListener('change', applyTheme)
+  darkSchemeMql = null
+  offNav?.()
+})
 </script>
 
 <template>

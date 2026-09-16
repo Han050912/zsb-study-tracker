@@ -26,10 +26,10 @@ const updater = (window as any).updater as
       check: () => void
       download: () => void
       install: () => void
-      onAvailable: (cb: (info: UpdateInfo) => void) => void
-      onProgress: (cb: (p: { percent: number }) => void) => void
-      onDownloaded: (cb: (info: { version: string }) => void) => void
-      onError: (cb: (msg: string) => void) => void
+      onAvailable: (cb: (info: UpdateInfo) => void) => () => void
+      onProgress: (cb: (p: { percent: number }) => void) => () => void
+      onDownloaded: (cb: (info: { version: string }) => void) => () => void
+      onError: (cb: (msg: string) => void) => () => void
     }
   | undefined
 
@@ -120,34 +120,41 @@ const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close, {
   panel: () => panelRef.value
 })
 
+// IPC 订阅的取消函数：组件卸载时统一调用，防止重复挂载时 ipcRenderer 监听器累积泄漏
+const unsubscribes: Array<() => void> = []
+
 onMounted(() => {
   if (!updater) return
-  updater.onAvailable((i) => {
-    info.value = i
-    stage.value = 'idle'
-    percent.value = 0
-    errorMsg.value = ''
-    show.value = true
-  })
-  updater.onProgress((p) => {
-    percent.value = Math.min(100, Math.max(0, Math.round(p.percent)))
-  })
-  updater.onDownloaded(() => {
-    stage.value = 'downloaded'
-  })
-  updater.onError((msg) => {
-    if (show.value) {
-      // 下载阶段出错：回到待确认态并提示，可重试
+  unsubscribes.push(
+    updater.onAvailable((i) => {
+      info.value = i
       stage.value = 'idle'
-      errorMsg.value = `下载失败：${msg}`
-    } else {
-      // 弹窗未打开（如手动检查更新时失败），也提示用户
-      toast(`检查更新失败：${msg}`)
-    }
-  })
+      percent.value = 0
+      errorMsg.value = ''
+      show.value = true
+    }),
+    updater.onProgress((p) => {
+      percent.value = Math.min(100, Math.max(0, Math.round(p.percent)))
+    }),
+    updater.onDownloaded(() => {
+      stage.value = 'downloaded'
+    }),
+    updater.onError((msg) => {
+      if (show.value) {
+        // 下载阶段出错：回到待确认态并提示，可重试
+        stage.value = 'idle'
+        errorMsg.value = `下载失败：${msg}`
+      } else {
+        // 弹窗未打开（如手动检查更新时失败），也提示用户
+        toast(`检查更新失败：${msg}`)
+      }
+    })
+  )
 })
 
 onBeforeUnmount(() => {
+  unsubscribes.forEach((off) => off())
+  unsubscribes.length = 0
   show.value = false
 })
 </script>
