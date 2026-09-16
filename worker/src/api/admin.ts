@@ -2,7 +2,7 @@ import type { Env } from '../index'
 import { on, body } from '../router'
 import { all, first, batch, run, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
-import { notifyStatement, postCascadeStatements, commentCascadeStatements } from './community'
+import { notifyStatement, postCascadeStatements, commentCascadeStatements, parseCursor } from './community'
 import { deleteUploads, uploadIdsOf } from './uploads'
 import { assertCleanAsync } from './sensitive'
 
@@ -174,10 +174,24 @@ export function registerAdminRoutes() {
     return Response.json({ isHidden: !!next })
   })
 
-  // 举报队列（仅待处理；附目标内容快照，目标已被删除时 target 为 null）
+  // 举报队列（仅待处理；附目标内容快照，目标已被删除时 target 为 null。
+  // 游标分页 P5-04：原 LIMIT 100 单页，队列积压超过 100 条时旧举报不可达）
   on('GET', '/api/admin/reports', true, async (ctx) => {
     await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 100, 1), 200)
+    const cursor = url.searchParams.get('cursor') || ''
+    const c = cursor ? parseCursor(cursor) : null
+    if (cursor && !c) throw new HttpError(400, '分页游标无效，请刷新后重试')
+
+    let whereSql = `WHERE r.status = 'pending'`
+    const params: unknown[] = []
+    if (c) {
+      // 升序流的键集条件：created_at 大于游标（并列时 id 更大）
+      whereSql += ' AND (r.created_at > ? OR (r.created_at = ? AND r.id > ?))'
+      params.push(c.ts, c.ts, c.id)
+    }
     const rows = await all<any>(
       ctx.env,
       `
@@ -185,10 +199,17 @@ export function registerAdminRoutes() {
       FROM community_reports r
       JOIN users ru ON ru.id = r.reporter_id
       LEFT JOIN user_settings rs ON rs.user_id = r.reporter_id
-      WHERE r.status = 'pending'
-      ORDER BY r.created_at ASC
-      LIMIT 100`
+      ${whereSql}
+      ORDER BY r.created_at ASC, r.id ASC
+      LIMIT ?`,
+      ...params,
+      limit + 1
     )
+    const hasMore = rows.length > limit
+    const last = rows[limit - 1]
+    const nextCursor = hasMore && last ? `${last.created_at}_${last.id}` : null
+    rows.length = Math.min(rows.length, limit)
+
     const postIds = rows.filter((r) => r.target_type === 'post').map((r) => r.target_id)
     const commentIds = rows.filter((r) => r.target_type === 'comment').map((r) => r.target_id)
     const messageIds = rows.filter((r) => r.target_type === 'message').map((r) => r.target_id)
@@ -232,6 +253,8 @@ export function registerAdminRoutes() {
     const commentMap = new Map(comments.map((c) => [c.id, c]))
     const messageMap = new Map(messages.map((m) => [m.id, m]))
     return Response.json({
+      hasMore,
+      nextCursor,
       reports: rows.map((r) => {
         const t =
           r.target_type === 'post'

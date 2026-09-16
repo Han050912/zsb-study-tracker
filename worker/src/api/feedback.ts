@@ -5,7 +5,7 @@ import { all, first, run, batch, uid, HttpError } from '../db'
 import { parseBody } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
 import { assertCleanAsync } from './sensitive'
-import { displayName, notifyStatement } from './community'
+import { displayName, notifyStatement, parseCursor } from './community'
 import { requireAdmin } from './admin'
 import { githubFetch } from './github'
 
@@ -192,13 +192,28 @@ export function registerFeedbackRoutes() {
     return Response.json({ id }, { status: 201 })
   })
 
-  // 管理员：反馈列表（?status=pending|resolved 可选筛选）
+  // 管理员：反馈列表（?status=pending|resolved 可选筛选；游标分页 P5-04：原 LIMIT 100 单页无游标）
   on('GET', '/api/admin/feedback', true, async (ctx) => {
     await rateLimit(ctx, 'admin', 20)
     await requireAdmin(ctx)
-    const status = new URL(ctx.request.url).searchParams.get('status')
+    const url = new URL(ctx.request.url)
+    const status = url.searchParams.get('status')
     const filtered = status === 'pending' || status === 'resolved'
-    const where = filtered ? 'WHERE f.status = ?' : ''
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 100, 1), 200)
+    const cursor = url.searchParams.get('cursor') || ''
+    const c = cursor ? parseCursor(cursor) : null
+    if (cursor && !c) throw new HttpError(400, '分页游标无效，请刷新后重试')
+
+    const where: string[] = []
+    const params: unknown[] = []
+    if (filtered) {
+      where.push('f.status = ?')
+      params.push(status)
+    }
+    if (c) {
+      where.push('(f.created_at < ? OR (f.created_at = ? AND f.id < ?))')
+      params.push(c.ts, c.ts, c.id)
+    }
     const rows = await all<FeedbackRow>(
       ctx.env,
       `
@@ -206,12 +221,16 @@ export function registerFeedbackRoutes() {
       FROM feedback f
       JOIN users u ON u.id = f.user_id
       LEFT JOIN user_settings rs ON rs.user_id = f.user_id
-      ${where}
-      ORDER BY f.created_at DESC
-      LIMIT 100`,
-      ...(filtered ? [status] : [])
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY f.created_at DESC, f.id DESC
+      LIMIT ?`,
+      ...params,
+      limit + 1
     )
-    return Response.json({ feedbacks: rows.map(toFeedback) })
+    const hasMore = rows.length > limit
+    const last = rows[limit - 1]
+    const nextCursor = hasMore && last ? `${last.created_at}_${last.id}` : null
+    return Response.json({ feedbacks: rows.slice(0, limit).map(toFeedback), hasMore, nextCursor })
   })
 
   // 管理员：更新反馈状态（pending ↔ resolved）

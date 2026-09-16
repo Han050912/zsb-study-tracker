@@ -2,7 +2,7 @@ import type { Env } from '../index'
 import { on, body } from '../router'
 import { all, first, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
-import { displayName, notifyStatement } from './community'
+import { displayName, notifyStatement, parseCursor } from './community'
 import { assertPartner, currentPartnerIds } from './partners'
 import { readNoteBody } from './noteBodies'
 import { allocateSeq } from './sync'
@@ -132,8 +132,32 @@ export function registerPartnerShareRoutes() {
     return Response.json({ id }, { status: 201 })
   })
 
-  // 分享列表：我收到的 + 我发出的
+  // 分享列表：我收到的 + 我发出的（游标分页，P5-04：原 LIMIT 100 硬上限导致旧分享不可达）
   on('GET', '/api/partner-shares', true, async (ctx) => {
+    const url = new URL(ctx.request.url)
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 100, 1), 200)
+    const cursor = url.searchParams.get('cursor') || ''
+    const c = cursor ? parseCursor(cursor) : null
+    if (cursor && !c) throw new HttpError(400, '分页游标无效，请刷新后重试')
+
+    let sql = `
+      SELECT s.*,
+        COALESCE(so.user_name, uo.username) AS owner_name,
+        COALESCE(sp.user_name, up.username) AS partner_name,
+        (SELECT COUNT(*) FROM partner_share_comments c WHERE c.share_id = s.id) AS comment_count
+      FROM partner_shares s
+      LEFT JOIN users uo ON uo.id = s.owner_id
+      LEFT JOIN user_settings so ON so.user_id = s.owner_id
+      LEFT JOIN users up ON up.id = s.partner_id
+      LEFT JOIN user_settings sp ON sp.user_id = s.partner_id
+      WHERE s.owner_id = ? OR s.partner_id = ?`
+    const params: unknown[] = [ctx.userId, ctx.userId]
+    if (c) {
+      sql += ' AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))'
+      params.push(c.ts, c.ts, c.id)
+    }
+    sql += ' ORDER BY s.created_at DESC, s.id DESC LIMIT ?'
+    params.push(limit + 1)
     const rows = await all<{
       id: string
       owner_id: string
@@ -144,30 +168,19 @@ export function registerPartnerShareRoutes() {
       owner_name: string
       partner_name: string
       comment_count: number
-    }>(
-      ctx.env,
-      `
-      SELECT s.*,
-        COALESCE(so.user_name, uo.username) AS owner_name,
-        COALESCE(sp.user_name, up.username) AS partner_name,
-        (SELECT COUNT(*) FROM partner_share_comments c WHERE c.share_id = s.id) AS comment_count
-      FROM partner_shares s
-      LEFT JOIN users uo ON uo.id = s.owner_id
-      LEFT JOIN user_settings so ON so.user_id = s.owner_id
-      LEFT JOIN users up ON up.id = s.partner_id
-      LEFT JOIN user_settings sp ON sp.user_id = s.partner_id
-      WHERE s.owner_id = ? OR s.partner_id = ?
-      ORDER BY s.created_at DESC LIMIT 100
-    `,
-      ctx.userId,
-      ctx.userId
-    )
+    }>(ctx.env, sql, ...params)
+
+    const hasMore = rows.length > limit
+    const last = rows[limit - 1]
+    const nextCursor = hasMore && last ? `${last.created_at}_${last.id}` : null
 
     // 列表口径：只保留对手方仍是当前搭子的分享，解绑后即从列表消失（无「半可用」）
     const partners = await currentPartnerIds(ctx.env, ctx.userId)
     return Response.json({
       received: rows.filter((r) => r.partner_id === ctx.userId && partners.has(r.owner_id)).map(mapShare),
-      sent: rows.filter((r) => r.owner_id === ctx.userId && partners.has(r.partner_id)).map(mapShare)
+      sent: rows.filter((r) => r.owner_id === ctx.userId && partners.has(r.partner_id)).map(mapShare),
+      hasMore,
+      nextCursor
     })
   })
 

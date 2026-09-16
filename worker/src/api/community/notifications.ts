@@ -111,7 +111,8 @@ export function registerNotificationsRoutes() {
       items: rows.slice(0, limit).map(mapNotification),
       unreadCount: unread?.n ?? 0,
       unreadExcludingMuted,
-      nextCursor
+      nextCursor,
+      hasMore: rows.length > limit
     })
   })
 

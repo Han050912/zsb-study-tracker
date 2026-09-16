@@ -55,6 +55,7 @@ export interface FeedQuery {
 export interface FeedResult {
   posts: CommunityPost[]
   nextCursor: string | null
+  hasMore?: boolean
 }
 
 export interface PostDetail {
@@ -67,6 +68,7 @@ export interface NotificationResult {
   unreadCount: number
   unreadExcludingMuted: number
   nextCursor: string | null
+  hasMore?: boolean
 }
 
 /** 单张图片上限 5MB，与 worker/src/api/uploads.ts 保持一致 */
@@ -346,7 +348,8 @@ export const communityApi = {
     request<{ isFeatured: boolean }>(`/api/admin/posts/${id}/feature`, { method: 'PUT' }),
   adminHidePost: (id: string) => request<{ isHidden: boolean }>(`/api/admin/posts/${id}/hide`, { method: 'PUT' }),
   adminHideComment: (id: string) => request<{ isHidden: boolean }>(`/api/admin/comments/${id}/hide`, { method: 'PUT' }),
-  adminReports: () => request<{ reports: AdminReport[] }>('/api/admin/reports'),
+  adminReports: () =>
+    request<{ reports: AdminReport[]; hasMore?: boolean; nextCursor?: string | null }>('/api/admin/reports'),
   adminResolveReport: (id: string, action: 'hide' | 'delete' | 'reject', reason?: string) =>
     request<{ ok: boolean }>(`/api/admin/reports/${id}/resolve`, {
       method: 'PUT',
@@ -400,7 +403,10 @@ export const communityApi = {
       method: 'POST',
       body: JSON.stringify({ partnerId, itemType, itemId, force })
     }),
-  partnerShares: () => request<{ received: PartnerShareItem[]; sent: PartnerShareItem[] }>('/api/partner-shares'),
+  partnerShares: () =>
+    request<{ received: PartnerShareItem[]; sent: PartnerShareItem[]; hasMore?: boolean; nextCursor?: string | null }>(
+      '/api/partner-shares'
+    ),
   partnerShare: (id: string) => request<PartnerShareDetail>(`/api/partner-shares/${id}`),
   addShareComment: (shareId: string, content: string) =>
     request<{ id: string }>(`/api/partner-shares/${shareId}/comments`, {

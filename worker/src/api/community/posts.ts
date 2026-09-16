@@ -61,6 +61,32 @@ export function firstPostAwardStatements(
   ]
 }
 
+/** 与 SQL 热度表达式同公式的 JS 计算（同序 IEEE 754 运算，结果逐位一致，供键集游标编码） */
+function heatOf(r: { likes_count: number; comments_count: number; created_at: number }, nowTs: number): number {
+  return ((r.likes_count * 2 + r.comments_count * 3 + 1) * 3600.0) / (nowTs - r.created_at + 7200)
+}
+
+/** 热度排序游标解析：`${冻结时刻}_${is_pinned}_${热度}_${created_at}_${id}`；非法返回 null */
+function parseHotCursor(cursor: string): {
+  ts: number
+  pinned: 0 | 1
+  heat: number
+  createdAt: number
+  id: string
+} | null {
+  const p = cursor.split('_')
+  if (p.length !== 5) return null
+  const ts = Number(p[0])
+  const pinned = Number(p[1])
+  const heat = Number(p[2])
+  const createdAt = Number(p[3])
+  const id = p[4]
+  if (![ts, pinned, heat, createdAt].every(Number.isFinite)) return null
+  if (!Number.isInteger(ts) || ts <= 0 || (pinned !== 0 && pinned !== 1)) return null
+  if (!Number.isInteger(createdAt) || createdAt <= 0 || !id) return null
+  return { ts, pinned: pinned as 0 | 1, heat, createdAt, id }
+}
+
 export function registerPostsRoutes() {
   // 帖子列表（游标分页；默认仅广场公开帖，circle 参数显式指定圈内流）
   on('GET', '/api/community/posts', false, async (ctx) => {
@@ -114,31 +140,49 @@ export function registerPostsRoutes() {
       where.push('p.topic_ref IS NULL')
     }
 
-    let sql = `${POST_SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`
     let nextCursor: string | null = null
+    let hasMore: boolean
 
     if (sort === 'hot') {
-      // 热度 = 互动分 / 时间衰减；offset 分页（热度随时间漂移，游标无意义）
-      const offset = Math.max(parseInt(cursor || '') || 0, 0)
-      sql += ` ORDER BY p.is_pinned DESC, (p.likes_count * 2 + p.comments_count * 3 + 1) * 3600.0 / (? - p.created_at + 7200) DESC, p.created_at DESC LIMIT ? OFFSET ?`
-      const rows = await all(ctx.env, sql, ...params, nowSec(), limit + 1, offset)
-      if (rows.length > limit) nextCursor = String(offset + limit)
-      return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor })
+      // 热度 = 互动分 / 时间衰减。热度随时间漂移，键集游标把「请求时刻」冻结进游标，
+      // 同一次翻页会话内排序稳定；相比 OFFSET，深翻页不再逐页退化为全表扫描（P5-04）。
+      // 游标格式：`${冻结时刻}_${is_pinned}_${热度}_${created_at}_${id}`，
+      // 翻页条件为排序键元组 (is_pinned, heat, created_at, id) 在全 DESC 序下小于末行。
+      const c = cursor ? parseHotCursor(cursor) : null
+      if (cursor && !c) throw new HttpError(400, '分页游标无效，请刷新后重试')
+      const ts = c ? c.ts : nowSec()
+      const heat = `(p.likes_count * 2 + p.comments_count * 3 + 1) * 3600.0 / (${ts} - p.created_at + 7200)`
+      if (c) {
+        // 键集条件并入 where（不可直接 sql += ' AND ...'：where 为空时会误挂到最后一个 JOIN 的 ON 上）
+        where.push(
+          `(p.is_pinned < ${c.pinned} OR (p.is_pinned = ${c.pinned} AND (${heat} < ? OR (${heat} = ? AND (p.created_at < ? OR (p.created_at = ? AND p.id < ?))))))`
+        )
+      }
+      const sql = `${POST_SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY p.is_pinned DESC, ${heat} DESC, p.created_at DESC, p.id DESC LIMIT ?`
+      const cursorBinds: unknown[] = c ? [c.heat, c.heat, c.createdAt, c.createdAt, c.id] : []
+      const rows = await all(ctx.env, sql, ...params, ...cursorBinds, limit + 1)
+      hasMore = rows.length > limit
+      if (hasMore) {
+        const last = rows[limit - 1] as any
+        nextCursor = `${ts}_${last.is_pinned}_${heatOf(last, ts)}_${last.created_at}_${last.id}`
+      }
+      return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor, hasMore })
     }
 
     const c = cursor ? parseCursor(cursor) : null
+    if (cursor && !c) throw new HttpError(400, '分页游标无效，请刷新后重试')
     if (c) {
       where.push('(p.created_at < ? OR (p.created_at = ? AND p.id < ?))')
       params.push(c.ts, c.ts, c.id)
-      sql = `${POST_SELECT} WHERE ${where.join(' AND ')}`
     }
-    sql += ' ORDER BY p.is_pinned DESC, p.created_at DESC, p.id DESC LIMIT ?'
+    const sql = `${POST_SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY p.is_pinned DESC, p.created_at DESC, p.id DESC LIMIT ?`
     const rows = await all(ctx.env, sql, ...params, limit + 1)
-    if (rows.length > limit) {
+    hasMore = rows.length > limit
+    if (hasMore) {
       const last = rows[limit - 1] as any
       nextCursor = `${last.created_at}_${last.id}`
     }
-    return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor })
+    return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor, hasMore })
   })
 
   // 帖子详情（含评论列表，前端组装二级树；管理员可见隐藏内容）

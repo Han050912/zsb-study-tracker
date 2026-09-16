@@ -18,6 +18,8 @@ const { goBack } = useBack()
 const toast = useToast()
 
 const reports = ref<AdminReport[]>([])
+/** 服务端还有更多数据未返回（本页一次性渲染，仅提示不翻页） */
+const reportsHasMore = ref(false)
 const loading = ref(true)
 /** 正在确认处理的举报：记录动作与说明 */
 const confirming = ref<{ id: string; action: 'hide' | 'delete' | 'reject' } | null>(null)
@@ -36,6 +38,7 @@ const FB_TYPE_LABEL: Record<Feedback['type'], string> = {
 }
 const feedbacks = ref<Feedback[]>([])
 const feedbackLoading = ref(false)
+const feedbackHasMore = ref(false)
 const feedbackFilter = ref<'all' | FeedbackStatus>('all')
 
 async function loadFeedback() {
@@ -43,6 +46,7 @@ async function loadFeedback() {
   try {
     const res = await feedbackApi.adminList(feedbackFilter.value === 'all' ? undefined : feedbackFilter.value)
     feedbacks.value = res.feedbacks
+    feedbackHasMore.value = !!res.hasMore
   } catch (e) {
     toast(getErrorMessage(e, '加载反馈失败'))
   } finally {
@@ -71,6 +75,7 @@ async function load() {
   try {
     const res = await communityApi.adminReports()
     reports.value = res.reports
+    reportsHasMore.value = !!res.hasMore
   } catch (e) {
     toast(getErrorMessage(e, '加载失败'))
   } finally {
@@ -251,6 +256,9 @@ async function removeHotTopic(id: string) {
             </div>
           </div>
         </div>
+        <div v-if="reportsHasMore" class="text-center text-[10px] text-slate-400 dark:text-slate-500">
+          还有更早的待处理举报未展示
+        </div>
       </div>
     </div>
 
@@ -402,6 +410,9 @@ async function removeHotTopic(id: string) {
               >查看 GitHub Issue →</a
             >
           </div>
+        </div>
+        <div v-if="feedbackHasMore" class="text-center text-[10px] text-slate-400 dark:text-slate-500">
+          还有更早的反馈未展示
         </div>
       </template>
     </div>

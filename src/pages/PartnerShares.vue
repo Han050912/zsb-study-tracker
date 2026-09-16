@@ -22,6 +22,8 @@ const loading = ref(true)
 const loadError = ref('')
 const received = ref<PartnerShareItem[]>([])
 const sent = ref<PartnerShareItem[]>([])
+/** 服务端还有更早的分享未返回（本页一次性渲染，仅提示不翻页） */
+const hasMore = ref(false)
 const tab = ref<'received' | 'sent'>('received')
 
 const list = computed(() => (tab.value === 'received' ? received.value : sent.value))
@@ -35,6 +37,7 @@ async function load() {
     const res = await communityApi.partnerShares()
     received.value = res.received
     sent.value = res.sent
+    hasMore.value = !!res.hasMore
   } catch (e) {
     loadError.value = getErrorMessage(e, '加载失败')
     toast(loadError.value)
@@ -114,6 +117,9 @@ function openPreview(item: PartnerShareItem) {
           </div>
           <span v-if="s.commentCount" class="shrink-0 text-[10px] text-slate-400">{{ s.commentCount }} 条批注</span>
         </button>
+        <div v-if="hasMore" class="text-center text-[10px] text-slate-400 dark:text-slate-500 pt-1">
+          还有更早的分享未展示
+        </div>
       </div>
     </template>
   </div>
