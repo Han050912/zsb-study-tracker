@@ -22,6 +22,9 @@ const RETRY_BASE_DELAY_MS = 100
 /** 连接层瞬时故障的错误码（Node 系统错误与 undici 的错误码） */
 const TRANSIENT_CODES = new Set([
   'ECONNRESET',
+  // undici 在「写入请求体时对端已断开」时抛 ECONNABORTED（dev server 重载 isolate 的典型表现），
+  // 与 ECONNRESET 同属连接层抖动，重试即可恢复
+  'ECONNABORTED',
   'EPIPE',
   'ETIMEDOUT',
   'EAI_AGAIN',

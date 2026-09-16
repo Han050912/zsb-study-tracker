@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import type { Env } from '../index'
 import { on, body } from '../router'
 import { first, HttpError } from '../db'
@@ -36,9 +37,65 @@ export interface SettingsFull {
   partnerRemindEnabled: boolean
 }
 
-/** 昵称/简介唯一校验入口：REST 预校验与记录同步共用，返回 trim 后的新对象。 */
+/**
+ * 通知类型白名单（勿扰屏蔽类型的合法取值）
+ * 其中 'message' 仅为兼容历史设置值保留（私信已不产生通知行，见 messages/unread-count）；
+ * 保留它可让用户设置里历史存储的 dnd_muted_types 中的 'message' 被正常解析，而非被静默丢弃。
+ */
+export const NOTIF_TYPES = ['like', 'comment', 'follow', 'achievement', 'message', 'system', 'partner'] as const
+
+/** 主题取值（对齐前端 `src/types/settings.ts` 的 'light' | 'dark' | 'auto'） */
+export const THEMES = ['light', 'dark', 'auto'] as const
+
+/** 资料可见性取值（对齐前端 `profileVisibility`） */
+const PROFILE_VISIBILITIES = ['public', 'login', 'private'] as const
+
+/**
+ * 设置字段 schema（**单点定义**）：REST `/api/settings/validate` 与记录级同步 settings 域共用同一份
+ * 逐字段类型 / 范围 / 长度 / 枚举校验（issue #39）。
+ *
+ * 字段全部可选：REST 只提交待校验的公开文本字段（userName/bio），记录级同步提交整条设置记录；
+ * 未列出的运行时字段透传（passthrough），D1 bind 只接受标量，对象/数组会被 TypeErrors 报成 500，
+ * 故这里必须提前判成 400 中文提示。
+ */
+export const settingsBodySchema = z
+  .object({
+    userName: z.string().max(30, '昵称最多 30 个字符').optional(),
+    bio: z.string().max(100, '简介最多 100 个字符').optional(),
+    dailyGoalMinutes: z.number().min(0, '每日学习目标不能为负数').optional(),
+    wordGoal: z.number().min(0, '每日单词目标不能为负数').optional(),
+    problemGoal: z.number().min(0, '每日做题目标不能为负数').optional(),
+    examDate: z.string().max(10, '考试日期最多 10 个字符（YYYY-MM-DD）').optional(),
+    theme: z.enum(THEMES, { message: '主题取值无效' }).optional(),
+    reminderEnabled: z.boolean().optional(),
+    reminderTime: z.string().max(8, '提醒时间最多 8 个字符').optional(),
+    quotes: z.array(z.string().max(200, '单条自定义引言最多 200 字')).optional(),
+    maimemoToken: z.string().optional(),
+    onboarded: z.boolean().optional(),
+    joinProgressBoard: z.boolean().optional(),
+    profileVisibility: z.enum(PROFILE_VISIBILITIES, { message: '资料可见性取值无效' }).optional(),
+    avatar: z.string().optional(),
+    doNotDisturb: z.boolean().optional(),
+    dndStartTime: z.string().max(8, '免打扰开始时间最多 8 个字符').optional(),
+    dndEndTime: z.string().max(8, '免打扰结束时间最多 8 个字符').optional(),
+    dndMutedTypes: z.array(z.enum(NOTIF_TYPES, { message: '通知类型无效' })).optional(),
+    dndMuteMessage: z.boolean().optional(),
+    partnerShareEnabled: z.boolean().optional(),
+    partnerRemindEnabled: z.boolean().optional()
+  })
+  .passthrough()
+
+/**
+ * 设置记录校验入口：REST 预校验与记录级同步共用，返回 trim 后的新对象。
+ * 先按 `settingsBodySchema` 做逐字段类型/范围/长度校验（非法一律 400 中文提示），再校验昵称/简介敏感词。
+ */
 export async function validateSettingsPublicText(value: SettingsFull, env: Env): Promise<SettingsFull> {
-  const next = { ...value }
+  const parsed = settingsBodySchema.safeParse(value)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]
+    throw new HttpError(400, `设置参数无效：${issue.path.join('.')} ${issue.message}`)
+  }
+  const next: SettingsFull = { ...value }
   if (typeof next.userName === 'string' && next.userName.trim()) {
     const name = next.userName.trim()
     if (name.length > 30) throw new HttpError(400, '昵称最多 30 个字符')
@@ -64,13 +121,6 @@ function parseQuotes(raw: unknown): string[] | undefined {
     return undefined
   }
 }
-
-/**
- * 通知类型白名单（勿扰屏蔽类型的合法取值）
- * 其中 'message' 仅为兼容历史设置值保留（私信已不产生通知行，见 messages/unread-count）；
- * 保留它可让用户设置里历史存储的 dnd_muted_types 中的 'message' 被正常解析，而非被静默丢弃。
- */
-export const NOTIF_TYPES = ['like', 'comment', 'follow', 'achievement', 'message', 'system', 'partner'] as const
 
 /** 容错解析勿扰屏蔽类型 JSON：非法/损坏时回退空数组 */
 export function parseMutedTypes(raw: unknown): string[] {

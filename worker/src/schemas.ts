@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { HttpError } from './db'
+import { HttpError, JSON_BODY_MAX_BYTES, parseJsonBody } from './db'
 
 // 全局汉化 zod 4 默认错误文案（类型不匹配等未显式指定 message 的 issue 也返回中文）
 z.config(z.locales.zhCN())
@@ -9,14 +9,17 @@ z.config(z.locales.zhCN())
  * DB 查询、敏感词、跨资源所有权、结构化解析一律留在各 handler 内。
  */
 
-/** 解析并校验 JSON 请求体：非法 JSON → 400；schema 不符 → 400（首个 issue 的中文提示）。 */
-export async function parseBody<S extends z.ZodTypeAny>(request: Request, schema: S): Promise<z.infer<S>> {
-  let raw: unknown
-  try {
-    raw = await request.json()
-  } catch {
-    throw new HttpError(400, '请求体不是合法 JSON')
-  }
+/**
+ * 解析并校验 JSON 请求体：非法 JSON → 400；schema 不符 → 400（首个 issue 的中文提示）。
+ * `maxBytes`：端点级上限，默认 `JSON_BODY_MAX_BYTES`（256KB）——不允许任何端点无上限读体（issue #52），
+ * 与 router.ts 的 `body()` 共用 db.parseJsonBody 同一份「Content-Length 预检 + 读取后复核」实现。
+ */
+export async function parseBody<S extends z.ZodTypeAny>(
+  request: Request,
+  schema: S,
+  maxBytes: number = JSON_BODY_MAX_BYTES
+): Promise<z.infer<S>> {
+  const raw: unknown = await parseJsonBody(request, maxBytes)
   const r = schema.safeParse(raw)
   if (!r.success) {
     throw new HttpError(400, r.error.issues[0]?.message || '请求参数无效')

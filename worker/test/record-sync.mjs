@@ -26,14 +26,26 @@
  * - 用例 34：记录删除被接受 → 自动撤销关联流水（records → `<key>`，errorQuestions → `error:<key>`）。
  * - 用例 35：删除 notes → `pdf_chunks` 分片清空；删除 errorQuestions → `error_images` 行 + R2 对象清空
  *   （读取 404），重复删除幂等；同一内容寻址对象仍被其它错题引用时不误删。
- * - 用例 36：points 事件字段非法（未知 op / 非正点数 / 缺 refId 与 refPrefix / revoke 同时给两者）→ 400。
+ * - 用例 36：points 事件的处置口径——**结构性非法**（未知 op / revoke 缺 ref 或同时给两者）
+ *   → 400 中文提示；**award 缺 refId / 未登记 reason / 非法分值形状 → 忽略该事件**
+ *   （200、awarded 为空、不落账），与同批合法事件共存不整批拒绝；
+ *   合法事件照常落账、超额分值只钳制到行为上限。
  * - 用例 37：不变式 `gamification.points === SUM(points_log.points)`。
  * 用户 B 用于积分用例：其学习日期集合完全可控（A 的记录日期为固定造数日期）。
+ * 注意：award 事件的 `reason` 必须在服务端行为白名单内（见 api/gamification.ts 的 AWARD_RULES），
+ * 测试里使用的 reason 均为真实行为（每日打卡 / 完成习惯「…」/ 学习 N 分钟 / 复习错题 等）。
  *
  * T4b 新增（成就列表由服务端并集维护，设计 §5.1/§5.2，用例 38）：
  * - 用例 38：`achievements` 推送字段与 `gamification.achievements` 做**只增不减**的集合并集——
  *   推两个 id → 快照含两者；重复推送同一批（含重复项）→ 集合不变、不重复；再推新 id → 追加且旧的不丢；
  *   与记录变更同批提交；非法（非数组 / 元素非字符串 / 空字符串 / 去重后超 200）→ 400 且不改动已有列表。
+ *
+ * 本批次新增（issue #11 award 语义收敛 + issue #39 记录级字段校验，用例 39）：
+ * - issue #11：未登记 reason / 非法分值形状的 award 事件由「400 整批拒绝」改为「忽略该事件」，
+ *   避免客户端 outbox 里的毒记录永久阻塞该账号全部域的同步（安全目标由白名单 + 上限钳制达成）。
+ * - issue #39：记录级同步的逐字段类型 / 范围 / 长度校验与 REST 侧**共用同一份 zod field schema**
+ *   （单表数组域与 english 四前缀表复用 `mapping.schema`，settings 域复用 `settingsBodySchema`）——
+ *   非法类型此前会被 SQLite 动态类型原样落库或让 D1 bind 抛 TypeError 变 500，现在一律 400 中文提示。
  *
  * 前置：npx wrangler d1 execute zsb-study-db --local --file=./schema.sql && npx wrangler dev --port 8787
  * 运行：SMOKE_DESKTOP_TOKEN=<DESKTOP_TOKEN> node test/record-sync.mjs [baseURL]（默认 http://localhost:8787）
@@ -285,11 +297,12 @@ async function main() {
     JSON.stringify(gamPush.data)
   )
 
-  // points 事件落账（T4 / 设计 §5.1）：按 refId 幂等插入流水，并回传「本次实际发放」条目与权威快照
+  // points 事件落账（T4 / 设计 §5.1）：按 refId 幂等插入流水，并回传「本次实际发放」条目与权威快照。
+  // reason 取真实客户端行为（服务端白名单内，'每日打卡' 上限 10），未登记 reason 会被忽略、不落账
   const pPoints = await push(
     tokenA,
     {},
-    { points: [{ op: 'award', refId: 't1', points: 6, reason: '测试发放', date: '2026-09-12' }] }
+    { points: [{ op: 'award', refId: 't1', points: 6, reason: '每日打卡', date: '2026-09-12' }] }
   )
   check(
     'points 事件且无 domains → 200（applied/versions 为空）',
@@ -302,14 +315,14 @@ async function main() {
   check('award 事件落账（points_log 出现该 ref_id）', logCount(uidA, 't1') === 1, `实际 ${logCount(uidA, 't1')}`)
   check(
     '响应 awarded 含本次实际发放条目',
-    JSON.stringify(pPoints.data?.awarded) === JSON.stringify([{ points: 6, reason: '测试发放' }]),
+    JSON.stringify(pPoints.data?.awarded) === JSON.stringify([{ points: 6, reason: '每日打卡' }]),
     JSON.stringify(pPoints.data?.awarded)
   )
   check('points = SUM(points_log.points)', pointsConsistent(uidA).ok, JSON.stringify(pointsConsistent(uidA)))
   const pPoints2 = await push(
     tokenA,
     {},
-    { points: [{ op: 'award', refId: 't1', points: 6, reason: '测试发放', date: '2026-09-12' }] }
+    { points: [{ op: 'award', refId: 't1', points: 6, reason: '每日打卡', date: '2026-09-12' }] }
   )
   check(
     '重复 award 同 refId → 幂等跳过（awarded 为空、流水仍 1 行）',
@@ -684,7 +697,8 @@ async function main() {
   check('冲突请求未落库', recCount('rc1') === 0, `实际 ${recCount('rc1')}`)
 
   console.log('[用例 19：updatedAt 时钟钳制（超前 > 5 分钟按服务端时间落库）]')
-  const futureAt = Date.now() + 10 * 60_000
+  const before = Date.now()
+  const futureAt = before + 10 * 60_000
   const clampPush = await push(tokenA, {
     materials: { upserts: [material('mtclamp', futureAt, '未来时钟')], deletes: [] }
   })
@@ -692,7 +706,9 @@ async function main() {
   const clampRow = rowOf(`SELECT updated_at FROM materials WHERE user_id = '${uidA}' AND id = 'mtclamp'`)
   check(
     '落库 updated_at 约为服务端当前时间（不是未来值）',
-    !!clampRow && Math.abs(clampRow.updated_at - Date.now()) < 10_000 && clampRow.updated_at < futureAt,
+    // 确定性区间断言：落库值必须「不早于本次请求开始、且严格小于被钳制的未来值」。
+    // 不用墙钟差值容差——rowOf 走 execSync(wrangler d1 execute)，负载下单次就要数秒，任何固定容差都会误报
+    !!clampRow && clampRow.updated_at >= before && clampRow.updated_at < futureAt,
     JSON.stringify(clampRow)
   )
   const normalAt = Date.now() + 1000
@@ -1295,24 +1311,25 @@ async function main() {
       (rowOf(`SELECT COUNT(*) AS n FROM pomodoro_daily WHERE user_id = '${uidA}'`)?.n ?? -1) === 1
   )
 
-  console.log('[用例 28：english 四表 NOT NULL 必填字段缺失 → 400（前置校验，非 SQLite 约束 500）]')
-  const engMissing = async (key, value) =>
+  console.log('[用例 28：english 四表必填字段缺失 / 类型非法 → 400（共用 REST 侧 zod field schema）]')
+  const engBad = async (key, value) =>
     (await push(tokenA, { english: { upserts: [wrap(key, value, at(280))], deletes: [] } })).data?.message
   // 各表 NOT NULL 列见 worker/schema.sql：vocab_records(date/new_words/review_words)、reading_records(date/wpm/accuracy)、
-  // listening_records(date/minutes/material/mode)、essay_templates(title/content)
-  const msgVocab = await engMissing('vocab:vm1', { id: 'vm1', date: '2026-09-10', newWords: 1 })
+  // listening_records(date/minutes/material/mode)、essay_templates(title/content)；
+  // 校验复用 REST 侧同一份 zod schema，故文案为「参数无效：<字段> 无效输入：期望 …，实际接收 …」
+  const msgVocab = await engBad('vocab:vm1', { id: 'vm1', date: '2026-09-10', newWords: 1 })
   check(
     'vocab 缺 reviewWords → 400 中文提示（明确缺哪个字段）',
-    typeof msgVocab === 'string' && /缺少必填字段 reviewWords/.test(msgVocab),
+    typeof msgVocab === 'string' && /reviewWords/.test(msgVocab) && /无效输入/.test(msgVocab),
     String(msgVocab)
   )
-  const msgReading = await engMissing('reading:rm1', { id: 'rm1', date: '2026-09-10', wpm: 100 })
+  const msgReading = await engBad('reading:rm1', { id: 'rm1', date: '2026-09-10', wpm: 100 })
   check(
     'reading 缺 accuracy → 400 中文提示',
-    typeof msgReading === 'string' && /缺少必填字段 accuracy/.test(msgReading),
+    typeof msgReading === 'string' && /accuracy/.test(msgReading) && /无效输入/.test(msgReading),
     String(msgReading)
   )
-  const msgListening = await engMissing('listening:lm1', {
+  const msgListening = await engBad('listening:lm1', {
     id: 'lm1',
     date: '2026-09-10',
     minutes: 10,
@@ -1320,16 +1337,28 @@ async function main() {
   })
   check(
     'listening 缺 mode → 400 中文提示',
-    typeof msgListening === 'string' && /缺少必填字段 mode/.test(msgListening),
+    typeof msgListening === 'string' && /mode/.test(msgListening) && /无效输入/.test(msgListening),
     String(msgListening)
   )
-  const msgTemplate = await engMissing('template:tm1', { id: 'tm1', title: '题目' })
+  const msgTemplate = await engBad('template:tm1', { id: 'tm1', title: '题目' })
   check(
     'template 缺 content → 400 中文提示',
-    typeof msgTemplate === 'string' && /缺少必填字段 content/.test(msgTemplate),
+    typeof msgTemplate === 'string' && /content/.test(msgTemplate) && /无效输入/.test(msgTemplate),
     String(msgTemplate)
   )
-  check('必填字段缺失请求未落库', countIn('vocab_records', 'vm1') === 0 && countIn('essay_templates', 'tm1') === 0)
+  // issue #39 的核心：类型非法不再是「放行后落库」，而是 400
+  const msgWpmType = await engBad('reading:rtype', { id: 'rtype', date: '2026-09-10', wpm: 'abc', accuracy: [1] })
+  check(
+    'reading 类型非法（wpm 字符串 / accuracy 数组）→ 400 且不落库',
+    typeof msgWpmType === 'string' && /wpm/.test(msgWpmType) && countIn('reading_records', 'rtype') === 0,
+    String(msgWpmType)
+  )
+  check(
+    '必填字段缺失请求未落库',
+    countIn('vocab_records', 'vm1') === 0 &&
+      countIn('essay_templates', 'tm1') === 0 &&
+      countIn('reading_records', 'rm1') === 0
+  )
 
   console.log('[用例 29：跨记录隔离护栏（推送/删除一条记录不影响同域其它记录）]')
   // habits：先落 hb2（含打卡），再推送 hb1 的打卡变更 —— hb2 的打卡行数与值必须完全不变
@@ -1568,10 +1597,10 @@ async function main() {
     {},
     {
       points: [
-        { op: 'award', refId: 'bref1', points: 6, reason: '撤销用例', date: today8 },
-        { op: 'award', refId: 'habit:bh1:2026-01-01', points: 2, reason: '习惯打卡', date: '2026-01-01' },
-        { op: 'award', refId: 'habit:bh1:2026-01-02', points: 2, reason: '习惯打卡', date: '2026-01-02' },
-        { op: 'award', refId: 'habit:bh2:2026-01-01', points: 2, reason: '习惯打卡', date: '2026-01-01' }
+        { op: 'award', refId: 'bref1', points: 6, reason: '每日打卡', date: today8 },
+        { op: 'award', refId: 'habit:bh1:2026-01-01', points: 2, reason: '完成习惯「早起晨读」', date: '2026-01-01' },
+        { op: 'award', refId: 'habit:bh1:2026-01-02', points: 2, reason: '完成习惯「早起晨读」', date: '2026-01-02' },
+        { op: 'award', refId: 'habit:bh2:2026-01-01', points: 2, reason: '完成习惯「早起晨读」', date: '2026-01-01' }
       ]
     }
   )
@@ -1610,9 +1639,10 @@ async function main() {
     tokenB,
     {},
     {
+      // 重新发放的 reason 同样必须在白名单内（'每日打卡' 上限 10，故 5 分不被钳制）
       points: [
         { op: 'revoke', refId: 'habit:bh2:2026-01-01' },
-        { op: 'award', refId: 'habit:bh2:2026-01-01', points: 5, reason: '重新完成打卡', date: '2026-01-01' }
+        { op: 'award', refId: 'habit:bh2:2026-01-01', points: 5, reason: '每日打卡', date: '2026-01-01' }
       ]
     }
   )
@@ -1630,7 +1660,7 @@ async function main() {
   const p34 = await push(
     tokenB,
     { records: { upserts: [recOn('bdel1', 5, today8, t34)], deletes: [] } },
-    { points: [{ op: 'award', refId: 'bdel1', points: 4, reason: '学习记录积分', date: today8 }] }
+    { points: [{ op: 'award', refId: 'bdel1', points: 4, reason: '学习 40 分钟', date: today8 }] }
   )
   check(
     '记录与其关联积分同批写入',
@@ -1776,21 +1806,67 @@ async function main() {
     `归属行=${imgRowCount(uidB)}`
   )
 
-  console.log('[用例 36：points 事件校验（未知 op / 非正点数 / 缺 refId 与 refPrefix / revoke 同时给两者）→ 400]')
-  const badPoints = async (ev) => (await push(tokenB, {}, { points: [ev] })).status
-  check('未知 op → 400', (await badPoints({ op: 'banana', refId: 'x', points: 1, reason: 'x' })) === 400)
-  check('points 为 0 → 400', (await badPoints({ op: 'award', refId: 'x', points: 0, reason: 'x' })) === 400)
-  check('points 为负数 → 400', (await badPoints({ op: 'award', refId: 'x', points: -3, reason: 'x' })) === 400)
-  check('points 非整数 → 400', (await badPoints({ op: 'award', refId: 'x', points: 1.5, reason: 'x' })) === 400)
-  check('award 缺 refId → 400', (await badPoints({ op: 'award', points: 3, reason: 'x' })) === 400)
-  check('revoke 同时缺 refId 与 refPrefix → 400', (await badPoints({ op: 'revoke' })) === 400)
+  console.log('[用例 36：points 事件——结构性非法 → 400；未登记 reason / 非法分值形状 → 忽略（不落账、不报错）]')
+  const pushPoints = (ev) => push(tokenB, {}, { points: [ev] })
+  check('未知 op → 400', (await pushPoints({ op: 'banana', refId: 'x', points: 1, reason: '每日打卡' })).status === 400)
+  const noRefId = await pushPoints({ op: 'award', points: 3, reason: '每日打卡' })
+  check(
+    'award 缺 refId → 200 且不落账（无幂等键无法安全入账，忽略该事件）',
+    noRefId.status === 200 && (noRefId.data?.awarded ?? []).length === 0,
+    JSON.stringify(noRefId.data)
+  )
+  check('revoke 同时缺 refId 与 refPrefix → 400', (await pushPoints({ op: 'revoke' })).status === 400)
   check(
     'revoke 同时给 refId 与 refPrefix → 400',
-    (await badPoints({ op: 'revoke', refId: 'x', refPrefix: 'y:' })) === 400
+    (await pushPoints({ op: 'revoke', refId: 'x', refPrefix: 'y:' })).status === 400
   )
-  const badMsg = await push(tokenB, {}, { points: [{ op: 'banana' }] })
+  const badMsg = await pushPoints({ op: 'banana' })
   check('校验文案为中文', /op 只能是 award 或 revoke/.test(badMsg.data?.message ?? ''), String(badMsg.data?.message))
-  check('非法 points 事件未落账', logCount(uidB, 'x') === 0, `实际 ${logCount(uidB, 'x')}`)
+
+  // issue #11 收敛后的口径：未登记 reason / 非法分值形状的 award **被忽略**（不落账、不报错）。
+  // 若沿用「400 整批拒绝」，客户端 outbox 里的这条毒记录会让该账号全部域的同步永久失败
+  const offReason = await pushPoints({ op: 'award', refId: 'offreason', points: 5, reason: '冒烟积分基线' })
+  check(
+    '未登记 reason → 200 且不落账（awarded 为空）',
+    offReason.status === 200 && (offReason.data?.awarded ?? []).length === 0 && logCount(uidB, 'offreason') === 0,
+    JSON.stringify({ status: offReason.status, awarded: offReason.data?.awarded, log: logCount(uidB, 'offreason') })
+  )
+  const BAD_SHAPES = [
+    ['points 为 0', { op: 'award', refId: 'badp0', points: 0, reason: '每日打卡' }],
+    ['points 为负数', { op: 'award', refId: 'badpneg', points: -3, reason: '每日打卡' }],
+    ['points 为小数', { op: 'award', refId: 'badpfrac', points: 1.5, reason: '每日打卡' }],
+    ['points 为字符串', { op: 'award', refId: 'badpstr', points: '6', reason: '每日打卡' }],
+    ['points 缺失', { op: 'award', refId: 'badpmiss', reason: '每日打卡' }],
+    ['reason 非字符串', { op: 'award', refId: 'badrnon', points: 6, reason: { a: 1 } }]
+  ]
+  for (const [label, ev] of BAD_SHAPES) {
+    const r = await pushPoints(ev)
+    check(
+      `分值/行为形状非法（${label}）→ 200 且不落账`,
+      r.status === 200 && (r.data?.awarded ?? []).length === 0 && logCount(uidB, ev.refId) === 0,
+      JSON.stringify({ status: r.status, awarded: r.data?.awarded, log: logCount(uidB, ev.refId) })
+    )
+  }
+  // 非法事件与合法事件同批：后者照常落账（超额只钳制到行为上限 10），不整批拒绝
+  const mixed = await push(
+    tokenB,
+    {},
+    {
+      points: [
+        { op: 'award', refId: 'mixed:off', points: 999, reason: '不在白名单的行为' },
+        { op: 'award', refId: 'mixed:ok', points: 999, reason: '每日打卡', date: today8 }
+      ]
+    }
+  )
+  check(
+    '同批混合：非法事件被忽略、合法事件落账且分值钳制到行为上限（999 → 10）',
+    mixed.status === 200 &&
+      JSON.stringify(mixed.data?.awarded) === JSON.stringify([{ points: 10, reason: '每日打卡' }]) &&
+      logCount(uidB, 'mixed:off') === 0 &&
+      logCount(uidB, 'mixed:ok') === 1,
+    JSON.stringify({ awarded: mixed.data?.awarded, off: logCount(uidB, 'mixed:off'), ok: logCount(uidB, 'mixed:ok') })
+  )
+  check('忽略与钳制后投影仍自洽', pointsConsistent(uidB).ok, JSON.stringify(pointsConsistent(uidB)))
 
   console.log('[用例 37：权威投影不变式 gamification.points === SUM(points_log.points)]')
   for (const [label, uid] of [
@@ -1864,6 +1940,84 @@ async function main() {
     '非法 achievements 未改动已有列表',
     achEqual(uidB, ['first_checkin', 'streak_7', 'streak_30', 'points_100']),
     JSON.stringify(achOf(uidB))
+  )
+
+  // issue #39：记录级同步的逐字段类型 / 范围 / 长度校验与 REST 侧共用同一份 zod field schema
+  console.log('[用例 39：记录级同步逐字段类型 / 范围校验（与 REST 共用 field schema）→ 400 中文提示]')
+  const t39 = at(500)
+  // 单表数组域：minutes 为字符串（此前会被 SQLite 动态类型原样落库）
+  const badMinutes = await push(tokenA, {
+    records: { upserts: [{ ...record('rbad39', 1, t39), minutes: 'abc' }], deletes: [] }
+  })
+  check(
+    'records.minutes 类型非法（字符串）→ 400 且不落库',
+    badMinutes.status === 400 && /minutes/.test(badMinutes.data?.message ?? '') && recCount('rbad39') === 0,
+    `${badMinutes.status} ${String(badMinutes.data?.message)} / ${recCount('rbad39')}`
+  )
+  // 单表数组域：数值字段为对象（D1 bind 会抛 TypeError，此前表现为 500）
+  const badTotal = await push(tokenA, {
+    problemSessions: { upserts: [{ ...problemSession('psbad39', t39), total: { a: 1 } }], deletes: [] }
+  })
+  check(
+    'problemSessions.total 为对象 → 400（而非 500）且不落库',
+    badTotal.status === 400 &&
+      /total/.test(badTotal.data?.message ?? '') &&
+      (rowOf(`SELECT COUNT(*) AS n FROM problem_sessions WHERE user_id = '${uidA}' AND id = 'psbad39'`)?.n ?? -1) === 0,
+    `${badTotal.status} ${String(badTotal.data?.message)}`
+  )
+  // materials.type 为对象：同样是非法类型
+  const badMaterial = await push(tokenA, {
+    materials: { upserts: [{ ...material('mtbad39', t39), type: ['x'] }], deletes: [] }
+  })
+  check(
+    'materials.type 类型非法 → 400',
+    badMaterial.status === 400 && /type/.test(badMaterial.data?.message ?? ''),
+    `${badMaterial.status} ${String(badMaterial.data?.message)}`
+  )
+  // 合法记录不受影响（400 只针对非法类型）
+  const okRecord39 = await push(tokenA, { records: { upserts: [record('rok39', 30, t39)], deletes: [] } })
+  check(
+    '同域合法记录照常生效',
+    okRecord39.status === 200 && okRecord39.data?.applied?.records === 1,
+    JSON.stringify(okRecord39.data?.applied)
+  )
+  // settings 域：bio 为对象（此前只在「是字符串」时校验长度，非字符串直接落库 → D1 TypeError → 500）
+  const settingsTsBefore = rowOf(`SELECT updated_at FROM user_settings WHERE user_id = '${uidA}'`)?.updated_at
+  const badBio = await push(tokenA, {
+    settings: { upserts: [wrap('self', { ...baseSettings, bio: {} }, at(501))], deletes: [] }
+  })
+  check(
+    'settings.self.bio 为对象 → 400（而非 500）且未写入',
+    badBio.status === 400 &&
+      /bio/.test(badBio.data?.message ?? '') &&
+      rowOf(`SELECT updated_at FROM user_settings WHERE user_id = '${uidA}'`)?.updated_at === settingsTsBefore,
+    `${badBio.status} ${String(badBio.data?.message)}`
+  )
+  const badTheme = await push(tokenA, {
+    settings: { upserts: [wrap('self', { ...baseSettings, theme: 'blue' }, at(502))], deletes: [] }
+  })
+  check(
+    'settings.self.theme 枚举非法 → 400 中文提示',
+    badTheme.status === 400 && /主题取值无效/.test(badTheme.data?.message ?? ''),
+    `${badTheme.status} ${String(badTheme.data?.message)}`
+  )
+  const badGoal = await push(tokenA, {
+    settings: { upserts: [wrap('self', { ...baseSettings, dailyGoalMinutes: -1 }, at(503))], deletes: [] }
+  })
+  check(
+    'settings.self.dailyGoalMinutes 为负数 → 400 中文提示',
+    badGoal.status === 400 && /不能为负数/.test(badGoal.data?.message ?? ''),
+    `${badGoal.status} ${String(badGoal.data?.message)}`
+  )
+  // 同批原子性：一个域类型非法 → 合法域也不生效
+  const atomic39 = await push(tokenA, {
+    records: { upserts: [record('ratomic39', 5, at(504))], deletes: [] },
+    todos: { upserts: [{ ...todo('tdatomic39', at(504)), order: 'x' }], deletes: [] }
+  })
+  check(
+    '同批含类型非法域 → 400 且合法域未写入（整批原子）',
+    atomic39.status === 400 && recCount('ratomic39') === 0,
+    `${atomic39.status} / ${recCount('ratomic39')}`
   )
 
   console.log(`\n通过 ${passed} / 失败 ${failed}`)

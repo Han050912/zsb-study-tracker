@@ -27,6 +27,21 @@ function d1(sql) {
   }).toString()
 }
 
+/**
+ * 直接向本地 D1 种入积分基线流水（黄金档 ≥1500 → 无发帖冷却），并同步权威投影。
+ * 不能用 /api/data/push 的 points award 事件伪造该基线：服务端白名单只接受真实行为 reason（issue #11），
+ * 「冒烟积分基线」不在册、该事件会被忽略（不落账）；直接种入的历史流水不参与撤销、也不依赖白名单。
+ * gamification.points 是 points_log 的投影（SUM(points)），故同时对齐，供 pull 快照与冷却分档读取。
+ */
+function seedPointsBaseline(userId, points = POINTS_BASE, refId = 'smoke:baseline') {
+  d1(
+    `INSERT INTO points_log (user_id, date, points, reason, ref_id) VALUES ('${userId}', '2026-01-01', ${points}, '冒烟积分基线', '${refId}')`
+  )
+  d1(
+    `INSERT INTO gamification (user_id, points) VALUES ('${userId}', ${points}) ON CONFLICT(user_id) DO UPDATE SET points = excluded.points`
+  )
+}
+
 let passed = 0
 let failed = 0
 
@@ -237,7 +252,8 @@ function sampleState() {
         score: 80,
         totalScore: 100,
         minutes: 120,
-        parts: { 选择: 40 }
+        // parts 线上形状为「部分名→得分」数组（与前端 ExamRecord 类型、REST 侧 zod schema 一致）
+        parts: [{ name: '选择', score: 40 }]
       }
     ],
     notes: [{ id: 'n1', subjectId: 'math', title: '极限笔记', tags: ['极限'], updatedAt: 1, bodyUpdatedAt: 1 }],
@@ -365,12 +381,14 @@ async function main() {
     loginA.status === 200 && !!loginA.data?.token && loginA.data?.user?.username === userA.username
   )
   const tokenA = loginA.data.token
+  const uidA = loginA.data.user?.id
 
   const me = await api('/api/auth/me', { token: tokenA })
   check('GET /api/auth/me 返回当前用户', me.status === 200 && me.data?.user?.username === userA.username)
 
   const regB = await api('/api/auth/register', { method: 'POST', body: userB })
   const tokenB = regB.data?.token
+  const uidB = regB.data?.user?.id
 
   // ---- 密码策略（8-64 位 + 字母和数字）----
   // 注册限流 3 次/分，regA/regDup/regB 已用满窗口：先等窗口滑动，3 个非法密码打满本窗口额度
@@ -553,20 +571,14 @@ async function main() {
 
   // ---- 记录级同步 push/pull ----
   console.log('[记录级同步 /api/data/push + /api/data/pull]')
-  // gamification 域已不可推（服务端权威）：A 的积分基线（黄金档 ≥1500 无发帖冷却）改以 award 事件建立
-  const baseA = await api('/api/data/push', {
-    method: 'POST',
-    token: tokenA,
-    body: {
-      points: [
-        { op: 'award', refId: 'smoke:baseline', points: POINTS_BASE, reason: '冒烟积分基线', date: '2026-01-01' }
-      ]
-    }
-  })
+  // gamification 域已不可推（服务端权威）：A 的积分基线（黄金档 ≥1500 无发帖冷却）直接种入本地 D1 流水，
+  // 不走 points award 事件（该 reason 不在服务端白名单内，会被忽略，见 seedPointsBaseline）
+  seedPointsBaseline(uidA)
+  const baseA = await pullFull(tokenA)
   check(
-    'A 以 award 事件建立积分基线（gamification 域不可推，points = SUM(points_log)）',
+    'A 的积分基线经 D1 流水种入生效（gamification 域不可推，points = SUM(points_log) = POINTS_BASE）',
     baseA.status === 200 && baseA.data?.gamification?.points === POINTS_BASE,
-    JSON.stringify(baseA.data)
+    JSON.stringify(baseA.data?.gamification)
   )
   const snapshot = sampleState()
   // 显式时间戳：幂等用例（重复推送同快照）需与首推对齐同一 updatedAt
@@ -600,7 +612,7 @@ async function main() {
     'errorQuestions 还原（base64 图片 + mastered 布尔）',
     d.errorQuestions?.[0]?.image?.startsWith('data:image') && d.errorQuestions[0].mastered === false
   )
-  check('exams.parts JSON 还原', d.exams?.[0]?.parts?.['选择'] === 40)
+  check('exams.parts JSON 还原', d.exams?.[0]?.parts?.[0]?.name === '选择' && d.exams?.[0]?.parts?.[0]?.score === 40)
   check('notes.tags JSON 还原', d.notes?.[0]?.tags?.[0] === '极限')
   check(
     'english 四组数据还原',
@@ -716,17 +728,14 @@ async function main() {
   const bSettings = await api('/api/settings', { token: tokenB })
   check('B 用户昵称取注册用户名（不受 A 影响）', bSettings.data?.userName === userB.username)
 
-  // B 的积分基线同样以 award 事件建立（黄金档 ≥1500 无发帖冷却）
-  const baseB = await api('/api/data/push', {
-    method: 'POST',
-    token: tokenB,
-    body: {
-      points: [
-        { op: 'award', refId: 'smoke:baseline', points: POINTS_BASE, reason: '冒烟积分基线', date: '2026-01-01' }
-      ]
-    }
-  })
-  check('B 以 award 事件建立积分基线', baseB.data?.gamification?.points === POINTS_BASE, JSON.stringify(baseB.data))
+  // B 的积分基线同样直接种入本地 D1 流水（黄金档 ≥1500 无发帖冷却）
+  seedPointsBaseline(uidB)
+  const baseB = await pullFull(tokenB)
+  check(
+    'B 的积分基线经 D1 流水种入生效',
+    baseB.data?.gamification?.points === POINTS_BASE,
+    JSON.stringify(baseB.data?.gamification)
+  )
 
   // 多租户 id 复用：B 推送与 A 完全相同 id 的快照应成功（复合主键 user_id+id）
   const tsB = Date.now()

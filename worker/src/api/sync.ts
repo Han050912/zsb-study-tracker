@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { all, batch, first, utc8Today, HttpError } from '../db'
+import { all, assertMappingBody, batch, first, readBodyText, utc8Today, HttpError } from '../db'
 import type { CrudMapping } from '../db'
 import { getSubjectTree, subjectInsertStatements, subjectTreeDeleteStatements } from './subjects'
 import { getHabits, habitUpsertStatements, habitDeleteStatements } from './habits'
@@ -12,7 +12,8 @@ import {
   getAchievements,
   getGamification,
   pointsAwardStatements,
-  pointsRevokeStatements
+  pointsRevokeStatements,
+  resolveAwardPoints
 } from './gamification'
 import type { PointsAward } from './gamification'
 import { getSettings, settingsRecordStatements, validateSettingsPublicText } from './settings'
@@ -46,7 +47,11 @@ import { purgePdfCache } from './pdfs'
  * `gamification` 由服务端权威维护：客户端推送该域 → 400，仅作为快照随 push/pull 响应回传。
  *
  * 积分（设计 §5.1/§5.2，与记录写入**同一 batch**原子提交）：
- * - `points` 事件：`award` 按 `ref_id` 幂等落账、`revoke` 支持 `refId` 精确、`refPrefix` 前缀与
+ * - `points` 事件：`award` 按 `ref_id` 幂等落账，`reason`/`points` 须通过服务端白名单（行为合法性 +
+ *   分值上限，见 gamification.resolveAwardPoints，issue #11）；**未登记行为 / 非法分值形状的 award
+ *   事件被直接忽略（不落账、不报错）**——事件来自客户端 outbox，整批 400 会像 issue #4/#5 一样
+ *   让该账号所有域的同步被这条毒记录永久阻塞，而「不能伪造分值」由白名单 + 上限钳制已完全达成；
+ *   `revoke` 支持 `refId` 精确、`refPrefix` 前缀与
  *   `all: true` 全量（撤销该用户全部有 ref_id 的流水，供导入/清空这类「整体替换」场景使用）。
  * - 记录删除被接受（写墓碑）时，服务端**同时**撤销该记录关联的流水（records/problemSessions/exams →
  *   `<key>`；errorQuestions → `error:<key>`；habits → `habit:<key>:%`）。
@@ -70,6 +75,7 @@ import { purgePdfCache } from './pdfs'
  * `versions` 仅作信息性展示（诊断），不是游标；增量查询仍以 `server_seq <= versions 快照` 为上界与之配合。
  */
 
+/** `/api/data/push` 请求体上限（批量记录 + 积分事件；记录级同步单批可达单域 10000 条，故显式放宽到 10MB） */
 export const SYNC_MAX_BYTES = 10 * 1024 * 1024
 
 /** 单域记录条数上限（沿用旧整域替换协议的阈值，超限 413） */
@@ -110,19 +116,6 @@ const ENGLISH_TABLES: Record<string, CrudMapping> = {
   reading: readingMapping.mapping,
   listening: listeningMapping.mapping,
   template: templatesMapping.mapping
-}
-
-/**
- * english 四张表的 NOT NULL 列（字段名取前端对象键；以 `worker/schema.sql` 的 DDL 为准）。
- * 缺列会让 SQLite 约束错误冒到 500，而设计 §4.1 要求「结构非法 → 400」：这里做前置校验。
- * 不计入的列：`id`/`user_id`（由键与登录态提供）、`updated_at`/`server_seq`（服务端写入）、
- * 带默认值或可空的列（vocab_records.points、essay_templates.level/category）。
- */
-const ENGLISH_REQUIRED_FIELDS: Record<string, readonly string[]> = {
-  vocab: ['date', 'newWords', 'reviewWords'], // vocab_records: date/new_words/review_words NOT NULL
-  reading: ['date', 'wpm', 'accuracy'], // reading_records: date/wpm/accuracy NOT NULL
-  listening: ['date', 'minutes', 'material', 'mode'], // listening_records: date/minutes/material/mode NOT NULL
-  template: ['title', 'content'] // essay_templates: title/content NOT NULL
 }
 
 /** 全部已知同步域：pull 的 versions 与游标校验以此为准 */
@@ -200,7 +193,10 @@ interface Decision {
 interface DomainStrategy {
   /** 响应形状：raw = upserts 直接回传记录对象；wrapped = `{ key, value, updatedAt }` */
   shape: 'raw' | 'wrapped'
-  /** 校验键空间与值形态（删除时 value 为 undefined；非法 → 400） */
+  /**
+   * 校验键空间与值形态（删除时 value 为 undefined；非法 → 400）。
+   * 单表数组域：value 即记录本身，逐字段类型/长度校验复用该域 REST 侧同一份 zod field schema。
+   */
   assertChange: (key: string, value?: unknown) => void
   /** 批量读现存记录的 LWW 时间戳（键 → stored.updated_at） */
   storedUpdatedAt: (env: Env, userId: string, keys: string[]) => Promise<Map<string, number>>
@@ -322,8 +318,11 @@ function singleRowUpsert(
 function singleTableStrategy(mapping: CrudMapping): DomainStrategy {
   return {
     shape: 'raw',
-    // 键空间无前缀约束（键即记录 id）
-    assertChange: () => {},
+    // 键空间无前缀约束（键即记录 id）；记录体逐字段类型/范围/长度校验复用该域 REST 侧**同一份**
+    // zod field schema（mapping.schema，单点定义，issue #39）。缺省（无 schema）时与原先一致放行。
+    assertChange: (_key, value) => {
+      if (value !== undefined) assertMappingBody(mapping, value)
+    },
     storedUpdatedAt: (env, userId, keys) => storedByColumn(env, mapping.table, 'id', userId, keys),
     upsertStatements: async (env, userId, item, seq) => [
       singleRowUpsert(env, mapping, userId, item.value, item.key, item.updatedAt, seq)
@@ -527,13 +526,10 @@ const englishStrategy: DomainStrategy = {
     if (value === undefined) return
     if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new HttpError(400, OBJECT_VALUE_REQUIRED('english', key))
-    // 前置校验该前缀对应表的 NOT NULL 列：缺失会被 SQLite 约束报成 500，此处提前判成 400（设计 §4.1）
-    const required = ENGLISH_REQUIRED_FIELDS[prefix]
-    const v = value as Record<string, unknown>
-    for (const field of required) {
-      if (v[field] === undefined || v[field] === null)
-        throw new HttpError(400, `域 english 的 ${prefix} 记录缺少必填字段 ${field}（key: ${key}）`)
-    }
+    // 逐字段类型/范围/长度校验（含 NOT NULL 列的必填与类型）：复用该前缀对应表在 REST 侧**同一份**
+    // zod field schema（ENGLISH_TABLES[prefix].schema，单点定义，issue #39）——缺失或类型非法都会
+    // 被 SQLite 约束 / 动态类型放过并造成脏数据或 500，此处一律提前判成 400
+    assertMappingBody(ENGLISH_TABLES[prefix], value)
   },
   storedUpdatedAt: async (env, userId, keys) => {
     const byPrefix = new Map<string, string[]>()
@@ -777,7 +773,8 @@ function validateDomainChanges(
         if (!isNonNegativeInt(r.bodyUpdatedAt)) throw new HttpError(400, 'notes 域的 bodyUpdatedAt 必须为非负整数')
         if (r.type === 'pdf' && r.bodyUpdatedAt !== 0) throw new HttpError(400, 'PDF 笔记的 bodyUpdatedAt 必须为 0')
       }
-      strategy.assertChange(r.id)
+      // 记录体（value = 记录本身）交策略做逐字段类型/范围校验：与 REST 侧共用同一份 field schema
+      strategy.assertChange(r.id, r)
       item = { key: r.id, value: r, updatedAt: r.updatedAt }
     }
     const prev = upserts.get(item.key)
@@ -806,9 +803,15 @@ function validateDomainChanges(
 
 /**
  * 校验并拆分 points 事件（设计 §5.1）：
- * - `award`：需 `refId`（幂等键）、正整数的 `points`、非空 `reason`；`date` 缺省为服务端今日
+ * - `award`：需 `refId`（幂等键）；`reason`（行为）与 `points` 交由服务端白名单裁定
+ *   （`resolveAwardPoints`，issue #11）——客户端只上报「行为 + 引用」；**行为未登记 / 分值形状非法 →
+ *   忽略该事件（不落账、不报错）**，分值超额 → 钳制到该行为上限；`date` 缺省为服务端今日。
+ *   忽略而非 400：事件来自客户端 outbox，整批拒绝会让该账号所有域的同步被这条毒记录永久阻塞。
  * - `revoke`：`refId`（精确）与 `refPrefix`（前缀）二选一，或 `all: true`（全量撤销，不与前两者同用）
- * 任何非法形状 → 400 中文提示；校验先于任何数据库访问（与域校验同批原子）。
+ * 其余非法形状（事件非对象 / op 未知 / award 缺 refId / revoke 自相矛盾）→ 400 中文提示；
+ * 例外：award 缺 refId 亦按「忽略」处理（无幂等键无法安全落账，且历史备份快照里存在无 refId
+ * 的流水，整批 400 会形成毒记录把该账号所有域的同步永久阻塞）；
+ * 校验先于任何数据库访问（与域校验同批原子）。
  */
 function parsePointsEvents(points: unknown): {
   awards: PointsAward[]
@@ -824,13 +827,19 @@ function parsePointsEvents(points: unknown): {
     const refId = typeof e.refId === 'string' && e.refId ? e.refId : undefined
     const refPrefix = typeof e.refPrefix === 'string' && e.refPrefix ? e.refPrefix : undefined
     if (e.op === 'award') {
-      if (!refId) throw new HttpError(400, 'points 的 award 事件缺少 refId')
-      if (!isPositiveInt(e.points)) throw new HttpError(400, 'points 的 award 事件的 points 必须为正整数')
-      if (typeof e.reason !== 'string' || !e.reason) throw new HttpError(400, 'points 的 award 事件缺少 reason')
+      // 缺 refId 无法安全落账（无幂等键会重复入账），忽略该事件而非 400：
+      // 历史备份快照中存在无 refId 的流水，整批拒绝会形成毒记录阻塞全部同步。
+      if (!refId) continue
+      // 分值不再由客户端任意决定：行为合法性 + 分值上限由服务端白名单裁定（issue #11）。
+      // 未登记行为 / 非法分值形状的 award 事件被**忽略**（不落账、不报错）——见 resolveAwardPoints
+      // 注释：award 来自客户端 outbox，整批 400 会让该账号所有域的同步被这条毒记录永久阻塞；
+      // 超额分值不报错，钳制到该行为上限。
+      const award = resolveAwardPoints(e.reason, e.points)
+      if (!award) continue
       awards.push({
         refId,
-        points: e.points,
-        reason: e.reason,
+        points: award.points,
+        reason: award.reason,
         date: typeof e.date === 'string' && e.date ? e.date : utc8Today()
       })
       continue
@@ -1351,13 +1360,20 @@ async function pullIncremental(env: Env, userId: string, cursors: Record<string,
 }
 
 /**
- * 读取 pull 请求体：空 body 等价于 `{}`（即 full 快照），避免前端漏传 body 时收到 400。
- * 先读 clone() 探空，非空再交给 body() 做 10MB 限制与 JSON 解析（同一份流的两次读取）。
+ * 读取 pull 请求体：载荷只有 `{ full?, cursors }`（游标表最多 14 个域），故上限取 64KB。
+ * 先按 Content-Length 预检上限、再读一次请求体——原实现先 `request.clone().text()` 全量读入
+ * （不受任何上限约束）才校验，正是 issue #52 的漏洞；空 body 仍等价于 `{}`（full 快照）。
  */
+const PULL_MAX_BYTES = 64 * 1024
+
 async function pullBody(request: Request): Promise<{ full?: boolean; cursors?: unknown }> {
-  const text = (await request.clone().text()).trim()
+  const text = (await readBodyText(request, PULL_MAX_BYTES)).trim()
   if (!text) return {}
-  return body<{ full?: boolean; cursors?: unknown }>(request, SYNC_MAX_BYTES)
+  try {
+    return JSON.parse(text) as { full?: boolean; cursors?: unknown }
+  } catch {
+    throw new HttpError(400, '请求体不是合法 JSON')
+  }
 }
 
 export function registerSyncRoutes() {
@@ -1379,7 +1395,13 @@ export function registerSyncRoutes() {
       throw new HttpError(400, 'domains 必须为对象')
     const domains = (domainsRaw ?? {}) as Record<string, unknown>
     const names = Object.keys(domains)
-    if (!names.length && !events.awards.length && !events.revokes.length && !achievements.length)
+    // 「是否真的什么都没带」以**原始载荷**判断，而不是解析结果：award 事件可能因未登记行为 /
+    // 非法分值形状被整体忽略（issue #11），若按解析结果判断，这条「合法但无效」的推送会被
+    // 误判为空并返回 400，重新制造出我们要消灭的毒记录路径。
+    const hasPoints = Array.isArray(payload?.points) && (payload?.points as unknown[]).length > 0
+    const hasAchievements =
+      Array.isArray(payload?.achievements) && (payload?.achievements as unknown[]).length > 0
+    if (!names.length && !hasPoints && !hasAchievements)
       throw new HttpError(400, '没有需要同步的变更')
 
     // 1. 全部校验先于任何数据库访问（多域单请求原子：任一域非法 → 整批 400）
