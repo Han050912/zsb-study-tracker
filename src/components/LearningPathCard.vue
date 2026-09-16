@@ -33,6 +33,16 @@ const countdownText = computed(() => {
 
 const hasPlan = computed(() => (data.value?.subjects ?? []).some((s) => s.dailyMinutes > 0))
 
+// 各科每日分配之和：科目较多触发「每科最低 10 分钟保底」时会大于用户设置的每日目标，
+// 与后端 weeklyTotalMinutes（求和 × 7）同一口径（P2-08）
+const dailyTotalMinutes = computed(() => (data.value?.subjects ?? []).reduce((sum, s) => sum + s.dailyMinutes, 0))
+
+const overGoalNote = computed(() => {
+  if (!data.value || !hasPlan.value) return ''
+  if (dailyTotalMinutes.value <= data.value.dailyGoalMinutes) return ''
+  return `因科目较多，已按每科最低 10 分钟保底，实际每日总时长为 ${formatMinutes(dailyTotalMinutes.value)}`
+})
+
 // ---- 分享求监督 ----
 const showComposer = ref(false)
 const composerContent = ref('')
@@ -44,7 +54,7 @@ function openShare() {
   composerContent.value = [
     '我的周学习计划',
     data.value.daysLeft != null && data.value.daysLeft > 0 ? `距离考试还有 ${data.value.daysLeft} 天` : '',
-    `每日目标 ${formatMinutes(data.value.dailyGoalMinutes)}`,
+    `每日目标 ${formatMinutes(dailyTotalMinutes.value)}`,
     lines.length ? `${lines.join('、')}` : '',
     '求监督，一起上岸！'
   ]
@@ -81,6 +91,7 @@ function openShare() {
         <span class="text-xs text-slate-400">本周总目标</span>
         <span class="text-sm font-bold">{{ formatMinutes(data.weeklyTotalMinutes) }}</span>
       </div>
+      <p v-if="overGoalNote" class="text-xs text-slate-400 dark:text-slate-500">{{ overGoalNote }}</p>
     </div>
     <div v-else class="text-xs text-slate-400">暂无科目，去「设置」添加科目并设置每日目标后即可生成计划。</div>
 

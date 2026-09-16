@@ -38,8 +38,21 @@ function renderKatex(katex: Katex, tex: string, display: boolean): string {
   }
 }
 
-// 公式占位符：纯文本标记，markdown-it 不会对其做任何转换
-const PH = '@@ZSBMATH'
+// 公式占位符前缀：实际占位符为 `@@ZSBMATH<本次渲染随机盐><序号>@@`，
+// markdown-it（html:false）不会转换其中的任何字符（@、字母、数字原样透传）。
+const PH_PREFIX = '@@ZSBMATH'
+
+/** 生成一个「完整占位符形态」不可能出现在原始正文中的随机盐（P2-11）：
+ *  若用户正文（含代码块）恰好含有形如 @@ZSBMATH<盐><序号>@@ 的串则换盐重试。
+ *  由于占位符中的每个字符在 markdown-it 输出中原样透传、不会被拼接改造，
+ *  「输出中出现的占位符必然源自本函数插入的 token」由该验证保证，
+ *  还原步骤绝不会命中或吞掉用户正文，从根源上杜绝占位符与正文冲突。 */
+function pickPlaceholderSalt(src: string): string {
+  for (;;) {
+    const salt = Math.random().toString(36).slice(2, 10)
+    if (!new RegExp(`${PH_PREFIX}${salt}\\d+@@`).test(src)) return salt
+  }
+}
 
 const BLOCK_MATH_RE = /\$\$([\s\S]+?)\$\$/g
 const INLINE_MATH_RE = /\$([^$\n]+?)\$/g
@@ -60,18 +73,22 @@ export function hasMath(src: string): boolean {
 }
 
 /**
- * 渲染主流程（与历史版本一致）：
- * 1. 先抽取公式为占位符，避免 markdown-it 处理公式内部特殊字符（_ * ~ 等）
+ * 渲染主流程（与历史版本行为一致）：
+ * 1. 先抽取公式为占位符 token，避免 markdown-it 处理公式内部特殊字符（_ * ~ 等）；
+ *    占位符含每次渲染唯一的随机盐，且已验证与原始正文不相交（见 pickPlaceholderSalt）
  * 2. markdown-it 主体渲染
  * 3. GFM 任务列表（markdown-it 核心不含此语法，后处理注入复选框）
- * 4. 还原公式（在 md.render 之后注入，不会被转义）
+ * 4. 还原公式 token（在 md.render 之后注入，不会被转义；仅命中本次渲染插入的 token）
  * renderMath 决定数学段的最终形态：同步路径为代码样式占位，异步路径为 KaTeX HTML。
  */
 function renderInternal(src: string, renderMath: (tex: string, display: boolean) => string): string {
+  const phPrefix = PH_PREFIX + pickPlaceholderSalt(src)
+  const restoreRe = new RegExp(`${phPrefix}(\\d+)@@`, 'g')
+
   const maths: string[] = []
   const pushMath = (tex: string, display: boolean) => {
     maths.push(renderMath(tex, display))
-    return `${PH}${maths.length - 1}@@`
+    return `${phPrefix}${maths.length - 1}@@`
   }
   let text = src.replace(BLOCK_MATH_RE, (m: string, tex: string, offset: number, s: string) =>
     isEscapedDollar(s, offset) ? m : pushMath(tex, true)
@@ -85,7 +102,7 @@ function renderInternal(src: string, renderMath: (tex: string, display: boolean)
   html = html.replace(/<li>\[ \]/g, '<li class="task-list-item"><input type="checkbox" disabled />')
   html = html.replace(/<li>\[[xX]\]/g, '<li class="task-list-item"><input type="checkbox" disabled checked />')
 
-  html = html.replace(/@@ZSBMATH(\d+)@@/g, (_m: string, i: string) => maths[Number(i)] ?? '')
+  html = html.replace(restoreRe, (_m: string, i: string) => maths[Number(i)] ?? '')
   return html
 }
 
@@ -120,7 +137,7 @@ function loadKatex(): Promise<Katex> {
 }
 
 /**
- * 含公式的完整渲染：动态加载 KaTeX 后按原 @@ZSBMATH 占位符方案渲染；
+ * 含公式的完整渲染：动态加载 KaTeX 后按本次渲染的唯一随机盐占位符渲染（P2-11）；
  * 无公式时直接返回 renderMarkdown 的同步结果。
  */
 export async function renderMarkdownWithMath(src: string): Promise<string> {

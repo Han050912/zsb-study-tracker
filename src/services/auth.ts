@@ -79,11 +79,11 @@ export async function restoreSession(): Promise<SessionUser | null> {
 
 /**
  * 注册 / 修改密码共用的密码强度校验，口径与服务端 `worker/src/schemas.ts` 的 passwordSchema 一致
- * （8-64 位且同时包含字母和数字）。返回首个错误文案，合法返回 null。
+ * （8-14 位且同时包含字母和数字）。返回首个错误文案，合法返回 null。
  */
 export function passwordPolicyError(password: string): string | null {
   if (password.length < 8) return '密码至少 8 位'
-  if (password.length > 64) return '密码最多 64 位'
+  if (password.length > 14) return '密码最多 14 位'
   if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) return '密码必须同时包含字母和数字'
   return null
 }

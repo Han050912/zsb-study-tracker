@@ -334,7 +334,7 @@ export function registerBoardsRoutes() {
       )
     }
 
-    // 3. 圈子推荐：人气降序，排除已加入
+    // 3. 圈子推荐：人气降序，排除当前用户已是 active 成员的圈子（P2-10）
     const circles = await all<any>(
       ctx.env,
       `
@@ -342,7 +342,7 @@ export function registerBoardsRoutes() {
         (cm.user_id IS NOT NULL) AS joined
       FROM community_circles c
       LEFT JOIN circle_members cm ON cm.circle_id = c.id AND cm.user_id = ? AND cm.status = 'active'
-      WHERE c.is_public = 1
+      WHERE c.is_public = 1 AND cm.user_id IS NULL
       ORDER BY c.member_count DESC, c.created_at DESC
       LIMIT 5`,
       ctx.userId

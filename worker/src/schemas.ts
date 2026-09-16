@@ -41,11 +41,11 @@ export async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   return diff === 0
 }
 
-// ---------- 密码策略（唯一新增规则：8-64 位 + 必须同时含字母和数字；仅注册生效） ----------
+// ---------- 密码策略（8-14 位 + 必须同时含字母和数字；与前端注册页 maxlength 对齐） ----------
 export const passwordSchema = z
   .string()
   .min(8, '密码至少 8 位')
-  .max(64, '密码最多 64 位')
+  .max(14, '密码最多 14 位')
   .refine((v) => /[A-Za-z]/.test(v) && /\d/.test(v), '密码必须同时包含字母和数字')
 
 export const usernameSchema = z

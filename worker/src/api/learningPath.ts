@@ -39,12 +39,17 @@ export function registerLearningPathRoutes() {
       }
     })
 
+    // 本周总目标按分配结果求和：保底 10 分钟/科可能使总和大于 dailyGoal，
+    // 若仍用 dailyGoal * 7 会与各科明细自相矛盾（P2-08）
+    const dailyTotalMinutes = plan.reduce((sum, s) => sum + s.dailyMinutes, 0)
+
     return Response.json({
       examDate: settings.examDate || null,
       daysLeft,
       dailyGoalMinutes: dailyGoal,
       subjects: plan,
-      weeklyTotalMinutes: dailyGoal * 7
+      dailyTotalMinutes,
+      weeklyTotalMinutes: dailyTotalMinutes * 7
     })
   })
 }
