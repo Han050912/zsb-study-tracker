@@ -168,6 +168,7 @@ export function registerBoardsRoutes() {
 
   // 学习进度对比：本周学习时长榜 / 本月刷题数榜（仅 join_progress_board=1 用户上榜，TOP 50；不展示末位排名）
   on('GET', '/api/community/progress-board', true, async (ctx) => {
+    await rateLimit(ctx, 'community:progress-board', 30)
     const t = new Date(Date.now() + 8 * 3600_000)
     const fmt = (d: Date) => d.toISOString().slice(0, 10)
     const daysSinceMonday = (t.getUTCDay() + 6) % 7
@@ -175,8 +176,8 @@ export function registerBoardsRoutes() {
     const today = fmt(t)
     const monthStart = today.slice(0, 8) + '01'
 
-    /** 参与者聚合行：user_id、展示名、蓝V、总积分、区间内 SUM 值 */
-    const participantsSql = (table: string, valueCol: string) => `
+    /** 榜单行：user_id、展示名、蓝V、总积分、区间内 SUM 值。排序与 TOP 50 截断全部下推到 SQL，不把全站参与者读进内存 */
+    const boardListSql = (table: string, valueCol: string) => `
       SELECT r.user_id, COALESCE(s.user_name, u.username) AS user_name, u.verified,
         s.avatar AS user_avatar, COALESCE(g.points, 0) AS total_points, SUM(r.${valueCol}) AS value
       FROM ${table} r
@@ -185,7 +186,20 @@ export function registerBoardsRoutes() {
       LEFT JOIN user_settings s ON s.user_id = r.user_id
       LEFT JOIN gamification g ON g.user_id = r.user_id
       WHERE r.date >= ? AND r.date <= ?
-      GROUP BY r.user_id`
+      GROUP BY r.user_id
+      ORDER BY value DESC, total_points DESC
+      LIMIT 50`
+
+    /** 参与者统计：人数 + 严格大于本人值的人数（rank/percentile 用）。与榜单行同源同口径，只回传聚合值 */
+    const boardStatsSql = (table: string, valueCol: string) => `
+      SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN v > ? THEN 1 ELSE 0 END), 0) AS greater FROM (
+        SELECT SUM(r.${valueCol}) AS v
+        FROM ${table} r
+        JOIN user_settings us ON us.user_id = r.user_id AND us.join_progress_board = 1
+        JOIN users u ON u.id = r.user_id
+        WHERE r.date >= ? AND r.date <= ?
+        GROUP BY r.user_id
+      )`
 
     /** 本人区间内总值（无论是否参与榜单，都返回用于自我对照） */
     const myValueSql = (table: string, valueCol: string, start: string, end: string) =>
@@ -197,44 +211,63 @@ export function registerBoardsRoutes() {
         end
       )
 
-    const [weekRows, monthRows, meWeek, meMonth] = await Promise.all([
-      all<any>(ctx.env, participantsSql('study_records', 'minutes'), weekStart, today),
-      all<any>(ctx.env, participantsSql('problem_sessions', 'total'), monthStart, today),
+    // 本人值/是否参与先取（boardStatsSql 需要本人值做比较基准），再并发拉两个榜的 TOP 50 与统计
+    const [meWeek, meMonth, joinedRow] = await Promise.all([
       myValueSql('study_records', 'minutes', weekStart, today),
-      myValueSql('problem_sessions', 'total', monthStart, today)
+      myValueSql('problem_sessions', 'total', monthStart, today),
+      first<{ joined: number }>(
+        ctx.env,
+        'SELECT (join_progress_board = 1) AS joined FROM user_settings WHERE user_id = ?',
+        ctx.userId
+      )
+    ])
+    const myWeek = meWeek?.v ?? 0
+    const myMonth = meMonth?.v ?? 0
+
+    const [weekList, monthList, weekStats, monthStats] = await Promise.all([
+      all<any>(ctx.env, boardListSql('study_records', 'minutes'), weekStart, today),
+      all<any>(ctx.env, boardListSql('problem_sessions', 'total'), monthStart, today),
+      first<{ total: number; greater: number }>(
+        ctx.env,
+        boardStatsSql('study_records', 'minutes'),
+        myWeek,
+        weekStart,
+        today
+      ),
+      first<{ total: number; greater: number }>(
+        ctx.env,
+        boardStatsSql('problem_sessions', 'total'),
+        myMonth,
+        monthStart,
+        today
+      )
     ])
 
     /** 榜单块：TOP 50 + 本人排名/百分位（rank = 参与者中严格大于本人值的人数 + 1；无参与者时 rank/percentile 为 null） */
-    const boardBlock = (rows: any[], myValue: number) => {
-      const sorted = rows.sort((a, b) => b.value - a.value || b.total_points - a.total_points)
-      const list = sorted.slice(0, 50).map((r) => ({
-        userId: r.user_id,
-        userName: r.user_name || '升本人',
-        verified: !!r.verified,
-        userAvatar: r.user_avatar ?? undefined,
-        totalPoints: r.total_points,
-        value: r.value,
-        isMe: r.user_id === ctx.userId
-      }))
-      const greater = sorted.filter((r) => r.value > myValue).length
-      const total = sorted.length
+    const boardBlock = (list: any[], stats: { total: number; greater: number } | null, myValue: number) => {
+      const total = stats?.total ?? 0
+      const greater = stats?.greater ?? 0
       const me = total
         ? { value: myValue, rank: greater + 1, percentile: Math.round(((total - greater - 1) / total) * 100) }
         : { value: myValue, rank: null, percentile: null }
-      return { list, me }
+      return {
+        list: list.map((r) => ({
+          userId: r.user_id,
+          userName: r.user_name || '升本人',
+          verified: !!r.verified,
+          userAvatar: r.user_avatar ?? undefined,
+          totalPoints: r.total_points,
+          value: r.value,
+          isMe: r.user_id === ctx.userId
+        })),
+        me
+      }
     }
 
-    const joinedRow = await first<{ joined: number }>(
-      ctx.env,
-      'SELECT (join_progress_board = 1) AS joined FROM user_settings WHERE user_id = ?',
-      ctx.userId
-    )
-    const joined = !!joinedRow?.joined
-
     return Response.json({
-      joined,
-      weekMinutes: boardBlock(weekRows, meWeek?.v ?? 0),
-      monthProblems: boardBlock(monthRows, meMonth?.v ?? 0)
+      joined: !!joinedRow?.joined,
+      weekMinutes: boardBlock(weekList, weekStats, myWeek),
+      monthProblems: boardBlock(monthList, monthStats, myMonth)
     })
   })
 

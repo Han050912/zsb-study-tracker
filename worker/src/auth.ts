@@ -57,7 +57,9 @@ function secretKey(secret: string): Uint8Array {
   return new TextEncoder().encode(secret)
 }
 
-/** 签发 HS256 JWT，payload 含 user_id（sub）、jti（吊销标识）与 role（可选，管理员判定免 DB 查询） */
+/** 签发 HS256 JWT，payload 含 user_id（sub）、jti（吊销标识）与 role（可选）。
+ *  role 只是签发时快照（签发后无法随 DB 撤销），仅可用于「非 admin 即拒绝」的快速否定；
+ *  管理员判定必须回查 DB（middleware/auth.ts 的 isDbAdmin） */
 export async function signToken(userId: string, secret: string, role?: string): Promise<string> {
   // jose v6 无 setClaim，任意 claim 经构造器 payload 传入；role 为空时不写入（旧客户端兼容）
   return new SignJWT(role ? { role } : {})
@@ -73,7 +75,7 @@ export interface TokenPayload {
   userId: string
   jti: string
   exp: number
-  /** 角色快照；旧 token 无此字段（undefined），消费方须回退 DB 查询 */
+  /** 角色快照（签发时值，不可撤销）；不可作为授权依据，旧 token 无此字段（undefined） */
   role?: string
 }
 

@@ -76,7 +76,9 @@ export function clearAuthCookieHeader(request: Request): string {
 }
 
 /** 解析并校验 JWT（含黑名单吊销），返回 user_id + role claim；失败抛 401。
- *  role 为 '' 表示无 role claim（旧 token），消费方需回退 DB 查询角色 */
+ *  role 为 '' 表示无 role claim（旧 token），消费方需回退 DB 查询角色。
+ *  该值仅是签发时快照、签发后不可撤销，只可用于「明确非 admin 即拒绝」的快速否定，
+ *  管理员判定必须以 DB 为准（见 isDbAdmin） */
 async function resolveUser(request: Request, env: Env): Promise<{ userId: string; role: string }> {
   const ext = extractToken(request)
   if (!ext) throw new HttpError(401, '未登录或登录已过期')
@@ -105,4 +107,15 @@ export async function tryGetAuth(request: Request, env: Env): Promise<{ userId: 
   } catch {
     return { userId: '', role: '' }
   }
+}
+
+/**
+ * 管理员判定的唯一权威来源：以 DB（users.role）为准。
+ * JWT 的 role claim 只是签发时快照、签发后无法撤销，不能作为授权依据；
+ * 故每次判定都回查 DB（一次主键点查），使管理员在 DB 中被降权后旧 token 立即失去管理能力。
+ */
+export async function isDbAdmin(env: Env, userId: string): Promise<boolean> {
+  if (!userId) return false
+  const u = await first<{ role: string }>(env, 'SELECT role FROM users WHERE id = ?', userId)
+  return u?.role === 'admin'
 }

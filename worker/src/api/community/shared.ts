@@ -1,5 +1,6 @@
 import type { Env } from '../../index'
 import { all, first, uid, utc8Today, HttpError } from '../../db'
+import { isDbAdmin } from '../../middleware/auth'
 import { uploadIdsOf } from '../uploads'
 
 /**
@@ -273,13 +274,12 @@ export async function displayName(env: Env, userId: string): Promise<string> {
   return r?.name || '升本人'
 }
 
-/** 当前用户是否为管理员。role 为 JWT claim 快照：'admin' 直接放行、
- *  其他非空值直接拒绝（claim 可信且省 DB 查询）；空值（旧 token 无 claim）回退 DB 查询 */
+/** 当前用户是否为管理员。role 为 JWT claim 快照（签发后不可撤销），不能作为授权依据：
+ *  声明为非 admin 时必然无管理权限，直接拒绝（免 DB 查询）；声明为 admin 或缺失（旧 token/匿名）时
+ *  以 DB 为准回查（isDbAdmin），保证管理员在 DB 中被降权后旧 token 立即失去管理能力 */
 export async function isAdmin(env: Env, userId: string, role?: string): Promise<boolean> {
-  if (role === 'admin') return true // claim 快路径：免 DB 查询
-  if (role) return false // claim 存在且非 admin：免 DB 查询（旧 token 无 claim 才走 DB）
-  const u = await first<{ role: string }>(env, 'SELECT role FROM users WHERE id = ?', userId)
-  return u?.role === 'admin'
+  if (role && role !== 'admin') return false
+  return isDbAdmin(env, userId)
 }
 
 /** 主页可见性校验：private 仅本人、login 需登录、public 放行 */
