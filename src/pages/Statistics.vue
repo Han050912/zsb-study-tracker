@@ -358,9 +358,9 @@ const report = computed(() => {
       </div>
     </div>
 
-    <!-- 周报卡片 -->
+    <!-- 周报卡片：口径为滚动近 7 天（非自然周），标题与文案按实际口径标注（P2-01） -->
     <div class="card bg-gradient-to-r from-primary-500 to-indigo-600 !text-white border-0">
-      <div class="text-sm font-semibold mb-2">本周学习报告</div>
+      <div class="text-sm font-semibold mb-2">近 7 天学习报告</div>
       <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
         <div>
           <div class="text-lg font-black">{{ formatMinutes(report.min) }}</div>
@@ -387,7 +387,7 @@ const report = computed(() => {
           <div class="text-[10px] opacity-80">积分</div>
         </div>
       </div>
-      <p class="text-xs opacity-80 mt-2">截图即可保存本周报告</p>
+      <p class="text-xs opacity-80 mt-2">截图即可保存近 7 天报告</p>
     </div>
 
     <div class="card">

@@ -243,6 +243,12 @@ function start() {
     return
   }
   if (phase.value === 'idle') {
+    // P2-03：启动前校验专注时长 —— 清空（v-model.number 得空串）/0/负数一律阻止启动，
+    // 避免 0 分钟「秒完成」后弹出与实际不符的加分提示
+    if (!(focusMinutes.value > 0)) {
+      toast('请输入大于 0 的专注时长')
+      return
+    }
     phase.value = 'focus'
     activeDescription = taskDescription.value.trim().slice(0, 50)
     seconds.value = 0
@@ -267,8 +273,9 @@ function pause() {
 function completePhase() {
   stopTimer()
   if (phase.value === 'focus') {
-    store.recordPomodoro(focusMinutes.value, activeDescription)
-    toast(`完成一个番茄钟！+5 积分`)
+    // P2-03：仅在实际记录成功后才提示 +5 积分，保证提示与实际一致
+    const recorded = store.recordPomodoro(focusMinutes.value, activeDescription)
+    if (recorded) toast(`完成一个番茄钟！+5 积分`)
     phase.value = 'break'
     seconds.value = 0
     pausedElapsed = 0
@@ -295,8 +302,9 @@ function giveUp() {
     const minutes = Math.round(elapsed / 60)
     // 达标口径：正计时以「结束」为完成；倒计时须已累计到设定时长。未达标只记真实时长，不发完成奖励
     const completed = mode.value === 'countup' || elapsed >= focusMinutes.value * 60
-    if (minutes >= 1) {
-      store.recordPomodoro(minutes, activeDescription, 'solo', undefined, completed)
+    // P2-03：recordPomodoro 返回是否实际记录（minutes < 1 时不记录），提示与实际保持一致
+    const recorded = store.recordPomodoro(minutes, activeDescription, 'solo', undefined, completed)
+    if (recorded) {
       toast(
         completed
           ? '完成一个番茄钟！+5 积分'
@@ -412,11 +420,18 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
-const recentInterruptions = computed(() => store.pomodoro.interruptions.slice(-5).reverse())
+// ---- 响应式今日键（UTC+8 业务日）：随实时时钟每秒更新，跨 00:00 后各列表自动切换到新的一天 ----
+const todayKey = computed(() => businessDate(now.value.getTime()))
+
+// ---- 最近中断：仅展示今日条目，与标题「n 次/今日」口径一致（P2-06） ----
+const recentInterruptions = computed(() =>
+  store.pomodoro.interruptions
+    .filter((it) => it.date === todayKey.value)
+    .slice(-5)
+    .reverse()
+)
 
 // ---- 最近完成：今日番茄明细 ----
-/** 响应式今日键：随实时时钟每秒更新，跨 00:00 后列表与编辑守卫自动切换到新的一天（UTC+8 业务日，不随系统时区） */
-const todayKey = computed(() => businessDate(now.value.getTime()))
 const todayRecordsSorted = computed(() =>
   (store.pomodoro.records || []).filter((r) => r.date === todayKey.value).sort((a, b) => b.time - a.time)
 )

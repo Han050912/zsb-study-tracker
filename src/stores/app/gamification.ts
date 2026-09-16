@@ -5,8 +5,11 @@
 
 import type { AppStoreThis } from './this-type'
 import { ACHIEVEMENTS } from '../../data/defaults'
-import { today, yesterday } from '../../utils/date'
+import { businessDate, today, yesterday } from '../../utils/date'
 import { stageAchievements, stagePoints } from '../../services/syncOutbox'
+
+/** 默认「早起晨读」习惯的固定 id（defaults.ts createDefaultState）：按 id 匹配不受改名影响 */
+const MORNING_HABIT_ID = 'h1'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type GamificationActionsShape = {
@@ -93,11 +96,13 @@ export const gamificationActions: GamificationActionsShape = {
     if (totalPomo >= 50) unlock('pomodoro_50')
     const todaySubjects = new Set(this.todayRecords.map((r) => r.subjectId))
     if (this.subjects.length > 0 && this.subjects.every((s) => todaySubjects.has(s.id))) unlock('all_subjects')
-    const morning = this.habits.find((h) => h.name.includes('晨读'))
+    // early_bird：按固定 id 匹配晨读习惯（原名匹配在改名后永久失效），日期键与打卡记录同用
+    // UTC+8 业务日口径（businessDate），修复此前 toISOString 生成 UTC 日期导致的整体错位一天
+    const morning = this.habits.find((h) => h.id === MORNING_HABIT_ID)
     if (morning) {
       let cnt = 0
       for (let i = 0; i < 7; i++) {
-        const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)
+        const d = businessDate(Date.now() - i * 86400_000)
         if (morning.records[d]) cnt++
       }
       if (cnt >= 7) unlock('early_bird')

@@ -11,21 +11,22 @@ import type { PomodoroRecord } from '../../types'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type PomodoroActionsShape = {
+  /** 返回是否实际落了记录（minutes < 1 时未记录返回 false），调用方据此决定是否弹完成提示 */
   recordPomodoro(
     minutes: number,
     description?: string,
     source?: 'solo' | 'party',
     partnerName?: string,
     completed?: boolean
-  ): void
+  ): boolean
   updatePomodoroRecordDescription(id: string, text: string): void
   recordInterruption(reason: string): void
 }
 
 export const pomodoroActions: PomodoroActionsShape = {
   /**
-   * 记一次番茄专注。`completed=false`（未达设定时长的提前结束）只记真实时长与番茄数，
-   * 不发「完成番茄钟」积分奖励——时长不达标不应发奖励。
+   * 记一次番茄专注，返回是否实际落了记录。`completed=false`（未达设定时长的提前结束）
+   * 只记真实时长与番茄数，不发「完成番茄钟」积分奖励——时长不达标不应发奖励。
    */
   recordPomodoro(
     this: AppStoreThis,
@@ -34,8 +35,8 @@ export const pomodoroActions: PomodoroActionsShape = {
     source: 'solo' | 'party' = 'solo',
     partnerName?: string,
     completed = true
-  ) {
-    if (minutes < 1) return
+  ): boolean {
+    if (minutes < 1) return false
     const t = today()
     const now = Date.now()
     if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
@@ -51,6 +52,7 @@ export const pomodoroActions: PomodoroActionsShape = {
     touchPomodoroDay(this.pomodoro.daily, t, now)
     touchPomodoroRecord(record, now)
     this.save()
+    return true
   },
 
   /** 双击编辑今日番茄记录的任务描述（清空存空串，展示层回退「未命名」） */

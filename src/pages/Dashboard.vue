@@ -2,7 +2,7 @@
 import { computed, onUnmounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useAppStore } from '../stores/app'
-import { today, formatMinutes } from '../utils/date'
+import { formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import { DEFAULT_QUOTES } from '../data/defaults'
 import Heatmap from '../components/Heatmap.vue'
@@ -249,7 +249,7 @@ onUnmounted(() => {
     <div class="flex items-center justify-between">
       <div>
         <h1 class="page-title">你好，{{ store.settings.userName }}</h1>
-        <p class="text-xs text-slate-400 mt-0.5">{{ today() }} · 连续学习 {{ store.gamification.streak }} 天</p>
+        <p class="text-xs text-slate-400 mt-0.5">{{ store.todayKey }} · 连续学习 {{ store.gamification.streak }} 天</p>
       </div>
       <div class="text-right">
         <div class="text-xs text-slate-400">{{ store.level.name }}学者</div>
@@ -608,7 +608,7 @@ onUnmounted(() => {
       :preset-content="composerContent"
       :preset-tags="['#每日打卡']"
       ref-type="record"
-      :ref-id="today()"
+      :ref-id="store.todayKey"
     />
   </div>
 </template>
