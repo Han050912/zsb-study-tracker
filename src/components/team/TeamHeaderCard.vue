@@ -7,7 +7,8 @@ import { useConfirm } from '../../composables/useConfirm'
 import { applyTeam, withdrawRequest, resetInviteCode, joinTeam } from '../../api/teams'
 import type { StudyTeam } from '../../types'
 
-/** 小组信息卡：基本信息 + 加入/申请/邀请码区；写操作成功后 emit refresh 由页面重载 */
+/** 小组信息卡：基本信息 + 加入/申请/邀请码区；写操作成功后 emit refresh 由页面重载。
+ *  仅撤回申请例外（emit withdrawn）：撤回后失去详情读取权限，由页面转列表而非重载 */
 const props = defineProps<{
   teamId: string
   team: StudyTeam
@@ -22,6 +23,8 @@ const emit = defineEmits<{
   edit: []
   leave: []
   'leader-leave': []
+  /** 撤回申请成功后申请人已无该小组详情读取权限，不能再走 refresh 重载，交由页面跳转 */
+  withdrawn: []
 }>()
 
 const route = useRoute()
@@ -55,7 +58,8 @@ async function handleWithdraw() {
   try {
     await withdrawRequest(props.teamId)
     toast('已撤回申请')
-    emit('refresh')
+    // 撤回后 URL 无邀请码时详情接口必然 403，改为交由页面回列表，避免错误提示
+    emit('withdrawn')
   } catch (e) {
     toast(getErrorMessage(e, '撤回失败'))
   } finally {

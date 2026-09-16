@@ -90,12 +90,18 @@ async function handleLeave() {
   try {
     await leaveTeam(teamId)
     toast('已退出小组')
-    await loadDetail()
+    // 退出后私密小组详情已不可读，直接回列表；不再请求已无权限的详情接口
+    router.replace('/teams')
   } catch (e) {
     toast(getErrorMessage(e, '退出失败'))
   } finally {
     leaveSubmitting.value = false
   }
+}
+
+/** 撤回申请成功后同样失去私密小组详情读取权限，与退出统一走回列表 */
+function handleWithdrawn() {
+  router.replace('/teams')
 }
 
 async function handleTransfer(userId: string, name: string) {
@@ -188,6 +194,7 @@ async function autoSync() {
         @refresh="loadDetail"
         @edit="showEdit = true"
         @leave="handleLeave"
+        @withdrawn="handleWithdrawn"
         @leader-leave="showLeaveModal = true"
       />
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { formatMinutes } from '../../utils/date'
 import { useToast } from '../../composables/useToast'
@@ -10,14 +10,18 @@ import type { TeamChallenge } from '../../types'
 
 /**
  * 挑战卡：列表展示 + 队长管理（取消/恢复/删除就地执行后 emit refresh）；
- * 同步与自动同步只发意图（sync / auto-sync），before/after 比较与 toast 留页面层
+ * 同步与自动同步只发意图（sync / auto-sync），before/after 比较与 toast 留页面层；
+ * 「我的进度」与「同步进度」仅成员（myRole 为 leader/member）可见，非成员改为提示文案
  */
-defineProps<{
+const props = defineProps<{
   challenges: TeamChallenge[]
   memberCount: number
   myRole?: 'leader' | 'member'
   syncSubmitting: Record<string, boolean>
 }>()
+
+/** 成员判定唯一来源：详情接口返回的 myRole（leader/member 为成员；未登录与非成员均为 undefined） */
+const isMember = computed(() => !!props.myRole)
 
 const emit = defineEmits<{
   sync: [challenge: TeamChallenge]
@@ -32,9 +36,10 @@ const confirm = useConfirm()
 
 const manageSubmitting = ref<Record<string, boolean>>({})
 
-/** 进入详情自动同步进行中的挑战（静默）：页面在首次 loadDetail 完成后渲染本组件，此处上抛意图由页面执行 */
+/** 进入详情自动同步进行中的挑战（静默）：页面在首次 loadDetail 完成后渲染本组件，此处上抛意图由页面执行。
+ *  非成员（未登录 / 未加入）无同步权限，不上抛意图，避免必然 403 的静默请求。 */
 onMounted(() => {
-  emit('auto-sync')
+  if (isMember.value) emit('auto-sync')
 })
 
 async function handleDelete(c: TeamChallenge) {
@@ -117,22 +122,25 @@ async function handleResume(c: TeamChallenge) {
           {{ c.startDate }} ~ {{ c.endDate }}
         </div>
         <div class="mt-2">
-          <div class="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-            <span>我的进度 {{ c.myProgress }}/{{ c.target }}</span>
-            <span v-if="c.myCompleted" class="text-emerald-500">已达标</span>
-          </div>
-          <div class="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-            <div
-              class="h-full bg-primary-500 rounded-full"
-              :style="{ width: Math.min(100, Math.round((c.myProgress / c.target) * 100)) + '%' }"
-            ></div>
-          </div>
+          <template v-if="isMember">
+            <div class="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+              <span>我的进度 {{ c.myProgress }}/{{ c.target }}</span>
+              <span v-if="c.myCompleted" class="text-emerald-500">已达标</span>
+            </div>
+            <div class="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div
+                class="h-full bg-primary-500 rounded-full"
+                :style="{ width: Math.min(100, Math.round((c.myProgress / c.target) * 100)) + '%' }"
+              ></div>
+            </div>
+          </template>
+          <p v-else class="text-xs text-slate-400">加入小组后可同步进度</p>
         </div>
         <div class="flex items-center justify-between mt-2">
           <span class="text-[10px] text-slate-400">团队达标 {{ c.completedCount }}/{{ memberCount }} 人</span>
           <div class="flex items-center gap-1.5 flex-wrap justify-end">
             <button
-              v-if="challengeStatus(c) === 'active'"
+              v-if="isMember && challengeStatus(c) === 'active'"
               class="btn-ghost !text-xs"
               :disabled="syncSubmitting[c.id]"
               @click="emit('sync', c)"
