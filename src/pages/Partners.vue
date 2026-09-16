@@ -135,6 +135,8 @@ async function searchPartner() {
 }
 
 async function addPartner(userId: string) {
+  if (acting.value[userId]) return
+  acting.value[userId] = true
   try {
     const res = await communityApi.sendPartner(userId)
     toast(res.accepted ? '你们已成为搭子！' : '已发送请求')
@@ -142,6 +144,8 @@ async function addPartner(userId: string) {
     await load()
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
+  } finally {
+    acting.value[userId] = false
   }
 }
 </script>
@@ -199,8 +203,19 @@ async function addPartner(userId: string) {
           <span v-else-if="searchResult.partnerStatus === 'self'" class="ml-auto text-xs text-slate-400 shrink-0"
             >这是你自己</span
           >
-          <button v-else class="ml-auto btn-primary !text-xs shrink-0" @click="addPartner(searchResult.userId)">
-            {{ searchResult.partnerStatus === 'pending_received' ? '接受邀请' : '加搭子' }}
+          <button
+            v-else
+            class="ml-auto btn-primary !text-xs shrink-0"
+            :disabled="acting[searchResult.userId]"
+            @click="addPartner(searchResult.userId)"
+          >
+            {{
+              acting[searchResult.userId]
+                ? '提交中…'
+                : searchResult.partnerStatus === 'pending_received'
+                  ? '接受邀请'
+                  : '加搭子'
+            }}
           </button>
         </div>
         <div v-else-if="searchNotFound" class="text-xs text-slate-400 dark:text-slate-500 text-center py-2">
@@ -220,8 +235,12 @@ async function addPartner(userId: string) {
             <UserAvatar :name="u.userName" :avatar="u.userAvatar" size="sm" />
             <span class="font-medium group-hover:text-primary-500">{{ u.userName }}</span>
           </div>
-          <button class="ml-auto btn-primary !text-xs" @click="respond(u.reqId, 'accept')">接受</button>
-          <button class="btn-ghost !text-xs" @click="respond(u.reqId, 'reject')">拒绝</button>
+          <button class="ml-auto btn-primary !text-xs" :disabled="acting[u.reqId]" @click="respond(u.reqId, 'accept')">
+            {{ acting[u.reqId] ? '处理中…' : '接受' }}
+          </button>
+          <button class="btn-ghost !text-xs" :disabled="acting[u.reqId]" @click="respond(u.reqId, 'reject')">
+            拒绝
+          </button>
         </div>
       </div>
 
@@ -300,7 +319,9 @@ async function addPartner(userId: string) {
               </div>
             </div>
           </div>
-          <button class="ml-auto btn-primary !text-xs shrink-0" @click="send(s.userId)">加搭子</button>
+          <button class="ml-auto btn-primary !text-xs shrink-0" :disabled="acting[s.userId]" @click="send(s.userId)">
+            {{ acting[s.userId] ? '提交中…' : '加搭子' }}
+          </button>
         </div>
       </div>
     </template>

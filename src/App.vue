@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, provide, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
 import { useCommunityStore } from './stores/community'
@@ -74,7 +74,21 @@ const hideNav = computed(() => isFullscreenPage.value || isAuthPage.value)
 const showOnboarding = computed(() => isLoggedIn.value && !isAuthPage.value && !store.settings.onboarded)
 
 // ---- 右上角账号头像下拉菜单 ----
+// 不复用 useOverlayDismiss：其完整模式（body 滚动锁定 + Tab 焦点陷阱 + 打开时强制移焦）
+// 面向遮罩式弹窗，对轻量下拉菜单过重；这里仅补 ESC 关闭 + aria + 关闭时归还焦点，
+// 「点击外部关闭」沿用既有的透明遮罩层行为。
 const avatarOpen = ref(false)
+const avatarBtn = ref<HTMLButtonElement | null>(null)
+/** ESC 关闭菜单并把焦点还给触发按钮（仅菜单打开时响应） */
+function onAvatarMenuKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && avatarOpen.value) {
+    e.preventDefault()
+    avatarOpen.value = false
+    avatarBtn.value?.focus()
+  }
+}
+onMounted(() => window.addEventListener('keydown', onAvatarMenuKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onAvatarMenuKeydown))
 const avatarLetter = computed(() => sessionUser.value?.username?.slice(0, 1).toUpperCase() || '')
 function goAccount() {
   avatarOpen.value = false
@@ -215,8 +229,11 @@ if (window.nav) {
     >
       <template v-if="isLoggedIn">
         <button
+          ref="avatarBtn"
           class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
           title="账号菜单"
+          aria-haspopup="true"
+          :aria-expanded="avatarOpen"
           @click.stop="avatarOpen = !avatarOpen"
         >
           <img

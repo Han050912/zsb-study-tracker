@@ -105,13 +105,20 @@ async function create() {
   }
 }
 
+/** 操作提交守卫（per-id，防止双击并发重复操作，避免第二次 400「邀约状态不正确」） */
+const acting = ref<Record<string, boolean>>({})
+
 async function accept(r: PartnerReview) {
+  if (acting.value[r.id]) return
+  acting.value[r.id] = true
   try {
     await communityApi.updatePartnerReview(r.id, 'accept')
     toast('已接受邀约')
     await reloadItems()
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
+  } finally {
+    acting.value[r.id] = false
   }
 }
 
@@ -207,8 +214,13 @@ async function cancel(r: PartnerReview) {
             复盘记录：{{ r.note }}
           </div>
           <div class="flex flex-wrap gap-1">
-            <button v-if="!r.isFrom && r.status === 'pending'" class="btn-primary !text-xs" @click="accept(r)">
-              接受
+            <button
+              v-if="!r.isFrom && r.status === 'pending'"
+              class="btn-primary !text-xs"
+              :disabled="acting[r.id]"
+              @click="accept(r)"
+            >
+              {{ acting[r.id] ? '接受中…' : '接受' }}
             </button>
             <button
               v-if="r.status === 'accepted' && completingId !== r.id"

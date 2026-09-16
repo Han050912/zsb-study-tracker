@@ -123,12 +123,15 @@ async function toggleTask(t: PartnerPlanTask, done: boolean) {
   }
 }
 
+const addingTask = ref(false)
+
 async function addTask() {
-  if (!detail.value) return
+  if (!detail.value || addingTask.value) return
   if (!newTaskTitle.value.trim()) {
     toast('请输入任务标题')
     return
   }
+  addingTask.value = true
   try {
     await communityApi.addPlanTask(detail.value.id, newTaskTitle.value.trim(), newTaskPhase.value.trim())
     newTaskTitle.value = ''
@@ -136,6 +139,8 @@ async function addTask() {
     await refreshDetail()
   } catch (e) {
     toast(getErrorMessage(e, '添加失败'))
+  } finally {
+    addingTask.value = false
   }
 }
 
@@ -229,7 +234,9 @@ async function removePlan() {
               maxlength="20"
               @keydown.enter="addTask"
             />
-            <button class="btn-primary !text-xs shrink-0" @click="addTask">添加任务</button>
+            <button class="btn-primary !text-xs shrink-0" :disabled="addingTask" @click="addTask">
+              {{ addingTask ? '添加中…' : '添加任务' }}
+            </button>
           </div>
         </template>
       </div>
