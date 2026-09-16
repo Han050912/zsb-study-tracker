@@ -12,12 +12,14 @@ declare module '*.vue' {
 }
 /* eslint-enable @typescript-eslint/no-empty-object-type */
 
-/** Electron preload 桥接（仅桌面端打包环境注入） */
+/** Electron preload 桥接（仅 Windows 桌面端注入；macOS 等平台不暴露 window.updater） */
 interface Window {
   updater?: {
     available: boolean
     check: () => void
     download: () => void
+    /** 取消当前下载（经 IPC 通知主进程中止 electron-updater 下载令牌） */
+    cancelDownload: () => void
     install: () => void
     /** 订阅更新事件，返回取消订阅函数（组件卸载时调用，避免回调叠加） */
     onAvailable: (
@@ -38,4 +40,6 @@ interface Window {
   nav?: {
     onNav: (cb: (route: { path: string; query?: Record<string, string> }) => void) => () => void
   }
+  /** 桌面端平台标识（Electron 端注入 process.platform，浏览器端 undefined） */
+  desktopPlatform?: string
 }

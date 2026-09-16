@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Ban } from '@lucide/vue'
 import { useToast } from '../composables/useToast'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 /**
  * 桌面端自动更新弹窗
  * 数据来源：electron-updater 经主进程 IPC 推送（版本号 / 发布说明 / 发布日期 / 下载进度）
- * 仅在 Electron 打包环境（window.updater 存在）下工作，Web 端自动隐藏
+ * 仅在 Windows 桌面端（window.updater 存在，preload 同条件暴露）下工作，Web 端与非 Windows 桌面端自动隐藏
  */
 
 interface UpdateInfo {
@@ -25,6 +26,7 @@ const updater = (window as any).updater as
   | {
       check: () => void
       download: () => void
+      cancelDownload: () => void
       install: () => void
       onAvailable: (cb: (info: UpdateInfo) => void) => () => void
       onProgress: (cb: (p: { percent: number }) => void) => () => void
@@ -38,10 +40,12 @@ const toast = useToast()
 
 const show = ref(false)
 const info = ref<UpdateInfo | null>(null)
-// idle: 待确认 | downloading: 下载中 | downloaded: 待重启
+// idle: 待确认 | downloading: 下载中（弹窗可关闭，下载转后台） | downloaded: 待重启
 const stage = ref<'idle' | 'downloading' | 'downloaded'>('idle')
 const percent = ref(0)
 const errorMsg = ref('')
+// 用户已请求取消下载：用于吞掉主进程随后的「取消」类 error 事件（取消不是失败）
+const cancelRequested = ref(false)
 
 /** 分组图标：按发布说明的章节标题关键字匹配 */
 function sectionIcon(title: string): string {
@@ -98,15 +102,22 @@ function goReleasePage() {
 
 function startDownload() {
   errorMsg.value = ''
+  cancelRequested.value = false
   stage.value = 'downloading'
+  show.value = true
   updater?.download()
+}
+/** 取消下载：回待确认态，经 IPC 通知主进程中止下载（之后可重新发起） */
+function cancelDownload() {
+  cancelRequested.value = true
+  stage.value = 'idle'
+  updater?.cancelDownload()
 }
 function restartInstall() {
   updater?.install()
 }
 function close() {
-  // 下载中不允许关闭，避免用户误以为更新已取消
-  if (stage.value === 'downloading') return
+  // 下载中允许关闭：下载转后台继续，完成后经 update:downloaded 重新打开弹窗
   show.value = false
 }
 
@@ -131,22 +142,31 @@ onMounted(() => {
       stage.value = 'idle'
       percent.value = 0
       errorMsg.value = ''
+      cancelRequested.value = false
       show.value = true
     }),
     updater.onProgress((p) => {
       percent.value = Math.min(100, Math.max(0, Math.round(p.percent)))
     }),
     updater.onDownloaded(() => {
+      // 后台下载完成：重新打开弹窗进入「待重启」态
       stage.value = 'downloaded'
+      show.value = true
     }),
     updater.onError((msg) => {
+      if (cancelRequested.value) {
+        // 用户主动取消引发的取消错误：静默忽略，保持待确认态
+        cancelRequested.value = false
+        return
+      }
+      // 回到待确认态，保证可以重新发起更新（无死角）
+      stage.value = 'idle'
       if (show.value) {
-        // 下载阶段出错：回到待确认态并提示，可重试
-        stage.value = 'idle'
+        // 弹窗开着（含下载阶段出错）：就地提示，可重试
         errorMsg.value = `下载失败：${msg}`
       } else {
-        // 弹窗未打开（如手动检查更新时失败），也提示用户
-        toast(`检查更新失败：${msg}`)
+        // 弹窗已关闭（如后台下载失败 / 手动检查更新时失败）：Toast 提示
+        toast(`更新失败：${msg}`)
       }
     })
   )
@@ -211,6 +231,10 @@ onBeforeUnmount(() => {
             </template>
             <div v-else class="text-sm text-slate-400 py-6 text-center">暂无详细更新说明</div>
 
+            <p v-if="stage === 'downloading'" class="text-xs text-slate-400 mt-2">
+              可关闭弹窗，下载将在后台继续，完成后会重新打开本窗口。
+            </p>
+
             <p v-if="errorMsg" class="text-xs text-red-500 mt-2">{{ errorMsg }}</p>
           </div>
 
@@ -233,16 +257,25 @@ onBeforeUnmount(() => {
                   更新
                 </button>
               </template>
-              <!-- 下载中：进度条 + 百分比 -->
+              <!-- 下载中：进度条 + 百分比 + 取消下载（关闭弹窗后下载转后台继续） -->
               <template v-else-if="stage === 'downloading'">
                 <div class="flex items-center gap-3">
-                  <div class="w-40 h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                    <div
-                      class="h-full bg-blue-500 rounded-full transition-all duration-300"
-                      :style="{ width: percent + '%' }"
-                    ></div>
+                  <div class="flex items-center gap-3">
+                    <div class="w-40 h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                      <div
+                        class="h-full bg-blue-500 rounded-full transition-all duration-300"
+                        :style="{ width: percent + '%' }"
+                      ></div>
+                    </div>
+                    <span class="text-sm text-slate-500 tabular-nums">{{ percent }}%</span>
                   </div>
-                  <span class="text-sm text-slate-500 tabular-nums">{{ percent }}%</span>
+                  <button
+                    class="flex items-center gap-1.5 px-4 py-1.5 rounded-md border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                    @click="cancelDownload"
+                  >
+                    <Ban class="w-4 h-4" aria-hidden="true" />
+                    取消下载
+                  </button>
                 </div>
               </template>
               <!-- 下载完成：稍后 / 立即重启 -->

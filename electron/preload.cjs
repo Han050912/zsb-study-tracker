@@ -14,24 +14,35 @@ function subscribe(channel, cb) {
   return () => ipcRenderer.removeListener(channel, listener)
 }
 
-contextBridge.exposeInMainWorld('updater', {
-  /** 是否有更新能力（仅打包后的桌面端存在） */
-  available: true,
-  /** 手动检查更新 */
-  check: () => ipcRenderer.send('update:check'),
-  /** 开始下载更新包 */
-  download: () => ipcRenderer.send('update:download'),
-  /** 退出并安装更新 */
-  install: () => ipcRenderer.send('update:install'),
-  /** 发现新版本（携带版本号/发布说明/发布日期）；返回取消订阅函数 */
-  onAvailable: (cb) => subscribe('update:available', cb),
-  /** 下载进度（percent/transferred/total/bytesPerSecond）；返回取消订阅函数 */
-  onProgress: (cb) => subscribe('update:progress', cb),
-  /** 下载完成，可重启安装；返回取消订阅函数 */
-  onDownloaded: (cb) => subscribe('update:downloaded', cb),
-  /** 更新流程出错；返回取消订阅函数 */
-  onError: (cb) => subscribe('update:error', cb)
-})
+// 自动更新桥接：仅 Windows 暴露（main.cjs 同条件加载 electron-updater）。
+// macOS 打包产物虽可构建，但更新通道未实现——不暴露 window.updater，
+// 渲染进程据此隐藏更新入口，避免「入口存在却永远无响应」（P6-04）。
+if (process.platform === 'win32') {
+  contextBridge.exposeInMainWorld('updater', {
+    /** 是否有更新能力（仅 Windows 桌面端存在） */
+    available: true,
+    /** 手动检查更新 */
+    check: () => ipcRenderer.send('update:check'),
+    /** 开始下载更新包 */
+    download: () => ipcRenderer.send('update:download'),
+    /** 取消当前下载（经 IPC 通知主进程中止 electron-updater 下载令牌） */
+    cancelDownload: () => ipcRenderer.send('update:cancel-download'),
+    /** 退出并安装更新 */
+    install: () => ipcRenderer.send('update:install'),
+    /** 发现新版本（携带版本号/发布说明/发布日期）；返回取消订阅函数 */
+    onAvailable: (cb) => subscribe('update:available', cb),
+    /** 下载进度（percent/transferred/total/bytesPerSecond）；返回取消订阅函数 */
+    onProgress: (cb) => subscribe('update:progress', cb),
+    /** 下载完成，可重启安装；返回取消订阅函数 */
+    onDownloaded: (cb) => subscribe('update:downloaded', cb),
+    /** 更新流程出错；返回取消订阅函数 */
+    onError: (cb) => subscribe('update:error', cb)
+  })
+}
+
+// 桌面端平台标识：供渲染进程区分「浏览器端」与「不支持自动更新的桌面端」（macOS/Linux），
+// 前者在设置页隐藏更新入口，后者置灰并提示。浏览器端不注入，保持 undefined。
+contextBridge.exposeInMainWorld('desktopPlatform', process.platform)
 
 // 桌面原生通知桥接：渲染进程统一走 src/services/notify.ts 调度
 contextBridge.exposeInMainWorld('desktopNotify', {

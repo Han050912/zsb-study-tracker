@@ -112,11 +112,15 @@ let mainLoadFailedDialogOpen = false
 // 渲染进程崩溃提示是否已弹出：与加载失败提示同理去重，避免崩溃循环时弹窗叠罗汉
 let renderCrashDialogOpen = false
 
-// ---- 自动更新（electron-updater，仅 Windows 打包端启用） ----
+// ---- 自动更新（electron-updater，仅 Windows 打包端启用；preload 同条件暴露 window.updater） ----
 let autoUpdater = null
+/** electron-updater 下载取消令牌构造器：与 autoUpdater 同模块加载，供「取消下载」使用 */
+let UpdaterCancellationToken = null
 if (!isDev && process.platform === 'win32') {
   try {
-    autoUpdater = require('electron-updater').autoUpdater
+    const updaterModule = require('electron-updater')
+    autoUpdater = updaterModule.autoUpdater
+    UpdaterCancellationToken = updaterModule.CancellationToken
   } catch {
     autoUpdater = null
   }
@@ -128,6 +132,39 @@ function setupAutoUpdater() {
   // 发现更新先弹窗由用户确认，不自动下载；应用退出时自动完成安装
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
+
+  // ---- 下载会话：取消令牌 + 无进度看门狗（P6-05） ----
+  // 60s 内没有任何 download-progress 事件即判为挂起，自动中止并回报失败，防下载永久阻塞
+  const PROGRESS_TIMEOUT_MS = 60 * 1000
+  let downloadToken = null
+  let lastProgressAt = 0
+  let progressWatchdog = null
+  // 置位后吞掉紧随其后的「取消」类 error 事件：用户主动取消 / 超时中止不是失败
+  let swallowCancelError = false
+
+  function clearProgressWatchdog() {
+    if (progressWatchdog) {
+      clearInterval(progressWatchdog)
+      progressWatchdog = null
+    }
+  }
+
+  /** 结束下载会话：停看门狗、清令牌。完成/失败/取消三路都收敛到这里，保证之后可重新发起下载 */
+  function endDownloadSession() {
+    clearProgressWatchdog()
+    downloadToken = null
+  }
+
+  /** 中止当前下载：取消 electron-updater 令牌并停看门狗 */
+  function cancelDownload() {
+    clearProgressWatchdog()
+    const token = downloadToken
+    downloadToken = null
+    if (token) {
+      swallowCancelError = true
+      token.cancel()
+    }
+  }
 
   const send = (channel, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
@@ -232,6 +269,7 @@ function setupAutoUpdater() {
   })
 
   autoUpdater.on('download-progress', (p) => {
+    lastProgressAt = Date.now() // 喂看门狗：有进度就续期，避免误判挂起
     send('update:progress', {
       percent: Math.round(p.percent * 10) / 10,
       transferred: p.transferred,
@@ -241,18 +279,47 @@ function setupAutoUpdater() {
   })
 
   autoUpdater.on('update-downloaded', (info) => {
+    endDownloadSession()
     send('update:downloaded', { version: info.version })
   })
 
   autoUpdater.on('error', (err) => {
-    send('update:error', err && err.message ? err.message : String(err))
+    const message = err && err.message ? err.message : String(err)
+    // 用户主动取消 / 看门狗超时中止会引发取消类错误（code ERR_CANCELLLED）：
+    // 属预期流程而非失败，吞掉以免覆盖超时提示或让用户看到莫名的「下载失败」
+    const code = err && err.code ? String(err.code) : message
+    if (swallowCancelError && /cancel/i.test(code)) {
+      swallowCancelError = false
+      return
+    }
+    endDownloadSession()
+    send('update:error', message)
   })
 
   ipcMain.on('update:check', () => {
     autoUpdater.checkForUpdates().catch(() => {})
   })
   ipcMain.on('update:download', () => {
-    autoUpdater.downloadUpdate().catch(() => {})
+    // 已有下载在途：忽略重复触发，避免叠加多个下载任务
+    if (downloadToken || !UpdaterCancellationToken) return
+    swallowCancelError = false
+    downloadToken = new UpdaterCancellationToken()
+    lastProgressAt = Date.now()
+    clearProgressWatchdog()
+    progressWatchdog = setInterval(() => {
+      if (Date.now() - lastProgressAt > PROGRESS_TIMEOUT_MS) {
+        cancelDownload()
+        send('update:error', '下载超时：超过 60 秒无进度已中止，请检查网络后重试')
+      }
+    }, 10 * 1000)
+    autoUpdater
+      .downloadUpdate(downloadToken)
+      .catch(() => {})
+      // 完成事件的清理已在 update-downloaded/error 中做，这里兜底收敛会话，不留死角
+      .finally(() => endDownloadSession())
+  })
+  ipcMain.on('update:cancel-download', () => {
+    cancelDownload()
   })
   ipcMain.on('update:install', () => {
     quitForUpdate = true
