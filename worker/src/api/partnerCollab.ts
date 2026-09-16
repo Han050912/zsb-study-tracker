@@ -72,6 +72,16 @@ function sanitizeMinutes(v: unknown, dflt: number, max: number): number {
   return Math.min(max, Math.max(0, n))
 }
 
+/** 会话时长上界（秒）：单次会话最长 24 小时，防止客户端写入极端值污染历史展示（P4-14） */
+const SESSION_MAX_SECONDS = 24 * 3600
+/** 会话时长上界（分钟口径，与 SESSION_MAX_SECONDS 同一上界换算） */
+const SESSION_MAX_MINUTES = SESSION_MAX_SECONDS / 60
+
+/** 会话侧累计时长归一化：floor + clamp 到 [0, max]（与 sanitizeMinutes 同为钳制语义） */
+function clampSessionValue(v: unknown, max: number): number {
+  return Math.min(max, Math.max(0, Math.floor(Number(v) || 0)))
+}
+
 /** 番茄自习室会话行 */
 interface StudySessionRow {
   id: string
@@ -240,9 +250,11 @@ export function registerPartnerStudy() {
     const b = await body(ctx.request)
     const state = b?.state === 'idle' || b?.state === 'focus' || b?.state === 'done' ? b.state : null
     if (!state) throw new HttpError(400, 'state 需为 idle/focus/done')
-    const minutes = Math.max(0, Math.floor(Number(b?.minutes) || 0))
-    const onlineSeconds = Math.max(0, Math.floor(Number(b?.onlineSeconds) || 0))
-    const elapsedSeconds = Math.max(0, Math.floor(Number(b?.elapsedSeconds) || 0))
+    // 时长上界（P4-14）：单次会话 ≤ 24 小时，超限值钳制到上界——该端点兼作心跳状态同步，
+    // 拒绝 400 会打断进行中的会话，钳制与本文件 sanitizeMinutes 的既有语义一致
+    const minutes = clampSessionValue(b?.minutes, SESSION_MAX_MINUTES)
+    const onlineSeconds = clampSessionValue(b?.onlineSeconds, SESSION_MAX_SECONDS)
+    const elapsedSeconds = clampSessionValue(b?.elapsedSeconds, SESSION_MAX_SECONDS)
     const running = b?.running === true ? 1 : 0
 
     const s = await getSession(ctx.env, ctx.params.id)

@@ -1,6 +1,6 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { all, first, run, batch, uid, HttpError } from '../db'
+import { all, first, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { displayName, notifyStatement } from './community'
 import { assertPartner, currentPartnerIds } from './partners'
@@ -431,17 +431,18 @@ export function registerPartnerShareRoutes() {
     )
   })
 
-  // 删除分享（仅分享者）
+  // 删除分享（仅分享者）：批注删除与分享删除放同一 batch 原子执行（P4-12），
+  // 失败整体回滚，不留「分享已删、批注残留」的半提交状态。
+  // 批注删除用子查询限定「本用户拥有的该分享」，与分享删除同批先后执行：
+  // 先删批注（此时分享行仍在，子查询可命中），再删分享；非 owner 时两条语句均 changes=0 → 404。
   on('DELETE', '/api/partner-shares/:id', true, async (ctx) => {
-    const res = await run(
-      ctx.env,
-      `DELETE FROM partner_shares WHERE id = ? AND owner_id = ?`,
-      ctx.params.id,
-      ctx.userId
-    )
-    if (!res.meta.changes) throw new HttpError(404, '分享不存在或无权删除')
-    // 级联删除批注
-    await run(ctx.env, `DELETE FROM partner_share_comments WHERE share_id = ?`, ctx.params.id)
+    const results = await batch(ctx.env, [
+      ctx.env.DB.prepare(
+        `DELETE FROM partner_share_comments WHERE share_id IN (SELECT id FROM partner_shares WHERE id = ? AND owner_id = ?)`
+      ).bind(ctx.params.id, ctx.userId),
+      ctx.env.DB.prepare(`DELETE FROM partner_shares WHERE id = ? AND owner_id = ?`).bind(ctx.params.id, ctx.userId)
+    ])
+    if (!results?.[1]?.meta.changes) throw new HttpError(404, '分享不存在或无权删除')
     return Response.json({ ok: true })
   })
 }

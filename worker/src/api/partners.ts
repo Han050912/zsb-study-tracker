@@ -609,10 +609,164 @@ function weeklyReportContent(name: string, s: WeeklyStats): string {
   return `${name} 上周学习周报：学习 ${s.minutes} 分钟 · 连续打卡 ${s.streak} 天 · 刷题 ${s.problems} 道 · 番茄 ${s.pomodoroMinutes} 分钟`
 }
 
+/** 空周统计（用户缺 gamification 行等场景的兜底） */
+const EMPTY_STATS: WeeklyStats = { minutes: 0, problems: 0, pomodoroMinutes: 0, streak: 0 }
+
+/** 每批语句数上限：避免 D1 batch 语句数上限（与原实现 50 条语句/批同口径） */
+const PUSH_STMTS_PER_BATCH = 50
+
+/** 待推送项：from = 周报数据主人，to = 接收者 */
+interface WeeklyPushItem {
+  fromId: string
+  toId: string
+}
+
+/** week_key（该周周一日期）→ 该周 [weekStart, weekEnd]（续跑历史失败批次时还原统计区间） */
+function weekRangeOf(weekKey: string): { weekStart: string; weekEnd: string } {
+  const monday = new Date(`${weekKey}T00:00:00Z`)
+  return { weekStart: weekKey, weekEnd: new Date(monday.getTime() + 6 * 86400_000).toISOString().slice(0, 10) }
+}
+
+/**
+ * 按批推送待推送项（每项 = push_log 去重标记 + 通知，同批原子；P4-05 失败可重入的核心）。
+ * cleanupPending 为 true（续跑路径）时每项额外携带一条「清理续跑记录」语句：
+ * 推送成功则该 pending 行同批删除（成功即出队），失败则整体回滚、记录保留供下次运行重试。
+ * 某批失败时：把该批未完成项持久化到 weekly_report_push_pending（尽力而为）后原样抛出——
+ * Cloudflare Cron 不重试，下次运行经 resumePendingPushes 只补推这些失败项；
+ * 已成功项因 push_log 已落库、下周 cron 换新 week_key 也不影响，天然不会重复推送。
+ */
+async function pushChunked(
+  env: Env,
+  weekKey: string,
+  items: WeeklyPushItem[],
+  contentOf: (item: WeeklyPushItem) => string,
+  cleanupPending = false
+): Promise<void> {
+  const stmtsOf = (item: WeeklyPushItem): D1PreparedStatement[] => {
+    const stmts: D1PreparedStatement[] = [
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO weekly_report_push_log (week_key, from_id, to_id, created_at) VALUES (?, ?, ?, ?)`
+      ).bind(weekKey, item.fromId, item.toId, nowSec()),
+      notifyStatement(env, {
+        userId: item.toId,
+        type: 'partner',
+        actorId: item.fromId,
+        targetType: 'partner_weekly',
+        targetId: item.fromId,
+        content: contentOf(item)
+      })
+    ]
+    if (cleanupPending) {
+      stmts.push(
+        env.DB.prepare(`DELETE FROM weekly_report_push_pending WHERE week_key = ? AND from_id = ? AND to_id = ?`).bind(
+          weekKey,
+          item.fromId,
+          item.toId
+        )
+      )
+    }
+    return stmts
+  }
+  const stmtsPerItem = cleanupPending ? 3 : 2
+  const chunkSize = Math.floor(PUSH_STMTS_PER_BATCH / stmtsPerItem)
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize)
+    try {
+      await batch(env, chunk.flatMap(stmtsOf))
+    } catch (e) {
+      // 失败批次持久化供下次续跑（尽力而为：持久化自身失败时保留原错误上抛，cron 告警仍可见）
+      try {
+        await batch(
+          env,
+          chunk.map((item) =>
+            env.DB.prepare(
+              `INSERT OR IGNORE INTO weekly_report_push_pending (week_key, from_id, to_id, created_at) VALUES (?, ?, ?, ?)`
+            ).bind(weekKey, item.fromId, item.toId, nowSec())
+          )
+        )
+      } catch (persistErr) {
+        console.error('[cron] 周报失败批次持久化失败', persistErr)
+      }
+      throw e
+    }
+  }
+}
+
+/**
+ * 续跑历史失败批次（P4-05）：按 week_key 分组还原各周的统计区间，只补推未完成项；
+ * 每项「push_log 标记 + 通知 + 清理续跑记录」同批原子，成功即出队，失败项留在表内等下次运行。
+ */
+async function resumePendingPushes(env: Env): Promise<void> {
+  const rows = await all<{ week_key: string; from_id: string; to_id: string; orphan: number }>(
+    env,
+    // LEFT JOIN users 标记孤儿行（入队后用户被注销等）：通知 INSERT 撞 FK 永远失败会让该批永续跑不完，
+    // 孤儿行直接出队，其余行按周分组续跑
+    `SELECT p.week_key, p.from_id, p.to_id, (u1.id IS NULL OR u2.id IS NULL) AS orphan
+     FROM weekly_report_push_pending p
+     LEFT JOIN users u1 ON u1.id = p.from_id
+     LEFT JOIN users u2 ON u2.id = p.to_id
+     ORDER BY p.week_key`
+  )
+  if (!rows.length) return
+
+  // 孤儿行清理不阻塞续跑（失败则下次运行重试，无害）
+  const orphans = rows.filter((r) => r.orphan)
+  if (orphans.length) {
+    try {
+      await batch(
+        env,
+        orphans.map((r) =>
+          env.DB.prepare(
+            `DELETE FROM weekly_report_push_pending WHERE week_key = ? AND from_id = ? AND to_id = ?`
+          ).bind(r.week_key, r.from_id, r.to_id)
+        )
+      )
+    } catch (e) {
+      console.error('[cron] 周报续跑孤儿行清理失败', e)
+    }
+  }
+
+  const items = rows.filter((r) => !r.orphan).map((r) => ({ fromId: r.from_id, toId: r.to_id, weekKey: r.week_key }))
+  if (!items.length) return
+
+  // 按 week_key 分组：不同失败批可能属于不同周，统计区间需各自还原
+  const byWeek = new Map<string, WeeklyPushItem[]>()
+  for (const it of items) {
+    const list = byWeek.get(it.weekKey) ?? []
+    list.push({ fromId: it.fromId, toId: it.toId })
+    byWeek.set(it.weekKey, list)
+  }
+  for (const [weekKey, weekItems] of byWeek) {
+    const { weekStart, weekEnd } = weekRangeOf(weekKey)
+    const uids = [...new Set(weekItems.flatMap((it) => [it.fromId, it.toId]))]
+    const [names, stats] = await Promise.all([
+      displayNamesBatch(env, uids),
+      weeklyStatsBatch(env, uids, weekStart, weekEnd)
+    ])
+    // cleanupPending：标记 + 通知 + 清理 pending 行同批原子；失败时未完成项原样落回 pending，直接上抛交由下次运行重试
+    await pushChunked(
+      env,
+      weekKey,
+      weekItems,
+      (it) => weeklyReportContent(names.get(it.fromId) ?? '升本人', stats.get(it.fromId) ?? EMPTY_STATS),
+      true
+    )
+  }
+}
+
 /** 每周一 cron 触发：双向推送上周学习周报通知（去重 INSERT 与通知 INSERT 同批原子写入，避免标记与落库脱节）。
  *  查询已批量化（原为逐关系 12 次查询：随搭子关系数线性增长，大规模时会撞 Workers 单次调用查询上限）：
- *  已推送标记 1 次、展示名与四项周统计按涉及用户去重后分块 GROUP BY。 */
+ *  已推送标记 1 次、展示名与四项周统计按涉及用户去重后分块 GROUP BY。
+ *  P4-05 失败可重入：先续跑历史失败批次（跨周），再推本周；任一批失败时该批关系行落入
+ *  weekly_report_push_pending，下次运行只补推未完成项，已推送项经 push_log 去重不重复推送。 */
 export async function pushWeeklyReports(env: Env): Promise<void> {
+  // 先续跑历史失败批次（跨周重入）；续跑未完成不阻塞本周推送，残留项留给下次运行继续补推
+  try {
+    await resumePendingPushes(env)
+  } catch (e) {
+    console.error('[cron] 周报续跑未完成（残留项下次运行继续补推）', e)
+  }
+
   const { weekStart, weekEnd, weekKey } = lastWeekRange()
   const rels = await all<{ from_id: string; to_id: string }>(
     env,
@@ -633,54 +787,21 @@ export async function pushWeeklyReports(env: Env): Promise<void> {
   )
   const pushed = new Set(pushedRows.map((r) => `${r.from_id}:${r.to_id}`))
 
+  const items: WeeklyPushItem[] = []
+  for (const r of rels) {
+    // 我的周报 → 推给搭子；搭子的周报 → 推给我（已推送方向跳过，保证同 week_key 重跑幂等）
+    if (!pushed.has(`${r.from_id}:${r.to_id}`)) items.push({ fromId: r.from_id, toId: r.to_id })
+    if (!pushed.has(`${r.to_id}:${r.from_id}`)) items.push({ fromId: r.to_id, toId: r.from_id })
+  }
+  if (!items.length) return
+
   // 涉及用户去重后批量取展示名与周统计
-  const uids = [...new Set(rels.flatMap((r) => [r.from_id, r.to_id]))]
+  const uids = [...new Set(items.flatMap((it) => [it.fromId, it.toId]))]
   const [names, stats] = await Promise.all([
     displayNamesBatch(env, uids),
     weeklyStatsBatch(env, uids, weekStart, weekEnd)
   ])
-  const nameOf = (uid: string) => names.get(uid) ?? '升本人'
-  const statsOf = (uid: string) => stats.get(uid) ?? { minutes: 0, problems: 0, pomodoroMinutes: 0, streak: 0 }
-
-  const stmts: D1PreparedStatement[] = []
-  const pushLog = (fromId: string, toId: string) =>
-    env.DB.prepare(
-      `INSERT OR IGNORE INTO weekly_report_push_log (week_key, from_id, to_id, created_at) VALUES (?, ?, ?, ?)`
-    ).bind(weekKey, fromId, toId, nowSec())
-
-  for (const r of rels) {
-    // 我的周报 → 推给搭子
-    if (!pushed.has(`${r.from_id}:${r.to_id}`)) {
-      stmts.push(pushLog(r.from_id, r.to_id))
-      stmts.push(
-        notifyStatement(env, {
-          userId: r.to_id,
-          type: 'partner',
-          actorId: r.from_id,
-          targetType: 'partner_weekly',
-          targetId: r.from_id,
-          content: weeklyReportContent(nameOf(r.from_id), statsOf(r.from_id))
-        })
-      )
-    }
-    // 搭子的周报 → 推给我
-    if (!pushed.has(`${r.to_id}:${r.from_id}`)) {
-      stmts.push(pushLog(r.to_id, r.from_id))
-      stmts.push(
-        notifyStatement(env, {
-          userId: r.from_id,
-          type: 'partner',
-          actorId: r.to_id,
-          targetType: 'partner_weekly',
-          targetId: r.to_id,
-          content: weeklyReportContent(nameOf(r.to_id), statsOf(r.to_id))
-        })
-      )
-    }
-  }
-
-  // 分块写入（每批 ≤50，避免 D1 batch 语句数上限）
-  for (let i = 0; i < stmts.length; i += 50) {
-    await batch(env, stmts.slice(i, i + 50))
-  }
+  await pushChunked(env, weekKey, items, (it) =>
+    weeklyReportContent(names.get(it.fromId) ?? '升本人', stats.get(it.fromId) ?? EMPTY_STATS)
+  )
 }

@@ -802,6 +802,20 @@ CREATE TABLE IF NOT EXISTS weekly_report_push_log (
   PRIMARY KEY (week_key, from_id, to_id)
 );
 
+-- ========== 周报推送失败批次续跑记录（P4-05：cron 不重试，失败批次落此表供下次运行补推） ==========
+-- cron 按批推送周报，某批失败时把该批未完成的关系行写到这里；下次运行（下周 cron / 同周重跑）
+-- 只补推这些行。week_key 记录周报归属周（跨周续跑时据此还原统计区间）；
+-- 与 push_log 互斥：进入本表 ⇒ 该项未推送（标记与通知同批失败时整体回滚，push_log 不会有残留）。
+CREATE TABLE IF NOT EXISTS weekly_report_push_pending (
+  week_key TEXT NOT NULL,          -- 周报归属周的周一日期 YYYY-MM-DD（UTC+8）
+  from_id TEXT NOT NULL,           -- 周报数据主人
+  to_id TEXT NOT NULL,             -- 接收者
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (week_key, from_id, to_id)
+);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖表生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS weekly_report_push_pending (week_key TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (week_key, from_id, to_id))"
+
 -- ========== 按域同步版本（域级 LWW 的依据） ==========
 CREATE TABLE IF NOT EXISTS sync_domain_versions (
   user_id TEXT NOT NULL REFERENCES users(id),
