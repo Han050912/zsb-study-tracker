@@ -1,12 +1,12 @@
 import { authFetch } from './client'
 
-export interface RemoteNoteBody {
+interface RemoteNoteBody {
   id: string
   content: string
   updatedAt: number
 }
 
-export interface PutNoteBodyResult {
+interface PutNoteBodyResult {
   applied: boolean
   updatedAt: number
   clamped: boolean

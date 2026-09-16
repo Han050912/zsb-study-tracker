@@ -1,6 +1,6 @@
 import { request } from './client'
 
-export interface AuthUser {
+interface AuthUser {
   id: string
   username: string
   role: string

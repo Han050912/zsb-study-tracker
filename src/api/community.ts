@@ -35,7 +35,7 @@ import type {
   WeeklyReport
 } from '../types'
 
-export interface FeedQuery {
+interface FeedQuery {
   sort?: 'latest' | 'hot'
   tag?: string
   type?: PostType
@@ -52,18 +52,18 @@ export interface FeedQuery {
   limit?: number
 }
 
-export interface FeedResult {
+interface FeedResult {
   posts: CommunityPost[]
   nextCursor: string | null
   hasMore?: boolean
 }
 
-export interface PostDetail {
+interface PostDetail {
   post: CommunityPost
   comments: CommunityComment[]
 }
 
-export interface NotificationResult {
+interface NotificationResult {
   items: CommunityNotification[]
   unreadCount: number
   unreadExcludingMuted: number
@@ -94,7 +94,7 @@ export async function uploadAvatar(blob: Blob): Promise<{ url: string }> {
 }
 
 /** 上传结果 */
-export interface UploadResult {
+interface UploadResult {
   id: string
   url: string
   size: number

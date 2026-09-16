@@ -33,13 +33,13 @@ export interface SyncDeletion {
 }
 
 /** 单域推送载荷 */
-export interface DomainPushPayload {
+interface DomainPushPayload {
   upserts: unknown[]
   deletes: SyncDeletion[]
 }
 
 /** push 请求体 */
-export interface PushPayload {
+interface PushPayload {
   domains: Record<string, DomainPushPayload>
   /** 积分事件（与记录变更同一 batch 原子提交） */
   points?: PointsEvent[]
@@ -48,7 +48,7 @@ export interface PushPayload {
 }
 
 /** push 响应 */
-export interface PushResponse {
+interface PushResponse {
   ok: boolean
   /** 各域本次写入的 server_seq（信息性字段，**不得**用作拉取游标） */
   versions: Record<string, number>

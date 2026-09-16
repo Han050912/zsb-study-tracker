@@ -38,9 +38,3 @@ export async function fetchPdf(id: string): Promise<Uint8Array> {
   await ensureOk(res, '加载 PDF')
   return new Uint8Array(await res.arrayBuffer())
 }
-
-/** 删除云端 PDF 原文（笔记删除时联动；失败静默——同步接口会兜底清理孤儿对象） */
-export async function deletePdf(id: string): Promise<void> {
-  const res = await authFetch(`/api/pdfs/${id}`, { method: 'DELETE' })
-  if (!res.ok) console.warn(`删除云端 PDF ${id} 失败（HTTP ${res.status}），将由同步清理兜底`)
-}

@@ -161,7 +161,7 @@ export function expireSession(): void {
   window.location.hash = `#${loginRedirectPath()}`
 }
 
-/** 401 全局处理：清除会话、通知清空内存数据、跳转登录页（导出供 XHR 上传等非 fetch 通道复用）。 */
+/** 401 全局处理：清除会话、通知清空内存数据、跳转登录页（供 XHR 上传等非 fetch 通道复用）。 */
 export function handleUnauthorized(): never {
   // 以「本标签页是否仍持有登录态」判定，而不是只看跨标签页共享的持久化标记：
   // 多标签页下另一标签页登出会删除该标记，本标签页内存中的 currentUser 却仍在

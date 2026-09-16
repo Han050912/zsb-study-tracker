@@ -9,11 +9,7 @@ import { authFetch } from './client'
 /** 错题图片引用前缀 */
 export const ERROR_IMAGE_PREFIX = 'r2:'
 
-export function isErrorImageRef(image?: string): boolean {
-  return !!image && image.startsWith(ERROR_IMAGE_PREFIX)
-}
-
-export function errorImageRefOf(image: string): string {
+function errorImageRefOf(image: string): string {
   return image.slice(ERROR_IMAGE_PREFIX.length)
 }
 
@@ -39,7 +35,7 @@ export async function uploadErrorImage(bytes: ArrayBuffer): Promise<string> {
 }
 
 /** 按内容 id 拉取错题图片字节 */
-export async function fetchErrorImage(id: string): Promise<Blob> {
+async function fetchErrorImage(id: string): Promise<Blob> {
   const res = await authFetch(`/api/error-images/${id}`)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: '' }))
