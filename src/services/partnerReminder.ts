@@ -9,7 +9,8 @@
  * 应用未运行期间错过的提醒会在下次启动或回到前台时补发。
  */
 import { sendNotification, buildAvatarIcon } from './notify'
-import { communityApi, imageUrl } from '../api/community'
+import { notificationsApi } from '../api/community/notifications'
+import { imageUrl } from '../api/community'
 
 /** 轮询间隔 30s。后台标签页定时器会被浏览器节流，回到前台由 visibilitychange 立即补检查 */
 const TICK_MS = 30_000
@@ -50,7 +51,7 @@ async function checkPartnerReminders() {
   if (!hooks) return
   try {
     // 拉取最新未读的搭子通知（含 type='partner' 过滤）
-    const res = await communityApi.notifications(null, 20, 'partner')
+    const res = await notificationsApi.notifications(null, 20, 'partner')
     const notified = loadNotifiedIds()
     let changed = false
     for (const n of res.items) {
@@ -59,10 +60,7 @@ async function checkPartnerReminders() {
       changed = true
       if (hooks.isSuppressed?.()) continue
       // 提醒人头像作为通知图标（未设置头像时生成首字母头像兜底）
-      const icon = buildAvatarIcon(
-        n.actorName || '搭',
-        n.actorAvatar ? imageUrl(n.actorAvatar) : undefined
-      )
+      const icon = buildAvatarIcon(n.actorName || '搭', n.actorAvatar ? imageUrl(n.actorAvatar) : undefined)
       if (!sendNotification('学习搭子提醒', n.content, icon)) {
         hooks.onFallback?.(`学习搭子提醒：${n.content}`)
       }

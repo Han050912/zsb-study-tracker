@@ -2,9 +2,12 @@
 /**
  * 搭子错题/笔记分享列表：收到的 + 我发出的；点击统一跳转全屏预览页
  */
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { partnersApi } from '../api/community/partners'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import { useBack } from '../composables/useBack'
 import { fromNow } from '../utils/date'
@@ -12,11 +15,15 @@ import type { PartnerShareItem } from '../types'
 
 const { goBack } = useBack()
 const router = useRouter()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
 const loading = ref(true)
+/** 加载失败信息：持久错误态（区别于「还没有收到分享」空态），提供重试 */
+const loadError = ref('')
 const received = ref<PartnerShareItem[]>([])
 const sent = ref<PartnerShareItem[]>([])
+/** 服务端还有更早的分享未返回（本页一次性渲染，仅提示不翻页） */
+const hasMore = ref(false)
 const tab = ref<'received' | 'sent'>('received')
 
 const list = computed(() => (tab.value === 'received' ? received.value : sent.value))
@@ -25,12 +32,15 @@ onMounted(load)
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
-    const res = await communityApi.partnerShares()
+    const res = await partnersApi.partnerShares()
     received.value = res.received
     sent.value = res.sent
-  } catch (e: any) {
-    toast(e?.message || '加载失败')
+    hasMore.value = !!res.hasMore
+  } catch (e) {
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
@@ -49,26 +59,55 @@ function openPreview(item: PartnerShareItem) {
     <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
 
     <template v-else>
-      <div class="flex gap-2">
-        <button class="btn !text-xs !py-1 !px-3" :class="tab === 'received' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-          @click="tab = 'received'">收到的（{{ received.length }}）</button>
-        <button class="btn !text-xs !py-1 !px-3" :class="tab === 'sent' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-          @click="tab = 'sent'">我发出的（{{ sent.length }}）</button>
+      <!-- 加载失败：持久错误态 + 重试，不落「还没有收到搭子的分享」空态 -->
+      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+        <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+        <span class="flex-1">{{ loadError }}</span>
+        <button class="btn-ghost !text-xs shrink-0" @click="load">
+          <RefreshCw :size="14" aria-hidden="true" />
+          重试
+        </button>
       </div>
 
-      <div class="card space-y-2">
+      <div v-else class="flex gap-2">
+        <button
+          class="btn !text-xs !py-1 !px-3"
+          :class="tab === 'received' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="tab = 'received'"
+        >
+          收到的（{{ received.length }}）
+        </button>
+        <button
+          class="btn !text-xs !py-1 !px-3"
+          :class="tab === 'sent' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          @click="tab = 'sent'"
+        >
+          我发出的（{{ sent.length }}）
+        </button>
+      </div>
+
+      <div v-if="!loadError" class="card space-y-2">
         <div v-if="!list.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
           {{ tab === 'received' ? '还没有收到搭子的分享' : '还没有分享给搭子，去错题本/笔记页分享一条吧' }}
         </div>
-        <button v-for="s in list" :key="s.id"
+        <button
+          v-for="s in list"
+          :key="s.id"
           class="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-xs transition-colors hover:bg-slate-50 dark:hover:bg-slate-700"
-          @click="openPreview(s)">
+          @click="openPreview(s)"
+        >
           <UserAvatar :name="tab === 'received' ? s.ownerName : s.partnerName" size="sm" />
           <div class="min-w-0 text-left flex-1">
             <div class="flex items-center gap-1.5">
               <span class="font-medium truncate">{{ tab === 'received' ? s.ownerName : s.partnerName }}</span>
-              <span class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-                :class="s.itemType === 'error' ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-500' : 'bg-sky-50 dark:bg-sky-900/30 text-sky-500'">
+              <span
+                class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+                :class="
+                  s.itemType === 'error'
+                    ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-500'
+                    : 'bg-sky-50 dark:bg-sky-900/30 text-sky-500'
+                "
+              >
                 {{ s.itemType === 'error' ? '错题' : '笔记' }}
               </span>
             </div>
@@ -78,6 +117,9 @@ function openPreview(item: PartnerShareItem) {
           </div>
           <span v-if="s.commentCount" class="shrink-0 text-[10px] text-slate-400">{{ s.commentCount }} 条批注</span>
         </button>
+        <div v-if="hasMore" class="text-center text-[10px] text-slate-400 dark:text-slate-500 pt-1">
+          还有更早的分享未展示
+        </div>
       </div>
     </template>
   </div>

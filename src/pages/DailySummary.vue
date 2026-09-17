@@ -1,56 +1,76 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { useToast } from '../composables/useToast'
 import { useAppStore } from '../stores/app'
 import { today, formatMinutes } from '../utils/date'
 import { MOODS } from '../data/defaults'
 import PostComposer from '../components/community/PostComposer.vue'
+import { TriangleAlert } from '@lucide/vue'
 import dayjs from 'dayjs'
-import { useOverlayDismiss } from '../composables/useOverlayDismiss'
+import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 const store = useAppStore()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
-// 编辑区固定为「今日」总结；往日总结通过点击日历弹出悬浮卡片查看
-// 定时器驱动：页面挂载跨午夜后自动切换到新的一天，并重载表单内容
+// 编辑区固定为「今日（UTC+8 业务日）」总结；往日总结通过点击日历弹出悬浮卡片查看
 const editDate = ref(today())
+// 跨午夜但仍有未保存内容时置位：editDate 冻结在原日期，明确提示用户先保存（issue #36）
+const editingStaleDay = ref(false)
+const form = ref({ mood: '', harvest: '', improve: '', plan: '' })
+
+/** 当前表单相对该日已保存内容是否存在未保存改动 */
+function isDirty(d: string): boolean {
+  const saved = store.summaries[d]
+  return (
+    form.value.mood !== (saved?.mood || '') ||
+    form.value.harvest !== (saved?.harvest || '') ||
+    form.value.improve !== (saved?.improve || '') ||
+    form.value.plan !== (saved?.plan || '')
+  )
+}
+
+// 跨午夜：无未保存内容时直接切到新的一天；有未保存内容则冻结 editDate（继续在原日期编辑），
+// 待用户保存到原日期后再切换——否则旧内容被写进新日期、原日期总结永久缺失
 const dayTimer = setInterval(() => {
-  if (editDate.value !== today()) editDate.value = today()
+  if (editDate.value === today()) return
+  if (isDirty(editDate.value)) {
+    if (!editingStaleDay.value) {
+      editingStaleDay.value = true
+      toast(`已跨到新的一天，请先保存 ${editDate.value} 的总结`)
+    }
+    return
+  }
+  editDate.value = today()
 }, 60000)
 onUnmounted(() => clearInterval(dayTimer))
 
-const form = ref({ mood: '', harvest: '', improve: '', plan: '' })
-watch(editDate, (d, oldD) => {
-  // 跨午夜切换时若存在未保存的编辑内容则保留，避免静默丢失用户输入
-  // immediate 首次触发无旧值，oldD 为 undefined，直接跳过索引取 prev
-  const prev = oldD === undefined ? undefined : store.summaries[oldD]
-  const dirty = form.value.mood !== (prev?.mood || '')
-    || form.value.harvest !== (prev?.harvest || '')
-    || form.value.improve !== (prev?.improve || '')
-    || form.value.plan !== (prev?.plan || '')
-  if (dirty) {
-    toast('已跨到新的一天，未保存的总结内容已保留，请及时保存')
-    return
-  }
-  const s = store.summaries[d]
-  form.value = {
-    mood: s?.mood || '',
-    harvest: s?.harvest || '',
-    improve: s?.improve || '',
-    plan: s?.plan || ''
-  }
-}, { immediate: true })
+// editDate 变更（首次载入 / 跨日切换 / 保存后回到今天）时按目标日期重载表单
+watch(
+  editDate,
+  (d) => {
+    editingStaleDay.value = false
+    const s = store.summaries[d]
+    form.value = {
+      mood: s?.mood || '',
+      harvest: s?.harvest || '',
+      improve: s?.improve || '',
+      plan: s?.plan || ''
+    }
+  },
+  { immediate: true }
+)
 
 /** 聚合某日期的全维度数据概览 */
 function aggregateDay(d: string) {
-  const records = store.records.filter(r => r.date === d)
+  const records = store.records.filter((r) => r.date === d)
   const minutes = records.reduce((s, r) => s + r.minutes, 0)
-  const problems = store.problemSessions.filter(p => p.date === d)
+  const problems = store.problemSessions.filter((p) => p.date === d)
   const pTotal = problems.reduce((s, p) => s + p.total, 0)
   const pCorrect = problems.reduce((s, p) => s + p.correct, 0)
   const pomo = store.pomodoro.daily[d] || { count: 0, minutes: 0, interruptions: 0 }
   const bySubject: Record<string, number> = {}
   for (const r of records) bySubject[r.subjectId] = (bySubject[r.subjectId] || 0) + r.minutes
-  return { minutes, pTotal, pCorrect, pomo, bySubject, accuracy: pTotal ? Math.round(pCorrect / pTotal * 100) : null }
+  return { minutes, pTotal, pCorrect, pomo, bySubject, accuracy: pTotal ? Math.round((pCorrect / pTotal) * 100) : null }
 }
 
 // ---- 当日数据聚合 ----
@@ -74,15 +94,27 @@ function save(): boolean {
     toast('请填写明日计划')
     return false
   }
-  const isNew = !store.summaries[editDate.value]
-  store.saveSummary({ date: editDate.value, ...form.value })
+  const date = editDate.value
+  const isNew = !store.summaries[date]
+  store.saveSummary({ date, ...form.value })
   toast('每日总结已保存' + (isNew ? ' +5 积分' : ''))
+  // 跨日后若 editDate 被冻结在原日期：保存成功即切回今天（watch 重载表单），内容始终归属实际编辑的那天
+  if (date !== today()) editDate.value = today()
   return true
 }
 
 // ---- 往日总结悬浮卡片 ----
 const cardDate = ref('')
-const { onOverlayMousedown: onCardMousedown, onOverlayClick: onCardClick } = useOverlayDismiss(() => { cardDate.value = '' })
+/** 卡片面板：Esc / Tab 焦点陷阱的锚点 */
+const cardPanelRef = ref<HTMLElement | null>(null)
+// Esc 关闭 + Tab 焦点陷阱 + body 滚动锁定下沉到弹层栈：只有卡片位于栈顶时响应键盘，
+// 叠加在本页分享弹窗 / 全局确认框之下时不会抢 Esc
+const { onOverlayMousedown: onCardMousedown, onOverlayClick: onCardClick } = useOverlayDismiss(
+  () => {
+    cardDate.value = ''
+  },
+  { show: () => !!cardDate.value, panel: () => cardPanelRef.value }
+)
 /** 明日计划板块开关：用户可选择展示/隐藏，默认不强制显示 */
 const showPlan = ref(false)
 const cardData = computed(() => (cardDate.value ? aggregateDay(cardDate.value) : null))
@@ -94,21 +126,12 @@ function openDayCard(d: string) {
   showPlan.value = false
 }
 
-// Esc 关闭悬浮卡片
-function onCardKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') cardDate.value = ''
-}
-watch(cardDate, v => {
-  if (v) window.addEventListener('keydown', onCardKeydown)
-  else window.removeEventListener('keydown', onCardKeydown)
-})
-onUnmounted(() => window.removeEventListener('keydown', onCardKeydown))
-
 // ---- 日历 ----
-const calMonth = ref(dayjs().format('YYYY-MM'))
+// 初始月份取业务日期所在月（本页所有日期键均为 UTC+8，不依赖设备时区）
+const calMonth = ref(editDate.value.slice(0, 7))
 // 跨午夜/跨月后日历自动切换到当前月
-watch(editDate, d => {
-  const m = dayjs(d).format('YYYY-MM')
+watch(editDate, (d) => {
+  const m = d.slice(0, 7)
   if (calMonth.value !== m) calMonth.value = m
 })
 const calendarDays = computed(() => {
@@ -130,7 +153,9 @@ function hasRecord(d: string | null) {
 
 // ---- 分享卡片 ----
 const showShare = ref(false)
-const { onOverlayMousedown: onShareMousedown, onOverlayClick: onShareClick } = useOverlayDismiss(() => { showShare.value = false })
+const { onOverlayMousedown: onShareMousedown, onOverlayClick: onShareClick } = useOverlayDismiss(() => {
+  showShare.value = false
+})
 /** 分享卡片 DOM 引用，用于渲染成图片 */
 const shareCardRef = ref<HTMLElement | null>(null)
 /** 卡片渲染后的图片 dataURL；非空时用 <img> 替换 DOM 卡片，支持移动端长按保存 */
@@ -141,7 +166,7 @@ function openShare() {
   if (save()) showShare.value = true
 }
 
-watch(showShare, async v => {
+watch(showShare, async (v) => {
   shareImg.value = ''
   if (!v) return
   shareImgLoading.value = true
@@ -185,13 +210,17 @@ function openCommunityShare() {
     d.minutes ? `学习 ${formatMinutes(d.minutes)}` : '',
     d.pTotal ? `刷题 ${d.pTotal} 道${d.accuracy !== null ? `（正确率 ${d.accuracy}%）` : ''}` : '',
     d.pomo.count ? `番茄钟 ${d.pomo.count} 个` : ''
-  ].filter(Boolean).join(' · ')
+  ]
+    .filter(Boolean)
+    .join(' · ')
   composerContent.value = [
     `${form.value.mood} 今日学习总结`,
     `收获：${form.value.harvest}`,
     `反思：${form.value.improve}`,
     stats ? `${stats}` : ''
-  ].filter(Boolean).join('\n')
+  ]
+    .filter(Boolean)
+    .join('\n')
   showComposer.value = true
 }
 </script>
@@ -209,6 +238,14 @@ function openCommunityShare() {
     <div class="grid lg:grid-cols-3 gap-4">
       <!-- 编辑区 -->
       <div class="lg:col-span-2 space-y-4">
+        <!-- 跨午夜冻结提示：editDate 仍停在被编辑的那一天，保存后自动切回今天 -->
+        <div
+          v-if="editingStaleDay"
+          class="flex items-center gap-2 text-xs font-medium bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl px-3 py-2"
+        >
+          <TriangleAlert :size="14" class="shrink-0" />
+          <span>已跨到新的一天，当前仍在编辑 {{ editDate }} 的总结，保存后将切换到今天</span>
+        </div>
         <div class="card">
           <div class="flex items-center justify-between mb-3">
             <div class="section-title !mb-0">今日数据概览</div>
@@ -224,7 +261,9 @@ function openCommunityShare() {
               <div class="text-[10px] text-slate-400">刷题数</div>
             </div>
             <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
-              <div class="font-black text-amber-500">{{ dayData.accuracy === null ? '—' : dayData.accuracy + '%' }}</div>
+              <div class="font-black text-amber-500">
+                {{ dayData.accuracy === null ? '—' : dayData.accuracy + '%' }}
+              </div>
               <div class="text-[10px] text-slate-400">正确率</div>
             </div>
             <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
@@ -233,8 +272,12 @@ function openCommunityShare() {
             </div>
           </div>
           <div v-if="Object.keys(dayData.bySubject).length" class="flex gap-2 mt-3 flex-wrap">
-            <span v-for="(min, sid) in dayData.bySubject" :key="sid" class="text-xs px-2 py-1 rounded-full text-white"
-              :style="{ background: store.subjectMap[sid]?.color || '#94a3b8' }">
+            <span
+              v-for="(min, sid) in dayData.bySubject"
+              :key="sid"
+              class="text-xs px-2 py-1 rounded-full text-white"
+              :style="{ background: store.subjectMap[sid]?.color || '#94a3b8' }"
+            >
               {{ store.subjectMap[sid]?.name }} {{ formatMinutes(min) }}
             </span>
           </div>
@@ -242,24 +285,42 @@ function openCommunityShare() {
 
         <div class="card space-y-4">
           <div>
-            <label class="label">今日心情</label>
+            <div class="label">今日心情</div>
             <div class="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
-              <button v-for="m in MOODS" :key="m" class="btn !text-xs !px-1"
+              <button
+                v-for="m in MOODS"
+                :key="m"
+                class="btn !text-xs !px-1"
                 :class="form.mood === m ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-                @click="form.mood = m">{{ m }}</button>
+                @click="form.mood = m"
+              >
+                {{ m }}
+              </button>
             </div>
           </div>
           <div>
-            <label class="label">今日收获</label>
-            <textarea v-model="form.harvest" rows="3" class="input" placeholder="今天学到了什么？有什么进步？"></textarea>
+            <label class="label" for="ds-harvest">今日收获</label>
+            <textarea
+              id="ds-harvest"
+              v-model="form.harvest"
+              rows="3"
+              class="input"
+              placeholder="今天学到了什么？有什么进步？"
+            ></textarea>
           </div>
           <div>
-            <label class="label">不足反思</label>
-            <textarea v-model="form.improve" rows="3" class="input" placeholder="哪里做得不够好？如何改进？"></textarea>
+            <label class="label" for="ds-improve">不足反思</label>
+            <textarea
+              id="ds-improve"
+              v-model="form.improve"
+              rows="3"
+              class="input"
+              placeholder="哪里做得不够好？如何改进？"
+            ></textarea>
           </div>
           <div>
-            <label class="label">明日计划</label>
-            <textarea v-model="form.plan" rows="3" class="input" placeholder="明天要完成什么？"></textarea>
+            <label class="label" for="ds-plan">明日计划</label>
+            <textarea id="ds-plan" v-model="form.plan" rows="3" class="input" placeholder="明天要完成什么？"></textarea>
           </div>
           <button class="btn-primary w-full" @click="save">保存总结</button>
         </div>
@@ -268,24 +329,44 @@ function openCommunityShare() {
       <!-- 历史日历 -->
       <div class="card h-fit">
         <div class="flex items-center justify-between mb-3">
-          <button class="btn-ghost !p-1.5" @click="calMonth = dayjs(calMonth).subtract(1, 'month').format('YYYY-MM')">←</button>
+          <button class="btn-ghost !p-1.5" @click="calMonth = dayjs(calMonth).subtract(1, 'month').format('YYYY-MM')">
+            ←
+          </button>
           <span class="text-sm font-semibold">{{ dayjs(calMonth + '-01').format('YYYY年M月') }}</span>
-          <button class="btn-ghost !p-1.5" @click="calMonth = dayjs(calMonth).add(1, 'month').format('YYYY-MM')">→</button>
+          <button class="btn-ghost !p-1.5" @click="calMonth = dayjs(calMonth).add(1, 'month').format('YYYY-MM')">
+            →
+          </button>
         </div>
         <div class="grid grid-cols-7 gap-1 text-center text-[10px] text-slate-400 mb-1">
-          <span v-for="w in ['日','一','二','三','四','五','六']" :key="w">{{ w }}</span>
+          <span v-for="w in ['日', '一', '二', '三', '四', '五', '六']" :key="w">{{ w }}</span>
         </div>
         <div class="grid grid-cols-7 gap-1">
-          <button v-for="(d, i) in calendarDays" :key="i" :disabled="!d"
+          <button
+            v-for="(d, i) in calendarDays"
+            :key="i"
+            :disabled="!d"
             class="aspect-square rounded-lg text-xs flex items-center justify-center relative transition-colors"
             :class="[
-              !d ? '' : d === editDate ? 'bg-primary-500 text-white font-bold' : 'hover:bg-slate-100 dark:hover:bg-slate-700',
+              !d
+                ? ''
+                : d === editDate
+                  ? 'bg-primary-500 text-white font-bold'
+                  : 'hover:bg-slate-100 dark:hover:bg-slate-700'
             ]"
             :title="d && d !== editDate ? '点击查看当日总结卡片' : ''"
-            @click="d && openDayCard(d)">
+            @click="d && openDayCard(d)"
+          >
             {{ d ? Number(d.slice(-2)) : '' }}
-            <span v-if="hasSummary(d)" class="absolute bottom-0.5 w-1 h-1 rounded-full" :class="d === editDate ? 'bg-white' : 'bg-emerald-400'"></span>
-            <span v-else-if="hasRecord(d)" class="absolute bottom-0.5 w-1 h-1 rounded-full" :class="d === editDate ? 'bg-white' : 'bg-primary-300'"></span>
+            <span
+              v-if="hasSummary(d)"
+              class="absolute bottom-0.5 w-1 h-1 rounded-full"
+              :class="d === editDate ? 'bg-white' : 'bg-emerald-400'"
+            ></span>
+            <span
+              v-else-if="hasRecord(d)"
+              class="absolute bottom-0.5 w-1 h-1 rounded-full"
+              :class="d === editDate ? 'bg-white' : 'bg-primary-300'"
+            ></span>
           </button>
         </div>
         <div class="text-[10px] text-slate-400 mt-2 flex gap-3">
@@ -299,12 +380,32 @@ function openCommunityShare() {
     <!-- 往日总结悬浮卡片 -->
     <Teleport to="body">
       <Transition name="fade">
-        <div v-if="cardDate && cardData" class="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" @mousedown="onCardMousedown" @click="onCardClick">
-          <div class="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto shadow-2xl animate-pop"
-            role="dialog" aria-modal="true" :aria-label="`${cardDate} 总结`">
-            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800">
+        <div
+          v-if="cardDate && cardData"
+          class="fixed inset-0 bg-black/40 flex items-center justify-center p-4"
+          :class="OVERLAY_LAYER.modal"
+          @mousedown="onCardMousedown"
+          @click="onCardClick"
+        >
+          <div
+            ref="cardPanelRef"
+            tabindex="-1"
+            class="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-md max-h-[85vh] overflow-y-auto shadow-2xl animate-pop outline-none"
+            role="dialog"
+            aria-modal="true"
+            :aria-label="`${cardDate} 总结`"
+          >
+            <div
+              class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800"
+            >
               <h3 class="font-bold">{{ cardDate }} 总结</h3>
-              <button class="text-slate-400 hover:text-slate-600 text-xl leading-none" @click="cardDate = ''" aria-label="关闭">×</button>
+              <button
+                class="text-slate-400 hover:text-slate-600 text-xl leading-none"
+                @click="cardDate = ''"
+                aria-label="关闭"
+              >
+                ×
+              </button>
             </div>
             <div class="px-5 py-4 space-y-4">
               <!-- ① 当日全维度数据概览（必填） -->
@@ -320,7 +421,9 @@ function openCommunityShare() {
                     <div class="text-[10px] text-slate-400">刷题数</div>
                   </div>
                   <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
-                    <div class="font-black text-amber-500">{{ cardData.accuracy === null ? '—' : cardData.accuracy + '%' }}</div>
+                    <div class="font-black text-amber-500">
+                      {{ cardData.accuracy === null ? '—' : cardData.accuracy + '%' }}
+                    </div>
                     <div class="text-[10px] text-slate-400">正确率</div>
                   </div>
                   <div class="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-2">
@@ -329,8 +432,12 @@ function openCommunityShare() {
                   </div>
                 </div>
                 <div v-if="Object.keys(cardData.bySubject).length" class="flex gap-2 mt-2 flex-wrap">
-                  <span v-for="(min, sid) in cardData.bySubject" :key="sid" class="text-xs px-2 py-1 rounded-full text-white"
-                    :style="{ background: store.subjectMap[sid]?.color || '#94a3b8' }">
+                  <span
+                    v-for="(min, sid) in cardData.bySubject"
+                    :key="sid"
+                    class="text-xs px-2 py-1 rounded-full text-white"
+                    :style="{ background: store.subjectMap[sid]?.color || '#94a3b8' }"
+                  >
                     {{ store.subjectMap[sid]?.name }} {{ formatMinutes(min) }}
                   </span>
                 </div>
@@ -354,14 +461,22 @@ function openCommunityShare() {
               <div class="border-t border-slate-100 dark:border-slate-700 pt-3">
                 <div class="flex items-center justify-between">
                   <span class="text-xs font-semibold text-slate-400">明日计划</span>
-                  <button class="text-xs px-2.5 py-1 rounded-full transition-colors"
-                    :class="showPlan ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'"
+                  <button
+                    class="text-xs px-2.5 py-1 rounded-full transition-colors"
+                    :class="
+                      showPlan
+                        ? 'bg-primary-500 text-white'
+                        : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                    "
                     :aria-pressed="showPlan"
-                    @click="showPlan = !showPlan">
+                    @click="showPlan = !showPlan"
+                  >
                     {{ showPlan ? '已展示 · 点击隐藏' : '已隐藏 · 点击展示' }}
                   </button>
                 </div>
-                <p v-if="showPlan" class="text-sm whitespace-pre-wrap leading-relaxed mt-2">{{ cardSummary?.plan || '未填写' }}</p>
+                <p v-if="showPlan" class="text-sm whitespace-pre-wrap leading-relaxed mt-2">
+                  {{ cardSummary?.plan || '未填写' }}
+                </p>
               </div>
             </div>
           </div>
@@ -371,15 +486,28 @@ function openCommunityShare() {
 
     <!-- 分享卡片 -->
     <Teleport to="body">
-      <div v-if="showShare" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" @mousedown="onShareMousedown" @click="onShareClick">
+      <div
+        v-if="showShare"
+        class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6"
+        @mousedown="onShareMousedown"
+        @click="onShareClick"
+      >
         <div class="max-w-sm w-full">
           <!-- 图片生成成功后用 <img> 展示，移动端可长按保存；生成期间/失败时展示原 DOM 卡片 -->
-          <img v-if="shareImg" :src="shareImg" alt="学习日报分享卡片" class="w-full rounded-3xl shadow-2xl select-none" />
-          <div v-show="!shareImg" ref="shareCardRef"
-            class="rounded-3xl overflow-hidden shadow-2xl bg-gradient-to-br from-primary-500 via-indigo-500 to-purple-600 text-white p-6">
+          <img
+            v-if="shareImg"
+            :src="shareImg"
+            alt="学习日报分享卡片"
+            class="w-full rounded-3xl shadow-2xl select-none"
+          />
+          <div
+            v-show="!shareImg"
+            ref="shareCardRef"
+            class="rounded-3xl overflow-hidden shadow-2xl bg-gradient-to-br from-primary-500 via-indigo-500 to-purple-600 text-white p-6"
+          >
             <!-- Logo + 品牌 -->
             <div class="flex items-center gap-2 mb-3">
-              <img src="/logo.png" alt="Logo" class="w-6 h-6 rounded" onerror="this.style.display='none'" />
+              <img src="/logo.png" alt="Logo" class="w-6 h-6 rounded" onerror="this.style.display = 'none'" />
               <span class="text-xs font-medium opacity-90">专升本学习助手</span>
             </div>
             <div class="text-xs opacity-80">{{ editDate }} · 备考打卡</div>
@@ -403,11 +531,19 @@ function openCommunityShare() {
               </div>
             </div>
             <div v-if="form.mood" class="mt-3 text-sm">今日心情：{{ form.mood }}</div>
-            <div v-if="form.harvest" class="mt-2 text-xs bg-white/10 rounded-xl p-3 leading-relaxed">{{ form.harvest.slice(0, 100) }}</div>
+            <div v-if="form.harvest" class="mt-2 text-xs bg-white/10 rounded-xl p-3 leading-relaxed">
+              {{ form.harvest.slice(0, 100) }}
+            </div>
             <div class="mt-4 text-[10px] opacity-70 text-center">github.com/Han050912/zsb-study-tracker</div>
           </div>
           <p class="text-center text-white/70 text-xs mt-12">
-            {{ shareImgLoading ? '正在生成图片…' : shareImg ? '点击保存图片，分享到备考群，和朋友一起上岸！' : '图片生成失败，可截图保存' }}
+            {{
+              shareImgLoading
+                ? '正在生成图片…'
+                : shareImg
+                  ? '点击保存图片，分享到备考群，和朋友一起上岸！'
+                  : '图片生成失败，可截图保存'
+            }}
           </p>
           <div class="flex gap-2 mt-5">
             <button class="btn-ghost flex-1" @click="copyShareText">复制文案</button>
@@ -419,7 +555,13 @@ function openCommunityShare() {
     </Teleport>
 
     <!-- 分享到社区广场（预填总结内容，可编辑后发布） -->
-    <PostComposer v-model:show="showComposer" type="share" :preset-content="composerContent"
-      :preset-tags="['#每日打卡']" ref-type="summary" :ref-id="editDate" />
+    <PostComposer
+      v-model:show="showComposer"
+      type="share"
+      :preset-content="composerContent"
+      :preset-tags="['#每日打卡']"
+      ref-type="summary"
+      :ref-id="editDate"
+    />
   </div>
 </template>

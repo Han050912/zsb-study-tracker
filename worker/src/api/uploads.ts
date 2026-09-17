@@ -3,6 +3,7 @@ import { on } from '../router'
 import { all, first, run, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { awardBadge, hasBadge } from './badges'
+import { IMAGE_MAX_BYTES, sniff, stripMetadata } from '../image'
 
 /**
  * 社区图片上传：R2 存储 + Worker 代理读取。
@@ -11,8 +12,6 @@ import { awardBadge, hasBadge } from './badges'
  * - 读取为公开路由（<img> 无法携带 Authorization），id 为 16 位 hex 随机串，不可枚举
  */
 
-/** 单张图片上限 5MB（与前端校验口径一致） */
-export const IMAGE_MAX_BYTES = 5 * 1024 * 1024
 /** 单帖最多 9 张 */
 export const IMAGE_MAX_PER_POST = 9
 /** 单条评论最多 3 张 */
@@ -22,146 +21,148 @@ export const IMAGE_MAX_PER_MESSAGE = 3
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
-// ---------- Magic Bytes 嗅探 ----------
+// ---------- 上传引用源（单点口径：孤图清理与删帖/删评论共用） ----------
 
-type ImageKind = { mime: string; ext: 'png' | 'jpg' | 'gif' | 'webp' }
+/**
+ * 引用社区图片（`/api/community/images/<id>`）的**全部**真实来源表（口径单点，勿在别处另立一份）。
+ * 孤图判定（周 cron）与删除上传前的引用统计共用此列表，避免两处漂移（issue #10 / #37）。
+ * 每张表都有一个 JSON 数组列 `image_urls`；`partner_shares` / `partner_share_comments` 等表不引用图片。
+ */
+const UPLOAD_REF_TABLES = ['community_posts', 'community_comments', 'community_messages', 'feedback'] as const
 
-function ascii(b: Uint8Array, off: number, len: number): string {
-  return String.fromCharCode(...b.subarray(off, off + len))
-}
+/** D1 单条语句绑定参数上限 100；UNION 4 张来源表 → 每块候选最多 20 个 URL（4×20=80 参数） */
+const REF_CHECK_CHUNK = 20
 
-/** 按文件头识别真实格式；不支持返回 null */
-function sniff(b: Uint8Array): ImageKind | null {
-  if (b.length >= 8 && b[0] === 0x89 && ascii(b, 1, 3) === 'PNG') return { mime: 'image/png', ext: 'png' }
-  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return { mime: 'image/jpeg', ext: 'jpg' }
-  if (b.length >= 6 && ascii(b, 0, 4) === 'GIF8') return { mime: 'image/gif', ext: 'gif' }
-  if (b.length >= 12 && ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 4) === 'WEBP') return { mime: 'image/webp', ext: 'webp' }
-  return null
-}
+/** 本系统图片路径 → 上传 id（仅认自身路径，忽略外部 URL / 头像路径） */
+const IMAGE_ID_RE = /\/api\/community\/images\/([a-f0-9]{16})/
 
-// ---------- 元数据剥离（解析失败一律抛错，由调用方拒绝上传） ----------
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((s, p) => s + p.byteLength, 0)
-  const out = new Uint8Array(total)
-  let off = 0
-  for (const p of parts) { out.set(p, off); off += p.byteLength }
-  return out
-}
-
-/** JPEG：剔除 APP1(EXIF) 与 COM 段，其余段（含 APP0 JFIF）保留 */
-function stripJpeg(b: Uint8Array): Uint8Array {
-  const parts: Uint8Array[] = [b.subarray(0, 2)] // SOI
-  let i = 2
-  while (i + 2 <= b.length) {
-    if (b[i] !== 0xff) throw new Error('malformed jpeg')
-    const marker = b[i + 1]
-    if (marker === 0xff) { i++; continue } // 填充字节
-    if (marker === 0xda) { parts.push(b.subarray(i)); return concat(parts) } // SOS：压缩数据原样照搬
-    if (marker === 0xd9) { parts.push(b.subarray(i, i + 2)); return concat(parts) } // EOI：正常结束
-    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
-      parts.push(b.subarray(i, i + 2)); i += 2; continue // 无长度段标记（SOI/RSTn/TEM）
+/**
+ * 在给定候选上传 id 中筛出**仍被引用**的 id（posts / comments / messages / feedback）。
+ *
+ * 用 `json_each` 展开各来源表的 `image_urls` 后按 `IN` **等值**匹配整批候选，取代原先「每个候选行
+ * 跑 3 次 `LIKE '%…%'`」的前缀通配写法——后者对每张来源表都是全表扫描，最坏放大成 N×3 次全表扫描
+ * （issue #42）。此处每张来源表每块候选只扫一次，复杂度与候选批大小线性。
+ */
+async function referencedUploadIds(env: Env, ids: string[]): Promise<Set<string>> {
+  const unique = [...new Set(ids)]
+  const found = new Set<string>()
+  for (let i = 0; i < unique.length; i += REF_CHECK_CHUNK) {
+    const urls = unique.slice(i, i + REF_CHECK_CHUNK).map((id) => `/api/community/images/${id}`)
+    const ph = urls.map(() => '?').join(',')
+    // json_valid 兜底：单行损坏的 image_urls 不至于让整条清理查询报错（与历史 LIKE 写法的容错一致）
+    const sql = UPLOAD_REF_TABLES.map(
+      (t) =>
+        `SELECT j.value AS url FROM ${t} t` +
+        `, json_each(CASE WHEN json_valid(t.image_urls) THEN t.image_urls ELSE '[]' END) j` +
+        ` WHERE j.value IN (${ph})`
+    ).join(' UNION ')
+    const rows = await all<{ url: string }>(env, sql, ...UPLOAD_REF_TABLES.flatMap(() => urls))
+    for (const r of rows) {
+      const m = IMAGE_ID_RE.exec(String(r.url))
+      if (m) found.add(m[1])
     }
-    if (i + 4 > b.length) throw new Error('malformed jpeg')
-    const len = (b[i + 2] << 8) | b[i + 3]
-    if (len < 2 || i + 2 + len > b.length) throw new Error('malformed jpeg')
-    if (marker !== 0xe1 && marker !== 0xfe) parts.push(b.subarray(i, i + 2 + len))
-    i += 2 + len
   }
-  throw new Error('malformed jpeg')
+  return found
 }
 
-/** PNG：剔除 eXIf 与文本块（tEXt/zTXt/iTXt），其余块（含各自 CRC）原样保留 */
-function stripPng(b: Uint8Array): Uint8Array {
-  const parts: Uint8Array[] = [b.subarray(0, 8)] // 签名
-  let i = 8
-  while (i + 8 <= b.length) {
-    const len = (b[i] << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3]) >>> 0
-    const type = ascii(b, i + 4, 4)
-    const end = i + 12 + len
-    if (end > b.length) throw new Error('malformed png')
-    if (type !== 'eXIf' && type !== 'tEXt' && type !== 'zTXt' && type !== 'iTXt') parts.push(b.subarray(i, end))
-    i = end
-    if (type === 'IEND') return concat(parts)
-  }
-  throw new Error('malformed png')
+/** 删除给定上传行的 R2 对象（含缩略图）与归属行；R2 删除失败仅记日志，不阻塞 DB 清理 */
+async function deleteUploadRows(
+  env: Env,
+  rows: { id: string; r2_key: string; thumb_r2_key: string | null }[]
+): Promise<void> {
+  if (!rows.length) return
+  await Promise.all(
+    rows.flatMap((r) => {
+      const dels: Promise<void>[] = [
+        env.IMAGES.delete(r.r2_key).catch((e) => console.error('R2 删除失败', r.r2_key, e))
+      ]
+      if (r.thumb_r2_key)
+        dels.push(env.IMAGES.delete(r.thumb_r2_key).catch((e) => console.error('R2 删除失败', r.thumb_r2_key, e)))
+      return dels
+    })
+  )
+  const ph = rows.map(() => '?').join(',')
+  await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...rows.map((r) => r.id))
 }
 
-/** WebP：剔除 EXIF/XMP 块并清 VP8X 对应标志位（0x08=EXIF, 0x04=XMP），重建 RIFF 总长度 */
-function stripWebp(b: Uint8Array): Uint8Array {
-  const kept: Uint8Array[] = []
-  let i = 12 // 跳过 'RIFF' + size + 'WEBP'
-  while (i + 8 <= b.length) {
-    const type = ascii(b, i, 4)
-    const size = (b[i + 4] | b[i + 5] << 8 | b[i + 6] << 16 | b[i + 7] << 24) >>> 0
-    const total = 8 + size + (size & 1) // 块数据按偶数字节对齐
-    if (i + total > b.length) throw new Error('malformed webp')
-    if (type === 'EXIF' || type === 'XMP ') { i += total; continue }
-    let chunk = b.subarray(i, i + total)
-    if (type === 'VP8X' && size >= 1) {
-      chunk = chunk.slice()
-      chunk[8] &= ~(0x08 | 0x04) // 清标志，避免阅读器寻找已被剔除的块
-    }
-    kept.push(chunk)
-    i += total
-  }
-  const payload = concat([new Uint8Array([0x57, 0x45, 0x42, 0x50]), ...kept]) // 'WEBP'
-  const head = new Uint8Array(8)
-  head.set([0x52, 0x49, 0x46, 0x46]) // 'RIFF'
-  const view = new DataView(head.buffer)
-  view.setUint32(4, payload.byteLength, true)
-  return concat([head, payload])
-}
-
-// ---------- 删帖时的图片清理（community.ts 复用） ----------
-
-/** 从帖子 image_urls JSON 中提取上传 id（仅认本系统路径，忽略外部 URL） */
+/** 从帖子/评论/私信/反馈的 image_urls JSON 中提取上传 id（仅认本系统路径，忽略外部 URL） */
 export function uploadIdsOf(raw: unknown): string[] {
   try {
     const v = JSON.parse(String(raw || '[]'))
     if (!Array.isArray(v)) return []
-    return v
-      .map(u => (typeof u === 'string' ? u.match(/\/api\/community\/images\/([a-f0-9]{16})$/)?.[1] : undefined))
-      .filter((x): x is string => !!x)
+    return v.map((u) => (typeof u === 'string' ? IMAGE_ID_RE.exec(u)?.[1] : undefined)).filter((x): x is string => !!x)
   } catch {
     return []
   }
 }
 
-/** 删除一组上传记录及对应 R2 对象；R2 删除失败仅记日志，不阻塞 DB 清理 */
+/**
+ * 删除一组上传记录及对应 R2 对象。
+ *
+ * **仍有其它引用时不删**（issue #37）：同一张图可被多个帖子 / 评论 / 私信 / 反馈复用，
+ * 删除其中一个引用方（其引用关系已随级联删除先行解除）不得连带删掉其它引用方仍在使用的
+ * R2 对象与 `community_uploads` 归属行。R2 删除失败仅记日志，不阻塞 DB 清理。
+ */
 export async function deleteUploads(env: Env, ids: string[]): Promise<void> {
-  if (!ids.length) return
-  const ph = ids.map(() => '?').join(',')
-  const rows = await all<{ r2_key: string; thumb_r2_key: string | null }>(env,
-    `SELECT r2_key, thumb_r2_key FROM community_uploads WHERE id IN (${ph})`, ...ids)
-  await Promise.all(rows.flatMap(r => {
-    const dels: Promise<void>[] = [env.IMAGES.delete(r.r2_key).catch(e => console.error('R2 删除失败', r.r2_key, e))]
-    if (r.thumb_r2_key) dels.push(env.IMAGES.delete(r.thumb_r2_key).catch(e => console.error('R2 删除失败', r.thumb_r2_key, e)))
-    return dels
-  }))
-  await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...ids)
+  const candidates = [...new Set(ids)]
+  if (!candidates.length) return
+  const referenced = await referencedUploadIds(env, candidates)
+  const deletable = candidates.filter((id) => !referenced.has(id))
+  if (!deletable.length) return
+  const ph = deletable.map(() => '?').join(',')
+  const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null }>(
+    env,
+    `SELECT id, r2_key, thumb_r2_key FROM community_uploads WHERE id IN (${ph})`,
+    ...deletable
+  )
+  await deleteUploadRows(env, rows)
 }
 
-/** 惰性清理：删除 30 天前且未被帖子/评论/反馈引用的孤图。由每周 cron 调用（已从上传路径移除）。 */
+/** 单轮清理的候选批大小（游标推进的步长） */
+const CLEANUP_BATCH = 200
+/** 单轮 cron 最多处理的候选行数：约束单次执行耗时（避免 cron 超时），游标保证下次接着推进 */
+const CLEANUP_MAX_ROWS = 1000
+
+/**
+ * 惰性清理：删除 30 天前且**未被帖子 / 评论 / 私信 / 反馈引用**的孤图。由每周 cron 调用。
+ *
+ * 两处修复（issue #10 / #42）：
+ * - 引用判定并入 `community_messages`（以及全部真实来源，见 `UPLOAD_REF_TABLES`），
+ *   历史私信配图不再被误判为孤图；
+ * - 按 `(created_at, id)` 升序取候选并**向后滚动游标**：被引用而未被删除的行同样推进游标，
+ *   避免「前若干条都被引用 → 每周取到同一批 → 真正靠后的孤图永远轮不到」的清理饥饿。
+ */
 export async function cleanupOrphanUploads(env: Env): Promise<void> {
   const cutoff = nowSec() - 30 * 86400
-  // 单条查询带引用标记：三个 EXISTS 子查询逐字保留原 LIKE 口径（16 位 hex ID 无子串误匹配）
-  const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null; ref_post: number | null; ref_comment: number | null; ref_feedback: number | null }>(env,
-    `SELECT cu.id, cu.r2_key, cu.thumb_r2_key,
-       (SELECT 1 FROM community_posts   WHERE image_urls LIKE '%/api/community/images/' || cu.id || '%' LIMIT 1) AS ref_post,
-       (SELECT 1 FROM community_comments WHERE image_urls LIKE '%/api/community/images/' || cu.id || '%' LIMIT 1) AS ref_comment,
-       (SELECT 1 FROM feedback          WHERE image_urls LIKE '%/api/community/images/' || cu.id || '%' LIMIT 1) AS ref_feedback
-     FROM community_uploads cu
-     WHERE cu.created_at < ? LIMIT 200`, cutoff)
-  const orphans = rows.filter(r => !r.ref_post && !r.ref_comment && !r.ref_feedback)
-  if (!orphans.length) return
-  await Promise.all(orphans.flatMap(r => {
-    const dels: Promise<void>[] = [env.IMAGES.delete(r.r2_key).catch(e => console.error('R2 删除失败', r.r2_key, e))]
-    if (r.thumb_r2_key) dels.push(env.IMAGES.delete(r.thumb_r2_key).catch(e => console.error('R2 删除失败', r.thumb_r2_key, e)))
-    return dels
-  }))
-  const ph = orphans.map(() => '?').join(',')
-  await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...orphans.map(r => r.id))
+  let cursorCreatedAt = -1
+  let cursorId = ''
+  for (let processed = 0; processed < CLEANUP_MAX_ROWS;) {
+    const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null; created_at: number }>(
+      env,
+      `SELECT id, r2_key, thumb_r2_key, created_at FROM community_uploads
+       WHERE created_at < ? AND (created_at > ? OR (created_at = ? AND id > ?))
+       ORDER BY created_at ASC, id ASC LIMIT ?`,
+      cutoff,
+      cursorCreatedAt,
+      cursorCreatedAt,
+      cursorId,
+      CLEANUP_BATCH
+    )
+    if (!rows.length) break
+    const last = rows[rows.length - 1]
+    cursorCreatedAt = last.created_at
+    cursorId = last.id
+    processed += rows.length
+    const referenced = await referencedUploadIds(
+      env,
+      rows.map((r) => r.id)
+    )
+    await deleteUploadRows(
+      env,
+      rows.filter((r) => !referenced.has(r.id))
+    )
+    if (rows.length < CLEANUP_BATCH) break
+  }
 }
 
 // ---------- 路由 ----------
@@ -169,7 +170,7 @@ export async function cleanupOrphanUploads(env: Env): Promise<void> {
 export function registerUploadRoutes() {
   // 上传图片（裸二进制；?filename= 可选，仅用于记录原始文件名）
   on('POST', '/api/community/upload', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:upload', 20)
+    await rateLimit(ctx, 'community:upload', 20)
     const q = new URL(ctx.request.url).searchParams
     const variant = q.get('variant')
     const thumbFor = q.get('id')
@@ -182,25 +183,23 @@ export function registerUploadRoutes() {
     const kind = sniff(buf)
     if (!kind) throw new HttpError(400, '仅支持 PNG / JPEG / WebP / GIF 图片')
 
-    let data: Uint8Array
-    try {
-      data = kind.ext === 'jpg' ? stripJpeg(buf)
-        : kind.ext === 'png' ? stripPng(buf)
-        : kind.ext === 'webp' ? stripWebp(buf)
-        : buf
-    } catch {
-      throw new HttpError(400, '图片文件损坏，无法处理')
-    }
+    const data = stripMetadata(buf, kind)
+    if (!data) throw new HttpError(400, '图片文件损坏，无法处理')
 
     // 缩略图：关联到已有原图记录（原图必须先上传成功）
     if (variant === 'thumb') {
       if (!thumbFor || !/^[a-f0-9]{16}$/.test(thumbFor)) throw new HttpError(400, '参数错误')
-      const owner = await first<{ id: string }>(ctx.env,
-        'SELECT id FROM community_uploads WHERE id = ? AND user_id = ?', thumbFor, ctx.userId)
+      const owner = await first<{ id: string }>(
+        ctx.env,
+        'SELECT id FROM community_uploads WHERE id = ? AND user_id = ?',
+        thumbFor,
+        ctx.userId
+      )
       if (!owner) throw new HttpError(404, '原图不存在')
       const tKind = sniff(buf)
       if (!tKind || tKind.ext === 'gif') throw new HttpError(400, '缩略图须为 PNG/JPEG/WebP')
-      const tData = tKind.ext === 'jpg' ? stripJpeg(buf) : tKind.ext === 'png' ? stripPng(buf) : stripWebp(buf)
+      const tData = stripMetadata(buf, tKind)
+      if (!tData) throw new HttpError(400, '图片文件损坏，无法处理')
       const tKey = `posts/${thumbFor}.thumb.${tKind.ext}`
       await ctx.env.IMAGES.put(tKey, tData, { httpMetadata: { contentType: tKind.mime } })
       await run(ctx.env, 'UPDATE community_uploads SET thumb_r2_key = ? WHERE id = ?', tKey, thumbFor)
@@ -211,20 +210,28 @@ export function registerUploadRoutes() {
     // 否则 cleanupOrphanUploads 会因头像不被帖子/评论/反馈引用而在 30 天后误删
     if (variant === 'avatar') {
       if (kind.ext === 'gif') throw new HttpError(400, '头像仅支持 PNG / JPEG / WebP')
-      const old = await first<{ avatar: string | null }>(ctx.env,
-        'SELECT avatar FROM user_settings WHERE user_id = ?', ctx.userId)
+      const old = await first<{ avatar: string | null }>(
+        ctx.env,
+        'SELECT avatar FROM user_settings WHERE user_id = ?',
+        ctx.userId
+      )
       const avId = uid()
       const avKey = `avatars/${avId}.${kind.ext}`
       await ctx.env.IMAGES.put(avKey, data, { httpMetadata: { contentType: kind.mime } })
       const url = `/api/avatar/${avId}.${kind.ext}`
-      await run(ctx.env,
+      await run(
+        ctx.env,
         'INSERT INTO user_settings (user_id, avatar) VALUES (?, ?) ' +
-        'ON CONFLICT(user_id) DO UPDATE SET avatar = excluded.avatar',
-        ctx.userId, url)
+          'ON CONFLICT(user_id) DO UPDATE SET avatar = excluded.avatar',
+        ctx.userId,
+        url
+      )
       // 删除旧头像对象（失败仅记日志；下次换头像时会随新流程再尝试删除）
       const oldFile = old?.avatar?.match(/^\/api\/avatar\/([a-f0-9]{16}\.(?:png|jpg|webp))$/)?.[1]
-      if (oldFile) await ctx.env.IMAGES.delete(`avatars/${oldFile}`)
-        .catch(e => console.error('[avatar] 旧头像删除失败', oldFile, e))
+      if (oldFile)
+        await ctx.env.IMAGES.delete(`avatars/${oldFile}`).catch((e) =>
+          console.error('[avatar] 旧头像删除失败', oldFile, e)
+        )
       return Response.json({ url }, { status: 201 })
     }
 
@@ -233,13 +240,25 @@ export function registerUploadRoutes() {
     await ctx.env.IMAGES.put(key, data, { httpMetadata: { contentType: kind.mime } })
     const url = `/api/community/images/${id}`
     const filename = (new URL(ctx.request.url).searchParams.get('filename') || '').slice(0, 100)
-    await run(ctx.env,
+    await run(
+      ctx.env,
       'INSERT INTO community_uploads (id, user_id, filename, r2_key, url, size, content_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      id, ctx.userId, filename, key, url, data.byteLength, kind.mime, nowSec())
+      id,
+      ctx.userId,
+      filename,
+      key,
+      url,
+      data.byteLength,
+      kind.mime,
+      nowSec()
+    )
     // 徽章：图片达人（累计上传 ≥50 张；已持有者跳过统计查询）
     if (!(await hasBadge(ctx.env, ctx.userId, 'image_50'))) {
-      const cnt = await first<{ n: number }>(ctx.env,
-        'SELECT COUNT(*) AS n FROM community_uploads WHERE user_id = ?', ctx.userId)
+      const cnt = await first<{ n: number }>(
+        ctx.env,
+        'SELECT COUNT(*) AS n FROM community_uploads WHERE user_id = ?',
+        ctx.userId
+      )
       if ((cnt?.n ?? 0) >= 50) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'image_50'))
     }
     return Response.json({ id, url, size: data.byteLength, contentType: kind.mime }, { status: 201 })
@@ -250,15 +269,18 @@ export function registerUploadRoutes() {
     const { id } = ctx.params
     if (!/^[a-f0-9]{16}$/.test(id)) throw new HttpError(400, '非法图片 ID')
     const thumb = new URL(ctx.request.url).searchParams.get('thumb') === '1'
-    const row = await first<{ r2_key: string; thumb_r2_key: string | null; content_type: string }>(ctx.env,
-      'SELECT r2_key, thumb_r2_key, content_type FROM community_uploads WHERE id = ?', id)
+    const row = await first<{ r2_key: string; thumb_r2_key: string | null; content_type: string }>(
+      ctx.env,
+      'SELECT r2_key, thumb_r2_key, content_type FROM community_uploads WHERE id = ?',
+      id
+    )
     if (!row) throw new HttpError(404, '图片不存在')
     const key = thumb && row.thumb_r2_key ? row.thumb_r2_key : row.r2_key
     const obj = await ctx.env.IMAGES.get(key)
     if (!obj) throw new HttpError(404, '图片不存在')
     return new Response(obj.body, {
       headers: {
-        'Content-Type': (thumb && row.thumb_r2_key) ? 'image/webp' : row.content_type,
+        'Content-Type': thumb && row.thumb_r2_key ? 'image/webp' : row.content_type,
         'Cache-Control': 'public, max-age=31536000, immutable',
         'X-Content-Type-Options': 'nosniff'
       }

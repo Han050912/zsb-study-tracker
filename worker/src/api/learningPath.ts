@@ -1,6 +1,5 @@
-import type { Env } from '../index'
 import { on } from '../router'
-import { all } from '../db'
+import { all, utc8Today } from '../db'
 import { getSettings } from './settings'
 
 /**
@@ -9,17 +8,14 @@ import { getSettings } from './settings'
  * 把时间分配到各科目；前端可一键分享到社区求监督。
  */
 
-/** 今日（UTC+8）的 YYYY-MM-DD，与 db.ts utc8Today 同口径 */
-function utc8Today(): string {
-  return new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
-}
-
 export function registerLearningPathRoutes() {
   on('GET', '/api/learning-path', true, async (ctx) => {
     const settings = await getSettings(ctx.env, ctx.userId)
-    const subjects = await all<{ id: string; name: string; icon: string; weight: number }>(ctx.env,
+    const subjects = await all<{ id: string; name: string; icon: string; weight: number }>(
+      ctx.env,
       'SELECT id, name, icon, weight FROM subjects WHERE user_id = ? ORDER BY weight DESC, id ASC',
-      ctx.userId)
+      ctx.userId
+    )
 
     // 距离考试天数：未设置返回 null；已过期可为负（前端据此提示「考试已结束/临近冲刺」）
     let daysLeft: number | null = null
@@ -32,7 +28,7 @@ export function registerLearningPathRoutes() {
     // 按科目权重占比分配每日目标时长（无权重科目按 0 处理；全部为 0 时均分兜底）
     const totalWeight = subjects.reduce((s, x) => s + (x.weight || 0), 0)
     const dailyGoal = settings.dailyGoalMinutes || 240
-    const plan = subjects.map(s => {
+    const plan = subjects.map((s) => {
       const ratio = totalWeight > 0 ? (s.weight || 0) / totalWeight : 1 / Math.max(subjects.length, 1)
       return {
         id: s.id,
@@ -43,12 +39,17 @@ export function registerLearningPathRoutes() {
       }
     })
 
+    // 本周总目标按分配结果求和：保底 10 分钟/科可能使总和大于 dailyGoal，
+    // 若仍用 dailyGoal * 7 会与各科明细自相矛盾（P2-08）
+    const dailyTotalMinutes = plan.reduce((sum, s) => sum + s.dailyMinutes, 0)
+
     return Response.json({
       examDate: settings.examDate || null,
       daysLeft,
       dailyGoalMinutes: dailyGoal,
       subjects: plan,
-      weeklyTotalMinutes: dailyGoal * 7
+      dailyTotalMinutes,
+      weeklyTotalMinutes: dailyTotalMinutes * 7
     })
   })
 }

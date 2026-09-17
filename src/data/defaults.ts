@@ -2,19 +2,51 @@ import type { AppState, Subject } from '../types'
 
 /** 高数考纲章节（专升本通用） */
 const mathChapters = [
-  { id: 'm1', name: '第一章 函数与极限', topics: ['函数及其性质', '数列极限', '函数极限', '无穷小与无穷大', '极限运算法则', '两个重要极限', '函数的连续性'] },
-  { id: 'm2', name: '第二章 导数与微分', topics: ['导数概念', '求导法则', '复合函数求导', '隐函数求导', '高阶导数', '微分及其应用'] },
-  { id: 'm3', name: '第三章 微分中值定理与导数应用', topics: ['罗尔定理', '拉格朗日中值定理', '洛必达法则', '单调性与极值', '凹凸性与拐点', '最值应用题'] },
+  {
+    id: 'm1',
+    name: '第一章 函数与极限',
+    topics: ['函数及其性质', '数列极限', '函数极限', '无穷小与无穷大', '极限运算法则', '两个重要极限', '函数的连续性']
+  },
+  {
+    id: 'm2',
+    name: '第二章 导数与微分',
+    topics: ['导数概念', '求导法则', '复合函数求导', '隐函数求导', '高阶导数', '微分及其应用']
+  },
+  {
+    id: 'm3',
+    name: '第三章 微分中值定理与导数应用',
+    topics: ['罗尔定理', '拉格朗日中值定理', '洛必达法则', '单调性与极值', '凹凸性与拐点', '最值应用题']
+  },
   { id: 'm4', name: '第四章 不定积分', topics: ['原函数与不定积分', '换元积分法', '分部积分法', '有理函数积分'] },
-  { id: 'm5', name: '第五章 定积分及其应用', topics: ['定积分概念与性质', '牛顿-莱布尼茨公式', '定积分换元与分部', '广义积分', '平面图形面积', '旋转体体积'] },
-  { id: 'm6', name: '第六章 微分方程', topics: ['微分方程基本概念', '可分离变量方程', '一阶线性方程', '二阶常系数齐次方程', '二阶常系数非齐次方程'] },
-  { id: 'm7', name: '第七章 多元函数微积分', topics: ['偏导数', '全微分', '复合函数微分法', '二元函数极值', '二重积分'] },
-  { id: 'm8', name: '第八章 无穷级数', topics: ['数项级数敛散性', '正项级数审敛法', '交错级数', '幂级数', '函数展开成幂级数'] }
+  {
+    id: 'm5',
+    name: '第五章 定积分及其应用',
+    topics: ['定积分概念与性质', '牛顿-莱布尼茨公式', '定积分换元与分部', '广义积分', '平面图形面积', '旋转体体积']
+  },
+  {
+    id: 'm6',
+    name: '第六章 微分方程',
+    topics: ['微分方程基本概念', '可分离变量方程', '一阶线性方程', '二阶常系数齐次方程', '二阶常系数非齐次方程']
+  },
+  {
+    id: 'm7',
+    name: '第七章 多元函数微积分',
+    topics: ['偏导数', '全微分', '复合函数微分法', '二元函数极值', '二重积分']
+  },
+  {
+    id: 'm8',
+    name: '第八章 无穷级数',
+    topics: ['数项级数敛散性', '正项级数审敛法', '交错级数', '幂级数', '函数展开成幂级数']
+  }
 ]
 
 const engChapters = [
   { id: 'e1', name: '词汇', topics: ['高频词汇', '中频词汇', '低频词汇', '词组搭配'] },
-  { id: 'e2', name: '语法', topics: ['时态语态', '非谓语动词', '虚拟语气', '定语从句', '名词性从句', '状语从句', '倒装与强调'] },
+  {
+    id: 'e2',
+    name: '语法',
+    topics: ['时态语态', '非谓语动词', '虚拟语气', '定语从句', '名词性从句', '状语从句', '倒装与强调']
+  },
   { id: 'e3', name: '阅读理解', topics: ['细节理解', '主旨大意', '推理判断', '词义猜测'] },
   { id: 'e4', name: '写作', topics: ['应用文', '议论文', '图表作文', '模板句型'] },
   { id: 'e5', name: '翻译', topics: ['英译汉', '汉译英'] },
@@ -23,8 +55,28 @@ const engChapters = [
 
 export function defaultSubjects(): Subject[] {
   return [
-    { id: 'math', name: '高等数学', icon: '📐', color: '#3b82f6', weight: 50, builtin: true, chapters: mathChapters, mastery: {}, topicImportance: {} },
-    { id: 'english', name: '英语', icon: '📖', color: '#10b981', weight: 50, builtin: true, chapters: engChapters, mastery: {}, topicImportance: {} }
+    {
+      id: 'math',
+      name: '高等数学',
+      icon: '📐',
+      color: '#3b82f6',
+      weight: 50,
+      builtin: true,
+      chapters: mathChapters,
+      mastery: {},
+      topicImportance: {}
+    },
+    {
+      id: 'english',
+      name: '英语',
+      icon: '📖',
+      color: '#10b981',
+      weight: 50,
+      builtin: true,
+      chapters: engChapters,
+      mastery: {},
+      topicImportance: {}
+    }
   ]
 }
 
@@ -147,7 +199,7 @@ export function createDefaultState(): AppState {
       dndMutedTypes: [],
       dndMuteMessage: false,
       partnerShareEnabled: false,
-      partnerRemindEnabled: true,
+      partnerRemindEnabled: true
     }
   }
 }

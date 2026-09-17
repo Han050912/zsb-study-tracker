@@ -1,5 +1,6 @@
 import type { Env } from '../../index'
 import { all, first, uid, utc8Today, HttpError } from '../../db'
+import { isDbAdmin } from '../../middleware/auth'
 import { uploadIdsOf } from '../uploads'
 
 /**
@@ -19,7 +20,7 @@ export const nowSec = () => Math.floor(Date.now() / 1000)
 export function parseStrArray(raw: unknown): string[] {
   try {
     const v = JSON.parse(String(raw || '[]'))
-    return Array.isArray(v) ? v.filter(t => typeof t === 'string') : []
+    return Array.isArray(v) ? v.filter((t) => typeof t === 'string') : []
   } catch {
     return []
   }
@@ -37,7 +38,7 @@ export function mapPost(r: any) {
     content: r.content,
     tags: parseStrArray(r.tags),
     imageUrls: parseStrArray(r.image_urls),
-    imageThumbs: parseStrArray(r.image_urls).map(u => u + '?thumb=1'),
+    imageThumbs: parseStrArray(r.image_urls).map((u) => u + '?thumb=1'),
     isResolved: !!r.is_resolved,
     acceptedAnswerId: r.accepted_answer_id ?? undefined,
     isFeatured: !!r.is_featured,
@@ -67,6 +68,7 @@ export function mapComment(r: any) {
     userName: r.user_name || '升本人',
     userAvatar: r.user_avatar ?? undefined,
     parentId: r.parent_id ?? undefined,
+    replyCount: r.reply_count ?? 0,
     content: r.content,
     imageUrls: parseStrArray(r.image_urls),
     userVerified: !!r.user_verified,
@@ -123,21 +125,35 @@ export const POST_SELECT = `
 // ---------- 积分 / 通知 ----------
 
 /** 社区行为积分语句：gamification 行可能不存在（upsert），流水写入 points_log（refId 带 srv: 前缀标记服务端来源） */
-export function awardStatements(env: Env, userId: string, points: number, reason: string, refId?: string): D1PreparedStatement[] {
+export function awardStatements(
+  env: Env,
+  userId: string,
+  points: number,
+  reason: string,
+  refId?: string
+): D1PreparedStatement[] {
   return [
     env.DB.prepare(
       'INSERT INTO gamification (user_id, points) VALUES (?, ?) ' +
-      'ON CONFLICT(user_id) DO UPDATE SET points = points + excluded.points'
+        'ON CONFLICT(user_id) DO UPDATE SET points = points + excluded.points'
     ).bind(userId, points),
-    env.DB.prepare('INSERT INTO points_log (user_id, date, points, reason, ref_id) VALUES (?, ?, ?, ?, ?)')
-      .bind(userId, utc8Today(), points, reason, refId ? `srv:${refId}` : null)
+    env.DB.prepare('INSERT INTO points_log (user_id, date, points, reason, ref_id) VALUES (?, ?, ?, ?, ?)').bind(
+      userId,
+      utc8Today(),
+      points,
+      reason,
+      refId ? `srv:${refId}` : null
+    )
   ]
 }
 
 /** 按 refId 精确回收积分流水（含 gamification 扣减），用于取消点赞/删除评论时防止「反复操作刷分」 */
 export async function revokeStatements(env: Env, refId: string): Promise<D1PreparedStatement[]> {
-  const logs = await all<{ user_id: string; points: number }>(env,
-    'SELECT user_id, points FROM points_log WHERE ref_id = ?', refId)
+  const logs = await all<{ user_id: string; points: number }>(
+    env,
+    'SELECT user_id, points FROM points_log WHERE ref_id = ?',
+    refId
+  )
   if (!logs.length) return []
   const byUser = new Map<string, number>()
   for (const l of logs) byUser.set(l.user_id, (byUser.get(l.user_id) || 0) + l.points)
@@ -149,73 +165,161 @@ export async function revokeStatements(env: Env, refId: string): Promise<D1Prepa
   return stmts
 }
 
-/** 回收一组点赞目标的全部「获赞」流水（refId = like:{user}:{type}:{target}），删除帖子/评论时调用，防止目标删除后积分残留被刷分 */
-export async function revokeLikeStatements(env: Env, targetType: 'post' | 'comment', targetIds: string[]): Promise<D1PreparedStatement[]> {
-  if (!targetIds.length) return []
-  const likes = await all<{ user_id: string; target_id: string }>(env,
-    `SELECT user_id, target_id FROM community_likes WHERE target_type = ? AND target_id IN (${targetIds.map(() => '?').join(',')})`,
-    targetType, ...targetIds)
+/** D1 单条查询绑定参数上限为 100，分块留余量 */
+const REVOKE_CHUNK = 90
+
+/**
+ * 按 refId 批量回收积分流水：分块一次查出全部命中流水 → 按 user_id 聚合 →
+ * 每个受影响用户一条 UPDATE + 分块 DELETE。与逐 refId 调用 revokeStatements 语义等价
+ * （MAX(MAX(x-a,0)-b,0) ≡ MAX(x-a-b,0)），但查询次数从 O(refIds) 次全表扫描降为 O(分块数)。
+ * 只生成语句不执行，由调用方并入 batch 原子提交。
+ */
+export async function revokeStatementsForRefIds(env: Env, refIds: string[]): Promise<D1PreparedStatement[]> {
+  const ids = [...new Set(refIds.filter(Boolean))]
+  if (!ids.length) return []
+  const byUser = new Map<string, number>()
+  for (let i = 0; i < ids.length; i += REVOKE_CHUNK) {
+    const chunk = ids.slice(i, i + REVOKE_CHUNK)
+    const logs = await all<{ user_id: string; points: number }>(
+      env,
+      `SELECT user_id, points FROM points_log WHERE ref_id IN (${chunk.map(() => '?').join(',')})`,
+      ...chunk
+    )
+    for (const l of logs) byUser.set(l.user_id, (byUser.get(l.user_id) || 0) + l.points)
+  }
   const stmts: D1PreparedStatement[] = []
-  for (const l of likes) stmts.push(...await revokeStatements(env, `srv:like:${l.user_id}:${targetType}:${l.target_id}`))
+  for (const [uid, pts] of byUser) {
+    stmts.push(env.DB.prepare('UPDATE gamification SET points = MAX(points - ?, 0) WHERE user_id = ?').bind(pts, uid))
+  }
+  for (let i = 0; i < ids.length; i += REVOKE_CHUNK) {
+    const chunk = ids.slice(i, i + REVOKE_CHUNK)
+    stmts.push(
+      env.DB.prepare(`DELETE FROM points_log WHERE ref_id IN (${chunk.map(() => '?').join(',')})`).bind(...chunk)
+    )
+  }
   return stmts
 }
 
-export function notifyStatement(env: Env, n: {
-  userId: string; type: string; actorId?: string; postId?: string; commentId?: string; content: string
-  targetType?: string; targetId?: string
-}): D1PreparedStatement {
-  // 未显式指定跳转目标时按类型自动推导：帖子类(评论/点赞/采纳) → 帖子；关注 → 用户主页；私信 → 会话
+/** 回收一组点赞目标的全部「获赞」流水（refId = like:{user}:{type}:{target}），删除帖子/评论时调用，防止目标删除后积分残留被刷分 */
+export async function revokeLikeStatements(
+  env: Env,
+  targetType: 'post' | 'comment',
+  targetIds: string[]
+): Promise<D1PreparedStatement[]> {
+  const targets = [...new Set(targetIds.filter(Boolean))]
+  if (!targets.length) return []
+  const refIds: string[] = []
+  // 分块查询：评论数可超过 D1 单查询 100 参数上限（修复原实现一次 IN 全量传入的潜在缺陷）
+  for (let i = 0; i < targets.length; i += REVOKE_CHUNK) {
+    const chunk = targets.slice(i, i + REVOKE_CHUNK)
+    const likes = await all<{ user_id: string; target_id: string }>(
+      env,
+      `SELECT user_id, target_id FROM community_likes WHERE target_type = ? AND target_id IN (${chunk.map(() => '?').join(',')})`,
+      targetType,
+      ...chunk
+    )
+    refIds.push(...likes.map((l) => `srv:like:${l.user_id}:${targetType}:${l.target_id}`))
+  }
+  return revokeStatementsForRefIds(env, refIds)
+}
+
+export function notifyStatement(
+  env: Env,
+  n: {
+    userId: string
+    type: string
+    actorId?: string
+    postId?: string
+    commentId?: string
+    content: string
+    targetType?: string
+    targetId?: string
+  }
+): D1PreparedStatement {
+  // 未显式指定跳转目标时按类型自动推导：帖子类(评论/点赞/采纳) → 帖子；关注 → 用户主页
   let tt = n.targetType ?? null
   let tid = n.targetId ?? null
   if (!tt) {
-    if (n.postId) { tt = 'post'; tid = n.postId }
-    else if (n.type === 'follow' && n.actorId) { tt = 'user'; tid = n.actorId }
-    else if (n.type === 'message' && n.actorId) { tt = 'message'; tid = n.actorId }
+    if (n.postId) {
+      tt = 'post'
+      tid = n.postId
+    } else if (n.type === 'follow' && n.actorId) {
+      tt = 'user'
+      tid = n.actorId
+    }
   }
   return env.DB.prepare(
     'INSERT INTO community_notifications (id, user_id, type, actor_id, post_id, comment_id, target_type, target_id, content, is_read, created_at) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)'
-  ).bind(uid(), n.userId, n.type, n.actorId ?? null, n.postId ?? null, n.commentId ?? null, tt, tid, n.content, nowSec())
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)'
+  ).bind(
+    uid(),
+    n.userId,
+    n.type,
+    n.actorId ?? null,
+    n.postId ?? null,
+    n.commentId ?? null,
+    tt,
+    tid,
+    n.content,
+    nowSec()
+  )
 }
 
 /** 用户展示名（用户设置昵称优先，回退用户名） */
 export async function displayName(env: Env, userId: string): Promise<string> {
-  const r = await first<{ name: string }>(env,
+  const r = await first<{ name: string }>(
+    env,
     'SELECT COALESCE(s.user_name, u.username) AS name FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?',
-    userId)
+    userId
+  )
   return r?.name || '升本人'
 }
 
-/** 当前用户是否为管理员 */
-export async function isAdmin(env: Env, userId: string): Promise<boolean> {
-  const u = await first<{ role: string }>(env, 'SELECT role FROM users WHERE id = ?', userId)
-  return u?.role === 'admin'
+/** 当前用户是否为管理员。role 为 JWT claim 快照（签发后不可撤销），不能作为授权依据：
+ *  声明为非 admin 时必然无管理权限，直接拒绝（免 DB 查询）；声明为 admin 或缺失（旧 token/匿名）时
+ *  以 DB 为准回查（isDbAdmin），保证管理员在 DB 中被降权后旧 token 立即失去管理能力 */
+export async function isAdmin(env: Env, userId: string, role?: string): Promise<boolean> {
+  if (role && role !== 'admin') return false
+  return isDbAdmin(env, userId)
 }
 
 /** 主页可见性校验：private 仅本人、login 需登录、public 放行 */
-export async function assertProfileVisible(ctx: { env: Env; userId: string }, targetUserId: string, visibility: string): Promise<void> {
+export async function assertProfileVisible(
+  ctx: { env: Env; userId: string },
+  targetUserId: string,
+  visibility: string
+): Promise<void> {
   if (visibility === 'private' && ctx.userId !== targetUserId) throw new HttpError(403, '对方设置了主页仅自己可见')
   if (visibility === 'login' && !ctx.userId) throw new HttpError(401, '请登录后查看')
 }
 
 /** LIKE 通配符转义（tags JSON 子串匹配用） */
 export function escapeLike(s: string): string {
-  return s.replace(/[\\%_]/g, c => '\\' + c)
+  return s.replace(/[\\%_]/g, (c) => '\\' + c)
 }
 
 // ---------- 圈子辅助 ----------
 
-export interface CircleRow { id: string; is_public: number }
+export interface CircleRow {
+  id: string
+  is_public: number
+}
 
 /** 圈子可读性校验：审核圈仅活跃成员/管理员可读其帖子流 */
-export async function assertCircleReadable(ctx: { env: Env; userId: string }, circleId: string): Promise<CircleRow> {
-  const circle = await first<CircleRow>(ctx.env,
-    'SELECT id, is_public FROM community_circles WHERE id = ?', circleId)
+export async function assertCircleReadable(
+  ctx: { env: Env; userId: string; role?: string },
+  circleId: string
+): Promise<CircleRow> {
+  const circle = await first<CircleRow>(ctx.env, 'SELECT id, is_public FROM community_circles WHERE id = ?', circleId)
   if (!circle) throw new HttpError(404, '圈子不存在')
   if (!circle.is_public) {
-    const member = await first<{ user_id: string }>(ctx.env,
-      "SELECT user_id FROM circle_members WHERE circle_id = ? AND user_id = ? AND status = 'active'", circleId, ctx.userId)
-    if (!member && !(await isAdmin(ctx.env, ctx.userId))) throw new HttpError(403, '审核圈内容仅成员可见')
+    const member = await first<{ user_id: string }>(
+      ctx.env,
+      "SELECT user_id FROM circle_members WHERE circle_id = ? AND user_id = ? AND status = 'active'",
+      circleId,
+      ctx.userId
+    )
+    if (!member && !(await isAdmin(ctx.env, ctx.userId, ctx.role))) throw new HttpError(403, '审核圈内容仅成员可见')
   }
   return circle
 }
@@ -267,29 +371,44 @@ export function postCascadeStatements(env: Env, postId: string): D1PreparedState
 
 /** 删评论级联清理语句：通知/点赞/举报/评论本体及二级回复 + 帖子计数回退 + 采纳状态解除；
  *  同时返回被删 id 列表与待清理的配图上传 id（R2 清理由调用方在 batch 成功后执行） */
-export async function commentCascadeStatements(env: Env, commentId: string, postId: string): Promise<{ statements: D1PreparedStatement[]; removedIds: string[]; imageIds: string[] }> {
-  const replies = await all<{ id: string }>(env,
-    'SELECT id FROM community_comments WHERE parent_id = ?', commentId)
-  const removedIds = [commentId, ...replies.map(r => r.id)]
+export async function commentCascadeStatements(
+  env: Env,
+  commentId: string,
+  postId: string
+): Promise<{ statements: D1PreparedStatement[]; removedIds: string[]; imageIds: string[] }> {
+  const replies = await all<{ id: string }>(env, 'SELECT id FROM community_comments WHERE parent_id = ?', commentId)
+  const removedIds = [commentId, ...replies.map((r) => r.id)]
   const ph = removedIds.map(() => '?').join(',')
-  const imgRows = await all<{ image_urls: string }>(env,
-    `SELECT image_urls FROM community_comments WHERE id IN (${ph})`, ...removedIds)
-  const imageIds = imgRows.flatMap(r => uploadIdsOf(r.image_urls))
+  const imgRows = await all<{ image_urls: string }>(
+    env,
+    `SELECT image_urls FROM community_comments WHERE id IN (${ph})`,
+    ...removedIds
+  )
+  const imageIds = imgRows.flatMap((r) => uploadIdsOf(r.image_urls))
   return {
     removedIds,
     imageIds,
     statements: [
       // 清理这些评论触发的通知（被评论/被回复/被赞评论），避免通知指向已删除内容
       env.DB.prepare(`DELETE FROM community_notifications WHERE comment_id IN (${ph})`).bind(...removedIds),
-      env.DB.prepare(`DELETE FROM community_likes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
-      env.DB.prepare(`DELETE FROM community_dislikes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
-      env.DB.prepare(`DELETE FROM community_reports WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(...removedIds),
+      env.DB.prepare(`DELETE FROM community_likes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(
+        ...removedIds
+      ),
+      env.DB.prepare(`DELETE FROM community_dislikes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(
+        ...removedIds
+      ),
+      env.DB.prepare(`DELETE FROM community_reports WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(
+        ...removedIds
+      ),
       env.DB.prepare(`DELETE FROM community_comments WHERE id IN (${ph})`).bind(...removedIds),
-      env.DB.prepare('UPDATE community_posts SET comments_count = MAX(comments_count - ?, 0) WHERE id = ?')
-        .bind(removedIds.length, postId),
+      env.DB.prepare('UPDATE community_posts SET comments_count = MAX(comments_count - ?, 0) WHERE id = ?').bind(
+        removedIds.length,
+        postId
+      ),
       // 被删评论若为最佳答案：解除采纳并回退为待解答（采纳积分回收由调用方按需执行）
-      env.DB.prepare('UPDATE community_posts SET accepted_answer_id = NULL, is_resolved = 0 WHERE id = ? AND accepted_answer_id = ?')
-        .bind(postId, commentId)
+      env.DB.prepare(
+        'UPDATE community_posts SET accepted_answer_id = NULL, is_resolved = 0 WHERE id = ? AND accepted_answer_id = ?'
+      ).bind(postId, commentId)
     ]
   }
 }

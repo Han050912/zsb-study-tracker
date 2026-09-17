@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useChart, chartTextColor } from '../composables/useChart'
+import ChartFallback from './ChartFallback.vue'
 import StarRating from './StarRating.vue'
 import type { TopicImportance } from '../types'
 
@@ -26,7 +27,10 @@ const props = defineProps<{
 const currentPage = ref(0)
 
 /** 选中的薄弱词条（跨章节可能重名，用 pageIndex + name 定位）；null 表示未选中 */
-interface SelectedTopic { name: string; pageIndex: number }
+interface SelectedTopic {
+  name: string
+  pageIndex: number
+}
 const selectedTopic = ref<SelectedTopic | null>(null)
 
 // 导航条滚动容器（章节标签）
@@ -58,16 +62,18 @@ const needPagination = computed(() => totalTopics.value > 8)
 
 // 分组数据：如果≤8个知识点则合并展示，否则按章节分组
 const groups = computed(() => {
-  const nonEmptyChapters = props.chapters.filter(ch => ch.topics.length > 0)
+  const nonEmptyChapters = props.chapters.filter((ch) => ch.topics.length > 0)
   if (!needPagination.value) {
     // 总数≤8，合并所有章节到一组
-    return [{
-      chapterName: '全部知识点',
-      topics: nonEmptyChapters.flatMap(ch => ch.topics)
-    }]
+    return [
+      {
+        chapterName: '全部知识点',
+        topics: nonEmptyChapters.flatMap((ch) => ch.topics)
+      }
+    ]
   }
   // 超过8个，按章节分组
-  return nonEmptyChapters.map(ch => ({
+  return nonEmptyChapters.map((ch) => ({
     chapterName: ch.chapterName,
     topics: ch.topics
   }))
@@ -78,11 +84,14 @@ const currentGroup = computed(() => groups.value[currentPage.value] || { chapter
 const hasMultiplePages = computed(() => totalPages.value > 1)
 
 // 当数据变化时重置页码
-watch(() => props.chapters.length, () => {
-  if (currentPage.value >= totalPages.value) {
-    currentPage.value = Math.max(0, totalPages.value - 1)
+watch(
+  () => props.chapters.length,
+  () => {
+    if (currentPage.value >= totalPages.value) {
+      currentPage.value = Math.max(0, totalPages.value - 1)
+    }
   }
-})
+)
 
 // 切换页面
 function goToPage(page: number) {
@@ -98,16 +107,24 @@ function selectTopic(topic: SelectedTopic) {
   currentPage.value = topic.pageIndex
 }
 
-function nextPage() { goToPage(currentPage.value + 1) }
-function prevPage() { goToPage(currentPage.value - 1) }
+function nextPage() {
+  goToPage(currentPage.value + 1)
+}
+function prevPage() {
+  goToPage(currentPage.value - 1)
+}
 
 // 雷达图配置
-const { el: radarEl } = useChart(() => {
+const {
+  el: radarEl,
+  status: radarStatus,
+  retry: retryRadar
+} = useChart(() => {
   if (currentGroup.value.topics.length === 0) return null
-  
+
   return {
     radar: {
-      indicator: currentGroup.value.topics.map(item => ({
+      indicator: currentGroup.value.topics.map((item) => ({
         name: item.name,
         max: item.max || 5
       })),
@@ -124,36 +141,40 @@ const { el: radarEl } = useChart(() => {
         }
       }
     },
-    series: [{
-      type: 'radar',
-      data: [{
-        value: currentGroup.value.topics.map(item => item.value),
-        name: '掌握度',
-        areaStyle: {
-          color: (props.color || '#3b82f6') + '44'
-        },
-        lineStyle: {
-          color: props.color || '#3b82f6',
-          width: 2
-        },
-        itemStyle: {
-          color: props.color || '#3b82f6'
-        }
-      }]
-    }]
+    series: [
+      {
+        type: 'radar',
+        data: [
+          {
+            value: currentGroup.value.topics.map((item) => item.value),
+            name: '掌握度',
+            areaStyle: {
+              color: (props.color || '#3b82f6') + '44'
+            },
+            lineStyle: {
+              color: props.color || '#3b82f6',
+              width: 2
+            },
+            itemStyle: {
+              color: props.color || '#3b82f6'
+            }
+          }
+        ]
+      }
+    ]
   }
 }, [currentGroup])
 
 // 统计信息
 const stats = computed(() => {
-  const values = currentGroup.value.topics.map(item => item.value)
+  const values = currentGroup.value.topics.map((item) => item.value)
   if (values.length === 0) return null
-  
+
   const avg = values.reduce((sum, v) => sum + v, 0) / values.length
   const min = Math.min(...values)
   const max = Math.max(...values)
-  const weak = currentGroup.value.topics.filter(item => item.value < 3)
-  
+  const weak = currentGroup.value.topics.filter((item) => item.value < 3)
+
   return { avg, min, max, weakCount: weak.length }
 })
 
@@ -161,7 +182,7 @@ const stats = computed(() => {
 const allWeakTopics = computed(() => {
   const result: Array<{ topic: RadarDataItem; chapterName: string; pageIndex: number }> = []
   groups.value.forEach((group, idx) => {
-    group.topics.forEach(topic => {
+    group.topics.forEach((topic) => {
       if (topic.value < 3) {
         result.push({ topic, chapterName: group.chapterName, pageIndex: idx })
       }
@@ -181,7 +202,7 @@ const selectedTopicDetail = computed(() => {
   const t = selectedTopic.value
   if (!t) return null
   const group = groups.value[t.pageIndex]
-  const topic = group?.topics.find(x => x.name === t.name)
+  const topic = group?.topics.find((x) => x.name === t.name)
   if (!group || !topic) return null
   return {
     name: topic.name,
@@ -204,20 +225,27 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
         {{ title }}
       </h3>
       <div v-if="stats" class="flex gap-3 text-xs text-slate-500 dark:text-slate-400">
-        <span>平均: <strong class="text-blue-600 dark:text-blue-400">{{ stats.avg.toFixed(1) }}</strong></span>
-        <span>薄弱: <strong class="text-orange-600 dark:text-orange-400">{{ stats.weakCount }}</strong></span>
+        <span
+          >平均: <strong class="text-blue-600 dark:text-blue-400">{{ stats.avg.toFixed(1) }}</strong></span
+        >
+        <span
+          >薄弱: <strong class="text-orange-600 dark:text-orange-400">{{ stats.weakCount }}</strong></span
+        >
       </div>
     </div>
 
     <!-- 当前章节名称 -->
     <div v-if="hasMultiplePages" class="mb-2 text-center">
-      <span class="inline-block px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-lg text-sm font-medium">
+      <span
+        class="inline-block px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-lg text-sm font-medium"
+      >
         {{ currentGroup.chapterName }}
       </span>
     </div>
 
     <!-- 雷达图 -->
-    <div ref="radarEl" class="h-64 sm:h-72 md:h-80"></div>
+    <ChartFallback v-if="radarStatus === 'error'" class="h-64 sm:h-72 md:h-80" @retry="retryRadar" />
+    <div v-else ref="radarEl" class="h-64 sm:h-72 md:h-80"></div>
 
     <!-- 分页控制 -->
     <div v-if="hasMultiplePages" class="mt-4 space-y-3">
@@ -227,15 +255,28 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
           @click="prevPage"
           :disabled="currentPage === 0"
           class="p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700"
-          aria-label="上一章">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" 
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          aria-label="上一章"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <polyline points="15 18 9 12 15 6"></polyline>
           </svg>
         </button>
 
-        <div ref="navRef" class="relative flex gap-1.5 overflow-x-auto max-w-xs sm:max-w-md"
-          @wheel.prevent="onNavWheel">
+        <div
+          ref="navRef"
+          class="relative flex gap-1.5 overflow-x-auto max-w-xs sm:max-w-md"
+          @wheel.prevent="onNavWheel"
+        >
           <button
             v-for="(group, idx) in groups"
             :key="idx"
@@ -248,7 +289,8 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
             ]"
             :title="group.chapterName"
             :aria-label="`${group.chapterName}`"
-            :aria-current="currentPage === idx ? 'true' : undefined">
+            :aria-current="currentPage === idx ? 'true' : undefined"
+          >
             {{ group.chapterName.length > 8 ? group.chapterName.slice(0, 8) + '...' : group.chapterName }}
           </button>
         </div>
@@ -257,9 +299,19 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
           @click="nextPage"
           :disabled="currentPage === totalPages - 1"
           class="p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700"
-          aria-label="下一章">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" 
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          aria-label="下一章"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <polyline points="9 18 15 12 9 6"></polyline>
           </svg>
         </button>
@@ -277,14 +329,21 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
       <!-- 薄弱知识点快速跳转 -->
       <div v-if="allWeakTopics.length > 0" class="pt-2 border-t border-slate-200 dark:border-slate-700">
         <!-- 选中词条详情 -->
-        <div v-if="selectedTopicDetail" class="mb-2 p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+        <div
+          v-if="selectedTopicDetail"
+          class="mb-2 p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+        >
           <div class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ selectedTopicDetail.name }}</div>
           <div class="flex items-center gap-2 mt-1">
             <StarRating :model-value="selectedTopicDetail.value" readonly />
             <span class="text-xs text-slate-500 dark:text-slate-400">{{ selectedTopicDetail.value }}/5</span>
           </div>
           <div class="flex items-center gap-1.5 mt-1.5">
-            <span class="text-[10px] px-1.5 py-0.5 rounded font-medium" :class="IMPORTANCE_META[selectedTopicDetail.importance].cls">{{ IMPORTANCE_META[selectedTopicDetail.importance].label }}</span>
+            <span
+              class="text-[10px] px-1.5 py-0.5 rounded font-medium"
+              :class="IMPORTANCE_META[selectedTopicDetail.importance].cls"
+              >{{ IMPORTANCE_META[selectedTopicDetail.importance].label }}</span
+            >
             <span class="text-xs text-slate-500 dark:text-slate-400">{{ selectedTopicDetail.chapterName }}</span>
           </div>
         </div>
@@ -303,7 +362,8 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
                   ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300'
                   : 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30'
             ]"
-            :title="`${item.chapterName} - ${item.topic.name}`">
+            :title="`${item.chapterName} - ${item.topic.name}`"
+          >
             {{ item.topic.name }}
           </button>
         </div>
@@ -311,9 +371,7 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
     </div>
 
     <!-- 无数据提示 -->
-    <div v-if="totalTopics === 0" class="text-center py-8 text-sm text-slate-400">
-      暂无掌握度数据
-    </div>
+    <div v-if="totalTopics === 0" class="text-center py-8 text-sm text-slate-400">暂无掌握度数据</div>
   </div>
 </template>
 

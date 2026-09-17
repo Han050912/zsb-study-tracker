@@ -1,24 +1,34 @@
 <script setup lang="ts">
+import { usePartnerStore } from '../features/collaboration/stores/partners'
+import { storeToRefs } from 'pinia'
+const partnerStore = usePartnerStore()
 /**
  * 双向复盘邀约：
  * - 列表：搭子/预约时间/状态/复盘记录 note；每条可「取消」（删除）
  * - 新建：选择搭子（?partner= 可预选）+ datetime-local 时间 → createPartnerReview（unix 秒）
  * - 收到的 pending 邀约可「接受」；已接受的邀约可「完成复盘」（填写复盘记录 note 后提交）
  */
-import { inject, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
-import { communityApi } from '../api/community'
+import { partnersApi } from '../api/community/partners'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import { useBack } from '../composables/useBack'
-import type { PartnerItem, PartnerReview } from '../types'
+import type { PartnerReview } from '../types'
 
 const route = useRoute()
 const { goBack } = useBack()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
+const confirm = useConfirm()
 
 const loading = ref(true)
+/** 首屏加载失败信息：持久错误态（区别于「还没有复盘邀约」空态），提供重试 */
+const loadError = ref('')
 const items = ref<PartnerReview[]>([])
-const partners = ref<PartnerItem[]>([])
+const { partners } = storeToRefs(partnerStore)
 
 // ---- 新建邀约 ----
 const newPartner = ref((route.query.partner as string) || '')
@@ -30,7 +40,10 @@ const completingId = ref('')
 const noteText = ref('')
 
 const STATUS: Record<PartnerReview['status'], { text: (r: PartnerReview) => string; cls: string }> = {
-  pending: { text: r => (r.isFrom ? '待对方接受' : '待我接受'), cls: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' },
+  pending: {
+    text: (r) => (r.isFrom ? '待对方接受' : '待我接受'),
+    cls: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+  },
   accepted: { text: () => '待复盘', cls: 'bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400' },
   done: { text: () => '已完成', cls: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' }
 }
@@ -39,54 +52,75 @@ function fmtTime(sec: number) {
   return dayjs(sec * 1000).format('MM-DD HH:mm')
 }
 
-onMounted(async () => {
+onMounted(load)
+
+/** 首屏全量加载（邀约 + 搭子）；失败置持久错误态供重试 */
+async function load() {
   loading.value = true
+  loadError.value = ''
   try {
-    const [r, l] = await Promise.all([communityApi.partnerReviews(), communityApi.partners()])
+    const [r, l] = await Promise.all([partnersApi.partnerReviews(), partnerStore.load()])
     items.value = r.items
-    partners.value = l.partners
-    if (newPartner.value && !l.partners.some(x => x.userId === newPartner.value)) newPartner.value = ''
-  } catch (e: any) {
-    toast(e?.message || '加载失败')
+    if (newPartner.value && !l.partners.some((x) => x.userId === newPartner.value)) newPartner.value = ''
+  } catch (e) {
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
-})
+}
 
-async function load() {
+/** 操作后的增量刷新：仅拉邀约列表，失败时 toast 不清空现有列表 */
+async function reloadItems() {
   try {
-    items.value = (await communityApi.partnerReviews()).items
-  } catch (e: any) {
-    toast(e?.message || '加载失败')
+    items.value = (await partnersApi.partnerReviews()).items
+  } catch (e) {
+    toast(getErrorMessage(e, '加载失败'))
   }
 }
 
 async function create() {
   if (creating.value) return
-  if (!newPartner.value) { toast('请选择搭子'); return }
-  if (!newTime.value) { toast('请选择复盘时间'); return }
+  if (!newPartner.value) {
+    toast('请选择搭子')
+    return
+  }
+  if (!newTime.value) {
+    toast('请选择复盘时间')
+    return
+  }
   const scheduledAt = Math.floor(new Date(newTime.value).getTime() / 1000)
-  if (Number.isNaN(scheduledAt)) { toast('时间格式不正确'); return }
+  if (Number.isNaN(scheduledAt)) {
+    toast('时间格式不正确')
+    return
+  }
   creating.value = true
   try {
-    await communityApi.createPartnerReview(newPartner.value, scheduledAt)
+    await partnersApi.createPartnerReview(newPartner.value, scheduledAt)
     newTime.value = ''
     toast('邀约已发送')
-    await load()
-  } catch (e: any) {
-    toast(e?.message || '创建失败')
+    await reloadItems()
+  } catch (e) {
+    toast(getErrorMessage(e, '创建失败'))
   } finally {
     creating.value = false
   }
 }
 
+/** 操作提交守卫（per-id，防止双击并发重复操作，避免第二次 400「邀约状态不正确」） */
+const acting = ref<Record<string, boolean>>({})
+
 async function accept(r: PartnerReview) {
+  if (acting.value[r.id]) return
+  acting.value[r.id] = true
   try {
-    await communityApi.updatePartnerReview(r.id, 'accept')
+    await partnersApi.updatePartnerReview(r.id, 'accept')
     toast('已接受邀约')
-    await load()
-  } catch (e: any) {
-    toast(e?.message || '操作失败')
+    await reloadItems()
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
+  } finally {
+    acting.value[r.id] = false
   }
 }
 
@@ -97,39 +131,49 @@ function openComplete(r: PartnerReview) {
 
 async function complete(r: PartnerReview) {
   try {
-    await communityApi.updatePartnerReview(r.id, 'done', noteText.value.trim())
+    await partnersApi.updatePartnerReview(r.id, 'done', noteText.value.trim())
     completingId.value = ''
     noteText.value = ''
     toast('复盘已完成')
-    await load()
-  } catch (e: any) {
-    toast(e?.message || '操作失败')
+    await reloadItems()
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
   }
 }
 
 async function cancel(r: PartnerReview) {
-  if (!window.confirm('取消这条复盘邀约？')) return
+  if (!(await confirm('取消这条复盘邀约？'))) return
   try {
-    await communityApi.deletePartnerReview(r.id)
+    await partnersApi.deletePartnerReview(r.id)
     if (completingId.value === r.id) completingId.value = ''
     toast('已取消')
-    await load()
-  } catch (e: any) {
-    toast(e?.message || '操作失败')
+    await reloadItems()
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
   }
 }
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto px-4 py-6 space-y-5">
+  <div class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
     <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
     <div class="section-title !mb-0">复盘邀约</div>
 
     <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
 
     <template v-else>
+      <!-- 首屏加载失败：持久错误态 + 重试，不落「还没有复盘邀约」空态 -->
+      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+        <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+        <span class="flex-1">{{ loadError }}</span>
+        <button class="btn-ghost !text-xs shrink-0" @click="load">
+          <RefreshCw :size="14" aria-hidden="true" />
+          重试
+        </button>
+      </div>
+
       <!-- 新建邀约 -->
-      <div class="card space-y-2">
+      <div v-else class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">新建复盘邀约</div>
         <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-2">
           还没有搭子，先去<router-link to="/community/partners" class="text-primary-500">搭子页</router-link>添加一位吧
@@ -147,11 +191,16 @@ async function cancel(r: PartnerReview) {
       </div>
 
       <!-- 邀约列表 -->
-      <div class="card space-y-2">
+      <div v-if="!loadError" class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">我的邀约（{{ items.length }}）</div>
-        <div v-if="!items.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">还没有复盘邀约，在上方发起一个吧</div>
-        <div v-for="r in items" :key="r.id"
-          class="border-b border-slate-50 dark:border-slate-700 last:border-0 py-2 space-y-1.5 text-xs">
+        <div v-if="!items.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
+          还没有复盘邀约，在上方发起一个吧
+        </div>
+        <div
+          v-for="r in items"
+          :key="r.id"
+          class="border-b border-slate-50 dark:border-slate-700 last:border-0 py-2 space-y-1.5 text-xs"
+        >
           <div class="flex items-center gap-2 flex-wrap">
             <span class="font-medium">{{ r.partnerName }}</span>
             <span class="text-slate-400">{{ fmtTime(r.scheduledAt) }}</span>
@@ -160,19 +209,39 @@ async function cancel(r: PartnerReview) {
             </span>
             <span v-if="r.isFrom" class="text-[10px] text-slate-400">我发起的</span>
           </div>
-          <div v-if="r.note && r.id !== completingId"
-            class="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/50 rounded-lg p-2 whitespace-pre-wrap">
+          <div
+            v-if="r.note && r.id !== completingId"
+            class="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/50 rounded-lg p-2 whitespace-pre-wrap"
+          >
             复盘记录：{{ r.note }}
           </div>
           <div class="flex flex-wrap gap-1">
-            <button v-if="!r.isFrom && r.status === 'pending'" class="btn-primary !text-xs" @click="accept(r)">接受</button>
-            <button v-if="r.status === 'accepted' && completingId !== r.id" class="btn-primary !text-xs" @click="openComplete(r)">完成复盘</button>
+            <button
+              v-if="!r.isFrom && r.status === 'pending'"
+              class="btn-primary !text-xs"
+              :disabled="acting[r.id]"
+              @click="accept(r)"
+            >
+              {{ acting[r.id] ? '接受中…' : '接受' }}
+            </button>
+            <button
+              v-if="r.status === 'accepted' && completingId !== r.id"
+              class="btn-primary !text-xs"
+              @click="openComplete(r)"
+            >
+              完成复盘
+            </button>
             <button class="btn-ghost !text-xs" @click="cancel(r)">取消</button>
           </div>
           <!-- 完成复盘：内联填写复盘记录 -->
           <div v-if="completingId === r.id" class="space-y-1.5">
-            <textarea v-model="noteText" rows="3" class="input !text-xs" maxlength="500"
-              placeholder="记录本次复盘的结论、问题与下一步计划…"></textarea>
+            <textarea
+              v-model="noteText"
+              rows="3"
+              class="input !text-xs"
+              maxlength="500"
+              placeholder="记录本次复盘的结论、问题与下一步计划…"
+            ></textarea>
             <div class="flex gap-1 justify-end">
               <button class="btn-ghost !text-xs" @click="completingId = ''">取消</button>
               <button class="btn-primary !text-xs" @click="complete(r)">提交复盘记录</button>

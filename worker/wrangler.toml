@@ -3,13 +3,23 @@ main = "src/index.ts"
 compatibility_date = "2026-08-04"
 account_id = "f56530b741377e91f44791c2aecd5855"
 
+# 与 Cloudflare Dashboard 远程配置保持一致，避免 deploy 覆盖时丢失
+workers_dev = false
+preview_urls = false
+
 # 自定义域名路由：与 Cloudflare Dashboard 远程配置保持一致，避免 deploy 覆盖时丢失
 routes = [
   { pattern = "cn.zsbservice.de5.net/*", zone_name = "zsbservice.de5.net" }
 ]
 
+# Smart Placement：与远程 Dashboard 设置一致（靠近数据源执行）
+[placement]
+mode = "smart"
+
 [observability]
 enabled = true
+# 注：redact_query_string（远程 Dashboard 配置，默认 false）不被当前 wrangler 4.118 识别，
+# 且默认值即 false，故不在此声明；升级 wrangler 后如需可补充
 
 [[d1_databases]]
 binding = "DB"
@@ -30,11 +40,87 @@ bucket_name = "zsb-study-images"
 # CF_API_TOKEN：Workers AI 调用令牌，属敏感密钥，禁止写入本文件或前端。
 #   生产：npx wrangler secret put CF_API_TOKEN
 #   本地：在 worker/.dev.vars 中写 CF_API_TOKEN=xxx（该文件已被 .gitignore 忽略）
+# ENCRYPT_SECRET：敏感字段加密密钥，npx wrangler secret put ENCRYPT_SECRET（未配置回退 JWT_SECRET 派生）
+#   ⚠️ 配置后再移除，或回滚到引入 ENCRYPT_SECRET 之前的代码，都会使期间写入的密文不可解（用户需重填墨墨 Token）
 # CF_ACCOUNT_ID：账户 ID 非敏感，直接复用本文件顶部的 account_id。
 #   若需本地覆盖（例如本地调试），可在 .dev.vars 中写 CF_ACCOUNT_ID=xxx。
 #   注意：wrangler.toml 的 account_id 不会自动注入运行时 env，需在 .dev.vars 显式提供。
 CF_ACCOUNT_ID = "f56530b741377e91f44791c2aecd5855"
 
+# ---------- 本地开发 CORS 开关 ----------
+# ALLOW_LOCAL_ORIGINS：本文件已声明生产 routes（cn.zsbservice.de5.net/*），wrangler dev 会把
+#   request.url 的 host 改写为生产域名，使 cors.ts 的 isLocalHost 判定失效、vite dev 前端
+#   （Origin: http://localhost:5173）被 CORS 拒绝。本地开发需在 worker/.dev.vars 中写
+#   ALLOW_LOCAL_ORIGINS=1 显式放行本机来源（见 worker/.dev.vars.example）。
+#   ⚠️ 生产环境禁止配置该变量（不要写入本 [vars] 段，也不要 wrangler secret put）。
+
 # 每周一 08:00（UTC+8）＝ UTC 周一 00:00：双向推送上周学习周报
 [triggers]
 crons = ["0 0 * * 1"]
+
+# ---------- cron 失败告警（可选）----------
+# ALERT_WEBHOOK：scheduled 子任务（周报推送/孤图清理/黑名单清理）任一失败时，
+#   POST 失败摘要到该 URL。消息体为 `{ "text": "..." }`（Slack incoming webhook 兼容格式；
+#   飞书/企业微信需各自的包装格式，配置前请确认你的 webhook 端接受该形状）。
+#   不配置 = 现状（仅 console.error 日志，可在 Cloudflare Dashboard / wrangler tail 查看）。
+#   URL 非高敏，可写在本 [vars] 段明文配置；介意暴露则 npx wrangler secret put ALERT_WEBHOOK，
+#   本地调试在 .dev.vars 中写 ALERT_WEBHOOK=xxx。
+
+# ---------- 速率限制（Workers 内置 Rate Limiting binding，2025-09 GA）----------
+# 按限值档位划分绑定；period 仅支持 10/60 秒，计数按 key 分 colo（跨实例共享，非全局精确）。
+# namespace_id 账号内唯一；档位与代码 rateLimit.ts 的 RateLimitTier 一一对应。
+[[ratelimits]]
+name = "RL_3"
+namespace_id = "1001"
+[ratelimits.simple]
+limit = 3
+period = 60
+
+[[ratelimits]]
+name = "RL_5"
+namespace_id = "1002"
+[ratelimits.simple]
+limit = 5
+period = 60
+
+[[ratelimits]]
+name = "RL_10"
+namespace_id = "1003"
+[ratelimits.simple]
+limit = 10
+period = 60
+
+[[ratelimits]]
+name = "RL_20"
+namespace_id = "1004"
+[ratelimits.simple]
+limit = 20
+period = 60
+
+[[ratelimits]]
+name = "RL_30"
+namespace_id = "1005"
+[ratelimits.simple]
+limit = 30
+period = 60
+
+[[ratelimits]]
+name = "RL_60"
+namespace_id = "1006"
+[ratelimits.simple]
+limit = 60
+period = 60
+
+[[ratelimits]]
+name = "RL_100"
+namespace_id = "1007"
+[ratelimits.simple]
+limit = 100
+period = 60
+
+[[ratelimits]]
+name = "RL_120"
+namespace_id = "1008"
+[ratelimits.simple]
+limit = 120
+period = 60

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useOverlayDismiss } from '../composables/useOverlayDismiss'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Ban } from '@lucide/vue'
+import { useToast } from '../composables/useToast'
+import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 /**
  * 桌面端自动更新弹窗
  * 数据来源：electron-updater 经主进程 IPC 推送（版本号 / 发布说明 / 发布日期 / 下载进度）
- * 仅在 Electron 打包环境（window.updater 存在）下工作，Web 端自动隐藏
+ * 仅在 Windows 桌面端（window.updater 存在，preload 同条件暴露）下工作，Web 端与非 Windows 桌面端自动隐藏
  */
 
 interface UpdateInfo {
@@ -24,23 +26,26 @@ const updater = (window as any).updater as
   | {
       check: () => void
       download: () => void
+      cancelDownload: () => void
       install: () => void
-      onAvailable: (cb: (info: UpdateInfo) => void) => void
-      onProgress: (cb: (p: { percent: number }) => void) => void
-      onDownloaded: (cb: (info: { version: string }) => void) => void
-      onError: (cb: (msg: string) => void) => void
+      onAvailable: (cb: (info: UpdateInfo) => void) => () => void
+      onProgress: (cb: (p: { percent: number }) => void) => () => void
+      onDownloaded: (cb: (info: { version: string }) => void) => () => void
+      onError: (cb: (msg: string) => void) => () => void
     }
   | undefined
 
-// 全局 Toast（App.vue 通过 provide('toast') 注入），用于弹窗未打开时也提示更新错误
-const toast = inject<(m: string) => void>('toast', () => {})
+// 全局 Toast（App.vue 通过 provide(TOAST_KEY) 注入），用于弹窗未打开时也提示更新错误
+const toast = useToast()
 
 const show = ref(false)
 const info = ref<UpdateInfo | null>(null)
-// idle: 待确认 | downloading: 下载中 | downloaded: 待重启
+// idle: 待确认 | downloading: 下载中（弹窗可关闭，下载转后台） | downloaded: 待重启
 const stage = ref<'idle' | 'downloading' | 'downloaded'>('idle')
 const percent = ref(0)
 const errorMsg = ref('')
+// 用户已请求取消下载：用于吞掉主进程随后的「取消」类 error 事件（取消不是失败）
+const cancelRequested = ref(false)
 
 /** 分组图标：按发布说明的章节标题关键字匹配 */
 function sectionIcon(title: string): string {
@@ -77,7 +82,7 @@ const sections = computed<NoteSection[]>(() => {
       current.items.push(text)
     }
   }
-  return result.filter(s => s.items.length > 0)
+  return result.filter((s) => s.items.length > 0)
 })
 
 /** 发布日期：YYYY-MM-DD 友好展示 */
@@ -97,61 +102,109 @@ function goReleasePage() {
 
 function startDownload() {
   errorMsg.value = ''
+  cancelRequested.value = false
   stage.value = 'downloading'
+  show.value = true
   updater?.download()
+}
+/** 取消下载：回待确认态，经 IPC 通知主进程中止下载（之后可重新发起） */
+function cancelDownload() {
+  cancelRequested.value = true
+  stage.value = 'idle'
+  updater?.cancelDownload()
 }
 function restartInstall() {
   updater?.install()
 }
 function close() {
-  // 下载中不允许关闭，避免用户误以为更新已取消
-  if (stage.value === 'downloading') return
+  // 下载中允许关闭：下载转后台继续，完成后经 update:downloaded 重新打开弹窗
   show.value = false
 }
 
-const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close)
+/** 弹窗面板：焦点陷阱与 Esc 的锚点 */
+const panelRef = ref<HTMLElement | null>(null)
+
+// Esc 关闭 + Tab 焦点陷阱 + body 滚动锁定 + 焦点移入/归还下沉到弹层栈：
+// 只有位于栈顶时响应键盘，避免被上层弹层盖住时仍抢 Esc
+const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close, {
+  show: () => show.value && !!info.value,
+  panel: () => panelRef.value
+})
+
+// IPC 订阅的取消函数：组件卸载时统一调用，防止重复挂载时 ipcRenderer 监听器累积泄漏
+const unsubscribes: Array<() => void> = []
 
 onMounted(() => {
   if (!updater) return
-  updater.onAvailable((i) => {
-    info.value = i
-    stage.value = 'idle'
-    percent.value = 0
-    errorMsg.value = ''
-    show.value = true
-  })
-  updater.onProgress((p) => {
-    percent.value = Math.min(100, Math.max(0, Math.round(p.percent)))
-  })
-  updater.onDownloaded(() => {
-    stage.value = 'downloaded'
-  })
-  updater.onError((msg) => {
-    if (show.value) {
-      // 下载阶段出错：回到待确认态并提示，可重试
+  unsubscribes.push(
+    updater.onAvailable((i) => {
+      info.value = i
       stage.value = 'idle'
-      errorMsg.value = `下载失败：${msg}`
-    } else {
-      // 弹窗未打开（如手动检查更新时失败），也提示用户
-      toast(`检查更新失败：${msg}`)
-    }
-  })
+      percent.value = 0
+      errorMsg.value = ''
+      cancelRequested.value = false
+      show.value = true
+    }),
+    updater.onProgress((p) => {
+      percent.value = Math.min(100, Math.max(0, Math.round(p.percent)))
+    }),
+    updater.onDownloaded(() => {
+      // 后台下载完成：重新打开弹窗进入「待重启」态
+      stage.value = 'downloaded'
+      show.value = true
+    }),
+    updater.onError((msg) => {
+      if (cancelRequested.value) {
+        // 用户主动取消引发的取消错误：静默忽略，保持待确认态
+        cancelRequested.value = false
+        return
+      }
+      // 回到待确认态，保证可以重新发起更新（无死角）
+      stage.value = 'idle'
+      if (show.value) {
+        // 弹窗开着（含下载阶段出错）：就地提示，可重试
+        errorMsg.value = `下载失败：${msg}`
+      } else {
+        // 弹窗已关闭（如后台下载失败 / 手动检查更新时失败）：Toast 提示
+        toast(`更新失败：${msg}`)
+      }
+    })
+  )
 })
 
-onBeforeUnmount(() => { show.value = false })
+onBeforeUnmount(() => {
+  unsubscribes.forEach((off) => off())
+  unsubscribes.length = 0
+  show.value = false
+})
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="update-fade">
-      <div v-if="show && info" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" @mousedown="onOverlayMousedown" @click="onOverlayClick">
-        <div class="update-pop bg-white dark:bg-slate-800 w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[85vh]">
+      <div
+        v-if="show && info"
+        class="fixed inset-0 flex items-center justify-center bg-black/40 p-4"
+        :class="OVERLAY_LAYER.lightbox"
+        @mousedown="onOverlayMousedown"
+        @click="onOverlayClick"
+      >
+        <div
+          ref="panelRef"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="update-dialog-title"
+          class="update-pop bg-white dark:bg-slate-800 w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[85vh]"
+        >
           <!-- 头部：版本标题 + 前往发布页 -->
           <div class="flex items-center justify-between px-6 pt-5 pb-3">
-            <h3 class="text-2xl font-bold text-slate-800 dark:text-slate-100">新版本 v{{ info.version }}</h3>
+            <h3 id="update-dialog-title" class="text-2xl font-bold text-slate-800 dark:text-slate-100">
+              新版本 v{{ info.version }}
+            </h3>
             <button
               class="px-4 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors shrink-0"
-              @click="goReleasePage">
+              @click="goReleasePage"
+            >
               前往发布页
             </button>
           </div>
@@ -161,11 +214,15 @@ onBeforeUnmount(() => { show.value = false })
             <template v-if="sections.length">
               <div v-for="sec in sections" :key="sec.title" class="mb-4">
                 <div class="flex items-center gap-2 font-bold text-slate-800 dark:text-slate-100 mb-2">
-                  <span v-if="sec.icon">{{ sec.icon }}</span><span>{{ sec.title }}</span>
+                  <span v-if="sec.icon">{{ sec.icon }}</span
+                  ><span>{{ sec.title }}</span>
                 </div>
                 <ul class="space-y-2">
-                  <li v-for="(item, idx) in sec.items" :key="idx"
-                    class="flex items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300 leading-relaxed">
+                  <li
+                    v-for="(item, idx) in sec.items"
+                    :key="idx"
+                    class="flex items-start gap-2.5 text-sm text-slate-700 dark:text-slate-300 leading-relaxed"
+                  >
                     <span class="mt-[7px] w-1.5 h-1.5 rounded-full bg-slate-800 dark:bg-slate-300 shrink-0"></span>
                     <span>{{ item }}</span>
                   </li>
@@ -173,6 +230,10 @@ onBeforeUnmount(() => { show.value = false })
               </div>
             </template>
             <div v-else class="text-sm text-slate-400 py-6 text-center">暂无详细更新说明</div>
+
+            <p v-if="stage === 'downloading'" class="text-xs text-slate-400 mt-2">
+              可关闭弹窗，下载将在后台继续，完成后会重新打开本窗口。
+            </p>
 
             <p v-if="errorMsg" class="text-xs text-red-500 mt-2">{{ errorMsg }}</p>
           </div>
@@ -185,28 +246,52 @@ onBeforeUnmount(() => { show.value = false })
               <template v-if="stage === 'idle'">
                 <button
                   class="px-5 py-1.5 rounded-md border border-blue-500 text-blue-500 text-sm font-medium hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                  @click="close">取消</button>
+                  @click="close"
+                >
+                  取消
+                </button>
                 <button
                   class="px-5 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors"
-                  @click="startDownload">更新</button>
+                  @click="startDownload"
+                >
+                  更新
+                </button>
               </template>
-              <!-- 下载中：进度条 + 百分比 -->
+              <!-- 下载中：进度条 + 百分比 + 取消下载（关闭弹窗后下载转后台继续） -->
               <template v-else-if="stage === 'downloading'">
                 <div class="flex items-center gap-3">
-                  <div class="w-40 h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                    <div class="h-full bg-blue-500 rounded-full transition-all duration-300" :style="{ width: percent + '%' }"></div>
+                  <div class="flex items-center gap-3">
+                    <div class="w-40 h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                      <div
+                        class="h-full bg-blue-500 rounded-full transition-all duration-300"
+                        :style="{ width: percent + '%' }"
+                      ></div>
+                    </div>
+                    <span class="text-sm text-slate-500 tabular-nums">{{ percent }}%</span>
                   </div>
-                  <span class="text-sm text-slate-500 tabular-nums">{{ percent }}%</span>
+                  <button
+                    class="flex items-center gap-1.5 px-4 py-1.5 rounded-md border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                    @click="cancelDownload"
+                  >
+                    <Ban class="w-4 h-4" aria-hidden="true" />
+                    取消下载
+                  </button>
                 </div>
               </template>
               <!-- 下载完成：稍后 / 立即重启 -->
               <template v-else>
                 <button
                   class="px-5 py-1.5 rounded-md border border-blue-500 text-blue-500 text-sm font-medium hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                  @click="close">稍后重启</button>
+                  @click="close"
+                >
+                  稍后重启
+                </button>
                 <button
                   class="px-5 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors"
-                  @click="restartInstall">立即重启更新</button>
+                  @click="restartInstall"
+                >
+                  立即重启更新
+                </button>
               </template>
             </div>
           </div>
@@ -234,12 +319,24 @@ onBeforeUnmount(() => { show.value = false })
   animation: update-pop-out 0.15s ease-in;
 }
 @keyframes update-pop-in {
-  from { transform: scale(0.95) translateY(8px); opacity: 0; }
-  to { transform: scale(1) translateY(0); opacity: 1; }
+  from {
+    transform: scale(0.95) translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
 }
 @keyframes update-pop-out {
-  from { transform: scale(1); opacity: 1; }
-  to { transform: scale(0.97); opacity: 0; }
+  from {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(0.97);
+    opacity: 0;
+  }
 }
 /* 内容区滚动条（贴近参考图的细灰滚动条） */
 .update-scroll::-webkit-scrollbar {

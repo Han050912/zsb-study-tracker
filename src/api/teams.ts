@@ -1,9 +1,23 @@
 import { request } from './client'
-import type { StudyTeam, TeamDetail, ChallengeType, TeamJoinRequest } from '../types'
+import type { StudyTeam, TeamDetail, ChallengeType, TeamJoinRequest, TeamChallenge } from '../types'
 
 /** 获取公开小组列表或我加入的小组 */
-export async function getTeams(myTeams = false): Promise<StudyTeam[]> {
-  return request<StudyTeam[]>(`/api/teams?my=${myTeams}`)
+export interface SquadQuery {
+  filter: 'my' | 'public'
+  keyword: string
+  capacity: string
+  challengeType: string
+}
+export function getTeams(query: SquadQuery, cursor?: string | null) {
+  const params = new URLSearchParams({
+    paged: '1',
+    my: String(query.filter === 'my'),
+    keyword: query.keyword,
+    capacity: query.capacity,
+    challengeType: query.challengeType
+  })
+  if (cursor) params.set('cursor', cursor)
+  return request<{ teams: StudyTeam[]; nextCursor: string | null }>(`/api/teams?${params}`)
 }
 
 /** 创建学习小组 */
@@ -19,9 +33,17 @@ export async function createTeam(data: {
   })
 }
 
-/** 获取小组详情 */
-export async function getTeamDetail(teamId: string): Promise<TeamDetail> {
-  return request<TeamDetail>(`/api/teams/${teamId}`)
+/** 获取小组详情（私密小组需携带有效邀请码方可读，用于邀请码申请入口） */
+export async function getTeamDetail(
+  teamId: string,
+  inviteCode?: string,
+  section?: 'members' | 'challenges' | 'overview'
+): Promise<TeamDetail> {
+  const params = new URLSearchParams()
+  if (inviteCode) params.set('invite', inviteCode)
+  if (section) params.set('section', section)
+  const query = params.size ? `?${params}` : ''
+  return request<TeamDetail>(`/api/teams/${teamId}${query}`)
 }
 
 /** 加入小组 */
@@ -30,7 +52,9 @@ export async function joinTeam(teamId: string): Promise<void> {
 }
 
 /** 按邀请码查询私密小组 */
-export async function getTeamByInvite(code: string): Promise<{ id: string; name: string; description: string; memberCount: number; maxMembers: number }> {
+export async function getTeamByInvite(
+  code: string
+): Promise<{ id: string; name: string; description: string; memberCount: number; maxMembers: number }> {
   return request(`/api/teams/by-invite?code=${encodeURIComponent(code)}`)
 }
 
@@ -67,11 +91,16 @@ export async function withdrawRequest(teamId: string): Promise<void> {
 
 /** 重新生成邀请码（仅队长） */
 export async function resetInviteCode(teamId: string): Promise<{ inviteCode: string; inviteCodeExpiresAt: number }> {
-  return request<{ inviteCode: string; inviteCodeExpiresAt: number }>(`/api/teams/${teamId}/invite-code`, { method: 'POST' })
+  return request<{ inviteCode: string; inviteCodeExpiresAt: number }>(`/api/teams/${teamId}/invite-code`, {
+    method: 'POST'
+  })
 }
 
 /** 编辑小组信息（名称/描述/人数上限，仅队长） */
-export async function updateTeam(teamId: string, data: { name: string; description?: string; maxMembers: number }): Promise<void> {
+export async function updateTeam(
+  teamId: string,
+  data: { name: string; description?: string; maxMembers: number }
+): Promise<void> {
   await request(`/api/teams/${teamId}`, {
     method: 'PUT',
     body: JSON.stringify(data)
@@ -84,12 +113,15 @@ export async function leaveTeam(teamId: string): Promise<void> {
 }
 
 /** 创建挑战 */
-export async function createChallenge(teamId: string, data: {
-  type: ChallengeType
-  target: number
-  durationDays: number
-  startDate: string
-}): Promise<{ id: string }> {
+export async function createChallenge(
+  teamId: string,
+  data: {
+    type: ChallengeType
+    target: number
+    durationDays: number
+    startDate: string
+  }
+): Promise<{ id: string }> {
   return request<{ id: string }>(`/api/teams/${teamId}/challenges`, {
     method: 'POST',
     body: JSON.stringify(data)
@@ -131,11 +163,14 @@ export async function disbandTeam(teamId: string): Promise<void> {
 }
 
 /** 编辑挑战（不含 type） */
-export async function updateChallenge(challengeId: string, data: {
-  target: number
-  durationDays: number
-  startDate: string
-}): Promise<void> {
+export async function updateChallenge(
+  challengeId: string,
+  data: {
+    target: number
+    durationDays: number
+    startDate: string
+  }
+): Promise<void> {
   await request(`/api/teams/challenges/${challengeId}`, {
     method: 'PUT',
     body: JSON.stringify(data)
@@ -155,4 +190,12 @@ export async function cancelChallenge(challengeId: string): Promise<void> {
 /** 恢复挑战 */
 export async function resumeChallenge(challengeId: string): Promise<void> {
   await request(`/api/teams/challenges/${challengeId}/resume`, { method: 'POST' })
+}
+
+export function syncActiveChallenges(teamId: string) {
+  return request<{ challenges: TeamChallenge[] }>(`/api/teams/${teamId}/sync-active`, { method: 'POST' })
+}
+
+export async function transferAndLeave(teamId: string, newLeaderId: string): Promise<void> {
+  await request(`/api/teams/${teamId}/transfer-and-leave`, { method: 'POST', body: JSON.stringify({ newLeaderId }) })
 }

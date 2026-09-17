@@ -1,0 +1,23 @@
+# worker/.dev.vars 模板（本文件供参考；实际 .dev.vars 已被 .gitignore 忽略，勿提交）
+# 复制为 worker/.dev.vars 后按需填写。
+
+# JWT 签名密钥（本地调试用）
+JWT_SECRET=dev-local-secret
+
+# Turnstile 校验密钥：本地用官方测试密钥（始终通过），
+# 与前端 dev 构建的测试 sitekey（1x00000000000000000000AA）配套。
+TURNSTILE_SECRET=1x0000000000000000000000000000000AA
+
+# 本地开发 CORS 放行开关：wrangler.toml 声明生产 routes 后，wrangler dev 会把
+# request.url 的 host 改写为生产域名，isLocalHost 判定失效、vite dev 前端被 CORS 拒绝。
+# 本地必须设为 1；生产环境禁止配置该变量（见 wrangler.toml [vars] 注释）。
+ALLOW_LOCAL_ORIGINS=1
+
+# 桌面端共享令牌（与桌面端构建时注入的 DESKTOP_TOKEN 一致，用于跳过 Turnstile）
+# DESKTOP_TOKEN=<与 SMOKE_DESKTOP_TOKEN 一致>
+
+# Workers AI 内容复审令牌（可选：留空则 AI 复审降级为仅本地词库过滤）
+# CF_API_TOKEN=
+
+# 账户 ID：非敏感；wrangler.toml 的 account_id 不会注入运行时 env，本地可显式提供
+# CF_ACCOUNT_ID=f56530b741377e91f44791c2aecd5855

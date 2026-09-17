@@ -65,6 +65,7 @@ gitlog/
 .vscode-server/
 .vs/
 .ssh/
+.planning/
 *.pem
 *.key
 *.p12

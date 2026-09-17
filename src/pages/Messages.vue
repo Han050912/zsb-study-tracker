@@ -1,27 +1,39 @@
 <script setup lang="ts">
-import { inject, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { messagesApi } from '../api/community/messages'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import { fromNow } from '../utils/date'
 import type { MessageConversation } from '../types'
 
 /** 私信会话列表：每对话方最新一条 + 未读数，点击进入聊天 */
 const router = useRouter()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
 
 const conversations = ref<MessageConversation[]>([])
 const loading = ref(true)
+/** 加载失败信息：持久错误态（区别于「还没有消息」空态），提供重试 */
+const loadError = ref('')
 
-onMounted(async () => {
+async function load() {
+  loading.value = true
+  loadError.value = ''
   try {
-    const res = await communityApi.conversations()
+    const res = await messagesApi.conversations()
     conversations.value = res.conversations
-  } catch (e: any) {
-    toast(e?.message || '加载失败')
+  } catch (e) {
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
+}
+
+onMounted(() => {
+  load()
 })
 </script>
 
@@ -30,27 +42,44 @@ onMounted(async () => {
     <h2 class="text-lg font-bold">消息</h2>
 
     <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+    <!-- 加载失败：持久错误态 + 重试，不落「还没有消息」空态 -->
+    <div v-else-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+      <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+      <span class="flex-1">{{ loadError }}</span>
+      <button class="btn-ghost !text-xs shrink-0" @click="load">
+        <RefreshCw :size="14" aria-hidden="true" />
+        重试
+      </button>
+    </div>
     <div v-else-if="!conversations.length" class="card text-center text-sm text-slate-400 py-10">
       还没有消息。到社区里找聊得来的同学，点头像 → 发消息吧～
     </div>
 
     <div v-else class="card !p-0 divide-y divide-slate-100 dark:divide-slate-700">
-      <button v-for="c in conversations" :key="c.peerId"
+      <button
+        v-for="c in conversations"
+        :key="c.peerId"
         class="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors"
-        @click="router.push(`/messages/${c.peerId}`)">
+        @click="router.push(`/messages/${c.peerId}`)"
+      >
         <UserAvatar :name="c.peerName" :avatar="c.peerAvatar" />
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5">
             <span class="text-sm font-semibold truncate">{{ c.peerName }}</span>
-            <span v-if="c.peerVerified"
-              class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
+            <span
+              v-if="c.peerVerified"
+              class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+              title="认证专家"
+              >✓</span
+            >
             <span class="text-[10px] text-slate-400 ml-auto shrink-0">{{ fromNow(c.lastAt) }}</span>
           </div>
-          <div class="text-xs text-slate-400 truncate mt-0.5">
-            {{ c.lastFromMe ? '我：' : '' }}{{ c.lastContent }}
-          </div>
+          <div class="text-xs text-slate-400 truncate mt-0.5">{{ c.lastFromMe ? '我：' : '' }}{{ c.lastContent }}</div>
         </div>
-        <span v-if="c.unread" class="shrink-0 min-w-[1.25rem] h-5 px-1 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center">
+        <span
+          v-if="c.unread"
+          class="shrink-0 min-w-[1.25rem] h-5 px-1 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center"
+        >
           {{ c.unread > 99 ? '99+' : c.unread }}
         </span>
       </button>

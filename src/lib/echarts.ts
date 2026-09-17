@@ -9,8 +9,14 @@ import { CanvasRenderer } from 'echarts/renderers'
  * 本文件经 useChart 动态 import 加载，不进入任何静态依赖链。
  */
 echarts.use([
-  LineChart, BarChart, PieChart, RadarChart,
-  GridComponent, TooltipComponent, LegendComponent, RadarComponent,
+  LineChart,
+  BarChart,
+  PieChart,
+  RadarChart,
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+  RadarComponent,
   CanvasRenderer
 ])
 

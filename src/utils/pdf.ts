@@ -7,13 +7,15 @@ let pdfjsPromise: Promise<PdfjsModule> | null = null
 
 /** 模块级单例：首次查看 PDF 时加载 pdf.js；worker 走 Vite 静态资源 URL（app:// 协议兼容不变） */
 function ensurePdfjs(): Promise<PdfjsModule> {
-  pdfjsPromise ??= import('pdfjs-dist/legacy/build/pdf.mjs').then(m => {
-    m.GlobalWorkerOptions.workerSrc = workerUrl
-    return m
-  }).catch(e => {
-    pdfjsPromise = null   // 失败不缓存，下次可重试（与 useChart 的 echarts 处理同口径）
-    throw e
-  })
+  pdfjsPromise ??= import('pdfjs-dist/legacy/build/pdf.mjs')
+    .then((m) => {
+      m.GlobalWorkerOptions.workerSrc = workerUrl
+      return m
+    })
+    .catch((e) => {
+      pdfjsPromise = null // 失败不缓存，下次可重试（与 useChart 的 echarts 处理同口径）
+      throw e
+    })
   return pdfjsPromise
 }
 

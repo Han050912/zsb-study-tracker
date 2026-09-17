@@ -32,21 +32,43 @@ function openPartners() {
     return
   }
   // 番茄邀请 / 备考计划 / 复盘邀约：跳对应列表页
-  if (tt === 'partner_study') { router.push('/partners/study'); return }
-  if (tt === 'partner_plan') { router.push('/partners/plans'); return }
-  if (tt === 'partner_review') { router.push('/partners/reviews'); return }
+  if (tt === 'partner_study') {
+    router.push('/partners/study')
+    return
+  }
+  if (tt === 'partner_plan') {
+    router.push(
+      props.n.targetId
+        ? { name: 'partner-plan-detail', params: { planId: props.n.targetId } }
+        : { name: 'partner-plans' }
+    )
+    return
+  }
+  if (tt === 'partner_review') {
+    router.push('/partners/reviews')
+    return
+  }
   // 监督提醒：跳首页打卡
-  if (tt === 'partner_remind') { router.push('/'); return }
+  if (tt === 'partner_remind') {
+    router.push('/')
+    return
+  }
   // 搭子申请 / 达成等默认：跳搭子列表
   router.push('/community/partners')
 }
 </script>
 
 <template>
-  <div class="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/40 cursor-pointer" @click="openPartners">
+  <div
+    class="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/40 cursor-pointer"
+    @click="openPartners"
+  >
     <button class="shrink-0 relative" @click.stop="openProfile">
       <UserAvatar :name="n.actorName || '搭'" :avatar="n.actorAvatar" />
-      <span v-if="!n.isRead" class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white dark:border-slate-800"></span>
+      <span
+        v-if="!n.isRead"
+        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white dark:border-slate-800"
+      ></span>
     </button>
     <div class="flex-1 min-w-0">
       <p class="text-sm text-slate-700 dark:text-slate-200 leading-relaxed break-words">{{ n.content }}</p>

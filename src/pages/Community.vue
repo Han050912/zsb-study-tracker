@@ -1,354 +1,257 @@
 <script setup lang="ts">
-import { inject, onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useCommunityStore } from '../stores/community'
-import { communityApi } from '../api/community'
+import { Search, Plus, ArrowUpRight } from '@lucide/vue'
+import { postsApi } from '../api/community/posts'
 import { isAdmin, isLoggedIn, requireLogin } from '../services/auth'
 import { COMMUNITY_TAGS } from '../data/defaults'
-import type { CommunityPost, HotTopic } from '../types'
+import { useFeedQuery } from '../features/community/composables/useFeedQuery'
+import { usePostActions } from '../features/community/composables/usePostActions'
+import type { CommunityPost } from '../types'
 import PostCard from '../components/community/PostCard.vue'
-import PostComposer from '../components/community/PostComposer.vue'
-import TagBadge from '../components/community/TagBadge.vue'
-import LeaderboardBoard from '../components/community/LeaderboardBoard.vue'
-import ProgressBoard from '../components/community/ProgressBoard.vue'
-import WeeklyReportCard from '../components/community/WeeklyReportCard.vue'
-import ReportDialog from '../components/community/ReportDialog.vue'
-import UserProfileModal from '../components/community/UserProfileModal.vue'
-import UserSearchModal from '../components/community/UserSearchModal.vue'
-import UserAvatar from '../components/community/UserAvatar.vue'
+import AppTabs from '../shared/components/AppTabs.vue'
+import AsyncState from '../shared/components/AsyncState.vue'
+import Modal from '../components/Modal.vue'
 
-const store = useCommunityStore()
-const router = useRouter()
-const toast = inject<(m: string) => void>('toast', () => {})
-
-const showComposer = ref(false)
-const boardTab = ref<'checkin' | 'progress'>('checkin')
-const hotTopics = ref<HotTopic[]>([])
-
-onMounted(() => {
-  store.fetchFeed(true).catch(e => toast(e?.message || '加载失败'))
-  if (isLoggedIn.value) store.fetchUnreadCount().catch(() => {})
-  loadDaily()
-  loadHotTopics()
-})
-
-// ---- 无限滚动：哨兵元素进入视口时加载下一页 ----
-const sentinel = ref<HTMLElement | null>(null)
-const observer = new IntersectionObserver(entries => {
-  if (entries.some(e => e.isIntersecting)) store.fetchFeed().catch(() => {})
-}, { rootMargin: '200px' })
-onMounted(() => { if (sentinel.value) observer.observe(sentinel.value) })
-onUnmounted(() => observer.disconnect())
-
-async function like(id: string) {
-  if (requireLogin(router)) return
-  try { await store.likePost(id) } catch (e: any) { toast(e?.message || '操作失败') }
+const PostComposer = defineAsyncComponent(() => import('../components/community/PostComposer.vue'))
+const CommunityRail = defineAsyncComponent(() => import('../components/community/CommunityRail.vue'))
+const ReportDialog = defineAsyncComponent(() => import('../components/community/ReportDialog.vue'))
+const UserProfileModal = defineAsyncComponent(() => import('../components/community/UserProfileModal.vue'))
+const CommunitySearch = defineAsyncComponent(() => import('../components/community/CommunitySearch.vue'))
+const Circles = defineAsyncComponent(() => import('./Circles.vue'))
+const router = useRouter(),
+  { feed, view, setQuery } = useFeedQuery()
+const { action, showProfile, profileUserId, showReport, reportPostId, openProfile, openReport } = usePostActions()
+const showComposer = ref(false),
+  showSearch = ref(false),
+  showRail = ref(false),
+  composerLoaded = ref(false)
+const dailyPost = ref<CommunityPost | null>(null),
+  sentinel = ref<HTMLElement | null>(null)
+const primaryTabs = [
+  { value: 'recommend', label: '推荐' },
+  { value: 'follow', label: '关注' },
+  { value: 'question', label: '提问' },
+  { value: 'circles', label: '圈子' }
+]
+const activeView = computed(() => (primaryTabs.some((t) => t.value === view.value) ? view.value : 'recommend'))
+const emptyMessage = computed(() =>
+  view.value === 'follow'
+    ? '关注同学后，他们的学习动态会出现在这里。'
+    : view.value === 'question'
+      ? '这个筛选下还没有问题，把你的疑惑写下来。'
+      : feed.tag || feed.query.keyword
+        ? '没有找到相关讨论，试试其他关键词或标签。'
+        : '今天的学习现场，等你分享。'
+)
+function chooseView(value: string) {
+  if (['follow', 'circles'].includes(value) && requireLogin(router)) return
+  void setQuery({ view: value, q: undefined })
 }
-
-async function dislike(id: string) {
-  if (requireLogin(router)) return
-  try { await store.dislikePost(id) } catch (e: any) { toast(e?.message || '操作失败') }
-}
-
-function filterTag(tag: string) {
-  store.setTag(tag).catch(e => toast(e?.message || '加载失败'))
-}
-
-function goRequireLogin(path: string) {
-  if (requireLogin(router)) return
-  router.push(path)
-}
-
 function openComposer() {
   if (requireLogin(router)) return
+  composerLoaded.value = true
   showComposer.value = true
 }
-
-/** 排序切换（最新/热门） */
-function chooseSort(sort: 'latest' | 'hot') {
-  store.setSort(sort).catch(e => toast(e?.message || '加载失败'))
+function searchPosts(keyword: string) {
+  void setQuery({ q: keyword, view: 'all' })
+  showSearch.value = false
 }
-
-/** 分类切换（推荐/提问/精华/关注 单选，再点当前项取消）；推荐/关注依赖登录态 */
-function chooseCategory(category: 'recommend' | 'question' | 'featured' | 'follow') {
-  if ((category === 'recommend' || category === 'follow') && requireLogin(router)) return
-  store.setCategory(store.category === category ? '' : category)
-    .catch(e => toast(e?.message || '加载失败'))
+function chooseRailTag(tag: string) {
+  void setQuery({ tag })
+  showRail.value = false
 }
-
-// ---- 标签横向滑动提示（超出可视区可滑动查看，右侧渐变 + 文字提示） ----
-const tagScrollRef = ref<HTMLElement | null>(null)
-const tagHasMore = ref(false)   // 存在未展示完的标签
-const tagAtEnd = ref(false)     // 已滑动到最右
-const tagTouched = ref(false)   // 用户已滑动过（之后不再显示文字提示）
-
-function updateTagScroll() {
-  const el = tagScrollRef.value
-  if (!el) return
-  tagHasMore.value = el.scrollWidth > el.clientWidth + 4
-  tagAtEnd.value = el.scrollWidth - el.clientWidth - el.scrollLeft <= 4
-}
-function onTagScroll() {
-  tagTouched.value = true
-  updateTagScroll()
-}
+let observer: IntersectionObserver | undefined
 onMounted(() => {
-  updateTagScroll()
-  window.addEventListener('resize', updateTagScroll)
+  void postsApi
+    .daily()
+    .then((res) => {
+      dailyPost.value = res.post
+    })
+    .catch(() => {})
+  observer = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting) && !feed.error && !feed.feedLoading && feed.posts.length)
+        void feed.fetchFeed()
+    },
+    { rootMargin: '200px' }
+  )
+  if (sentinel.value) observer.observe(sentinel.value)
 })
-onUnmounted(() => window.removeEventListener('resize', updateTagScroll))
-
-// ---- 每日一题 ----
-const dailyPost = ref<CommunityPost | null>(null)
-async function loadDaily() {
-  try {
-    const res = await communityApi.daily()
-    dailyPost.value = res.post
-  } catch { dailyPost.value = null }
-}
-
-// ---- 热门话题运营位 ----
-async function loadHotTopics() {
-  try {
-    const res = await communityApi.hotTopics()
-    hotTopics.value = res.topics
-  } catch { /* 静默降级 */ }
-}
-
-// ---- 举报 ----
-const showReport = ref(false)
-const reportPostId = ref('')
-function openReport(postId: string) {
-  if (requireLogin(router)) return
-  reportPostId.value = postId
-  showReport.value = true
-}
-
-// ---- 用户资料卡 ----
-const showProfile = ref(false)
-const profileUserId = ref('')
-function openProfile(userId: string) {
-  // 资料卡后端公开（auth:false）；访客可见性由弹窗内 401 引导处理
-  profileUserId.value = userId
-  showProfile.value = true
-}
-
-// ---- 找用户搜索 ----
-const showSearch = ref(false)
-function openSearch() {
-  if (requireLogin(router)) return
-  showSearch.value = true
-}
-
-// ---- 管理员操作 ----
-async function togglePin(id: string) {
-  try {
-    const pinned = await store.adminPinPost(id)
-    toast(pinned ? '已置顶' : '已取消置顶')
-  } catch (e: any) { toast(e?.message || '操作失败') }
-}
-
-async function toggleFeature(id: string) {
-  try {
-    const featured = await store.adminFeaturePost(id)
-    toast(featured ? '已加精' : '已取消加精')
-  } catch (e: any) { toast(e?.message || '操作失败') }
-}
-
-async function toggleDaily(id: string) {
-  try {
-    const daily = await store.adminDailyPost(id)
-    await loadDaily() // 顶部卡片同步刷新
-    toast(daily ? '已设为每日一题' : '已取消每日一题')
-  } catch (e: any) { toast(e?.message || '操作失败') }
-}
-
-async function toggleHide(id: string) {
-  try {
-    const hidden = await store.adminHidePost(id)
-    toast(hidden ? '已隐藏' : '已取消隐藏')
-  } catch (e: any) { toast(e?.message || '操作失败') }
-}
-
-async function removePost(id: string) {
-  if (!window.confirm('确认删除这篇帖子？评论和点赞将一并删除。')) return
-  try {
-    await store.removePost(id)
-    toast('帖子已删除')
-  } catch (e: any) { toast(e?.message || '删除失败') }
-}
+watch(sentinel, (el, previous) => {
+  if (previous) observer?.unobserve(previous)
+  if (el) observer?.observe(el)
+})
+onUnmounted(() => observer?.disconnect())
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
-    <div class="flex items-center justify-between">
-      <h1 class="page-title">社区广场</h1>
-      <div class="flex items-center gap-2">
-        <button class="btn-ghost !text-xs" @click="openSearch">找用户</button>
-        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/partners')">搭子</button>
-        <button class="btn-ghost !text-xs" @click="goRequireLogin('/community/circles')">圈子</button>
-        <button class="btn-primary" @click="openComposer">{{ isLoggedIn ? '发帖' : '登录后发帖' }}</button>
+  <div class="collaboration-page max-w-6xl mx-auto p-4 md:p-6 space-y-5">
+    <header class="flex items-end justify-between gap-3">
+      <div>
+        <p class="text-xs text-slate-500 mb-1">把今天学到的，留给同行的人</p>
+        <h1 class="collaboration-title">社区</h1>
       </div>
-    </div>
-
-    <!-- 上周学习周报（登录态；访客隐藏，避免注定 401 的请求） -->
-    <WeeklyReportCard v-if="isLoggedIn" />
-
-    <!-- 热门话题运营位：点击按 tag 筛选帖子流 -->
-    <div v-if="hotTopics.length" class="card !py-2.5">
-      <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-        <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 shrink-0 pl-1">本周热门</span>
-        <TagBadge v-for="t in hotTopics" :key="t.tag" :tag="t.text"
-          :active="store.tag === t.tag" @click="filterTag(store.tag === t.tag ? '' : t.tag)" />
+      <div class="flex gap-2 items-center">
+        <button class="btn-ghost" aria-label="搜索帖子、用户和圈子" title="搜索" @click="showSearch = true">
+          <Search :size="18" /><span class="hidden sm:inline">搜索</span></button
+        ><button class="btn-primary hidden md:inline-flex" @click="openComposer"><Plus :size="18" />发布</button>
       </div>
-    </div>
-
-    <!-- 榜单：打卡榜 / 进步榜（登录态；访客显示登录引导，避免空白与注定 401 的请求） -->
-    <div v-if="isLoggedIn" class="card !py-3">
-      <div class="flex bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit mb-3">
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="boardTab === 'checkin' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="boardTab = 'checkin'">打卡榜</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="boardTab === 'progress' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="boardTab = 'progress'">进步榜</button>
-      </div>
-      <LeaderboardBoard v-show="boardTab === 'checkin'" />
-      <ProgressBoard v-show="boardTab === 'progress'" />
-    </div>
-    <button v-else class="card !py-3 text-sm text-slate-500 dark:text-slate-400 text-center w-full hover:border-primary-300 transition-colors"
-      @click="router.push('/login')">
-      登录后可查看打卡榜、进步榜与你的学习周报 →
-    </button>
-
-    <!-- 每日一题：管理员设置的最新一题，点击进入详情参与解答 -->
-    <button v-if="dailyPost" class="card !p-4 text-left w-full flex items-center gap-3 border-l-4 !border-l-primary-400"
-      @click="router.push(`/community/post/${dailyPost.id}`)">
-      <span class="text-xl shrink-0"></span>
-      <div class="flex-1 min-w-0">
-        <div class="text-xs font-semibold text-primary-500">每日一题</div>
-        <div class="text-sm truncate mt-0.5">{{ dailyPost.content }}</div>
-      </div>
-      <span class="text-[10px] text-slate-400 shrink-0">{{ dailyPost.userName }} · 💬{{ dailyPost.commentsCount }}</span>
-    </button>
-
-    <!-- 排序 + 标签筛选 -->
-    <div class="flex flex-col gap-2">
-      <!-- 排序/筛选按钮组：独占一行 -->
-      <div class="flex items-center bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs w-fit">
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.sort === 'latest' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseSort('latest')">最新</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.sort === 'hot' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseSort('hot')">热门</button>
-        <span class="w-px h-4 bg-slate-300 dark:bg-slate-600 mx-1"></span>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.category === 'recommend' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('recommend')">推荐</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.category === 'question' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('question')">提问</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.category === 'featured' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('featured')">精华</button>
-        <button class="px-3 py-1.5 rounded-md transition-colors"
-          :class="store.category === 'follow' ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'"
-          @click="chooseCategory('follow')">关注</button>
-      </div>
-
-      <!-- 预设话题标签：横向单行排列，超出可视区可滑动查看 -->
-      <div class="relative">
-        <div ref="tagScrollRef" class="flex gap-1.5 overflow-x-auto py-1 no-scrollbar scroll-smooth"
-          @scroll.passive="onTagScroll">
-          <TagBadge tag="全部" :active="!store.tag" @click="filterTag('')" />
-          <TagBadge v-for="t in COMMUNITY_TAGS" :key="t" :tag="t" :active="store.tag === t" @click="filterTag(store.tag === t ? '' : t)" />
-        </div>
-        <!-- 右侧渐变遮罩：暗示还有更多标签 -->
-        <div v-if="tagHasMore && !tagAtEnd"
-          class="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-slate-50 dark:from-slate-900 to-transparent"></div>
-        <!-- 滑动提示：仅未滑动过时显示，明确告知可滑动查看 -->
-        <transition name="fade">
-          <div v-if="tagHasMore && !tagAtEnd && !tagTouched"
-            class="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 rounded-full bg-white/90 dark:bg-slate-800/90 px-1.5 py-0.5 text-[10px] text-slate-500 dark:text-slate-400 shadow-sm">
-            <span>滑动查看</span>
-            <span aria-hidden="true">›</span>
+    </header>
+    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px] gap-8 items-start">
+      <section class="min-w-0 space-y-4">
+        <div class="feed-filters space-y-2">
+          <AppTabs
+            id="community-view"
+            :model-value="activeView"
+            :items="primaryTabs"
+            label="社区内容"
+            @update:model-value="chooseView"
+          />
+          <div v-if="view !== 'circles'" class="flex gap-2 overflow-x-auto items-center pb-1 text-sm">
+            <button
+              v-for="sort in ['latest', 'hot'] as const"
+              :key="sort"
+              class="px-3 rounded-lg"
+              :class="feed.sort === sort ? 'bg-white dark:bg-slate-800 font-semibold' : 'text-slate-500'"
+              :aria-pressed="feed.sort === sort"
+              @click="setQuery({ sort })"
+            >
+              {{ sort === 'latest' ? '最新' : '热门' }}
+            </button>
+            <span class="h-5 border-l border-slate-300" aria-hidden="true"></span>
+            <button
+              class="px-3 whitespace-nowrap"
+              :aria-pressed="view === 'featured'"
+              @click="setQuery({ view: view === 'featured' ? 'recommend' : 'featured' })"
+            >
+              精华
+            </button>
+            <button
+              v-for="tag in COMMUNITY_TAGS"
+              :key="tag"
+              class="px-3 rounded-lg whitespace-nowrap"
+              :class="
+                feed.tag === tag
+                  ? 'text-primary-600 bg-primary-50 dark:bg-primary-900/30'
+                  : 'text-slate-500 dark:text-slate-400'
+              "
+              :aria-pressed="feed.tag === tag"
+              @click="setQuery({ tag: feed.tag === tag ? undefined : tag })"
+            >
+              {{ tag }}
+            </button>
           </div>
-        </transition>
-      </div>
-    </div>
-
-    <!-- 推荐附加：圈子 + 用户（仅 recommend 分类显示） -->
-    <div v-if="store.category === 'recommend' && store.recommendExtras" class="space-y-3">
-      <div v-if="store.recommendExtras.circles.length" class="card space-y-2">
-        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">推荐圈子</div>
-        <div v-for="c in store.recommendExtras.circles" :key="c.id" class="flex items-center gap-2 text-xs">
-          <span class="font-medium">{{ c.name }}</span>
-          <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ c.memberCount }} 人</span>
-          <button class="ml-auto btn-ghost !text-xs" @click="router.push(`/community/circles/${c.id}`)">去看看</button>
         </div>
-      </div>
-      <div v-if="store.recommendExtras.users.length" class="card space-y-2">
-        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">推荐关注</div>
-        <div v-for="u in store.recommendExtras.users" :key="u.userId" class="flex items-center gap-2 text-xs">
-          <div class="flex items-center gap-2 cursor-pointer group" @click="router.push(`/profile/${u.userId}`)">
-            <UserAvatar :name="u.userName" :avatar="u.userAvatar" size="sm" />
-            <span class="font-medium group-hover:text-primary-500">{{ u.userName }}</span>
-          </div>
-          <span v-if="u.verified" class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0" title="认证专家">✓</span>
-          <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ u.reason }}</span>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 shrink-0">{{ u.totalPoints }} 分</span>
-          <button class="ml-auto btn-ghost !text-xs" @click="router.push(`/profile/${u.userId}`)">看主页</button>
+        <div
+          id="community-view-panel"
+          role="tabpanel"
+          :aria-labelledby="`community-view-tab-${activeView}`"
+          class="space-y-4"
+        >
+          <Circles v-if="view === 'circles' && isLoggedIn" />
+          <template v-else>
+            <div
+              v-if="feed.tag || feed.query.keyword"
+              class="flex flex-wrap items-center justify-between gap-2 text-sm"
+            >
+              <span>筛选：{{ feed.tag }} {{ feed.query.keyword }}</span
+              ><button class="btn-ghost" @click="setQuery({ tag: undefined, q: undefined })">清除筛选</button>
+            </div>
+            <button
+              v-if="dailyPost && !feed.tag && !feed.query.keyword"
+              class="card w-full flex items-center gap-3 text-left !py-3"
+              @click="router.push({ name: 'community-post', params: { id: dailyPost.id } })"
+            >
+              <span class="text-primary-600 dark:text-primary-400 text-xs font-semibold shrink-0">每日一题</span
+              ><span class="truncate text-sm">{{ dailyPost.content }}</span
+              ><ArrowUpRight :size="18" class="shrink-0 ml-auto" />
+            </button>
+            <button class="lg:hidden text-sm text-slate-500 flex justify-between w-full" @click="showRail = true">
+              今日同行 · 周报与榜单 <span>↗</span>
+            </button>
+            <AsyncState
+              :loading="feed.bucket.status === 'initial-loading'"
+              :error="!feed.posts.length ? feed.bucket.initialError : ''"
+              :empty="!feed.posts.length && !feed.feedLoading && !feed.error"
+              :message="emptyMessage"
+              @retry="feed.fetchFeed(true)"
+            >
+              <template #action
+                ><button v-if="view === 'follow'" class="btn-ghost" @click="showSearch = true">去发现同学</button
+                ><button v-else class="btn-ghost" @click="openComposer">
+                  {{ view === 'question' ? '发布第一个问题' : '分享学习动态' }}
+                </button></template
+              >
+              <p v-if="feed.bucket.status === 'refreshing'" role="status" class="text-xs text-slate-500">
+                正在更新讨论…
+              </p>
+              <PostCard
+                v-for="post in feed.posts"
+                :key="post.id"
+                :post="post"
+                @like="action('like', post.id)"
+                @dislike="action('dislike', post.id)"
+                @tag="setQuery({ tag: $event })"
+                @open="router.push({ name: 'community-post', params: { id: post.id } })"
+                @profile="openProfile(post.userId)"
+                @report="openReport(post.id)"
+                @pin="action('pin', post.id)"
+                @feature="action('feature', post.id)"
+                @daily="action('daily', post.id)"
+                @hide="action('hide', post.id)"
+                ><template v-if="isAdmin" #actions
+                  ><button class="text-sm text-red-500" @click.stop="action('remove', post.id)">删除</button></template
+                ></PostCard
+              >
+            </AsyncState>
+            <AsyncState
+              v-if="feed.posts.length && feed.bucket.initialError"
+              :error="feed.bucket.initialError"
+              @retry="feed.fetchFeed(true)"
+            />
+            <AsyncState
+              v-if="feed.bucket.loadMoreError"
+              :error="feed.bucket.loadMoreError"
+              @retry="feed.fetchFeed(false)"
+            />
+            <div ref="sentinel" class="h-1"></div>
+            <div class="text-center text-sm text-slate-500" aria-live="polite">
+              <button
+                v-if="feed.hasMore && feed.posts.length && !feed.error"
+                class="btn-ghost"
+                :disabled="feed.feedLoading"
+                @click="feed.fetchFeed(false)"
+              >
+                {{ feed.feedLoading ? '正在加载' : '加载更多讨论' }}</button
+              ><span v-else-if="!feed.hasMore && feed.posts.length">你已看完这些讨论</span>
+            </div>
+          </template>
         </div>
-      </div>
+      </section>
+      <aside v-if="feed.bucket.updatedAt" class="hidden lg:block pt-4">
+        <CommunityRail :extras="feed.recommendExtras" @tag="setQuery({ tag: $event })" />
+      </aside>
     </div>
-
-    <!-- 推荐加载失败提示（仅 recommend 分类下显示） -->
-    <div v-if="store.category === 'recommend' && store.error" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
-      <span>{{ store.error }}</span>
-      <button class="ml-auto btn-ghost !text-xs shrink-0" @click="store.fetchFeed(true)">重试</button>
-    </div>
-
-    <!-- 帖子列表 -->
-    <div class="space-y-3">
-      <PostCard v-for="p in store.posts" :key="p.id" :post="p"
-        @like="like(p.id)"
-        @dislike="dislike(p.id)"
-        @tag="filterTag"
-        @open="router.push(`/community/post/${p.id}`)"
-        @pin="togglePin(p.id)"
-        @feature="toggleFeature(p.id)"
-        @daily="toggleDaily(p.id)"
-        @profile="openProfile(p.userId)"
-        @hide="toggleHide(p.id)"
-        @report="openReport(p.id)">
-        <template v-if="isAdmin" #actions>
-          <button class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost(p.id)">删除</button>
-        </template>
-      </PostCard>
-    </div>
-
-    <div v-if="!store.posts.length && !store.feedLoading" class="card text-center py-10 text-slate-400 text-sm">
-      <div class="text-3xl mb-2">🌱</div>
-      <p>还没有动态，来发第一帖吧！</p>
-    </div>
-
-    <!-- 无限滚动哨兵 -->
-    <div ref="sentinel" class="h-1"></div>
-    <div v-if="store.feedLoading" class="text-center text-xs text-slate-400 py-2">加载中…</div>
-    <div v-else-if="!store.hasMore && store.posts.length" class="text-center text-xs text-slate-400 py-2">没有更多了</div>
-
-    <PostComposer v-model:show="showComposer" type="share" allow-type-switch allow-template />
-    <ReportDialog v-model:show="showReport" target-type="post" :target-id="reportPostId" />
-    <UserProfileModal v-model:show="showProfile" :user-id="profileUserId" />
-    <UserSearchModal v-model:show="showSearch" />
+    <button
+      class="btn-primary md:hidden fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20 !rounded-full !px-5 shadow-lg"
+      @click="openComposer"
+    >
+      <Plus :size="18" />发布
+    </button>
+    <PostComposer
+      v-if="composerLoaded"
+      v-model:show="showComposer"
+      :type="view === 'question' ? 'question' : 'share'"
+      allow-type-switch
+      allow-template
+      @posted="feed.fetchFeed(true)"
+    />
+    <CommunitySearch v-if="showSearch" @close="showSearch = false" @search-posts="searchPosts" />
+    <ReportDialog v-if="showReport" v-model:show="showReport" target-type="post" :target-id="reportPostId" />
+    <UserProfileModal v-if="showProfile" v-model:show="showProfile" :user-id="profileUserId" />
+    <Modal title="今日同行" :show="showRail" @close="showRail = false"
+      ><CommunityRail v-if="showRail" :extras="feed.recommendExtras" @tag="chooseRailTag"
+    /></Modal>
   </div>
 </template>
-
-<style scoped>
-/* 隐藏横向滚动条，保留滑动能力（以渐变遮罩替代视觉提示） */
-.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
-.no-scrollbar::-webkit-scrollbar { display: none; }
-.fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
-</style>

@@ -1,0 +1,115 @@
+:root {
+  --ink: #17324d;
+  --action: #2457e6;
+  --coral: #ff6b5c;
+  --mint: #2fbf9b;
+  --paper: #f7f8fa;
+  --surface: #fff;
+  --line: #e2e8f0;
+  --muted: #64748b;
+}
+.dark {
+  --ink: #e2e8f0;
+  --action: #8faeff;
+  --paper: #101722;
+  --surface: #182333;
+  --line: #334155;
+  --muted: #a3b3c6;
+}
+.collaboration-page {
+  color: var(--ink);
+  font-family: 'Noto Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', sans-serif;
+  min-width: 0;
+}
+.collaboration-title {
+  font-family: 'Smiley Sans', 'Microsoft YaHei', sans-serif;
+  font-size: clamp(1.6rem, 3vw, 2rem);
+  font-weight: 750;
+  letter-spacing: -0.04em;
+  line-height: 1.35;
+}
+.training-number {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.collaboration-page .card {
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: none;
+}
+.collaboration-page :is(button, .btn, .btn-primary, .btn-ghost, .btn-danger, summary) {
+  min-height: 44px;
+  min-width: 44px;
+}
+.collaboration-page :is(input, select) {
+  min-height: 44px;
+  min-width: 0;
+}
+.collaboration-page button {
+  flex-shrink: 0;
+}
+.collaboration-page .text-slate-400,
+.dark .collaboration-page .text-slate-500 {
+  color: var(--muted);
+}
+.collaboration-page .btn-primary {
+  background-color: #2457e6;
+  color: #fff;
+}
+.collaboration-page .btn-primary:hover {
+  background-color: #1c45bd;
+}
+.app-tabs {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+.app-tabs button {
+  min-height: 48px;
+  padding: 0.6rem 1rem;
+  white-space: nowrap;
+  color: var(--muted);
+  border-bottom: 3px solid transparent;
+}
+.app-tabs button[aria-selected='true'] {
+  color: var(--action);
+  border-bottom-color: var(--action);
+  font-weight: 700;
+}
+.feed-filters {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding-block: 0.4rem;
+  background: var(--paper);
+}
+.progress-track {
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0,
+    transparent calc(10% - 1px),
+    var(--line) calc(10% - 1px),
+    var(--line) 10%
+  );
+  border-block: 1px solid var(--line);
+  padding: 1rem 0;
+}
+:where(button, a, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--action);
+  outline-offset: 3px;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

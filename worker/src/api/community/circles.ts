@@ -1,8 +1,8 @@
 import { on, body } from '../../router'
-import { all, first, run, batch, uid, HttpError } from '../../db'
+import { all, first, batch, uid, HttpError } from '../../db'
 import { rateLimit } from '../../middleware/rateLimit'
 import { assertCleanAsync } from '../sensitive'
-import { mapCircle, nowSec, displayName, notifyStatement, escapeLike } from './shared'
+import { mapCircle, nowSec, displayName, notifyStatement, escapeLike, isAdmin } from './shared'
 
 /**
  * 社区广场话题圈子域路由：圈子列表 / 建圈 / 详情 / 加入退圈 / 审批 / 移除成员。
@@ -12,24 +12,40 @@ import { mapCircle, nowSec, displayName, notifyStatement, escapeLike } from './s
 export function registerCirclesRoutes() {
   // 圈子列表（按成员数倒序；附我的加入状态）
   on('GET', '/api/community/circles', true, async (ctx) => {
-    const rows = await all<any>(ctx.env, `
+    const rows = await all<any>(
+      ctx.env,
+      `
       SELECT c.*, m.role AS my_role, m.status AS my_member_status
       FROM community_circles c
       LEFT JOIN circle_members m ON m.circle_id = c.id AND m.user_id = ?
       ORDER BY c.member_count DESC, c.created_at DESC
-      LIMIT 100`, ctx.userId)
+      LIMIT 100`,
+      ctx.userId
+    )
     return Response.json({
-      circles: rows.map(r => mapCircle(r,
-        r.my_role === 'owner' ? 'owner' : r.my_member_status === 'active' ? 'member' : r.my_member_status === 'pending' ? 'pending' : null))
+      circles: rows.map((r) =>
+        mapCircle(
+          r,
+          r.my_role === 'owner'
+            ? 'owner'
+            : r.my_member_status === 'active'
+              ? 'member'
+              : r.my_member_status === 'pending'
+                ? 'pending'
+                : null
+        )
+      )
     })
   })
 
   // 建圈（创建者自动成为圈主；名称过敏感词）
   on('POST', '/api/community/circles', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:circle', 10)
+    await rateLimit(ctx, 'community:circle', 10)
     const b = await body(ctx.request)
     const name = String(b?.name ?? '').trim()
-    const description = String(b?.description ?? '').trim().slice(0, 200)
+    const description = String(b?.description ?? '')
+      .trim()
+      .slice(0, 200)
     if (!name || name.length > 30) throw new HttpError(400, '圈子名称需为 1-30 字')
     await assertCleanAsync(name, ctx.env)
     if (description) await assertCleanAsync(description, ctx.env)
@@ -44,56 +60,98 @@ export function registerCirclesRoutes() {
         "INSERT INTO circle_members (circle_id, user_id, role, status, created_at) VALUES (?, ?, 'owner', 'active', ?)"
       ).bind(id, ctx.userId, now)
     ])
-    return Response.json(mapCircle(await first(ctx.env, 'SELECT * FROM community_circles WHERE id = ?', id), 'owner'), { status: 201 })
+    return Response.json(mapCircle(await first(ctx.env, 'SELECT * FROM community_circles WHERE id = ?', id), 'owner'), {
+      status: 201
+    })
   })
 
-  // 圈子详情：基本信息 + 活跃成员（前 50）；圈主可见待审批列表
+  // 圈子详情：基本信息 + 活跃成员（前 50）；圈主可见待审批列表。
+  // 成员名单脱敏：审核圈（非公开）且调用者既非活跃成员/圈主也非管理员时，
+  // 仅返回圈子基本信息与 myStatus（供前端展示「申请加入」），members/pending 恒为空数组且不执行成员查询；
+  // 公开圈任何人可见名单，圈子列表本就可发现圈子，故详情不做整体 403。
   on('GET', '/api/community/circles/:id', true, async (ctx) => {
     const circle = await first<any>(ctx.env, 'SELECT * FROM community_circles WHERE id = ?', ctx.params.id)
     if (!circle) throw new HttpError(404, '圈子不存在')
-    const members = await all<any>(ctx.env, `
+    const mine = await first<{ role: string; status: string }>(
+      ctx.env,
+      'SELECT role, status FROM circle_members WHERE circle_id = ? AND user_id = ?',
+      ctx.params.id,
+      ctx.userId
+    )
+    const myStatus = !mine ? null : mine.role === 'owner' ? 'owner' : mine.status === 'active' ? 'member' : 'pending'
+    // 脱敏判定与 assertCircleReadable 的成员可读口径一致（活跃成员/圈主 status 均为 active）
+    if (!circle.is_public && mine?.status !== 'active' && !(await isAdmin(ctx.env, ctx.userId, ctx.role))) {
+      return Response.json({ circle: mapCircle(circle, myStatus), members: [], pending: [] })
+    }
+    const members = await all<any>(
+      ctx.env,
+      `
       SELECT m.user_id, m.role, COALESCE(s.user_name, u.username) AS user_name, u.verified, s.avatar AS user_avatar
       FROM circle_members m
       JOIN users u ON u.id = m.user_id
       LEFT JOIN user_settings s ON s.user_id = m.user_id
       WHERE m.circle_id = ? AND m.status = 'active'
       ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END, m.created_at ASC
-      LIMIT 50`, ctx.params.id)
-    const mine = await first<{ role: string; status: string }>(ctx.env,
-      'SELECT role, status FROM circle_members WHERE circle_id = ? AND user_id = ?', ctx.params.id, ctx.userId)
-    const myStatus = !mine ? null : mine.role === 'owner' ? 'owner' : mine.status === 'active' ? 'member' : 'pending'
+      LIMIT 50`,
+      ctx.params.id
+    )
     // 待审批列表仅圈主可见
     let pending: any[] = []
     if (mine?.role === 'owner') {
-      pending = await all<any>(ctx.env, `
+      pending = await all<any>(
+        ctx.env,
+        `
         SELECT m.user_id, COALESCE(s.user_name, u.username) AS user_name, m.created_at, s.avatar AS user_avatar
         FROM circle_members m
         JOIN users u ON u.id = m.user_id
         LEFT JOIN user_settings s ON s.user_id = m.user_id
         WHERE m.circle_id = ? AND m.status = 'pending'
-        ORDER BY m.created_at ASC`, ctx.params.id)
+        ORDER BY m.created_at ASC`,
+        ctx.params.id
+      )
     }
     return Response.json({
       circle: mapCircle(circle, myStatus),
-      members: members.map(m => ({ userId: m.user_id, userName: m.user_name || '升本人', role: m.role, verified: !!m.verified, userAvatar: m.user_avatar ?? undefined })),
-      pending: pending.map(p => ({ userId: p.user_id, userName: p.user_name || '升本人', createdAt: p.created_at, userAvatar: p.user_avatar ?? undefined }))
+      members: members.map((m) => ({
+        userId: m.user_id,
+        userName: m.user_name || '升本人',
+        role: m.role,
+        verified: !!m.verified,
+        userAvatar: m.user_avatar ?? undefined
+      })),
+      pending: pending.map((p) => ({
+        userId: p.user_id,
+        userName: p.user_name || '升本人',
+        createdAt: p.created_at,
+        userAvatar: p.user_avatar ?? undefined
+      }))
     })
   })
 
   // 加入/退圈 toggle：非成员→加入（公开圈直接 active；审核圈 pending 并通知圈主）；
   // active→退圈；pending→取消申请。圈主不能退出自己创建的圈。
   on('PUT', '/api/community/circles/:id/join', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:circle', 30)
+    await rateLimit(ctx, 'community:circle', 30)
     const circle = await first<any>(ctx.env, 'SELECT * FROM community_circles WHERE id = ?', ctx.params.id)
     if (!circle) throw new HttpError(404, '圈子不存在')
-    const mine = await first<{ role: string; status: string }>(ctx.env,
-      'SELECT role, status FROM circle_members WHERE circle_id = ? AND user_id = ?', ctx.params.id, ctx.userId)
+    const mine = await first<{ role: string; status: string }>(
+      ctx.env,
+      'SELECT role, status FROM circle_members WHERE circle_id = ? AND user_id = ?',
+      ctx.params.id,
+      ctx.userId
+    )
 
     if (mine?.status === 'active') {
       if (mine.role === 'owner') throw new HttpError(400, '圈主不能退出自己创建的圈子')
       await batch(ctx.env, [
-        ctx.env.DB.prepare('DELETE FROM circle_members WHERE circle_id = ? AND user_id = ?').bind(ctx.params.id, ctx.userId),
-        ctx.env.DB.prepare('UPDATE community_circles SET member_count = MAX(member_count - 1, 0) WHERE id = ?').bind(ctx.params.id)
+        ctx.env.DB.prepare('DELETE FROM circle_members WHERE circle_id = ? AND user_id = ?').bind(
+          ctx.params.id,
+          ctx.userId
+        ),
+        // 计数在批内按成员表重算（P4-11）：批失败一起回滚，且自愈历史漂移
+        ctx.env.DB.prepare(
+          "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+        ).bind(ctx.params.id, ctx.params.id)
       ])
       return Response.json({ status: null })
     }
@@ -101,10 +159,13 @@ export function registerCirclesRoutes() {
       // 取消申请：同时撤回给圈主的申请通知（按「申请加入圈子「<圈名>」」精确匹配，
       // 避免误删同一圈主名下其他圈子的申请通知；LIKE 通配符转义同 tags 查询口径）
       await batch(ctx.env, [
-        ctx.env.DB.prepare('DELETE FROM circle_members WHERE circle_id = ? AND user_id = ?').bind(ctx.params.id, ctx.userId),
+        ctx.env.DB.prepare('DELETE FROM circle_members WHERE circle_id = ? AND user_id = ?').bind(
+          ctx.params.id,
+          ctx.userId
+        ),
         ctx.env.DB.prepare(
           "DELETE FROM community_notifications WHERE type = 'system' AND actor_id = ? AND user_id = ? " +
-          "AND content LIKE ? ESCAPE '\\'"
+            "AND content LIKE ? ESCAPE '\\'"
         ).bind(ctx.userId, circle.creator_id, `%申请加入圈子「${escapeLike(circle.name)}」%`)
       ])
       return Response.json({ status: null })
@@ -113,17 +174,30 @@ export function registerCirclesRoutes() {
     const status = circle.is_public ? 'active' : 'pending'
     const myName = await displayName(ctx.env, ctx.userId)
     const stmts: D1PreparedStatement[] = [
-      ctx.env.DB.prepare('INSERT INTO circle_members (circle_id, user_id, role, status, created_at) VALUES (?, ?, ?, ?, ?)')
-        .bind(ctx.params.id, ctx.userId, 'member', status, nowSec())
+      // INSERT OR IGNORE 幂等（P4-11）：并发双击撞 PRIMARY KEY(circle_id, user_id) 时返回 200 而非 500
+      ctx.env.DB.prepare(
+        'INSERT OR IGNORE INTO circle_members (circle_id, user_id, role, status, created_at) VALUES (?, ?, ?, ?, ?)'
+      ).bind(ctx.params.id, ctx.userId, 'member', status, nowSec())
     ]
     if (status === 'active') {
-      stmts.push(ctx.env.DB.prepare('UPDATE community_circles SET member_count = member_count + 1 WHERE id = ?').bind(ctx.params.id))
+      // 成员写入与计数重算同一 batch（P4-11，复用 teams/teams.ts addMember 范式）：批内按成员表重算，
+      // 批失败一起回滚，INSERT 被忽略时重算结果不变（幂等），不再用 +1 递增
+      stmts.push(
+        ctx.env.DB.prepare(
+          "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+        ).bind(ctx.params.id, ctx.params.id)
+      )
     } else {
-      stmts.push(notifyStatement(ctx.env, {
-        userId: circle.creator_id, type: 'system', actorId: ctx.userId,
-        targetType: 'circle', targetId: ctx.params.id,
-        content: `${myName} 申请加入圈子「${circle.name}」，请到圈子详情页审批`
-      }))
+      stmts.push(
+        notifyStatement(ctx.env, {
+          userId: circle.creator_id,
+          type: 'system',
+          actorId: ctx.userId,
+          targetType: 'circle',
+          targetId: ctx.params.id,
+          content: `${myName} 申请加入圈子「${circle.name}」，请到圈子详情页审批`
+        })
+      )
     }
     await batch(ctx.env, stmts)
     return Response.json({ status })
@@ -131,39 +205,61 @@ export function registerCirclesRoutes() {
 
   // 圈主批准申请（pending → active，通知申请人）
   on('PUT', '/api/community/circles/:id/members/:uid/approve', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:circle', 30)
-    const circle = await first<any>(ctx.env, 'SELECT id, name, creator_id FROM community_circles WHERE id = ?', ctx.params.id)
+    await rateLimit(ctx, 'community:circle', 30)
+    const circle = await first<any>(
+      ctx.env,
+      'SELECT id, name, creator_id FROM community_circles WHERE id = ?',
+      ctx.params.id
+    )
     if (!circle) throw new HttpError(404, '圈子不存在')
     if (circle.creator_id !== ctx.userId) throw new HttpError(403, '仅圈主可审批')
-    const updated = await run(ctx.env,
-      "UPDATE circle_members SET status = 'active' WHERE circle_id = ? AND user_id = ? AND status = 'pending'",
-      ctx.params.id, ctx.params.uid)
-    if (!updated.meta.changes) throw new HttpError(404, '申请不存在或已处理')
-    await batch(ctx.env, [
-      ctx.env.DB.prepare('UPDATE community_circles SET member_count = member_count + 1 WHERE id = ?').bind(ctx.params.id),
+    // 置 active + 计数重算 + 通知同一 batch（P4-11）：中途失败整体回滚，消除「计数少 1 且不可自愈」；
+    // 计数按成员表重算而非 +1，自愈历史漂移。changes === 0 说明申请不存在或已被并发处理。
+    const results = await batch(ctx.env, [
+      ctx.env.DB.prepare(
+        "UPDATE circle_members SET status = 'active' WHERE circle_id = ? AND user_id = ? AND status = 'pending'"
+      ).bind(ctx.params.id, ctx.params.uid),
+      ctx.env.DB.prepare(
+        "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+      ).bind(ctx.params.id, ctx.params.id),
       notifyStatement(ctx.env, {
-        userId: ctx.params.uid, type: 'system',
-        targetType: 'circle', targetId: ctx.params.id,
+        userId: ctx.params.uid,
+        type: 'system',
+        targetType: 'circle',
+        targetId: ctx.params.id,
         content: `🎉 你加入圈子「${circle.name}」的申请已通过`
       })
     ])
+    if (!results?.[0]?.meta.changes) throw new HttpError(404, '申请不存在或已处理')
     return Response.json({ ok: true })
   })
 
   // 圈主移除成员 / 拒绝申请
   on('DELETE', '/api/community/circles/:id/members/:uid', true, async (ctx) => {
-    rateLimit(ctx.request, 'community:circle', 30)
+    await rateLimit(ctx, 'community:circle', 30)
     const circle = await first<any>(ctx.env, 'SELECT id, creator_id FROM community_circles WHERE id = ?', ctx.params.id)
     if (!circle) throw new HttpError(404, '圈子不存在')
     if (circle.creator_id !== ctx.userId) throw new HttpError(403, '仅圈主可移除成员')
     if (ctx.params.uid === circle.creator_id) throw new HttpError(400, '不能移除圈主')
-    const target = await first<{ status: string }>(ctx.env,
-      'SELECT status FROM circle_members WHERE circle_id = ? AND user_id = ?', ctx.params.id, ctx.params.uid)
+    const target = await first<{ status: string }>(
+      ctx.env,
+      'SELECT status FROM circle_members WHERE circle_id = ? AND user_id = ?',
+      ctx.params.id,
+      ctx.params.uid
+    )
     if (!target) throw new HttpError(404, '成员不存在')
     await batch(ctx.env, [
-      ctx.env.DB.prepare('DELETE FROM circle_members WHERE circle_id = ? AND user_id = ?').bind(ctx.params.id, ctx.params.uid),
+      ctx.env.DB.prepare('DELETE FROM circle_members WHERE circle_id = ? AND user_id = ?').bind(
+        ctx.params.id,
+        ctx.params.uid
+      ),
       ...(target.status === 'active'
-        ? [ctx.env.DB.prepare('UPDATE community_circles SET member_count = MAX(member_count - 1, 0) WHERE id = ?').bind(ctx.params.id)]
+        ? [
+            // 计数在批内按成员表重算（P4-11 同口径），替代 -1 递增并自愈历史漂移
+            ctx.env.DB.prepare(
+              "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+            ).bind(ctx.params.id, ctx.params.id)
+          ]
         : [])
     ])
     return Response.json({ ok: true })

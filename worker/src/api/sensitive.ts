@@ -29,29 +29,61 @@ function toHalfWidth(s: string): string {
 
 /** 常见谐音/拆字/变体映射：把绕过写法归一为规范词，供词表命中 */
 const HOMOPHONE_MAP: Record<string, string> = {
-  '威信': '微信', '薇信': '微信', 'v信': '微信', 'vx': '微信',
-  '企鹅': 'qq', '扣扣': 'qq',
-  '煞笔': '傻逼', '傻毕': '傻逼', '沙比': '傻逼', '傻比': '傻逼', '煞比': '傻逼', 'sb': '傻逼',
-  '草泥马': '操你妈', '草你妈': '操你妈', '草拟吗': '操你妈', '艹泥马': '操你妈', '草你马': '操你妈',
-  '妈卖批': '妈逼',
-  '制杖': '智障', '智帐': '智障',
-  '脑惨': '脑残', 'nc': '脑残',
-  '代kao': '代考', '代k': '代考',
-  '卖da案': '卖答案', '卖da': '卖答案',
+  威信: '微信',
+  薇信: '微信',
+  v信: '微信',
+  vx: '微信',
+  企鹅: 'qq',
+  扣扣: 'qq',
+  煞笔: '傻逼',
+  傻毕: '傻逼',
+  沙比: '傻逼',
+  傻比: '傻逼',
+  煞比: '傻逼',
+  sb: '傻逼',
+  草泥马: '操你妈',
+  草你妈: '操你妈',
+  草拟吗: '操你妈',
+  艹泥马: '操你妈',
+  草你马: '操你妈',
+  妈卖批: '妈逼',
+  制杖: '智障',
+  智帐: '智障',
+  脑惨: '脑残',
+  nc: '脑残',
+  代kao: '代考',
+  代k: '代考',
+  卖da案: '卖答案',
+  卖da: '卖答案'
 }
+
+/**
+ * 谐音归一规则（模块加载时预计算一次）：
+ * normalize 处于发帖/评论/私信等内容校验热路径，逐文本调用，
+ * 若每次都重排键序、重复编译正则会产生无谓开销，故提升到模块作用域。
+ * 键按长度降序，避免短 key 提前吞掉长 key（如「vx」先于「v」）。
+ */
+const HOMOPHONE_RULES: { key: string; value: string; wordRe?: RegExp }[] = Object.keys(HOMOPHONE_MAP)
+  .sort((a, b) => b.length - a.length)
+  .map((key) => ({
+    key,
+    value: HOMOPHONE_MAP[key],
+    // 纯英文缩写（sb/nc/vx）若用子串替换会误伤英文单词（since/USB/sync 等），
+    // 仅按词边界（前后非字母）替换；中文谐音 key 无此风险，保持子串替换
+    wordRe: /^[a-z]+$/.test(key) ? new RegExp(`\\b${key}\\b`, 'g') : undefined
+  }))
 
 function normalize(s: string): string {
   let t = toHalfWidth(s).toLowerCase()
   // 去除空白、间隔符、零宽字符、变体选择符与常见标点/括号
-  t = t.replace(/[\s\-_.*#@!?,，。！？~·、（）()【】[\]<>《》"'“”‘’:：;；|\\/+=￥$&^%\u200b-\u200f\ufeff\ufe0e\ufe0f]+/g, '')
-  // 谐音归一：按 key 长度降序替换，避免短 key 提前吞掉长 key（如「vx」先于「v」）
-  const keys = Object.keys(HOMOPHONE_MAP).sort((a, b) => b.length - a.length)
-  for (const k of keys) {
-    // 纯英文缩写（sb/nc/vx）若用子串替换会误伤英文单词（since/USB/sync 等），
-    // 仅按词边界（前后非字母）替换；中文谐音 key 无此风险，保持子串替换
-    t = /^[a-z]+$/.test(k)
-      ? t.replace(new RegExp(`\\b${k}\\b`, 'g'), HOMOPHONE_MAP[k])
-      : t.split(k).join(HOMOPHONE_MAP[k])
+  t = t.replace(
+    // eslint-disable-next-line no-misleading-character-class -- 变体选择符(U+FE0E/FE0F)与零宽字符在此按字面量逐个匹配，属有意为之
+    /[\s\-_.*#@!?,，。！？~·、（）()【】[\]<>《》"'“”‘’:：;；|\\/+=￥$&^%\u200b-\u200f\ufeff\ufe0e\ufe0f]+/g,
+    ''
+  )
+  // 谐音归一：替换规则与顺序见模块级 HOMOPHONE_RULES
+  for (const r of HOMOPHONE_RULES) {
+    t = r.wordRe ? t.replace(r.wordRe, r.value) : t.split(r.key).join(r.value)
   }
   return t
 }
@@ -73,7 +105,7 @@ export function moderate(text: string): ModerationResult {
   const t = normalize(text)
   return {
     hard: hardAc.containsAny(t),
-    soft: softAc.containsAny(t),
+    soft: softAc.containsAny(t)
   }
 }
 
@@ -87,7 +119,7 @@ export interface AssertCleanOptions {
 }
 
 export interface AssertCleanAsyncResult {
-  /** 是否命中 soft 违规、应标记 is_flagged 待审（仅 allowSoft=true 时可能为 true） */
+  /** 是否命中 soft 违规、应标记 is_flagged 待审（assertCleanAsync 需 allowSoft=true；assertCleanLocal 恒可能） */
   flagged: boolean
 }
 
@@ -120,5 +152,23 @@ export async function assertCleanAsync(
     if (opts?.allowSoft) return { flagged: true }
     throw new HttpError(400, '内容疑似包含违规信息，请修改后再发布')
   }
+  return { flagged: false }
+}
+
+/**
+ * 仅本地词库的校验（不调 AI），soft 命中降级为 flagged：
+ *  - hard → 拒绝发布（400，文案与 assertCleanAsync 一致）；
+ *  - soft → { flagged: true }（与正文 soft 命中同一口径，标记待审而非拒绝）。
+ *
+ * 用于发帖标签等短文本场景：一次发帖最多带 5 个标签，逐个走 assertCleanAsync 会在
+ * 本地词库未命中时串行触发 Workers AI（每次超时 5 秒），最坏拖慢发帖 30 秒；
+ * 标签文本短、匹配面窄，本地词库已足够覆盖。
+ */
+export function assertCleanLocal(text: string): AssertCleanAsyncResult {
+  const local = moderate(text)
+  if (local.hard) {
+    throw new HttpError(400, '内容包含违规信息，请修改后再发布')
+  }
+  if (local.soft) return { flagged: true }
   return { flagged: false }
 }

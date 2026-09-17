@@ -50,7 +50,7 @@ function buildPrompt(text: string): string {
     '  "soft" 表示疑似违规或擦边（软性引流/边界辱骂），',
     '  "none" 表示正常内容（此时 violation 为 false）。',
     '待审核内容：',
-    text,
+    text
   ].join('\n')
 }
 
@@ -110,18 +110,18 @@ export async function aiModerate(text: string, env: Env): Promise<AiModerationRe
     const res = await fetch(url, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         messages: [
           { role: 'system', content: buildPrompt(trimmed) },
-          { role: 'user', content: trimmed },
+          { role: 'user', content: trimmed }
         ],
         // 非推理模型直接输出结论，256 token 足够，省额度
-        max_tokens: 256,
+        max_tokens: 256
       }),
-      signal: controller.signal,
+      signal: controller.signal
     })
 
     if (!res.ok) {

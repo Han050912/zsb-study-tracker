@@ -1,6 +1,7 @@
 import type { Env } from '../index'
 import { on } from '../router'
 import { first, HttpError } from '../db'
+import { rateLimit } from '../middleware/rateLimit'
 import { decryptSecret } from '../crypto'
 
 /**
@@ -109,37 +110,66 @@ async function fetchYoudaoMeaning(word: string): Promise<string> {
 export function registerMaimemoRoutes() {
   // 今日背诵数据：分别拉取新词/复习词的已完成条目计数
   on('POST', '/api/proxy/maimemo/today', true, async (ctx) => {
+    await rateLimit(ctx, 'maimemo:today', 20)
     const token = await maimemoToken(ctx.env, ctx.userId)
     const [newRes, reviewRes] = await Promise.all([
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_finished: true, is_new: true, limit: 1000 }),
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_finished: true, is_new: false, limit: 1000 })
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, {
+        is_finished: true,
+        is_new: true,
+        limit: 1000
+      }),
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, {
+        is_finished: true,
+        is_new: false,
+        limit: 1000
+      })
     ])
     return Response.json({
-      newWords: (newRes.today_items || []).filter(i => i.is_finished).length,
-      reviewWords: (reviewRes.today_items || []).filter(i => i.is_finished).length
+      newWords: (newRes.today_items || []).filter((i) => i.is_finished).length,
+      reviewWords: (reviewRes.today_items || []).filter((i) => i.is_finished).length
     })
   })
 
   // 学习进度：{ finished, total }
   on('GET', '/api/proxy/maimemo/progress', true, async (ctx) => {
+    await rateLimit(ctx, 'maimemo:progress', 30)
     const token = await maimemoToken(ctx.env, ctx.userId)
     const prog = await post<{ progress?: { finished: number; total: number } }>(
-      '/api/v1/memo/study/get_study_progress', token, {})
+      '/api/v1/memo/study/get_study_progress',
+      token,
+      {}
+    )
     return Response.json({
       finished: prog.progress?.finished ?? 0,
       total: prog.progress?.total ?? 0
     })
   })
 
-  // 今日单词明细（含拼写 + 释义）：新学 + 复习全部条目，按学习顺序排列
+  // 今日单词明细（含拼写 + 释义）：新学 + 复习条目，按学习顺序排列
   on('POST', '/api/proxy/maimemo/today-detail', true, async (ctx) => {
+    await rateLimit(ctx, 'maimemo:today-detail', 5)
     const token = await maimemoToken(ctx.env, ctx.userId)
-    // 拉取全部今日条目（新学 + 复习），不按 is_finished 过滤，由前端展示完成状态
+    // 子请求上限：Workers 免费计划 50 次/请求。释义最坏走两条路径（墨墨 UGC + 有道回退），
+    // 条目上限 20 保证最坏 2×20+2 = 42 次子请求
+    const MAX_TODAY_ITEMS = 20
+    // 子请求上界由 slice(0, MAX_TODAY_ITEMS) 保证，与上游 limit 无关；FETCH_LIMIT 只影响单条响应体积
+    const FETCH_LIMIT = 200
+    // 拉取今日条目（新学 + 复习，各自最多 FETCH_LIMIT 条），不按 is_finished 过滤，由前端展示完成状态
     const [newRes, reviewRes] = await Promise.all([
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: true, limit: 1000 }),
-      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, { is_new: false, limit: 1000 })
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, {
+        is_new: true,
+        limit: FETCH_LIMIT
+      }),
+      post<{ today_items?: TodayItem[] }>('/api/v1/memo/study/get_today_items', token, {
+        is_new: false,
+        limit: FETCH_LIMIT
+      })
     ])
-    const items = [...(newRes.today_items || []), ...(reviewRes.today_items || [])]
+    const newItems = newRes.today_items || []
+    const reviewItems = reviewRes.today_items || []
+    const total = newItems.length + reviewItems.length
+    const items = [...newItems, ...reviewItems].slice(0, MAX_TODAY_ITEMS)
+    const truncated = total > MAX_TODAY_ITEMS || newItems.length >= FETCH_LIMIT || reviewItems.length >= FETCH_LIMIT
     if (!items.length) return Response.json({ words: [] })
 
     // 批量拉取释义：并发 8 路，优先墨墨 UGC 释义，为空时回退有道词典
@@ -147,10 +177,14 @@ export function registerMaimemoRoutes() {
       // 主源：墨墨用户自建释义（UGC）
       try {
         const res = await get<{ interpretations?: InterpretationItem[] }>(
-          `/api/v1/memo/interpretations?voc_id=${item.voc_id}`, token)
-        const pub = (res.interpretations || []).find(i => i.status === 'PUBLISHED')
+          `/api/v1/memo/interpretations?voc_id=${item.voc_id}`,
+          token
+        )
+        const pub = (res.interpretations || []).find((i) => i.status === 'PUBLISHED')
         if (pub?.interpretation) return pub.interpretation
-      } catch { /* 降级到有道 */ }
+      } catch {
+        /* 降级到有道 */
+      }
 
       // 回退源：有道词典免费翻译（墨墨 API 不返回内置词典释义）
       return fetchYoudaoMeaning(item.voc_spelling)
@@ -163,7 +197,9 @@ export function registerMaimemoRoutes() {
         isNew: item.is_new,
         isFinished: item.is_finished,
         meaning: meanings[i]
-      }))
+      })),
+      total,
+      truncated
     })
   })
 }

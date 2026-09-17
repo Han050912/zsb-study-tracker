@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { inject, onMounted } from 'vue'
-import { useCommunityStore } from '../stores/community'
+import { onMounted, ref } from 'vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
+import { useNotificationStore } from '../stores/community'
 import type { CommunityNotification, NotificationType } from '../types'
 import NotificationCommentItem from '../components/community/NotificationCommentItem.vue'
 import NotificationLikeItem from '../components/community/NotificationLikeItem.vue'
@@ -8,8 +10,22 @@ import NotificationFollowItem from '../components/community/NotificationFollowIt
 import NotificationPartnerItem from '../components/community/NotificationPartnerItem.vue'
 import NotificationGenericItem from '../components/community/NotificationGenericItem.vue'
 
-const store = useCommunityStore()
-const toast = inject<(m: string) => void>('toast', () => {})
+const store = useNotificationStore()
+const toast = useToast()
+
+/** 列表加载中：首屏与切筛选期间显示骨架屏，避免先闪「暂无通知」空态 */
+const loading = ref(false)
+
+async function fetchList(reset: boolean) {
+  loading.value = true
+  try {
+    await store.fetchNotifications(reset)
+  } catch (e) {
+    toast(getErrorMessage(e, '加载失败'))
+  } finally {
+    loading.value = false
+  }
+}
 
 const FILTERS: { k: NotificationType | ''; l: string }[] = [
   { k: '', l: '全部' },
@@ -21,11 +37,12 @@ const FILTERS: { k: NotificationType | ''; l: string }[] = [
   { k: 'system', l: '系统' }
 ]
 function switchFilter(k: NotificationType | '') {
-  store.setNotifyFilter(k).catch(e => toast(e?.message || '加载失败'))
+  if (store.notifyFilter === k) return
+  fetchList(true)
 }
 
 onMounted(() => {
-  store.fetchNotifications(true).catch(e => toast(e?.message || '加载失败'))
+  fetchList(true)
 })
 
 function markRead(n: CommunityNotification) {
@@ -36,8 +53,8 @@ async function readAll() {
   try {
     await store.markAllRead()
     toast('已全部标记为已读')
-  } catch (e: any) {
-    toast(e?.message || '操作失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
   }
 }
 </script>
@@ -45,22 +62,36 @@ async function readAll() {
 <template>
   <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
     <div class="flex items-center justify-between">
-      <h1 class="page-title"> 通知中心</h1>
+      <h1 class="page-title">通知中心</h1>
       <button v-if="store.unreadCount" class="btn-ghost !text-xs" @click="readAll">全部已读</button>
     </div>
 
     <div class="flex flex-wrap gap-2">
-      <button v-for="f in FILTERS" :key="f.k" class="btn !text-xs !py-1 !px-3"
+      <button
+        v-for="f in FILTERS"
+        :key="f.k"
+        class="btn !text-xs !py-1 !px-3"
         :class="store.notifyFilter === f.k ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-        @click="switchFilter(f.k)">{{ f.l }}</button>
+        @click="switchFilter(f.k)"
+      >
+        {{ f.l }}
+      </button>
     </div>
 
-    <div v-if="!store.notifications.length" class="card text-center py-10 text-slate-400 text-sm">
+    <!-- 加载中：骨架占位，与「暂无通知」空态明确区分 -->
+    <div v-if="loading" class="card !p-0 divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
+      <div v-for="i in 4" :key="i" class="p-4 space-y-2">
+        <div class="h-4 w-1/3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+        <div class="h-3 w-2/3 rounded bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+      </div>
+    </div>
+
+    <div v-else-if="!store.notifications.length" class="card text-center py-10 text-slate-400 text-sm">
       <div class="text-3xl mb-2"></div>
       <p>暂无通知</p>
     </div>
 
-    <div class="card !p-0 divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
+    <div v-else class="card !p-0 divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
       <template v-for="n in store.notifications" :key="n.id">
         <NotificationCommentItem v-if="n.type === 'comment'" :n="n" @read="markRead(n)" />
         <NotificationLikeItem v-else-if="n.type === 'like'" :n="n" @read="markRead(n)" />
@@ -71,8 +102,12 @@ async function readAll() {
     </div>
 
     <div v-if="store.hasMoreNotify && store.notifications.length" class="text-center">
-      <button class="btn-ghost !text-xs"
-        @click="store.fetchNotifications().catch(e => toast(e?.message || '加载失败'))">加载更多</button>
+      <button
+        class="btn-ghost !text-xs"
+        @click="store.fetchNotifications().catch((e) => toast(getErrorMessage(e, '加载失败')))"
+      >
+        加载更多
+      </button>
     </div>
   </div>
 </template>

@@ -1233,7 +1233,7 @@ export const HARD_WORDS: string[] = [
   '黑逼',
   '龟儿子',
   '龟头',
-  '龟孙子',
+  '龟孙子'
 ]
 
 export const SOFT_WORDS: string[] = [
@@ -1262,5 +1262,5 @@ export const SOFT_WORDS: string[] = [
   '蠢猪',
   '蠢货',
   '辣鸡',
-  '逗比',
+  '逗比'
 ]

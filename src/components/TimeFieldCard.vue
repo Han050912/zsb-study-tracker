@@ -20,18 +20,22 @@ const emit = defineEmits<{ 'update:modelValue': [string] }>()
 const accentStyles = {
   sky: {
     iconBox: 'from-sky-400 to-blue-500 shadow-sky-200 dark:shadow-none',
-    cardActive: 'border-sky-300 dark:border-sky-600 ring-2 ring-sky-100 dark:ring-sky-900/50 bg-sky-50/60 dark:bg-sky-900/10',
+    cardActive:
+      'border-sky-300 dark:border-sky-600 ring-2 ring-sky-100 dark:ring-sky-900/50 bg-sky-50/60 dark:bg-sky-900/10',
     chipActive: 'bg-sky-500 border-sky-500 text-white shadow-sm shadow-sky-200 dark:shadow-none',
     chipHover: 'hover:border-sky-300 hover:text-sky-600 dark:hover:border-sky-500 dark:hover:text-sky-300',
-    inputFocus: 'hover:border-sky-300 dark:hover:border-sky-500 focus:border-sky-400 focus:ring-sky-200 dark:focus:ring-sky-800',
+    inputFocus:
+      'hover:border-sky-300 dark:hover:border-sky-500 focus:border-sky-400 focus:ring-sky-200 dark:focus:ring-sky-800',
     clear: 'text-sky-500 hover:bg-sky-100/70 dark:hover:bg-sky-900/40'
   },
   amber: {
     iconBox: 'from-amber-400 to-orange-500 shadow-amber-200 dark:shadow-none',
-    cardActive: 'border-amber-300 dark:border-amber-600 ring-2 ring-amber-100 dark:ring-amber-900/50 bg-amber-50/60 dark:bg-amber-900/10',
+    cardActive:
+      'border-amber-300 dark:border-amber-600 ring-2 ring-amber-100 dark:ring-amber-900/50 bg-amber-50/60 dark:bg-amber-900/10',
     chipActive: 'bg-amber-500 border-amber-500 text-white shadow-sm shadow-amber-200 dark:shadow-none',
     chipHover: 'hover:border-amber-300 hover:text-amber-600 dark:hover:border-amber-500 dark:hover:text-amber-300',
-    inputFocus: 'hover:border-amber-300 dark:hover:border-amber-500 focus:border-amber-400 focus:ring-amber-200 dark:focus:ring-amber-800',
+    inputFocus:
+      'hover:border-amber-300 dark:hover:border-amber-500 focus:border-amber-400 focus:ring-amber-200 dark:focus:ring-amber-800',
     clear: 'text-amber-600 hover:bg-amber-100/70 dark:hover:bg-amber-900/40'
   }
 } as const
@@ -53,9 +57,11 @@ function pick(value: string) {
 <template>
   <div
     class="rounded-2xl border p-4 transition-all duration-200"
-    :class="modelValue
-      ? [ac.cardActive, 'shadow-md']
-      : 'border-slate-100 dark:border-slate-700 bg-gradient-to-br from-slate-50/80 to-white dark:from-slate-700/30 dark:to-slate-800 hover:shadow-md hover:border-slate-200 dark:hover:border-slate-600'"
+    :class="
+      modelValue
+        ? [ac.cardActive, 'shadow-md']
+        : 'border-slate-100 dark:border-slate-700 bg-gradient-to-br from-slate-50/80 to-white dark:from-slate-700/30 dark:to-slate-800 hover:shadow-md hover:border-slate-200 dark:hover:border-slate-600'
+    "
   >
     <div class="flex gap-3">
       <div
@@ -73,7 +79,9 @@ function pick(value: string) {
             class="text-[11px] px-2 py-0.5 rounded-full transition-colors"
             :class="ac.clear"
             @click="emit('update:modelValue', '')"
-          >清除</button>
+          >
+            清除
+          </button>
         </div>
         <p class="text-[11px] leading-relaxed text-slate-400 mt-0.5">{{ desc }}</p>
         <input
@@ -89,11 +97,18 @@ function pick(value: string) {
             :key="p.label"
             type="button"
             class="px-2.5 py-1 rounded-full border text-[11px] font-medium transition-all duration-150 active:scale-95"
-            :class="modelValue === p.value
-              ? ac.chipActive
-              : ['border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-700/60', ac.chipHover]"
+            :class="
+              modelValue === p.value
+                ? ac.chipActive
+                : [
+                    'border-slate-200 dark:border-slate-600 text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-700/60',
+                    ac.chipHover
+                  ]
+            "
             @click="pick(p.value)"
-          >{{ p.label }}</button>
+          >
+            {{ p.label }}
+          </button>
         </div>
       </div>
     </div>

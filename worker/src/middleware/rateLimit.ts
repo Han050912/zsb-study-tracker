@@ -1,52 +1,48 @@
+import type { Ctx } from '../router'
+import type { Env } from '../index'
 import { HttpError } from '../db'
 
 /**
- * 代码层内存速率限制：按 IP 滑动窗口计数。
- * 本层是登录/注册限流的**主要防线**（登录 10 次/分、注册 3 次/分）；WAF 层仅在洪水级攻击时兜底。
- * 局限：计数存于实例内存，多实例间不共享，实例冷启动/重启后计数归零，故单靠本层拦不住洪水级攻击。
+ * 速率限制：基于 Cloudflare Workers 内置 Rate Limiting binding（2025-09 GA，wrangler.toml [[ratelimits]]）。
+ * 计数跨实例共享（按 colo，宽松最终一致），是限流主防线；全局洪水防护依赖 WAF 层（现状未部署，见 docs/waf-rate-limiting.md）。
+ * 局限：binding period 仅支持 10/60 秒；计数按 key 分 colo，非全局精确。
+ * 注意：同名 action 搭配不同档位时分别独立计数（如 community:circle 的创建 10 档与加入/审批 30 档互不占额）。
  */
 
-interface Bucket {
-  count: number
-  resetAt: number
-}
+/** 限值档位：与 wrangler.toml 的 8 个 [[ratelimits]] 绑定一一对应 */
+export type RateLimitTier = 3 | 5 | 10 | 20 | 30 | 60 | 100 | 120
 
-const store = new Map<string, Bucket>()
-
-/** 定时清理过期桶，避免 Map 无限增长（每分钟执行一次） */
-function pruneExpired() {
-  const now = Date.now()
-  for (const [k, v] of store) {
-    if (now >= v.resetAt) store.delete(k)
-  }
+/** 限值档位 → 绑定名 */
+const TIER_BINDINGS: Record<RateLimitTier, keyof Env> = {
+  3: 'RL_3',
+  5: 'RL_5',
+  10: 'RL_10',
+  20: 'RL_20',
+  30: 'RL_30',
+  60: 'RL_60',
+  100: 'RL_100',
+  120: 'RL_120'
 }
 
 /**
- * 按 IP + 操作名为键进行速率限制。
- * @param max 窗口内允许的最大请求数
- * @param windowMs 时间窗口（毫秒），默认 60 秒
- * @returns 失败时抛出 HttpError(429)
+ * 按操作名进行速率限制：超限抛 HttpError(429)，计数由 binding 跨实例共享。
+ * key 取值来源（P4-01）：已登录请求用 userId（前缀 `u:` 区分身份空间）——
+ * NAT 下同一出口 IP 的用户不再互相挤占配额，轮换 IP 也无法刷新额度；
+ * 匿名请求回退到 Cloudflare 连接层注入的 CF-Connecting-IP（该头由 Cloudflare 设置，
+ * 客户端伪造会被覆盖），不再读取客户端可控的 X-Forwarded-For；两者都拿不到时
+ * 统一归入 'unknown' 桶（仅出现在无 CF 头的本地开发等场景，共享配额即为 fail-closed）。
+ * 绑定字段缺失时 fail-open（记日志后放行）：限流失效好过请求全挂，auth 仍有 Turnstile 兜底；
+ * binding 调用本身出错则上抛，由全局 catch 统一处理（500），不静默掩盖。
  */
-export function rateLimit(request: Request, action: string, max: number, windowMs = 60_000): void {
-  // X-Forwarded-For 或 CF-Connecting-IP 优先级高于原始 IP（Worker 场景）
-  const ip =
-    request.headers.get('CF-Connecting-IP') ||
-    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
-    'unknown'
+export async function rateLimit(ctx: Ctx, action: string, max: RateLimitTier): Promise<void> {
+  const principal = ctx.userId ? `u:${ctx.userId}` : ctx.request.headers.get('CF-Connecting-IP') || 'unknown'
+  const key = `${principal}:${action}`
 
-  const key = `${ip}:${action}`
-  const now = Date.now()
-
-  if (Math.random() < 0.01) pruneExpired()
-
-  const existing = store.get(key)
-  if (!existing || now >= existing.resetAt) {
-    store.set(key, { count: 1, resetAt: now + windowMs })
+  const binding = ctx.env[TIER_BINDINGS[max]] as RateLimit | undefined
+  if (!binding) {
+    console.error(`[rateLimit] 绑定 ${TIER_BINDINGS[max]} 缺失，限流未生效（fail-open）`)
     return
   }
-
-  existing.count++
-  if (existing.count > max) {
-    throw new HttpError(429, '操作过于频繁，请稍后再试')
-  }
+  const { success } = await binding.limit({ key })
+  if (!success) throw new HttpError(429, '操作过于频繁，请稍后再试')
 }

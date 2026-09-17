@@ -12,6 +12,10 @@ import { githubFetch } from './github'
  *
  * 成功：{ success: true, data: <GitHub Release 完整 JSON> }
  * 失败：{ success: false }
+ *
+ * 信封例外：全站成功信封统一为 { ok: true }，唯独本端点保留 { success } ——
+ * 桌面端 electron/main.cjs 的 fetchReleaseNotes 直接读取 json.success，
+ * 已安装的旧客户端无法回溯更新，改信封即破坏其更新说明拉取。
  */
 
 /** 缓存有效期（毫秒） */
@@ -32,8 +36,10 @@ export function registerReleaseRoutes() {
       return Response.json({ success: true, data: cached.data })
     }
 
-    const result = await githubFetch<Record<string, unknown>>(ctx.env,
-      '/repos/Han050912/zsb-study-tracker/releases/latest')
+    const result = await githubFetch<Record<string, unknown>>(
+      ctx.env,
+      '/repos/Han050912/zsb-study-tracker/releases/latest'
+    )
     if (result.tokenMissing) {
       console.error('[latest-release] GITHUB_TOKEN 环境变量未配置')
       return Response.json({ success: false }, { status: 500 })

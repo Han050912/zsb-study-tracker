@@ -1,9 +1,26 @@
+import { z } from 'zod'
 import { on } from '../router'
 import { crudHandlers } from '../db'
+
+/** 与 examsMapping.toRow 消费字段一一对应；parts 为「部分名→得分」的 Record */
+const examBodySchema = z
+  .object({
+    id: z.string().optional(),
+    subjectId: z.string(),
+    date: z.string(),
+    title: z.string(),
+    score: z.number(),
+    totalScore: z.number(),
+    minutes: z.number(),
+    // parts 线上实际形状为「部分名→得分」数组（[{name, score}]，与同步测试用例 14 一致），非 Record
+    parts: z.array(z.object({ name: z.string(), score: z.number() })).optional()
+  })
+  .passthrough()
 
 /** 真题/套卷（exam_records 表 ↔ 前端 ExamRecord，parts 为 JSON 字符串） */
 export const examsMapping = crudHandlers({
   table: 'exam_records',
+  schema: examBodySchema,
   toRow: (userId, b, id) => ({
     id,
     user_id: userId,
@@ -15,21 +32,30 @@ export const examsMapping = crudHandlers({
     minutes: b.minutes,
     parts: b.parts ? JSON.stringify(b.parts) : null
   }),
-  fromRow: (r) => ({
-    id: r.id,
-    subjectId: r.subject_id,
-    date: r.date,
-    title: r.title,
-    score: r.score,
-    totalScore: r.total_score,
-    minutes: r.minutes,
-    parts: r.parts ? JSON.parse(r.parts) : undefined
-  })
+  fromRow: (r) => {
+    // parts 实际以「部分名→得分」数组（[{name, score}]）落库：仅做容错解析，不二次限定形状，
+    // 解析失败才降级为 undefined（等同无该列），不拖垮整个同步接口
+    let parts: Record<string, number> | undefined
+    if (r.parts) {
+      try {
+        parts = JSON.parse(r.parts)
+      } catch {
+        parts = undefined
+      }
+    }
+    return {
+      id: r.id,
+      subjectId: r.subject_id,
+      date: r.date,
+      title: r.title,
+      score: r.score,
+      totalScore: r.total_score,
+      minutes: r.minutes,
+      parts
+    }
+  }
 })
 
 export function registerExamRoutes() {
   on('GET', '/api/exams', true, examsMapping.list)
-  on('POST', '/api/exams', true, examsMapping.create)
-  on('PUT', '/api/exams/:id', true, examsMapping.update)
-  on('DELETE', '/api/exams/:id', true, examsMapping.remove)
 }

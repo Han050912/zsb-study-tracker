@@ -1,7 +1,7 @@
 import type { Env } from './index'
 
 /**
- * 敏感字段加密（AES-256-GCM）：密钥由 JWT_SECRET 经 SHA-256 派生。
+ * 敏感字段加密（AES-256-GCM）：密钥由 ENCRYPT_SECRET（未配置回退 JWT_SECRET）经 SHA-256 派生。
  * 密文格式 `enc:<iv_b64>:<ciphertext_b64>`，用于存储第三方凭证（如墨墨开放 API Token），
  * 使数据库被拖库后无法直接还原明文。
  * 解密失败（密钥轮换 / 数据损坏）返回 null，调用方按「未配置」处理。
@@ -26,7 +26,7 @@ function fromB64(b64: string): Uint8Array {
 }
 
 export async function encryptSecret(env: Env, plaintext: string): Promise<string> {
-  const key = await keyFromSecret(env.JWT_SECRET)
+  const key = await keyFromSecret(env.ENCRYPT_SECRET || env.JWT_SECRET)
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext))
   return `enc:${toB64(iv)}:${toB64(new Uint8Array(ct))}`
@@ -36,12 +36,26 @@ export async function decryptSecret(env: Env, ciphertext: string): Promise<strin
   try {
     const parts = ciphertext.split(':')
     if (parts.length !== 3 || parts[0] !== 'enc') return null
-    const key = await keyFromSecret(env.JWT_SECRET)
     const iv = fromB64(parts[1])
     const ct = fromB64(parts[2])
-    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct)
+    const pt = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      await keyFromSecret(env.ENCRYPT_SECRET || env.JWT_SECRET),
+      ct
+    )
     return new TextDecoder().decode(pt)
   } catch {
-    return null
+    // 新密钥解密失败：回退 legacy（历史数据由 JWT_SECRET 派生加密）；两者皆失败则报错并返回 null
+    try {
+      if (!env.ENCRYPT_SECRET) return null
+      const parts = ciphertext.split(':')
+      const iv = fromB64(parts[1])
+      const ct = fromB64(parts[2])
+      const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, await keyFromSecret(env.JWT_SECRET), ct)
+      return new TextDecoder().decode(pt)
+    } catch {
+      console.error('[crypto] 解密失败：密钥不匹配或数据损坏')
+      return null
+    }
   }
 }

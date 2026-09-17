@@ -7,6 +7,7 @@
  */
 import { computed } from 'vue'
 import dayjs from 'dayjs'
+import { businessDate } from '../../utils/date'
 
 const props = defineProps<{
   data: { date: string; minutes: number }[]
@@ -25,12 +26,19 @@ const minuteMap = computed(() => {
   return m
 })
 
-interface Cell { date: string; minutes: number }
-interface Col { cells: Cell[]; monthLabel: string }
+interface Cell {
+  date: string
+  minutes: number
+}
+interface Col {
+  cells: Cell[]
+  monthLabel: string
+}
 
 /** 30 周网格：以今天为终点，对齐到本周周日再向前 29 周，恰好 30 列；月份标签每隔 3 个月标注一次 */
 const cols = computed<Col[]>(() => {
-  const end = dayjs()
+  // 网格终点取 UTC+8 业务日期（不随系统时区变化）；dayjs 仅在该纯日期串上做日历算术（等价于本地解析）
+  const end = dayjs(businessDate())
   // 本周周日（end 对齐到最近周日），再往前 29 周 = 30 个周日边界（30 列）
   const startSunday = end.subtract(end.day(), 'day').subtract((WEEKS - 1) * 7, 'day')
   const raw: Cell[][] = []
@@ -38,13 +46,16 @@ const cols = computed<Col[]>(() => {
   for (let d = startSunday; !d.isAfter(end); d = d.add(1, 'day')) {
     const key = d.format('YYYY-MM-DD')
     week.push({ date: key, minutes: minuteMap.value.get(key) ?? 0 })
-    if (week.length === 7) { raw.push(week); week = [] }
+    if (week.length === 7) {
+      raw.push(week)
+      week = []
+    }
   }
   if (week.length) raw.push(week)
 
   // 月份标签严格对应所在列（用 year*12+month 比较，避免跨年误判），且间隔 >= 3 个月才标注
   let lastLabelYm = -1
-  return raw.map(cells => {
+  return raw.map((cells) => {
     const dt = new Date(cells[0].date + 'T00:00:00')
     const ym = dt.getFullYear() * 12 + dt.getMonth()
     const show = lastLabelYm === -1 || ym - lastLabelYm >= 3

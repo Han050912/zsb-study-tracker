@@ -1,12 +1,14 @@
 import type { Env } from './index'
-import { requireAuth, tryGetUser } from './middleware/auth'
-import { HttpError } from './db'
+import { resolveAuth, tryGetAuth } from './middleware/auth'
+import { HttpError, JSON_BODY_MAX_BYTES, parseJsonBody } from './db'
 
 export interface Ctx {
   request: Request
   env: Env
   /** 需认证路由由中间件解析注入；公开路由为空字符串 */
   userId: string
+  /** JWT role claim 快照；'' 表示匿名或旧 token 无 role claim（消费方须回退 DB 查询） */
+  role: string
   /** 路径参数，如 { id: 'xxx' } */
   params: Record<string, string>
 }
@@ -45,8 +47,7 @@ function match(segments: string[], path: string[]): Record<string, string> | nul
         // 畸形百分号编码（如 %zz）视为不匹配，交由上层返回 404，而非 500
         return null
       }
-    }
-    else if (seg !== path[i]) return null
+    } else if (seg !== path[i]) return null
   }
   return params
 }
@@ -64,17 +65,21 @@ export async function route(request: Request, env: Env): Promise<Response> {
     // auth=false：仍尝试解析 JWT，已登录用户 ctx.userId 不再被误清空；
     //   公开接口的 SQL 关联（liked_by_me/disliked_by_me/followed_by_me）和
     //   login 可见性判断依赖于此，否则认证用户访问公开接口会被误判为匿名
-    const userId = r.auth ? await requireAuth(request, env) : await tryGetUser(request, env)
-    return r.handler({ request, env, userId, params })
+    // role：JWT role claim 快照；'' 表示匿名或旧 token 无 claim（isAdmin 对空 role 走 DB 回退）
+    const auth = r.auth ? await resolveAuth(request, env) : await tryGetAuth(request, env)
+    return r.handler({ request, env, userId: auth.userId, role: auth.role, params })
   }
   throw new HttpError(404, '接口不存在')
 }
 
-/** 解析 JSON 请求体；非法 JSON 抛出 400。 */
-export async function body<T = any>(request: Request): Promise<T> {
-  try {
-    return (await request.json()) as T
-  } catch {
-    throw new HttpError(400, '请求体不是合法 JSON')
-  }
+/**
+ * 解析 JSON 请求体；非法 JSON 抛出 400。
+ * maxBytes：端点级请求体大小上限（字节），超限抛 413。**默认 `JSON_BODY_MAX_BYTES`（256KB）**——
+ * 任何端点都必须有上限，不允许「先无上限读入 isolate、读完再校验」（issue #52）；
+ * 只有确实需要更大上限的端点才显式传值（如 `/api/data/push` 的 10MB）。
+ * 读取实现与上限口径集中在 db.readBodyText / db.parseJsonBody（先 Content-Length 预检再读），与
+ * schemas.parseBody 共用同一份实现。
+ */
+export function body<T = any>(request: Request, maxBytes: number = JSON_BODY_MAX_BYTES): Promise<T> {
+  return parseJsonBody<T>(request, maxBytes)
 }

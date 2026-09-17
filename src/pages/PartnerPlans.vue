@@ -1,23 +1,35 @@
 <script setup lang="ts">
+import { usePartnerStore } from '../features/collaboration/stores/partners'
+import { storeToRefs } from 'pinia'
+const partnerStore = usePartnerStore()
 /**
  * 协作备考计划：
  * - 列表视图：我的计划（标题/搭子/我的进度 myDone-taskTotal），点进详情
  * - 新建计划：选择搭子（?partner= 可预选）+ 标题 → createPartnerPlan
  * - 详情视图：任务列表（标题/阶段/「我完成」可勾选 /「搭子完成」只读）、添加任务、删除任务、删除计划
  */
-import { inject, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { communityApi } from '../api/community'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AsyncState from '../shared/components/AsyncState.vue'
+import { getErrorMessage } from '../utils/error'
+import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
+import { useRoute, useRouter } from 'vue-router'
+import { partnersApi } from '../api/community/partners'
+import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import { useBack } from '../composables/useBack'
-import type { PartnerItem, PartnerPlan, PartnerPlanDetail, PartnerPlanTask } from '../types'
+import type { PartnerPlan, PartnerPlanDetail, PartnerPlanTask } from '../types'
 
 const route = useRoute()
+const router = useRouter()
 const { goBack } = useBack()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
+const confirm = useConfirm()
 
 const loading = ref(true)
+/** 首屏加载失败信息：持久错误态（区别于「还没有协作计划」空态），提供重试 */
+const loadError = ref('')
 const plans = ref<PartnerPlan[]>([])
-const partners = ref<PartnerItem[]>([])
+const { partners } = storeToRefs(partnerStore)
 
 // ---- 新建计划 ----
 const newPartner = ref((route.query.partner as string) || '')
@@ -27,135 +39,179 @@ const creating = ref(false)
 // ---- 详情视图 ----
 const detail = ref<PartnerPlanDetail | null>(null)
 const detailLoading = ref(false)
+const detailError = ref('')
+let detailTicket = 0
+onBeforeUnmount(() => detailTicket++)
 const newTaskTitle = ref('')
 const newTaskPhase = ref('')
 
-onMounted(async () => {
+onMounted(load)
+
+async function load() {
   loading.value = true
+  loadError.value = ''
   try {
-    const [p, l] = await Promise.all([communityApi.partnerPlans(), communityApi.partners()])
+    const [p, l] = await Promise.all([partnersApi.partnerPlans(), partnerStore.load()])
     plans.value = p.items
-    partners.value = l.partners
-    if (newPartner.value && !l.partners.some(x => x.userId === newPartner.value)) newPartner.value = ''
-  } catch (e: any) {
-    toast(e?.message || '加载失败')
+    if (newPartner.value && !l.partners.some((x) => x.userId === newPartner.value)) newPartner.value = ''
+  } catch (e) {
+    loadError.value = getErrorMessage(e, '加载失败')
+    toast(loadError.value)
   } finally {
     loading.value = false
   }
-})
+}
 
 async function loadPlans() {
   try {
-    plans.value = (await communityApi.partnerPlans()).items
-  } catch (e: any) {
-    toast(e?.message || '加载失败')
+    plans.value = (await partnersApi.partnerPlans()).items
+  } catch (e) {
+    toast(getErrorMessage(e, '加载失败'))
   }
 }
 
 async function createPlan() {
   if (creating.value) return
-  if (!newPartner.value) { toast('请选择搭子'); return }
-  if (!newTitle.value.trim()) { toast('请输入计划标题'); return }
+  if (!newPartner.value) {
+    toast('请选择搭子')
+    return
+  }
+  if (!newTitle.value.trim()) {
+    toast('请输入计划标题')
+    return
+  }
   creating.value = true
   try {
-    await communityApi.createPartnerPlan(newPartner.value, newTitle.value.trim())
+    await partnersApi.createPartnerPlan(newPartner.value, newTitle.value.trim())
     newTitle.value = ''
     toast('计划已创建')
     await loadPlans()
-  } catch (e: any) {
-    toast(e?.message || '创建失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '创建失败'))
   } finally {
     creating.value = false
   }
 }
 
-async function openDetail(id: string) {
+function openDetail(id: string) {
+  void router.push({ name: 'partner-plan-detail', params: { planId: id }, query: route.query })
+}
+watch(
+  () => route.params.planId,
+  (id) => {
+    if (typeof id === 'string') void loadDetail(id)
+    else {
+      detailTicket++
+      detail.value = null
+      detailError.value = ''
+      detailLoading.value = false
+    }
+  },
+  { immediate: true }
+)
+async function loadDetail(id: string) {
+  const ticket = ++detailTicket
   detailLoading.value = true
+  detailError.value = ''
   detail.value = null
   try {
-    detail.value = await communityApi.partnerPlan(id)
-  } catch (e: any) {
-    toast(e?.message || '加载失败')
+    const result = await partnersApi.partnerPlan(id)
+    if (ticket === detailTicket) detail.value = result
+  } catch (e) {
+    if (ticket === detailTicket) detailError.value = getErrorMessage(e, '计划加载失败，请重试')
   } finally {
-    detailLoading.value = false
+    if (ticket === detailTicket) detailLoading.value = false
   }
 }
 
 function backToList() {
-  detail.value = null
-  loadPlans()
+  void router.push({ name: 'partner-plans', query: route.query })
 }
 
 async function refreshDetail() {
   if (!detail.value) return
   try {
-    detail.value = await communityApi.partnerPlan(detail.value.id)
-  } catch (e: any) {
-    toast(e?.message || '刷新失败')
+    detail.value = await partnersApi.partnerPlan(detail.value.id)
+  } catch (e) {
+    toast(getErrorMessage(e, '刷新失败'))
   }
 }
 
 async function toggleTask(t: PartnerPlanTask, done: boolean) {
   if (!detail.value) return
   try {
-    await communityApi.updatePlanTask(detail.value.id, t.id, done)
+    await partnersApi.updatePlanTask(detail.value.id, t.id, done)
     t.myDone = done
-  } catch (e: any) {
-    toast(e?.message || '操作失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '操作失败'))
     await refreshDetail()
   }
 }
 
+const addingTask = ref(false)
+
 async function addTask() {
-  if (!detail.value) return
-  if (!newTaskTitle.value.trim()) { toast('请输入任务标题'); return }
+  if (!detail.value || addingTask.value) return
+  if (!newTaskTitle.value.trim()) {
+    toast('请输入任务标题')
+    return
+  }
+  addingTask.value = true
   try {
-    await communityApi.addPlanTask(detail.value.id, newTaskTitle.value.trim(), newTaskPhase.value.trim())
+    await partnersApi.addPlanTask(detail.value.id, newTaskTitle.value.trim(), newTaskPhase.value.trim())
     newTaskTitle.value = ''
     newTaskPhase.value = ''
     await refreshDetail()
-  } catch (e: any) {
-    toast(e?.message || '添加失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '添加失败'))
+  } finally {
+    addingTask.value = false
   }
 }
 
 async function removeTask(t: PartnerPlanTask) {
   if (!detail.value) return
-  if (!window.confirm(`删除任务「${t.title}」？`)) return
+  if (!(await confirm(`删除任务「${t.title}」？`, { danger: true }))) return
   try {
-    await communityApi.deletePlanTask(detail.value.id, t.id)
+    await partnersApi.deletePlanTask(detail.value.id, t.id)
     toast('任务已删除')
     await refreshDetail()
-  } catch (e: any) {
-    toast(e?.message || '删除失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '删除失败'))
   }
 }
 
 async function removePlan() {
   if (!detail.value) return
-  if (!window.confirm(`删除计划「${detail.value.title}」？其中的任务将一并删除。`)) return
+  if (!(await confirm(`删除计划「${detail.value.title}」？其中的任务将一并删除。`, { danger: true }))) return
   try {
-    await communityApi.deletePartnerPlan(detail.value.id)
+    await partnersApi.deletePartnerPlan(detail.value.id)
     toast('计划已删除')
     detail.value = null
+    backToList()
     await loadPlans()
-  } catch (e: any) {
-    toast(e?.message || '删除失败')
+  } catch (e) {
+    toast(getErrorMessage(e, '删除失败'))
   }
 }
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto px-4 py-6 space-y-5">
+  <div class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
     <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
     <div class="section-title !mb-0">协作备考计划</div>
 
     <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
 
     <!-- 详情视图 -->
-    <template v-else-if="detail || detailLoading">
+    <template v-else-if="route.params.planId">
       <div class="card space-y-3">
-        <div v-if="detailLoading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+        <AsyncState
+          v-if="detailLoading || detailError"
+          :loading="detailLoading"
+          :error="detailError"
+          @retry="loadDetail(String(route.params.planId))"
+        />
         <template v-else-if="detail">
           <div class="flex items-center gap-2">
             <button class="btn-ghost !text-xs !px-2" @click="backToList">← 列表</button>
@@ -166,16 +222,26 @@ async function removePlan() {
             <button class="ml-auto btn-danger !text-xs shrink-0" @click="removePlan">删除计划</button>
           </div>
 
-          <div v-if="!detail.tasks.length" class="text-xs text-slate-400 text-center py-6">还没有任务，在下方添加第一个任务吧</div>
-          <div v-for="t in detail.tasks" :key="t.id"
-            class="flex items-center gap-2 text-xs border-b border-slate-50 dark:border-slate-700 last:border-0 py-2 flex-wrap">
+          <div v-if="!detail.tasks.length" class="text-xs text-slate-400 text-center py-6">
+            还没有任务，在下方添加第一个任务吧
+          </div>
+          <div
+            v-for="t in detail.tasks"
+            :key="t.id"
+            class="flex items-center gap-2 text-xs border-b border-slate-50 dark:border-slate-700 last:border-0 py-2 flex-wrap"
+          >
             <div class="min-w-0">
               <div class="font-medium" :class="t.myDone ? 'line-through text-slate-400' : ''">{{ t.title }}</div>
               <div v-if="t.phase" class="text-[10px] text-slate-400">{{ t.phase }}</div>
             </div>
             <label class="ml-auto flex items-center gap-1 cursor-pointer shrink-0">
-              <input type="checkbox" :checked="t.myDone" class="accent-primary-500"
-                @change="toggleTask(t, ($event.target as HTMLInputElement).checked)" /> 我完成
+              <input
+                type="checkbox"
+                :checked="t.myDone"
+                class="accent-primary-500"
+                @change="toggleTask(t, ($event.target as HTMLInputElement).checked)"
+              />
+              我完成
             </label>
             <label class="flex items-center gap-1 text-slate-400 shrink-0" title="仅搭子本人可勾选">
               <input type="checkbox" :checked="t.partnerDone" disabled class="accent-primary-500" /> 搭子完成
@@ -185,10 +251,23 @@ async function removePlan() {
 
           <!-- 添加任务 -->
           <div class="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-700 flex-wrap">
-            <input v-model="newTaskTitle" class="input flex-1 min-w-32 !text-xs" placeholder="任务标题，如：刷完第三章习题"
-              maxlength="50" @keydown.enter="addTask" />
-            <input v-model="newTaskPhase" class="input !w-28 !text-xs" placeholder="阶段（选填）" maxlength="20" @keydown.enter="addTask" />
-            <button class="btn-primary !text-xs shrink-0" @click="addTask">添加任务</button>
+            <input
+              v-model="newTaskTitle"
+              class="input flex-1 min-w-32 !text-xs"
+              placeholder="任务标题，如：刷完第三章习题"
+              maxlength="50"
+              @keydown.enter="addTask"
+            />
+            <input
+              v-model="newTaskPhase"
+              class="input !w-28 !text-xs"
+              placeholder="阶段（选填）"
+              maxlength="20"
+              @keydown.enter="addTask"
+            />
+            <button class="btn-primary !text-xs shrink-0" :disabled="addingTask" @click="addTask">
+              {{ addingTask ? '添加中…' : '添加任务' }}
+            </button>
           </div>
         </template>
       </div>
@@ -196,8 +275,18 @@ async function removePlan() {
 
     <!-- 列表视图 -->
     <template v-else>
+      <!-- 首屏加载失败：持久错误态 + 重试，不落「还没有协作计划」空态 -->
+      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+        <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+        <span class="flex-1">{{ loadError }}</span>
+        <button class="btn-ghost !text-xs shrink-0" @click="load">
+          <RefreshCw :size="14" aria-hidden="true" />
+          重试
+        </button>
+      </div>
+
       <!-- 新建计划 -->
-      <div class="card space-y-2">
+      <div v-else class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">新建计划</div>
         <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-2">
           还没有搭子，先去<router-link to="/community/partners" class="text-primary-500">搭子页</router-link>添加一位吧
@@ -207,8 +296,13 @@ async function removePlan() {
             <option value="" disabled>选择搭子</option>
             <option v-for="p in partners" :key="p.userId" :value="p.userId">{{ p.userName }}</option>
           </select>
-          <input v-model="newTitle" class="input flex-1 min-w-32 !text-xs" placeholder="计划标题，如：高数一轮复习"
-            maxlength="30" @keydown.enter="createPlan" />
+          <input
+            v-model="newTitle"
+            class="input flex-1 min-w-32 !text-xs"
+            placeholder="计划标题，如：高数一轮复习"
+            maxlength="30"
+            @keydown.enter="createPlan"
+          />
           <button class="btn-primary !text-xs shrink-0" :disabled="creating" @click="createPlan">
             {{ creating ? '创建中…' : '创建' }}
           </button>
@@ -216,12 +310,17 @@ async function removePlan() {
       </div>
 
       <!-- 计划列表 -->
-      <div class="card space-y-2">
+      <div v-if="!loadError" class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">我的计划（{{ plans.length }}）</div>
-        <div v-if="!plans.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">还没有协作计划，在上方创建一个吧</div>
-        <button v-for="p in plans" :key="p.id"
+        <div v-if="!plans.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
+          还没有协作计划，在上方创建一个吧
+        </div>
+        <button
+          v-for="p in plans"
+          :key="p.id"
           class="w-full flex items-center gap-2 rounded-lg px-2 py-2 text-xs transition-colors hover:bg-slate-50 dark:hover:bg-slate-700"
-          @click="openDetail(p.id)">
+          @click="openDetail(p.id)"
+        >
           <div class="min-w-0 text-left">
             <div class="font-medium truncate">{{ p.title }}</div>
             <div class="text-[10px] text-slate-400">与「{{ p.partnerName }}」协作</div>

@@ -23,10 +23,15 @@ function openPost() {
 </script>
 
 <template>
-  <div class="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/40">
+  <div
+    class="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-700/40"
+  >
     <button class="shrink-0 relative" @click="openProfile">
       <UserAvatar :name="n.actorName || '?'" :avatar="n.actorAvatar" />
-      <span v-if="!n.isRead" class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white dark:border-slate-800"></span>
+      <span
+        v-if="!n.isRead"
+        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white dark:border-slate-800"
+      ></span>
     </button>
     <button class="flex-1 min-w-0 text-left" @click="openPost">
       <div class="flex items-center gap-1.5">
@@ -34,11 +39,16 @@ function openPost() {
         <RelationTag :relation="n.relation" />
       </div>
       <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">
-        赞了你的{{ n.commentId ? '评论' : '帖子' }} <span class="text-xs text-slate-400 ml-1">{{ fromNow(n.createdAt) }}</span>
+        赞了你的{{ n.commentId ? '评论' : '帖子' }}
+        <span class="text-xs text-slate-400 ml-1">{{ fromNow(n.createdAt) }}</span>
       </p>
     </button>
-    <button v-if="n.postThumb" class="shrink-0 w-14 h-14 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700" @click="openPost">
-      <img :src="imageUrl(n.postThumb)" alt="帖子" class="w-full h-full object-cover" loading="lazy">
+    <button
+      v-if="n.postThumb"
+      class="shrink-0 w-14 h-14 rounded-lg overflow-hidden bg-slate-100 dark:bg-slate-700"
+      @click="openPost"
+    >
+      <img :src="imageUrl(n.postThumb)" alt="帖子" class="w-full h-full object-cover" loading="lazy" />
     </button>
   </div>
 </template>

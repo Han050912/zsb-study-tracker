@@ -1,9 +1,36 @@
+import { z } from 'zod'
 import { on } from '../router'
 import { crudHandlers } from '../db'
+
+/** 各 schema 与对应 toRow 消费字段一一对应 */
+const readingBodySchema = z
+  .object({ id: z.string().optional(), date: z.string(), wpm: z.number(), accuracy: z.number() })
+  .passthrough()
+
+const listeningBodySchema = z
+  .object({
+    id: z.string().optional(),
+    date: z.string(),
+    minutes: z.number(),
+    material: z.string(),
+    mode: z.string()
+  })
+  .passthrough()
+
+const templateBodySchema = z
+  .object({
+    id: z.string().optional(),
+    title: z.string(),
+    content: z.string(),
+    level: z.number().optional(),
+    category: z.string().optional()
+  })
+  .passthrough()
 
 /** 英语专项：阅读训练 */
 export const readingMapping = crudHandlers({
   table: 'reading_records',
+  schema: readingBodySchema,
   toRow: (userId, b, id) => ({
     id,
     user_id: userId,
@@ -17,6 +44,7 @@ export const readingMapping = crudHandlers({
 /** 英语专项：听力练习 */
 export const listeningMapping = crudHandlers({
   table: 'listening_records',
+  schema: listeningBodySchema,
   toRow: (userId, b, id) => ({
     id,
     user_id: userId,
@@ -31,6 +59,7 @@ export const listeningMapping = crudHandlers({
 /** 英语专项：作文模板 */
 export const templatesMapping = crudHandlers({
   table: 'essay_templates',
+  schema: templateBodySchema,
   toRow: (userId, b, id) => ({
     id,
     user_id: userId,
@@ -50,17 +79,8 @@ export const templatesMapping = crudHandlers({
 
 export function registerEnglishRoutes() {
   on('GET', '/api/reading', true, readingMapping.list)
-  on('POST', '/api/reading', true, readingMapping.create)
-  on('PUT', '/api/reading/:id', true, readingMapping.update)
-  on('DELETE', '/api/reading/:id', true, readingMapping.remove)
 
   on('GET', '/api/listening', true, listeningMapping.list)
-  on('POST', '/api/listening', true, listeningMapping.create)
-  on('PUT', '/api/listening/:id', true, listeningMapping.update)
-  on('DELETE', '/api/listening/:id', true, listeningMapping.remove)
 
   on('GET', '/api/templates', true, templatesMapping.list)
-  on('POST', '/api/templates', true, templatesMapping.create)
-  on('PUT', '/api/templates/:id', true, templatesMapping.update)
-  on('DELETE', '/api/templates/:id', true, templatesMapping.remove)
 }

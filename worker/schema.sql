@@ -1,34 +1,4 @@
--- 已建库升级：用户对外 ID 改为随机短码 user_code（替代自增 user_no），执行一次：
---   ALTER TABLE users ADD COLUMN user_code TEXT;
---   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_user_code ON users(user_code);
---   -- 存量用户回填 8 位随机码（字符集去掉 0/O/1/I）：
---   UPDATE users SET user_code = (
---     WITH RECURSIVE seq(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM seq WHERE x < 8)
---     SELECT group_concat(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', (abs(random()) % 32) + 1, 1), '')
---     FROM seq
---     WHERE users.id IS NOT NULL   -- 相关子查询：强制逐行求值，否则所有行会得到同一随机码导致 UNIQUE 冲突
---   ) WHERE user_code IS NULL;
---   -- 验证无 NULL、无重复（均应无结果）后，废弃旧自增号（最后一步）：
---   --   SELECT COUNT(*) FROM users WHERE user_code IS NULL;
---   --   SELECT user_code, COUNT(*) c FROM users GROUP BY user_code HAVING c > 1;
---   DROP INDEX IF EXISTS idx_users_user_no;
---   ALTER TABLE users DROP COLUMN user_no;
--- 已建库升级：notes 表新增 type 列（PDF 笔记），执行一次：
---   ALTER TABLE notes ADD COLUMN type TEXT;
--- 已建库升级：pdf_chunks 分片表（替代 R2），执行一次：
---   CREATE TABLE IF NOT EXISTS pdf_chunks ( user_id TEXT NOT NULL REFERENCES users(id), pdf_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (user_id, pdf_id, chunk_index) );
--- 已建库升级：users 表新增 role 列（管理员体系），执行一次：
---   ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user';
 -- 将指定用户设为管理员：UPDATE users SET role = 'admin' WHERE username = '你的用户名';
--- 已建库升级：社区增强 P0（图片/提问帖/举报/审核留痕），执行一次：
---   ALTER TABLE community_posts ADD COLUMN image_urls TEXT NOT NULL DEFAULT '[]';
---   ALTER TABLE community_posts ADD COLUMN is_resolved INTEGER NOT NULL DEFAULT 0;
---   CREATE TABLE IF NOT EXISTS community_uploads ( id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), filename TEXT NOT NULL DEFAULT '', r2_key TEXT NOT NULL, url TEXT NOT NULL, size INTEGER NOT NULL, content_type TEXT NOT NULL, created_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id);
---   CREATE TABLE IF NOT EXISTS community_reports ( id TEXT PRIMARY KEY, reporter_id TEXT NOT NULL REFERENCES users(id), target_type TEXT NOT NULL, target_id TEXT NOT NULL, reason TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at);
---   CREATE TABLE IF NOT EXISTS community_moderation_log ( id TEXT PRIMARY KEY, admin_id TEXT NOT NULL REFERENCES users(id), action TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, report_id TEXT, reason TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_modlog_created ON community_moderation_log(created_at);
 
 -- ========== 组队挑战（P2-2）==========
 -- 学习小组：多人组队完成打卡/刷题目标，达标全员获团队徽章
@@ -90,91 +60,6 @@ CREATE TABLE IF NOT EXISTS team_challenge_progress (
   PRIMARY KEY (challenge_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id);
--- 已建库升级：社区增强 P1（最佳答案/精华帖/评论图片），执行一次：
---   ALTER TABLE community_posts ADD COLUMN accepted_answer_id TEXT;
---   ALTER TABLE community_posts ADD COLUMN is_featured INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE community_comments ADD COLUMN image_urls TEXT NOT NULL DEFAULT '[]';
---   ALTER TABLE community_comments ADD COLUMN is_accepted INTEGER NOT NULL DEFAULT 0;
---   CREATE INDEX IF NOT EXISTS idx_posts_featured ON community_posts(is_featured, created_at);
--- 已建库升级：社区增强 P1 第二批（专家认证/徽章系统），执行一次：
---   ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE users ADD COLUMN expertise TEXT NOT NULL DEFAULT '';
---   CREATE TABLE IF NOT EXISTS user_badges ( user_id TEXT NOT NULL REFERENCES users(id), badge_key TEXT NOT NULL, awarded_at INTEGER NOT NULL, PRIMARY KEY (user_id, badge_key) );
--- 已建库升级：社区增强 P1 第三批（好友关注/每日一题），执行一次：
---   CREATE TABLE IF NOT EXISTS user_follows ( follower_id TEXT NOT NULL REFERENCES users(id), followee_id TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL, PRIMARY KEY (follower_id, followee_id) );
---   CREATE INDEX IF NOT EXISTS idx_follows_followee ON user_follows(followee_id);
---   ALTER TABLE community_posts ADD COLUMN is_daily INTEGER NOT NULL DEFAULT 0;
--- 已建库升级：社区增强 P1 第四批（话题圈子），执行一次：
---   CREATE TABLE IF NOT EXISTS community_circles ( id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', creator_id TEXT NOT NULL REFERENCES users(id), is_public INTEGER NOT NULL DEFAULT 1, member_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
---   CREATE TABLE IF NOT EXISTS circle_members ( circle_id TEXT NOT NULL REFERENCES community_circles(id), user_id TEXT NOT NULL REFERENCES users(id), role TEXT NOT NULL DEFAULT 'member', status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, PRIMARY KEY (circle_id, user_id) );
---   CREATE INDEX IF NOT EXISTS idx_cmembers_user ON circle_members(user_id);
---   ALTER TABLE community_posts ADD COLUMN circle_id TEXT;
---   CREATE INDEX IF NOT EXISTS idx_posts_circle ON community_posts(circle_id, created_at);
--- 已建库升级：社区增强 P2（私信），执行一次：
---   CREATE TABLE IF NOT EXISTS community_messages ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES users(id), to_id TEXT NOT NULL REFERENCES users(id), content TEXT NOT NULL, is_read INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_messages_to ON community_messages(to_id, is_read);
---   CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
--- 已建库升级：社区增强 P2（知识点讨论区），执行一次：
---   ALTER TABLE community_posts ADD COLUMN topic_ref TEXT;
---   ALTER TABLE community_posts ADD COLUMN ref_type TEXT;
---   ALTER TABLE community_posts ADD COLUMN ref_id TEXT;
--- 已建库升级：组队挑战（P2-2），执行一次：
---   CREATE TABLE IF NOT EXISTS study_teams ( id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', creator_id TEXT NOT NULL REFERENCES users(id), member_count INTEGER NOT NULL DEFAULT 0, max_members INTEGER NOT NULL DEFAULT 10, is_public INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL );
---   CREATE TABLE IF NOT EXISTS team_members ( team_id TEXT NOT NULL REFERENCES study_teams(id), user_id TEXT NOT NULL REFERENCES users(id), role TEXT NOT NULL DEFAULT 'member', joined_at INTEGER NOT NULL, PRIMARY KEY (team_id, user_id) );
---   CREATE INDEX IF NOT EXISTS idx_tmembers_user ON team_members(user_id);
---   CREATE TABLE IF NOT EXISTS team_challenges ( id TEXT PRIMARY KEY, team_id TEXT NOT NULL REFERENCES study_teams(id), type TEXT NOT NULL, target INTEGER NOT NULL, duration_days INTEGER NOT NULL, start_date TEXT NOT NULL, end_date TEXT NOT NULL, completed_count INTEGER NOT NULL DEFAULT 0, is_completed INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_tchallenges_team ON team_challenges(team_id, created_at);
---   CREATE TABLE IF NOT EXISTS team_challenge_progress ( challenge_id TEXT NOT NULL REFERENCES team_challenges(id), user_id TEXT NOT NULL REFERENCES users(id), current_value INTEGER NOT NULL DEFAULT 0, is_completed INTEGER NOT NULL DEFAULT 0, completed_at INTEGER, PRIMARY KEY (challenge_id, user_id) );
---   CREATE INDEX IF NOT EXISTS idx_tprogress_user ON team_challenge_progress(user_id);
--- 已建库升级：组队挑战管理（P2-2 补充：取消/恢复/编辑/删除），执行一次：
---   ALTER TABLE team_challenges ADD COLUMN is_cancelled INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE team_challenges ADD COLUMN remaining_days INTEGER;
--- 已建库升级：待办新增开始 / 最晚截止时间与提醒去重标记，执行一次：
---   ALTER TABLE todos ADD COLUMN start_at INTEGER;
---   ALTER TABLE todos ADD COLUMN due_at INTEGER;
---   ALTER TABLE todos ADD COLUMN start_notified_at INTEGER;
---   ALTER TABLE todos ADD COLUMN due_notified_at INTEGER;
--- 已建库升级：社区 P1 进步榜（学习进度对比），执行一次：
---   ALTER TABLE user_settings ADD COLUMN join_progress_board INTEGER NOT NULL DEFAULT 0;
--- 已建库升级：热门话题运营位（P1），执行一次：
---   CREATE TABLE IF NOT EXISTS community_hot_topics ( id TEXT PRIMARY KEY, text TEXT NOT NULL, tag TEXT NOT NULL, action TEXT NOT NULL, created_at INTEGER NOT NULL );
--- 已建库升级：社区踩投票（P1），执行一次：
---   ALTER TABLE community_posts ADD COLUMN dislikes_count INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE community_comments ADD COLUMN dislikes_count INTEGER NOT NULL DEFAULT 0;
---   CREATE TABLE IF NOT EXISTS community_dislikes ( user_id TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (user_id, target_type, target_id) );
--- 已建库升级：主页可见性设置（P1），执行一次：
---   ALTER TABLE user_settings ADD COLUMN profile_visibility TEXT NOT NULL DEFAULT 'login';
--- 已建库升级：社区图片缩略图（P1），执行一次：
---   ALTER TABLE community_uploads ADD COLUMN thumb_r2_key TEXT;
--- 已建库升级：学习搭子（P2-7），执行一次：
---   CREATE TABLE IF NOT EXISTS study_partners ( id TEXT PRIMARY KEY, pair_key TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(pair_key) );
---   CREATE INDEX IF NOT EXISTS idx_partners_to ON study_partners(to_id, status);
---   CREATE INDEX IF NOT EXISTS idx_partners_from ON study_partners(from_id, status);
--- 已建库升级：意见反馈（P2-8），执行一次：
---   CREATE TABLE IF NOT EXISTS feedback ( id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), type TEXT NOT NULL, content TEXT NOT NULL, contact TEXT NOT NULL DEFAULT '', image_urls TEXT NOT NULL DEFAULT '[]', github_issue_url TEXT, status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at);
---   CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at);
--- 已建库升级：用户自定义头像（P0），执行一次：
---   ALTER TABLE user_settings ADD COLUMN avatar TEXT;
--- 已建库升级：内容软违规标记（P3），执行一次：
---   ALTER TABLE community_posts ADD COLUMN is_flagged INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE community_comments ADD COLUMN is_flagged INTEGER NOT NULL DEFAULT 0;
--- 已建库升级：私密组邀请码 + 入组申请（#8），执行一次：
---   ALTER TABLE study_teams ADD COLUMN invite_code TEXT;
---   ALTER TABLE study_teams ADD COLUMN invite_code_expires_at INTEGER;
---   CREATE TABLE IF NOT EXISTS team_join_requests ( team_id TEXT NOT NULL REFERENCES study_teams(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id), created_at INTEGER NOT NULL, PRIMARY KEY (team_id, user_id) );
--- 已建库升级：个人简介 bio（#14），执行一次：
---   ALTER TABLE user_settings ADD COLUMN bio TEXT NOT NULL DEFAULT '';
--- 已建库升级：勿扰模式（#17），执行一次：
---   ALTER TABLE user_settings ADD COLUMN do_not_disturb INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE user_settings ADD COLUMN dnd_start_time TEXT NOT NULL DEFAULT '';
---   ALTER TABLE user_settings ADD COLUMN dnd_end_time TEXT NOT NULL DEFAULT '';
---   ALTER TABLE user_settings ADD COLUMN dnd_muted_types TEXT NOT NULL DEFAULT '';
--- 已建库升级：勿扰屏蔽消息（#18），执行一次：
---   ALTER TABLE user_settings ADD COLUMN dnd_mute_message INTEGER NOT NULL DEFAULT 0;
--- 已建库升级：通知精准跳转目标（#11），执行一次：
---   ALTER TABLE community_notifications ADD COLUMN target_type TEXT;
---   ALTER TABLE community_notifications ADD COLUMN target_id TEXT;
 -- 新库直接执行本文件即可（所有建表语句已含最新列）。
 
 -- ========== 用户认证 ==========
@@ -214,7 +99,9 @@ CREATE TABLE IF NOT EXISTS user_settings (
   dnd_muted_types TEXT NOT NULL DEFAULT '',   -- 勿扰屏蔽通知类型（JSON 数组）
   dnd_mute_message INTEGER NOT NULL DEFAULT 0, -- 勿扰屏蔽消息（1=屏蔽）
   partner_share_enabled INTEGER NOT NULL DEFAULT 0, -- 允许搭子查看学习数据（周报对比/定向分享；默认关闭）
-  partner_remind_enabled INTEGER NOT NULL DEFAULT 1  -- 允许搭子发送学习鼓励提醒（默认开启）
+  partner_remind_enabled INTEGER NOT NULL DEFAULT 1, -- 允许搭子发送学习鼓励提醒（默认开启）
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========
@@ -228,6 +115,8 @@ CREATE TABLE IF NOT EXISTS subjects (
   color TEXT NOT NULL,
   weight INTEGER DEFAULT 0,
   builtin INTEGER DEFAULT 0,    -- 0=用户自定义, 1=系统预设（如语文/数学/英语/计算机）
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -236,6 +125,8 @@ CREATE TABLE IF NOT EXISTS chapters (
   user_id TEXT NOT NULL REFERENCES users(id),
   subject_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -246,6 +137,8 @@ CREATE TABLE IF NOT EXISTS topics (
   name TEXT NOT NULL,
   mastery INTEGER DEFAULT 0,    -- 0-100 掌握程度
   importance TEXT DEFAULT 'normal',
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -260,8 +153,13 @@ CREATE TABLE IF NOT EXISTS study_records (
   topic TEXT,
   note TEXT,
   created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
+CREATE INDEX IF NOT EXISTS idx_study_records_user_date ON study_records(user_id, date);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_study_records_user_date ON study_records(user_id, date)"
 
 -- ========== 刷题记录 ==========
 CREATE TABLE IF NOT EXISTS problem_sessions (
@@ -272,8 +170,13 @@ CREATE TABLE IF NOT EXISTS problem_sessions (
   total INTEGER NOT NULL,
   correct INTEGER NOT NULL,
   types TEXT NOT NULL,          -- JSON 字符串：题型分布
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
+CREATE INDEX IF NOT EXISTS idx_problem_sessions_user_date ON problem_sessions(user_id, date);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_problem_sessions_user_date ON problem_sessions(user_id, date)"
 
 -- ========== 错题本 ==========
 CREATE TABLE IF NOT EXISTS error_questions (
@@ -285,9 +188,28 @@ CREATE TABLE IF NOT EXISTS error_questions (
   type TEXT NOT NULL,           -- 题型（选择题/填空题/简答题等）
   content TEXT NOT NULL,        -- 题目内容
   answer TEXT,                  -- 正确答案
-  image TEXT,                   -- base64 dataURL（题目配图）
+  image TEXT,                   -- 'r2:<sha256>' 引用（字节存 R2，归属见 error_images）
   review_count INTEGER DEFAULT 0,
   mastered INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  PRIMARY KEY (user_id, id)
+);
+-- 错题图片引用计数/清理按 (user_id, image) 定位（P5-02）：删除驱动的孤儿清理需统计同图引用数，
+-- 缺此索引时逐行子查询会扫描该用户全部错题
+CREATE INDEX IF NOT EXISTS idx_error_questions_user_image ON error_questions(user_id, image);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_error_questions_user_image ON error_questions(user_id, image)"
+
+-- ========== 错题图片（R2 对象归属与孤儿清理） ==========
+-- id 为图片字节 sha256 十六进制（内容寻址）：同一张图恒定同一 id，重复上传幂等
+CREATE TABLE IF NOT EXISTS error_images (
+  id TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  r2_key TEXT NOT NULL,                      -- R2 对象键：errors/<user_id>/<sha256>.<ext>
+  size INTEGER NOT NULL,
+  content_type TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (user_id, id)
 );
@@ -303,6 +225,8 @@ CREATE TABLE IF NOT EXISTS exam_records (
   total_score INTEGER NOT NULL,
   minutes INTEGER NOT NULL,
   parts TEXT,                   -- JSON：各部分得分明细
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -312,10 +236,12 @@ CREATE TABLE IF NOT EXISTS notes (
   user_id TEXT NOT NULL REFERENCES users(id),
   subject_id TEXT NOT NULL,
   title TEXT NOT NULL,
-  content TEXT NOT NULL,        -- Markdown 正文 / PDF 的 D1 引用（'d1:<id>'，原文分片存 pdf_chunks）
+  content TEXT NOT NULL DEFAULT '', -- 历史兼容占位；正文已外置，不再读写业务内容
   tags TEXT,                    -- JSON 数组：标签列表
   type TEXT,                    -- NULL 为 Markdown 笔记；'pdf' 为 PDF 原文笔记
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,  -- 客户端编辑时刻(ms)，LWW 比较键（既有列，记录级同步复用）
+  body_updated_at INTEGER NOT NULL DEFAULT 0, -- Markdown 正文版本；PDF 恒为 0
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -327,6 +253,8 @@ CREATE TABLE IF NOT EXISTS vocab_records (
   new_words INTEGER NOT NULL,
   review_words INTEGER NOT NULL,
   points INTEGER DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -337,6 +265,8 @@ CREATE TABLE IF NOT EXISTS reading_records (
   date TEXT NOT NULL,
   wpm INTEGER NOT NULL,        -- 阅读速度（词/分钟）
   accuracy REAL NOT NULL,      -- 正确率（0-1）
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -348,6 +278,8 @@ CREATE TABLE IF NOT EXISTS listening_records (
   minutes INTEGER NOT NULL,
   material TEXT NOT NULL,      -- 听力材料名称
   mode TEXT NOT NULL,          -- 精听/泛听/听写
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -359,6 +291,8 @@ CREATE TABLE IF NOT EXISTS essay_templates (
   content TEXT NOT NULL,
   level INTEGER DEFAULT 1,
   category TEXT,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -370,6 +304,8 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
   harvest TEXT NOT NULL,        -- 今日收获
   improve TEXT NOT NULL,        -- 不足之处
   plan TEXT NOT NULL,           -- 明日计划
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, date)
 );
 
@@ -381,6 +317,8 @@ CREATE TABLE IF NOT EXISTS habits (
   type TEXT NOT NULL,           -- 'checkbox' | 'minutes' | 'count'
   target INTEGER,
   bad INTEGER DEFAULT 0,        -- 0=好习惯, 1=坏习惯
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -390,6 +328,8 @@ CREATE TABLE IF NOT EXISTS habit_records (
   date TEXT NOT NULL,
   value TEXT,
   checkin INTEGER DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, habit_id, date)
 );
 
@@ -408,6 +348,8 @@ CREATE TABLE IF NOT EXISTS materials (
   read_pages INTEGER,
   notes TEXT,
   created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -417,7 +359,9 @@ CREATE TABLE IF NOT EXISTS gamification (
   points INTEGER DEFAULT 0,
   streak INTEGER DEFAULT 0,     -- 连续打卡天数
   last_checkin TEXT DEFAULT '',
-  achievements TEXT DEFAULT '[]' -- JSON 数组
+  achievements TEXT DEFAULT '[]', -- JSON 数组
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
 
 CREATE TABLE IF NOT EXISTS points_log (
@@ -426,8 +370,18 @@ CREATE TABLE IF NOT EXISTS points_log (
   date TEXT NOT NULL,
   points INTEGER NOT NULL,
   reason TEXT NOT NULL,
-  ref_id TEXT
+  ref_id TEXT,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
+
+CREATE INDEX IF NOT EXISTS idx_points_log_ref
+  ON points_log(ref_id) WHERE ref_id IS NOT NULL;
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_points_log_ref ON points_log(ref_id) WHERE ref_id IS NOT NULL"
+CREATE INDEX IF NOT EXISTS idx_points_log_user ON points_log(user_id);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_points_log_user ON points_log(user_id)"
 
 -- ========== 番茄钟统计 ==========
 CREATE TABLE IF NOT EXISTS pomodoro_daily (
@@ -436,6 +390,8 @@ CREATE TABLE IF NOT EXISTS pomodoro_daily (
   count INTEGER DEFAULT 0,
   minutes INTEGER DEFAULT 0,
   interruptions INTEGER DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, date)
 );
 
@@ -444,7 +400,9 @@ CREATE TABLE IF NOT EXISTS pomodoro_interruptions (
   user_id TEXT NOT NULL REFERENCES users(id),
   date TEXT NOT NULL,
   reason TEXT NOT NULL,
-  time INTEGER NOT NULL
+  time INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
 
 CREATE TABLE IF NOT EXISTS pomodoro_records (
@@ -456,6 +414,8 @@ CREATE TABLE IF NOT EXISTS pomodoro_records (
   description TEXT DEFAULT '',
   source TEXT DEFAULT 'solo',
   partner_name TEXT,
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
@@ -472,13 +432,17 @@ CREATE TABLE IF NOT EXISTS todos (
   due_at INTEGER,                  -- 最晚截止时间（时间戳），到点未完成则提醒
   start_notified_at INTEGER,       -- 开始提醒已发出时间（去重）
   due_notified_at INTEGER,         -- 截止提醒已发出时间（去重）
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
 );
 
 -- ========== 自定义引言 ==========
 CREATE TABLE IF NOT EXISTS default_quotes (
   user_id TEXT PRIMARY KEY REFERENCES users(id),
-  quotes TEXT NOT NULL           -- JSON 数组
+  quotes TEXT NOT NULL,          -- JSON 数组
+  updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
+  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
 );
 
 -- ========== 社区广场 ==========
@@ -569,6 +533,18 @@ CREATE TABLE IF NOT EXISTS pdf_chunks (
   PRIMARY KEY (user_id, pdf_id, chunk_index)
 );
 
+-- ========== Markdown 笔记正文分片（不进入 Pinia / 记录同步载荷） ==========
+CREATE TABLE IF NOT EXISTS note_body_chunks (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  note_id TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  updated_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, note_id, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_note_body_chunks_user ON note_body_chunks(user_id, note_id);
+
 -- ========== 社区增强：图片上传 / 举报 / 审核留痕 ==========
 -- 图片上传记录：二进制存 R2（绑定 IMAGES），本表仅存元数据；读取走 /api/community/images/:id 代理路由
 CREATE TABLE IF NOT EXISTS community_uploads (
@@ -583,6 +559,8 @@ CREATE TABLE IF NOT EXISTS community_uploads (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_uploads_user ON community_uploads(user_id);
+-- 孤图清理按 (created_at, id) 升序 + 游标推进取候选（issue #42）：缺此索引会全表扫描 + 无确定顺序
+CREATE INDEX IF NOT EXISTS idx_uploads_created ON community_uploads(created_at, id);
 
 -- 内容举报：举报人匿名（列表仅管理员可见）；status: 'pending' | 'resolved' | 'rejected'
 CREATE TABLE IF NOT EXISTS community_reports (
@@ -628,7 +606,7 @@ CREATE TABLE IF NOT EXISTS circle_members (
 );
 CREATE INDEX IF NOT EXISTS idx_cmembers_user ON circle_members(user_id);
 
--- 私信：一对一消息（单向模式，无需互关；发送即通知对方，举报复用 community_reports target_type='message'）
+-- 私信：一对一消息（单向模式，无需互关；不经通知中心，由「消息」模块承载；举报复用 community_reports target_type='message'）
 CREATE TABLE IF NOT EXISTS community_messages (
   id TEXT PRIMARY KEY,
   from_id TEXT NOT NULL REFERENCES users(id),
@@ -640,8 +618,6 @@ CREATE TABLE IF NOT EXISTS community_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_to ON community_messages(to_id, is_read);
 CREATE INDEX IF NOT EXISTS idx_messages_pair ON community_messages(from_id, to_id, created_at);
--- 已建库升级：私信配图（P3），执行一次：
---   ALTER TABLE community_messages ADD COLUMN image_urls TEXT;
 
 -- 用户徽章：服务端事件驱动发放（发帖/提问/打卡里程碑/获赞/被采纳/上传），主键去重保证仅发放一次
 CREATE TABLE IF NOT EXISTS user_badges (
@@ -651,10 +627,11 @@ CREATE TABLE IF NOT EXISTS user_badges (
   PRIMARY KEY (user_id, badge_key)
 );
 
--- 审核操作日志：所有治理动作留痕（action: 'hide' | 'delete' | 'reject' 等）
+-- 审核操作日志：所有治理动作留痕（action: 'hide' | 'delete' | 'reject' | 'auto-hide' 等）
+-- admin_id 可空：NULL 表示系统动作（如举报达阈值自动隐藏，无对应管理员），非空为真实管理员 id
 CREATE TABLE IF NOT EXISTS community_moderation_log (
   id TEXT PRIMARY KEY,
-  admin_id TEXT NOT NULL REFERENCES users(id),
+  admin_id TEXT REFERENCES users(id),
   action TEXT NOT NULL,
   target_type TEXT NOT NULL,        -- 'post' | 'comment' | 'report'
   target_id TEXT NOT NULL,
@@ -719,25 +696,22 @@ CREATE TABLE IF NOT EXISTS jwt_blacklist (
   expires_at INTEGER NOT NULL
 );
 
+-- 已签发会话登记（每签发一次 token 登记一行，登出即删除）：
+-- 吊销只能按 jti 精确命中，其它设备的 jti 服务端无从得知，故签发时留档；
+-- 修改密码时按 user_id 取出全部 jti 一次性写入 jwt_blacklist，使其它会话立即失效。
+-- 过期行由 api/auth.ts 的 cleanupExpiredTokens（每周 cron）清理。
+CREATE TABLE IF NOT EXISTS user_sessions (
+  jti TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  expires_at INTEGER NOT NULL,   -- token 过期时间（Unix 秒），与 jwt_blacklist 同口径
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖索引生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS user_sessions (jti TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL)"
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)"
+
 -- ========== 学习搭子协作（轻量化双向学习协作关系） ==========
--- 已建库升级：学习搭子功能体系，执行一次：
---   ALTER TABLE user_settings ADD COLUMN partner_share_enabled INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE user_settings ADD COLUMN partner_remind_enabled INTEGER NOT NULL DEFAULT 1;
---   CREATE TABLE IF NOT EXISTS partner_shares ( id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), partner_id TEXT NOT NULL REFERENCES users(id), item_type TEXT NOT NULL, item_id TEXT NOT NULL, created_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_pshares_partner ON partner_shares(partner_id, created_at);
---   CREATE INDEX IF NOT EXISTS idx_pshares_owner ON partner_shares(owner_id, created_at);
---   CREATE TABLE IF NOT EXISTS partner_share_comments ( id TEXT PRIMARY KEY, share_id TEXT NOT NULL REFERENCES partner_shares(id), user_id TEXT NOT NULL REFERENCES users(id), content TEXT NOT NULL, created_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_pscomments_share ON partner_share_comments(share_id, created_at);
---   CREATE TABLE IF NOT EXISTS partner_study_sessions ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES users(id), to_id TEXT NOT NULL REFERENCES users(id), status TEXT NOT NULL DEFAULT 'active', from_state TEXT NOT NULL DEFAULT 'focus', to_state TEXT NOT NULL DEFAULT 'focus', from_minutes INTEGER NOT NULL DEFAULT 0, to_minutes INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_pss_from ON partner_study_sessions(from_id, status);
---   CREATE INDEX IF NOT EXISTS idx_pss_to ON partner_study_sessions(to_id, status);
---   CREATE TABLE IF NOT EXISTS partner_plans ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES users(id), to_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_pp_pair ON partner_plans(from_id, to_id);
---   CREATE TABLE IF NOT EXISTS partner_plan_tasks ( id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES partner_plans(id), title TEXT NOT NULL, phase TEXT NOT NULL DEFAULT '', done_by_from INTEGER NOT NULL DEFAULT 0, done_by_to INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_ppt_plan ON partner_plan_tasks(plan_id);
---   CREATE TABLE IF NOT EXISTS partner_reviews ( id TEXT PRIMARY KEY, from_id TEXT NOT NULL REFERENCES users(id), to_id TEXT NOT NULL REFERENCES users(id), scheduled_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', note TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL );
---   CREATE INDEX IF NOT EXISTS idx_pr_from ON partner_reviews(from_id, status);
---   CREATE INDEX IF NOT EXISTS idx_pr_to ON partner_reviews(to_id, status);
 
 -- 错题/笔记定向分享（单向分享给搭子，双方可批注交流，与公开社区帖子隔离）
 CREATE TABLE IF NOT EXISTS partner_shares (
@@ -762,22 +736,6 @@ CREATE TABLE IF NOT EXISTS partner_share_comments (
 CREATE INDEX IF NOT EXISTS idx_pscomments_share ON partner_share_comments(share_id, created_at);
 
 -- 双人同步番茄「开黑学习」自习室（仅展示对方状态，不做闲聊）
--- 已建库升级：番茄钟联动（时长字段 + idle 状态），执行一次：
---   ALTER TABLE partner_study_sessions ADD COLUMN focus_minutes INTEGER NOT NULL DEFAULT 25;
---   ALTER TABLE partner_study_sessions ADD COLUMN break_minutes INTEGER NOT NULL DEFAULT 5;
--- 已建库升级：开黑监督（在线时长 + 结束时间），执行一次：
---   ALTER TABLE partner_study_sessions ADD COLUMN ended_at INTEGER;
---   ALTER TABLE partner_study_sessions ADD COLUMN from_online_seconds INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE partner_study_sessions ADD COLUMN to_online_seconds INTEGER NOT NULL DEFAULT 0;
--- 已建库升级：番茄钟计时持久化（后台继续/暂停 + 刷新恢复），执行一次：
---   ALTER TABLE partner_study_sessions ADD COLUMN from_elapsed_seconds INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE partner_study_sessions ADD COLUMN to_elapsed_seconds INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE partner_study_sessions ADD COLUMN from_running INTEGER NOT NULL DEFAULT 0;
---   ALTER TABLE partner_study_sessions ADD COLUMN to_running INTEGER NOT NULL DEFAULT 0;
--- 已建库升级：移除休息阶段（break_minutes 废弃），执行一次：
---   ALTER TABLE partner_study_sessions DROP COLUMN break_minutes;
--- 已建库升级：计时模式（正计时/倒计时），执行一次：
---   ALTER TABLE partner_study_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'countdown';
 CREATE TABLE IF NOT EXISTS partner_study_sessions (
   id TEXT PRIMARY KEY,
   from_id TEXT NOT NULL REFERENCES users(id),    -- 发起人
@@ -796,6 +754,7 @@ CREATE TABLE IF NOT EXISTS partner_study_sessions (
   to_elapsed_seconds INTEGER NOT NULL DEFAULT 0,   -- 搭子当前阶段已消耗秒数
   from_running INTEGER NOT NULL DEFAULT 0,          -- 发起人是否在计时（1=计时中，0=暂停）
   to_running INTEGER NOT NULL DEFAULT 0,            -- 搭子是否在计时
+  last_active_at INTEGER NOT NULL DEFAULT 0,        -- 最后活跃时间（任一参与方心跳时刷新，超时未刷新视为僵尸会话并回收）
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -840,8 +799,6 @@ CREATE INDEX IF NOT EXISTS idx_pr_from ON partner_reviews(from_id, status);
 CREATE INDEX IF NOT EXISTS idx_pr_to ON partner_reviews(to_id, status);
 
 -- ========== 周报推送去重（cron 重试防重复推送） ==========
--- 已建库升级：周报推送去重表（cron 重试防重复推送），执行一次：
---   CREATE TABLE IF NOT EXISTS weekly_report_push_log ( week_key TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (week_key, from_id, to_id) );
 CREATE TABLE IF NOT EXISTS weekly_report_push_log (
   week_key TEXT NOT NULL,          -- 上周一日期 YYYY-MM-DD（UTC+8）
   from_id TEXT NOT NULL,           -- 周报数据主人
@@ -849,3 +806,39 @@ CREATE TABLE IF NOT EXISTS weekly_report_push_log (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (week_key, from_id, to_id)
 );
+
+-- ========== 周报推送失败批次续跑记录（P4-05：cron 不重试，失败批次落此表供下次运行补推） ==========
+-- cron 按批推送周报，某批失败时把该批未完成的关系行写到这里；下次运行（下周 cron / 同周重跑）
+-- 只补推这些行。week_key 记录周报归属周（跨周续跑时据此还原统计区间）；
+-- 与 push_log 互斥：进入本表 ⇒ 该项未推送（标记与通知同批失败时整体回滚，push_log 不会有残留）。
+CREATE TABLE IF NOT EXISTS weekly_report_push_pending (
+  week_key TEXT NOT NULL,          -- 周报归属周的周一日期 YYYY-MM-DD（UTC+8）
+  from_id TEXT NOT NULL,           -- 周报数据主人
+  to_id TEXT NOT NULL,             -- 接收者
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (week_key, from_id, to_id)
+);
+-- 应用到远程库（由维护者手动执行，代码合并不依赖表生效）：
+--   npx wrangler d1 execute zsb-study-db --remote --command "CREATE TABLE IF NOT EXISTS weekly_report_push_pending (week_key TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (week_key, from_id, to_id))"
+
+-- ========== 按域同步版本（域级 LWW 的依据） ==========
+CREATE TABLE IF NOT EXISTS sync_domain_versions (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  domain TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (user_id, domain)
+);
+
+-- ========== 记录级增量同步：删除墓碑 ==========
+-- 墓碑永久保留（不清理）：单行约 60 字节，量级相对记录本身可忽略；保留可彻底避免「旧设备把已删记录复活」
+-- 同 key 再次删除 = INSERT OR REPLACE 更新 deleted_at/seq
+CREATE TABLE IF NOT EXISTS sync_deletions (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  domain TEXT NOT NULL,
+  record_key TEXT NOT NULL,    -- 记录键，见设计 3.3 键空间
+  deleted_at INTEGER NOT NULL, -- 客户端删除时刻（ms），参与 LWW
+  seq INTEGER NOT NULL,        -- 服务端单调序号，参与拉取游标
+  PRIMARY KEY (user_id, domain, record_key)
+);
+CREATE INDEX IF NOT EXISTS idx_sync_deletions_seq ON sync_deletions(user_id, seq);

@@ -49,8 +49,8 @@ export async function githubFetch<T = unknown>(
     const res = await fetch(`https://api.github.com${path}`, {
       method: init.method ?? 'GET',
       headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
         'User-Agent': 'zsb-study-api-worker'
       },
       body: init.body,
@@ -61,8 +61,12 @@ export async function githubFetch<T = unknown>(
     const remaining = Number(res.headers.get('X-RateLimit-Remaining'))
     const limit = Number(res.headers.get('X-RateLimit-Limit'))
     const resetAt = Number(res.headers.get('X-RateLimit-Reset')) * 1000
-    if (Number.isFinite(remaining) && Number.isFinite(limit) && limit > 0
-      && remaining <= limit * RATE_LIMIT_WARN_RATIO) {
+    if (
+      Number.isFinite(remaining) &&
+      Number.isFinite(limit) &&
+      limit > 0 &&
+      remaining <= limit * RATE_LIMIT_WARN_RATIO
+    ) {
       const resetText = Number.isFinite(resetAt)
         ? `约 ${Math.max(0, Math.round((resetAt - Date.now()) / 60000))} 分钟后重置`
         : '重置时间未知'
@@ -76,7 +80,7 @@ export async function githubFetch<T = unknown>(
       if (res.body) await res.body.cancel().catch(() => {})
       return { ok: false, status: res.status, rateLimited, tokenMissing: false, data: null }
     }
-    const data = await res.json() as T
+    const data = (await res.json()) as T
     return { ok: true, status: res.status, rateLimited: false, tokenMissing: false, data }
   } catch (e) {
     // AbortError 为超时，其余为网络异常；均按失败降级，不向上抛

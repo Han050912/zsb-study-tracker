@@ -1,0 +1,16 @@
+dist/
+release/
+node_modules/
+docs/
+public/
+package-lock.json
+worker/package-lock.json
+*.md
+.superpowers/
+.codebuddy/
+gitlog/
+.codex/
+.opensquilla/
+worker/.wrangler/
+.github/workflows/
+worker/tsconfig.json

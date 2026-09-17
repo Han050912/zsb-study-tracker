@@ -25,8 +25,10 @@
 
 <br/>
 
+[![CI](https://github.com/Han050912/zsb-study-tracker/actions/workflows/ci.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/ci.yml)
 [![Pages Deploy](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-pages.yml)
 [![Worker Deploy](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-worker.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/deploy-worker.yml)
+[![Desktop Release](https://github.com/Han050912/zsb-study-tracker/actions/workflows/release-desktop.yml/badge.svg)](https://github.com/Han050912/zsb-study-tracker/actions/workflows/release-desktop.yml)
 
 <br/>
 
@@ -265,7 +267,7 @@
 | PWA | vite-plugin-pwa（可安装 + Service Worker 离线缓存，API 请求 NetworkFirst） |
 | 后端 | Cloudflare Workers（TypeScript）、自研路由与中间件、bcryptjs 密码哈希、jose 签发 JWT |
 | 数据 | Cloudflare D1（50+ 张业务表，见 `worker/schema.sql`）、R2（社区图片存储）、D1 定时任务（每周一推送周报） |
-| 工程 | ESLint 之外的类型检查 `tsc --noEmit`、Worker 冒烟测试 `node test/smoke.mjs`、GitHub Actions 双流水线 |
+| 工程 | ESLint 之外的类型检查 `tsc --noEmit`、`node --test` 单元测试、Worker 冒烟测试 `node test/smoke.mjs`、GitHub Actions 四条流水线 |
 
 </div>
 
@@ -275,7 +277,7 @@
 
 <div style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:20px 24px;margin:16px 0;">
 
-> 环境要求：**Node.js 18 或更高版本**（CI 与 Worker 部署使用 Node 22，可从 [nodejs.org](https://nodejs.org) 下载安装包）。
+> 环境要求：**Node.js 18 或更高版本**（运行单元测试 `npm test` 需 Node ≥ 22.18，因为 Worker 测试直接导入 `.ts` 源码；CI 与 Worker 部署使用 Node 22，可从 [nodejs.org](https://nodejs.org) 下载安装包）。
 
 </div>
 
@@ -290,6 +292,9 @@ cd zsb-study-tracker
 
 # 安装项目需要的依赖包（第一次会比较慢，后面就快了）
 npm install
+
+# 复制环境变量示例为本地开发配置（Windows cmd 用 copy 代替 cp；本地开发把 VITE_API_BASE 改为 http://localhost:8787）
+cp .env.example .env.development
 
 # 启动开发服务器，浏览器会自动打开页面
 npm run dev
@@ -387,12 +392,14 @@ zsb-study-tracker/
 
 <div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:20px 24px;margin:16px 0;">
 
-项目有两条 GitHub Actions 流水线，均监听 **`master`** 分支：
+项目有四条 GitHub Actions 流水线：一条 CI 检查、两条部署、一条桌面端发版。
 
 | 流水线 | 触发条件 | 行为 |
 | :--- | :--- | :--- |
-| `deploy-pages.yml` | 推送到 `master` | `npm ci` → `npm run build` → 部署 `dist/` 到 GitHub Pages |
-| `deploy-worker.yml` | 推送到 `master` 且 `worker/**` 有变更 | 在 `worker/` 下 `npm ci` → `npx wrangler deploy` |
+| `ci.yml` | 推送到 `development` / `master`，或任意 PR | 前端 typecheck / lint / format / 单元测试 / 构建，外加 Worker typecheck |
+| `deploy-pages.yml` | 推送到 `master`（或手动触发） | `npm ci` → `npm run build` → 部署 `dist/` 到 GitHub Pages |
+| `deploy-worker.yml` | 推送到 `master` 且 `worker/**` 有变更（或手动触发） | 在 `worker/` 下 `npm ci` → typecheck 门禁 → `npx wrangler deploy` |
+| `release-desktop.yml` | 打 `v*` tag（或手动触发） | 校验 tag 与 package.json 版本一致 → lint / 单元测试 → 构建桌面端并校验 `dist/api-base.json` 产物 → 发布 Windows 安装包到 GitHub Releases（草稿，需手动 publish） |
 
 部署需要的仓库 Secrets：`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`；Worker 运行期还需配置 `JWT_SECRET`、`TURNSTILE_SECRET`、`DESKTOP_TOKEN` 等变量，并创建 D1 数据库（`zsb-study-db`）与 R2 桶（`zsb-study-images`）。
 

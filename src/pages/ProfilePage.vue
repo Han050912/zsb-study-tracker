@@ -5,10 +5,12 @@
  * 隐私控制：仅公开为主，后续可扩展可见性设置。
  */
 import { onMounted, ref, computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { useRoute } from 'vue-router'
+import { usersApi } from '../api/community/users'
+import { TriangleAlert } from '@lucide/vue'
 import { COMMUNITY_BADGES } from '../data/defaults'
 import { sessionUser } from '../services/auth'
+import { formatMinutes } from '../utils/date'
 import StreakHeatmap from '../components/community/StreakHeatmap.vue'
 import Modal from '../components/Modal.vue'
 import ProfileHeader from '../components/profile/ProfileHeader.vue'
@@ -19,13 +21,14 @@ import { useBack } from '../composables/useBack'
 import type { CommunityUserProfile, UserStudyStats } from '../types'
 
 const route = useRoute()
-const router = useRouter()
 const { goBack } = useBack()
 
 const userId = route.params.id as string
 
 const profile = ref<CommunityUserProfile | null>(null)
 const stats = ref<UserStudyStats | null>(null)
+/** 学习统计加载失败：不用 0 兜底，展示「学习数据加载失败，点击重试」（概览与热力图区域） */
+const statsError = ref(false)
 const loading = ref(true)
 const error = ref('')
 const worksTab = ref<'posts' | 'likes'>('posts')
@@ -39,18 +42,11 @@ const profilePrivate = computed(() => !!profile.value?.profilePrivate)
 const heatDate = ref('')
 const heatMinutes = computed(() => {
   if (!heatDate.value || !stats.value?.heatmap) return 0
-  return stats.value.heatmap.find(h => h.date === heatDate.value)?.minutes ?? 0
+  return stats.value.heatmap.find((h) => h.date === heatDate.value)?.minutes ?? 0
 })
 
-/** 分钟格式化：X 小时 Y 分钟 */
-function formatMinutes(min: number) {
-  const h = Math.floor(min / 60)
-  const m = min % 60
-  return h > 0 ? `${h} 小时 ${m} 分钟` : `${m} 分钟`
-}
-
 // 徽章目录：已获得的高亮，未获得的置灰
-const earnedKeys = computed(() => new Set(profile.value?.badges?.map(b => b.key) ?? []))
+const earnedKeys = computed(() => new Set(profile.value?.badges?.map((b) => b.key) ?? []))
 
 // 学习时长格式化
 const totalHours = computed(() => Math.floor((stats.value?.totalStudy.minutes ?? 0) / 60))
@@ -61,33 +57,42 @@ const monthMinutes = computed(() => (stats.value?.monthStudy.minutes ?? 0) % 60)
 // profile 与 stats 分开加载：私密主页（非本人）时 stats 会 403，但不阻塞资料卡与关注按钮渲染
 async function loadAll() {
   try {
-    profile.value = await communityApi.profile(userId)
-  } catch (e: any) {
-    if (e?.status === 403) error.value = '对方设置了主页仅自己可见'
+    profile.value = await usersApi.profile(userId)
+  } catch (e) {
+    if ((e as { status?: number } | null)?.status === 403) error.value = '对方设置了主页仅自己可见'
     else error.value = '用户不存在或已注销'
     loading.value = false
     return
   }
   // 私密主页降级视图：跳过学习统计加载（接口会 403）
-  if (!profile.value.profilePrivate) {
-    try {
-      stats.value = await communityApi.stats(userId)
-    } catch {
-      stats.value = null // 统计加载失败不阻塞主页展示
-    }
-  }
+  if (!profile.value.profilePrivate) await loadStats()
   loading.value = false
 }
 
-// FollowButton 乐观更新后的受控回写：同步关注状态 / 粉丝数 / 关系
+/** 学习统计单独加载/重试；失败置 statsError（统计与热力图区域显示错误态，不用 0 兜底） */
+async function loadStats() {
+  statsError.value = false
+  stats.value = null
+  try {
+    stats.value = await usersApi.stats(userId)
+  } catch {
+    statsError.value = true // 统计加载失败不阻塞主页展示，但明确告知失败
+  }
+}
+
+// FollowButton 乐观更新后的受控回写：同步关注状态 / 粉丝数 / 互关数 / 关系
 function onFollowChange(following: boolean) {
   const p = profile.value
   if (!p) return
+  const wasMutual = p.followedByMe && p.followsMe
   p.followedByMe = following
-  // 降级视图缺少 followers 字段（undefined），跳过计数修正避免产生 NaN
+  // 降级视图缺少 followers/mutualCount 字段（undefined），跳过计数修正避免产生 NaN
   if (typeof p.followers === 'number') p.followers += following ? 1 : -1
-  p.relation = p.followedByMe && p.followsMe ? 'mutual'
-    : p.followedByMe ? 'following' : p.followsMe ? 'follower' : 'none'
+  p.relation =
+    p.followedByMe && p.followsMe ? 'mutual' : p.followedByMe ? 'following' : p.followsMe ? 'follower' : 'none'
+  // 互相关注状态变化时同步「互关」数字，保证与四态标签同屏一致
+  const isMutual = p.followedByMe && p.followsMe
+  if (typeof p.mutualCount === 'number' && isMutual !== wasMutual) p.mutualCount += isMutual ? 1 : -1
 }
 
 onMounted(loadAll)
@@ -126,73 +131,99 @@ onMounted(loadAll)
         <!-- 作品 Tab（帖子 / 点赞） -->
         <UserWorksTabs :user-id="userId" :is-self="isSelf" v-model:active-tab="worksTab" />
 
-      <!-- 学习概览：总学习时长 / 总做题数 / 本月学习 -->
-      <div class="card">
-        <h3 class="text-sm font-bold mb-3">学习概览</h3>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
-            <div class="text-lg font-bold text-blue-600">
-              {{ totalHours }}<span class="text-sm font-normal">h</span> {{ totalMinutes }}<span class="text-sm font-normal">m</span>
+        <!-- 学习概览：总学习时长 / 总做题数 / 本月学习 -->
+        <div class="card">
+          <h3 class="text-sm font-bold mb-3">学习概览</h3>
+          <!-- 学习统计加载失败：不用 0 兜底，整块显示错误态 + 重试 -->
+          <button
+            v-if="statsError"
+            class="w-full flex items-center gap-2 text-xs text-red-500 dark:text-red-400"
+            @click="loadStats"
+          >
+            <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+            <span class="flex-1 text-left">学习数据加载失败，点击重试</span>
+          </button>
+          <div v-else class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
+              <div class="text-lg font-bold text-blue-600">
+                {{ totalHours }}<span class="text-sm font-normal">h</span> {{ totalMinutes
+                }}<span class="text-sm font-normal">m</span>
+              </div>
+              <div class="text-xs text-slate-400">总学习时长</div>
+              <div class="text-[10px] text-slate-400">{{ stats?.totalStudy.days }} 天</div>
             </div>
-            <div class="text-xs text-slate-400">总学习时长</div>
-            <div class="text-[10px] text-slate-400">{{ stats?.totalStudy.days }} 天</div>
-          </div>
-          <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
-            <div class="text-lg font-bold text-green-600">{{ stats?.problems.total ?? 0 }}</div>
-            <div class="text-xs text-slate-400">总做题数</div>
-            <div class="text-[10px] text-slate-400">正确率 {{ stats?.problems.accuracy ?? 0 }}%</div>
-          </div>
-          <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
-            <div class="text-lg font-bold text-blue-600">
-              {{ monthHours }}<span class="text-sm font-normal">h</span> {{ monthMinutes }}<span class="text-sm font-normal">m</span>
+            <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
+              <div class="text-lg font-bold text-green-600">{{ stats?.problems.total ?? 0 }}</div>
+              <div class="text-xs text-slate-400">总做题数</div>
+              <div class="text-[10px] text-slate-400">正确率 {{ stats?.problems.accuracy ?? 0 }}%</div>
             </div>
-            <div class="text-xs text-slate-400">本月学习</div>
+            <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
+              <div class="text-lg font-bold text-blue-600">
+                {{ monthHours }}<span class="text-sm font-normal">h</span> {{ monthMinutes
+                }}<span class="text-sm font-normal">m</span>
+              </div>
+              <div class="text-xs text-slate-400">本月学习</div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <!-- 学习热力图 -->
-      <div class="card">
-        <h3 class="text-sm font-bold mb-3">学习热力图（近 30 周）</h3>
-        <StreakHeatmap v-if="stats?.heatmap" :data="stats.heatmap" @select="heatDate = $event" />
-        <p class="text-[10px] text-slate-400 mt-2">点击色块可查看当日学习时长</p>
-      </div>
-
-      <!-- 科目分布 -->
-      <div class="card" v-if="stats?.subjects?.length">
-        <h3 class="text-sm font-bold mb-3">科目学习分布</h3>
-        <div class="space-y-2">
-          <div v-for="s in stats.subjects" :key="s.id" class="flex items-center gap-2">
-            <span class="text-sm w-20 truncate">{{ s.name }}</span>
-            <div class="flex-1 bg-slate-100 dark:bg-slate-800 rounded-full h-2.5">
-              <div class="bg-blue-500 h-2.5 rounded-full transition-all"
-                :style="{ width: `${Math.min(s.minutes / (stats.subjects[0]?.minutes || 1) * 100, 100)}%` }" />
-            </div>
-            <span class="text-xs text-slate-400 w-16 text-right">{{ Math.floor(s.minutes / 60) }}h {{ s.minutes % 60 }}m</span>
-          </div>
+        <!-- 学习热力图（统计失败时同样显示错误态，不渲染空热力图） -->
+        <div class="card">
+          <h3 class="text-sm font-bold mb-3">学习热力图（近 30 周）</h3>
+          <button
+            v-if="statsError"
+            class="w-full flex items-center gap-2 text-xs text-red-500 dark:text-red-400"
+            @click="loadStats"
+          >
+            <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+            <span class="flex-1 text-left">学习数据加载失败，点击重试</span>
+          </button>
+          <template v-else>
+            <StreakHeatmap v-if="stats?.heatmap" :data="stats.heatmap" @select="heatDate = $event" />
+            <p class="text-[10px] text-slate-400 mt-2">点击色块可查看当日学习时长</p>
+          </template>
         </div>
-      </div>
 
-      <!-- 徽章墙 -->
-      <div class="card">
-        <h3 class="text-sm font-bold mb-3">徽章墙</h3>
-        <div v-if="!profile.badges?.length" class="text-xs text-slate-400 py-2">
-          还没有获得徽章。多发帖、多提问、坚持打卡来解锁吧！
-        </div>
-        <div v-else class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div v-for="badgeDef in COMMUNITY_BADGES" :key="badgeDef.key"
-            class="flex items-center gap-2 p-2 rounded-lg transition-colors"
-            :class="earnedKeys.has(badgeDef.key)
-              ? 'bg-amber-50 dark:bg-amber-900/20'
-              : 'opacity-40 grayscale'">
-            <span class="text-xl">{{ badgeDef.icon }}</span>
-            <div class="min-w-0">
-              <div class="text-xs font-semibold truncate">{{ badgeDef.name }}</div>
-              <div class="text-[10px] text-slate-400 truncate">{{ badgeDef.desc }}</div>
+        <!-- 科目分布 -->
+        <div class="card" v-if="stats?.subjects?.length">
+          <h3 class="text-sm font-bold mb-3">科目学习分布</h3>
+          <div class="space-y-2">
+            <div v-for="s in stats.subjects" :key="s.id" class="flex items-center gap-2">
+              <span class="text-sm w-20 truncate">{{ s.name }}</span>
+              <div class="flex-1 bg-slate-100 dark:bg-slate-800 rounded-full h-2.5">
+                <div
+                  class="bg-blue-500 h-2.5 rounded-full transition-all"
+                  :style="{ width: `${Math.min((s.minutes / (stats.subjects[0]?.minutes || 1)) * 100, 100)}%` }"
+                />
+              </div>
+              <span class="text-xs text-slate-400 w-16 text-right"
+                >{{ Math.floor(s.minutes / 60) }}h {{ s.minutes % 60 }}m</span
+              >
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- 徽章墙 -->
+        <div class="card">
+          <h3 class="text-sm font-bold mb-3">徽章墙</h3>
+          <div v-if="!profile.badges?.length" class="text-xs text-slate-400 py-2">
+            还没有获得徽章。多发帖、多提问、坚持打卡来解锁吧！
+          </div>
+          <div v-else class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div
+              v-for="badgeDef in COMMUNITY_BADGES"
+              :key="badgeDef.key"
+              class="flex items-center gap-2 p-2 rounded-lg transition-colors"
+              :class="earnedKeys.has(badgeDef.key) ? 'bg-amber-50 dark:bg-amber-900/20' : 'opacity-40 grayscale'"
+            >
+              <span class="text-xl">{{ badgeDef.icon }}</span>
+              <div class="min-w-0">
+                <div class="text-xs font-semibold truncate">{{ badgeDef.name }}</div>
+                <div class="text-[10px] text-slate-400 truncate">{{ badgeDef.desc }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </template>
     </template>
 
@@ -205,7 +236,9 @@ onMounted(loadAll)
         <span class="text-sm text-slate-500 dark:text-slate-400">当日学习总时长</span>
         <span class="text-xl font-black text-primary-500">{{ formatMinutes(heatMinutes) }}</span>
       </div>
-      <p class="text-xs text-slate-400 text-center pt-3">{{ heatMinutes > 0 ? '具体科目明细仅本人可见' : '当日未学习' }}</p>
+      <p class="text-xs text-slate-400 text-center pt-3">
+        {{ heatMinutes > 0 ? '具体科目明细仅本人可见' : '当日未学习' }}
+      </p>
     </Modal>
   </div>
 </template>

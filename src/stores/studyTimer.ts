@@ -1,3 +1,4 @@
+import { pollingDelay, type ConnectionState } from '../features/collaboration/connection'
 /**
  * 双人番茄钟计时核心 store（跨路由存活）：
  * - 计时状态与 tick/poll 定时器在此管理，组件卸载不清理（仅 finishSession 清理）
@@ -6,7 +7,7 @@
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { communityApi } from '../api/community'
+import { partnersApi } from '../api/community/partners'
 import { requestKeepalive } from '../api/client'
 import { useAppStore } from './app'
 import type { PartnerStudySession } from '../types'
@@ -26,6 +27,12 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
 
   const session = ref<PartnerStudySession | null>(null)
   const phase = ref<Phase>('idle')
+  const connection = ref<ConnectionState>('connecting')
+  const lastSyncedAt = ref(0)
+  let failures = 0,
+    sessionGeneration = 0
+  let syncQueue: Promise<void> = Promise.resolve()
+  let pollInFlight = false
   const seconds = ref(0)
   const running = ref(false)
   const myMinutes = ref(0)
@@ -46,7 +53,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   }
 
   let handle: ReturnType<typeof setInterval> | null = null
-  let pollTimer: ReturnType<typeof setInterval> | null = null
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
   let startTimestamp = 0
   let pausedElapsed = 0
   let onlineBase = 0
@@ -73,7 +80,10 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
 
   function stopTimer() {
     running.value = false
-    if (handle) { clearInterval(handle); handle = null }
+    if (handle) {
+      clearInterval(handle)
+      handle = null
+    }
     const elapsed = Math.floor((Date.now() - startTimestamp) / 1000)
     pausedElapsed += elapsed
     onlineBase += elapsed
@@ -138,28 +148,61 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     await completePhase()
   }
 
-  async function syncState(state: Phase) {
-    const s = session.value
-    if (!s) return
-    try {
-      const res = await communityApi.updateStudySession(s.id, state, myMinutes.value, onlineSeconds.value, pausedElapsed, running.value)
-      if (!session.value) return
-      session.value.partnerState = res.session.partnerState
-      session.value.partnerMinutes = res.session.partnerMinutes
-      session.value.partnerOnlineSeconds = res.session.partnerOnlineSeconds
-      session.value.partnerElapsedSeconds = res.session.partnerElapsedSeconds
-      session.value.partnerRunning = res.session.partnerRunning
-      if (res.session.status === 'done') {
-        if (phase.value === 'focus') appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', session.value.partnerName)
-        sessionCompleted.value++
-        finishSession()
-      }
-    } catch { /* 同步失败静默 */ }
+  function syncState(_state: Phase): Promise<void> {
+    const id = session.value?.id,
+      generation = sessionGeneration
+    if (!id) return Promise.resolve()
+    const request = syncQueue
+      .catch(() => {})
+      .then(async () => {
+        if (sessionGeneration !== generation || session.value?.id !== id) return
+        const res = await partnersApi.updateStudySession(
+          id,
+          phase.value,
+          myMinutes.value,
+          onlineSeconds.value,
+          seconds.value,
+          running.value
+        )
+        if (sessionGeneration !== generation || session.value?.id !== id) return
+        connection.value = 'connected'
+        failures = 0
+        lastSyncedAt.value = Date.now()
+        Object.assign(session.value, {
+          partnerState: res.session.partnerState,
+          partnerMinutes: res.session.partnerMinutes,
+          partnerOnlineSeconds: res.session.partnerOnlineSeconds,
+          partnerElapsedSeconds: res.session.partnerElapsedSeconds,
+          partnerRunning: res.session.partnerRunning
+        })
+        if (res.session.status === 'done') {
+          if (phase.value === 'focus')
+            appStore.recordPomodoro(
+              Math.round(seconds.value / 60),
+              currentDescription(),
+              'party',
+              session.value.partnerName
+            )
+          sessionCompleted.value++
+          finishSession()
+        }
+      })
+      .catch(() => {
+        if (sessionGeneration !== generation || session.value?.id !== id) return
+        failures++
+        connection.value = navigator.onLine && failures < 3 ? 'reconnecting' : 'offline'
+      })
+    syncQueue = request
+    return request
   }
 
   function enterSession(s: PartnerStudySession | null | undefined) {
     if (!s) return
     if (session.value && session.value.id === s.id) return
+    if (session.value) finishSession()
+    sessionGeneration++
+    failures = 0
+    connection.value = 'connecting'
 
     const normalized: PartnerStudySession = {
       id: s.id,
@@ -169,7 +212,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
       partnerAvatar: s.partnerAvatar,
       focusMinutes: finiteOr(s.focusMinutes, 25),
       mode: s.mode ?? 'countdown',
-      myState: (s.myState as string) === 'break' ? 'done' : s.myState ?? 'idle',
+      myState: (s.myState as string) === 'break' ? 'done' : (s.myState ?? 'idle'),
       myMinutes: Number(s.myMinutes) || 0,
       partnerState: s.partnerState ?? 'idle',
       partnerMinutes: Number(s.partnerMinutes) || 0,
@@ -191,7 +234,9 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('pagehide', onPageHide)
-    pollTimer = setInterval(poll, 10000)
+    window.addEventListener('online', reconnect)
+    window.addEventListener('offline', markOffline)
+    schedulePoll(0)
 
     if (phase.value === 'idle') start()
   }
@@ -205,9 +250,11 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
       phase.value = 'done' // 结算后置结束态，阻断 await 间隙内 poll 对 focus 的重复结算
     }
     try {
-      await communityApi.endStudySession(s.id)
+      await partnersApi.endStudySession(s.id)
       finishSession()
-    } catch { /* 结束失败静默 */ }
+    } catch {
+      /* 结束失败静默 */
+    }
   }
 
   function waitForPartner() {
@@ -217,16 +264,27 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   async function leaveSession() {
     pendingChoice.value = null
     if (session.value) {
-      try { await syncState('done') } catch { /* 忽略 */ }
+      try {
+        await syncState('done')
+      } catch {
+        /* 忽略 */
+      }
     }
     finishSession()
   }
 
   function finishSession() {
+    sessionGeneration++
+    pollInFlight = false
+    window.removeEventListener('online', reconnect)
+    window.removeEventListener('offline', markOffline)
     stopTimer()
     // 开黑输入框在鼠标移开底部后隐藏，用户可能全程未看到：会话结束必须清空，避免残留描述写入下次开黑记录
     taskDescription.value = ''
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+    if (pollTimer) {
+      clearTimeout(pollTimer)
+      pollTimer = null
+    }
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('pagehide', onPageHide)
     session.value = null
@@ -238,28 +296,34 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     onlineBase = 0
   }
 
-  async function poll() {
-    if (!session.value) return
-    try {
-      const res = running.value
-        ? await communityApi.updateStudySession(session.value.id, phase.value, myMinutes.value, onlineSeconds.value, seconds.value, true)
-        : await communityApi.studySession(session.value.id)
-      if (!session.value) return
-      session.value.partnerState = res.session.partnerState
-      session.value.partnerMinutes = res.session.partnerMinutes
-      session.value.partnerOnlineSeconds = res.session.partnerOnlineSeconds
-      session.value.partnerElapsedSeconds = res.session.partnerElapsedSeconds
-      session.value.partnerRunning = res.session.partnerRunning
-      if (res.session.status === 'done') {
-        if (phase.value === 'focus') appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', session.value.partnerName)
-        sessionCompleted.value++
-        finishSession()
-      }
-    } catch { /* 轮询失败静默 */ }
+  function schedulePoll(delay = pollingDelay(failures, document.hidden)) {
+    if (pollTimer) clearTimeout(pollTimer)
+    if (session.value) pollTimer = setTimeout(poll, delay)
   }
-
+  async function poll() {
+    if (!session.value || pollInFlight) return
+    const generation = sessionGeneration
+    pollInFlight = true
+    await syncState(phase.value)
+    if (generation !== sessionGeneration) return
+    pollInFlight = false
+    schedulePoll()
+  }
+  function markOffline() {
+    connection.value = 'offline'
+    schedulePoll()
+  }
+  function reconnect() {
+    if (!session.value) return
+    failures = 0
+    connection.value = 'reconnecting'
+    schedulePoll(0)
+  }
   function handleVisibilityChange() {
-    if (!document.hidden && running.value) tick()
+    if (!document.hidden) {
+      if (running.value) tick()
+      reconnect()
+    } else schedulePoll()
   }
 
   function onPageHide() {
@@ -268,14 +332,38 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     const elapsed = pausedElapsed + runningElapsed
     requestKeepalive(
       `/api/partner-study/sessions/${session.value.id}`,
-      { state: phase.value, minutes: myMinutes.value, onlineSeconds: onlineBase + runningElapsed, elapsedSeconds: elapsed },
+      {
+        state: phase.value,
+        minutes: myMinutes.value,
+        onlineSeconds: onlineBase + runningElapsed,
+        elapsedSeconds: elapsed
+      },
       'PUT'
     )
   }
 
   return {
-    session, phase, seconds, running, myMinutes, onlineSeconds,
-    display, pomodoroCompleted, sessionCompleted, pendingChoice, taskDescription,
-    start, pause, endSession, enterSession, finishSession, waitForPartner, leaveSession, finishFocus
+    session,
+    connection,
+    lastSyncedAt,
+    reconnect,
+    phase,
+    seconds,
+    running,
+    myMinutes,
+    onlineSeconds,
+    display,
+    pomodoroCompleted,
+    sessionCompleted,
+    pendingChoice,
+    taskDescription,
+    start,
+    pause,
+    endSession,
+    enterSession,
+    finishSession,
+    waitForPartner,
+    leaveSession,
+    finishFocus
   }
 })

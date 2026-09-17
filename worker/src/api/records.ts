@@ -1,9 +1,25 @@
+import { z } from 'zod'
 import { on } from '../router'
 import { crudHandlers } from '../db'
+
+/** 与 recordsMapping.toRow 消费字段一一对应；passthrough 放行同步附带的 updatedAt 等运行时字段 */
+const recordBodySchema = z
+  .object({
+    id: z.string().optional(),
+    subjectId: z.string(),
+    date: z.string(),
+    minutes: z.number(),
+    chapterId: z.string().optional(),
+    topic: z.string().optional(),
+    note: z.string().optional(),
+    createdAt: z.number().optional()
+  })
+  .passthrough()
 
 /** 学习记录（study_records 表 ↔ 前端 StudyRecord） */
 export const recordsMapping = crudHandlers({
   table: 'study_records',
+  schema: recordBodySchema,
   toRow: (userId, b, id) => ({
     id,
     user_id: userId,
@@ -29,7 +45,4 @@ export const recordsMapping = crudHandlers({
 
 export function registerRecordRoutes() {
   on('GET', '/api/records', true, recordsMapping.list)
-  on('POST', '/api/records', true, recordsMapping.create)
-  on('PUT', '/api/records/:id', true, recordsMapping.update)
-  on('DELETE', '/api/records/:id', true, recordsMapping.remove)
 }

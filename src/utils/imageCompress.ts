@@ -8,26 +8,42 @@ function loadImage(file: File | Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
-    img.onload = () => { URL.revokeObjectURL(url); resolve(img) }
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片解码失败')) }
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve(img)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('图片解码失败'))
+    }
     img.src = url
   })
 }
 
 function canvasToWebp(canvas: HTMLCanvasElement, quality = 0.82): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(b => (b ? resolve(b) : reject(new Error('图片压缩失败'))), 'image/webp', quality)
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('图片压缩失败'))), 'image/webp', quality)
   })
 }
 
 /** 缩略图：640×360（16:9），源图中心裁剪 */
 async function makeThumb(img: HTMLImageElement): Promise<Blob> {
-  const TW = 640, TH = 360
-  const w = img.naturalWidth, h = img.naturalHeight
+  const TW = 640,
+    TH = 360
+  const w = img.naturalWidth,
+    h = img.naturalHeight
   if (!w || !h) throw new Error('图片尺寸无效')
-  let sx = 0, sy = 0, sw = w, sh = h
-  if (w / h > TW / TH) { sw = h * (TW / TH); sx = (w - sw) / 2 }
-  else { sh = w / (TW / TH); sy = (h - sh) / 2 }
+  let sx = 0,
+    sy = 0,
+    sw = w,
+    sh = h
+  if (w / h > TW / TH) {
+    sw = h * (TW / TH)
+    sx = (w - sw) / 2
+  } else {
+    sh = w / (TW / TH)
+    sy = (h - sh) / 2
+  }
   const c = document.createElement('canvas')
   c.width = TW
   c.height = TH

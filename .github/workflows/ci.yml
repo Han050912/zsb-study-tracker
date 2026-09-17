@@ -1,0 +1,68 @@
+name: CI
+
+# 开发分支与主分支的 push 都跑，PR 同样跑；与部署流程完全解耦
+on:
+  push:
+    branches: [development, master]
+  pull_request:
+
+# 同一分支的新提交取消上一次未完成的检查，避免排队堆积
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web (typecheck / lint / format / test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          # 类型检查不需要 Electron 二进制，跳过下载显著加速 CI
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Unit tests
+        run: |
+          npm ci --prefix worker
+          npm test
+
+      - name: Build
+        run: npx vite build
+
+  typecheck-worker:
+    name: Typecheck (worker)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ./worker/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck

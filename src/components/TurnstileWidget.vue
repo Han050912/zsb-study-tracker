@@ -14,9 +14,7 @@ const emit = defineEmits<{ (e: 'load-error'): void }>()
 // 本地开发（vite dev）使用 Turnstile 官方测试 sitekey（始终通过），
 // 与 worker/.dev.vars 中的测试 secret（1x0000000000000000000000000000000AA）配套，避免本地环境被真实校验卡住。
 // 生产构建（vite build）自动使用真实 sitekey，不受影响。
-const TURNSTILE_SITEKEY = import.meta.env.DEV
-  ? '1x00000000000000000000AA'
-  : '0x4AAAAAAEGLRGric6eUYnOv'
+const TURNSTILE_SITEKEY = import.meta.env.DEV ? '1x00000000000000000000AA' : '0x4AAAAAAEGLRGric6eUYnOv'
 const LOAD_TIMEOUT_MS = 10_000
 const MAX_RETRIES = 2
 
@@ -27,7 +25,10 @@ let widgetId = ''
 /** 单次加载 Turnstile JS SDK，附带超时保护 */
 function loadScriptOnce(): Promise<void> {
   return new Promise((resolve, reject) => {
-    if ((window as any).turnstile) { resolve(); return }
+    if ((window as any).turnstile) {
+      resolve()
+      return
+    }
 
     const script = document.createElement('script')
     script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
@@ -38,7 +39,10 @@ function loadScriptOnce(): Promise<void> {
       reject(new Error('加载超时'))
     }, LOAD_TIMEOUT_MS)
 
-    script.onload = () => { clearTimeout(timeoutId); resolve() }
+    script.onload = () => {
+      clearTimeout(timeoutId)
+      resolve()
+    }
     script.onerror = () => {
       clearTimeout(timeoutId)
       script.remove()
@@ -56,7 +60,7 @@ async function loadScript(): Promise<void> {
       return
     } catch {
       if (attempt < MAX_RETRIES) {
-        await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
+        await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)))
       }
     }
   }
@@ -85,9 +89,17 @@ onMounted(async () => {
   widgetId = (window as any).turnstile.render(container.value, {
     sitekey: TURNSTILE_SITEKEY,
     theme: 'light',
-    callback: (t: string) => { token.value = t; status.value = 'ready' },
-    'error-callback': () => { emit('load-error'); status.value = 'error' },
-    'expired-callback': () => { token.value = '' },
+    callback: (t: string) => {
+      token.value = t
+      status.value = 'ready'
+    },
+    'error-callback': () => {
+      emit('load-error')
+      status.value = 'error'
+    },
+    'expired-callback': () => {
+      token.value = ''
+    }
   })
 })
 
@@ -97,7 +109,7 @@ onUnmounted(() => {
 
 function reset() {
   if (widgetId) {
-    (window as any).turnstile.reset(widgetId)
+    ;(window as any).turnstile.reset(widgetId)
     token.value = ''
   }
 }

@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, inject, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
+import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
-import { today } from '../utils/date'
-import dayjs from 'dayjs'
+import { habitDone } from '../stores/app/habits'
+import { businessDate, today } from '../utils/date'
 import Modal from '../components/Modal.vue'
 import type { Habit, HabitType } from '../types'
 import { VOCAB_HABIT_ID, PROBLEM_HABIT_ID } from '../data/defaults'
 
 const store = useAppStore()
-const toast = inject<(m: string) => void>('toast', () => {})
+const toast = useToast()
+const confirm = useConfirm()
 
 /** 输入框自动聚焦指令 */
 const vFocus = { mounted: (el: HTMLElement) => el.focus() }
@@ -26,15 +29,26 @@ function add() {
 
 /** 日期心跳：跨午夜后驱动热力缓存等按天计算的内容自动刷新 */
 const dayTick = ref(today())
-const dayTimer = setInterval(() => { dayTick.value = today() }, 60000)
+const dayTimer = setInterval(() => {
+  dayTick.value = today()
+}, 60000)
 onUnmounted(() => clearInterval(dayTimer))
 
 function record(h: Habit, value: number | string) {
-  const hadValue = !!h.records[today()]
-  // 积分奖励/回收逻辑已内聚在 store.recordHabit 中
+  const hadMet = habitDone(h, h.records[today()])
+  // 积分奖励/回收逻辑已内聚在 store.recordHabit 中（达标口径与 habitDone 一致）
   store.recordHabit(h.id, today(), value)
-  if (!h.bad && value && !hadValue) toast('打卡成功 +2 积分')
-  else toast(h.bad ? '已记录，注意自律！' : '已更新')
+  if (h.bad) {
+    toast('已记录，注意自律！')
+    return
+  }
+  const met = habitDone(h, h.records[today()])
+  if (met && !hadMet) toast('打卡成功 +2 积分')
+  // 达标被取消（勾选撤销 / 记录清零、改小）：积分已由 store 回收，按状态更新提示
+  else if (!met && hadMet) toast('已更新')
+  else if (h.target && (h.type === 'count' || h.type === 'minutes'))
+    toast(`已完成 ${Number(h.records[today()]) || 0}/${h.target}，未达标`)
+  else toast('已记录')
 }
 
 // ---- 坏习惯「每日克制打卡」 ----
@@ -57,19 +71,18 @@ function saveTarget(h: Habit) {
   toast('目标已更新' + (h.id === VOCAB_HABIT_ID || h.id === PROBLEM_HABIT_ID ? '（已同步到设置页）' : ''))
 }
 
-/** 近 30 天热力 */
+/** 近 30 天热力（日期键为 UTC+8 业务日期，不随系统时区变化；达标口径与 recordHabit 积分判定一致，有 target 需达到目标才满格） */
 function heatData(h: Habit) {
   return Array.from({ length: 30 }, (_, i) => {
-    const d = dayjs().subtract(29 - i, 'day').format('YYYY-MM-DD')
-    const v = h.records[d]
-    return { date: d, done: h.type === 'checkbox' || h.type === 'time' ? !!v : Number(v) > 0 }
+    const d = businessDate(Date.now() - (29 - i) * 86400_000)
+    return { date: d, done: habitDone(h, h.records[d]) }
   })
 }
 
 /** 坏习惯近 30 天克制情况：克制打卡=绿，发生=红，无记录=灰 */
 function badHeatData(h: Habit) {
   return Array.from({ length: 30 }, (_, i) => {
-    const d = dayjs().subtract(29 - i, 'day').format('YYYY-MM-DD')
+    const d = businessDate(Date.now() - (29 - i) * 86400_000)
     const checked = !!h.checkins?.[d]
     const happened = Number(h.records[d]) > 0
     return {
@@ -80,21 +93,23 @@ function badHeatData(h: Habit) {
   })
 }
 
-const goodHabits = computed(() => store.habits.filter(h => !h.bad))
-const badHabits = computed(() => store.habits.filter(h => h.bad))
+const goodHabits = computed(() => store.habits.filter((h) => !h.bad))
+const badHabits = computed(() => store.habits.filter((h) => h.bad))
 
 /** 热力数据缓存：按习惯 id 记忆化，避免模板内每次渲染重复构建 30 天数组；依赖 dayTick 跨午夜自动刷新 */
 const goodHeatMaps = computed(() => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- 显式建立对 dayTick 的响应式依赖（跨午夜刷新热力图）
   dayTick.value
-  return Object.fromEntries(goodHabits.value.map(h => [h.id, heatData(h)]))
+  return Object.fromEntries(goodHabits.value.map((h) => [h.id, heatData(h)]))
 })
 const badHeatMaps = computed(() => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- 显式建立对 dayTick 的响应式依赖（跨午夜刷新热力图）
   dayTick.value
-  return Object.fromEntries(badHabits.value.map(h => [h.id, badHeatData(h)]))
+  return Object.fromEntries(badHabits.value.map((h) => [h.id, badHeatData(h)]))
 })
 
-function removeHabit(id: string) {
-  if (!window.confirm('删除该习惯及其记录？')) return
+async function removeHabit(id: string) {
+  if (!(await confirm('删除该习惯及其记录？', { danger: true }))) return
   store.deleteHabit(id)
   toast('已删除')
 }
@@ -110,12 +125,25 @@ function removeHabit(id: string) {
     <div class="grid md:grid-cols-2 gap-3">
       <div v-for="h in goodHabits" :key="h.id" class="card">
         <div class="flex items-center justify-between mb-2">
-          <span class="font-medium text-sm">{{ h.name }}
+          <span class="font-medium text-sm"
+            >{{ h.name }}
             <span v-if="editingTargetId === h.id" class="inline-flex items-center gap-1 ml-1">
-              <input v-model.number="editingTargetValue" type="number" min="1" class="input !w-16 !py-0.5 !px-1.5 !text-xs"
-                @keyup.enter="saveTarget(h)" @blur="saveTarget(h)" v-focus />
+              <input
+                v-model.number="editingTargetValue"
+                type="number"
+                min="1"
+                class="input !w-16 !py-0.5 !px-1.5 !text-xs"
+                @keyup.enter="saveTarget(h)"
+                @blur="saveTarget(h)"
+                v-focus
+              />
             </span>
-            <span v-else-if="h.target" class="text-xs text-slate-400 cursor-pointer hover:text-primary-500" title="点击修改目标" @click="startEditTarget(h)">
+            <span
+              v-else-if="h.target"
+              class="text-xs text-slate-400 cursor-pointer hover:text-primary-500"
+              title="点击修改目标"
+              @click="startEditTarget(h)"
+            >
               目标 {{ h.target }}{{ h.type === 'minutes' ? '分钟' : h.type === 'count' ? '次' : '' }} ✎
             </span>
           </span>
@@ -123,26 +151,57 @@ function removeHabit(id: string) {
         </div>
         <!-- 今日操作 -->
         <div class="mb-3">
-          <button v-if="h.type === 'checkbox'" class="btn w-full"
+          <button
+            v-if="h.type === 'checkbox'"
+            class="btn w-full"
             :class="h.records[today()] ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-            @click="record(h, h.records[today()] ? 0 : 1)">
+            @click="record(h, h.records[today()] ? 0 : 1)"
+          >
             {{ h.records[today()] ? '✓ 今日已完成' : '点击打卡' }}
           </button>
           <div v-else-if="h.type === 'time'" class="flex gap-2">
-            <input type="time" class="input" :value="(h.records[today()] as string) || ''"
-              @change="record(h, ($event.target as HTMLInputElement).value)" />
+            <input
+              type="time"
+              class="input"
+              :value="(h.records[today()] as string) || ''"
+              @change="record(h, ($event.target as HTMLInputElement).value)"
+            />
           </div>
           <div v-else class="flex gap-2">
-            <input type="number" min="0" class="input" :placeholder="h.type === 'minutes' ? '分钟数' : '次数'"
+            <input
+              type="number"
+              min="0"
+              class="input"
+              :placeholder="h.type === 'minutes' ? '分钟数' : '次数'"
               :value="(h.records[today()] as number) || ''"
-              @keyup.enter="record(h, Number(($event.target as HTMLInputElement).value))" />
-            <button class="btn-primary shrink-0" @click="record(h, Number(($event.currentTarget as HTMLElement).previousElementSibling ? (($event.currentTarget as HTMLElement).previousElementSibling as HTMLInputElement).value : 0))">保存</button>
+              @keyup.enter="record(h, Number(($event.target as HTMLInputElement).value))"
+            />
+            <button
+              class="btn-primary shrink-0"
+              @click="
+                record(
+                  h,
+                  Number(
+                    ($event.currentTarget as HTMLElement).previousElementSibling
+                      ? (($event.currentTarget as HTMLElement).previousElementSibling as HTMLInputElement).value
+                      : 0
+                  )
+                )
+              "
+            >
+              保存
+            </button>
           </div>
         </div>
         <!-- 30天热力 -->
         <div class="flex gap-[3px] flex-wrap">
-          <div v-for="c in goodHeatMaps[h.id] || []" :key="c.date" :title="c.date"
-            class="w-3.5 h-3.5 rounded-sm" :class="c.done ? 'bg-emerald-400' : 'bg-slate-100 dark:bg-slate-700'"></div>
+          <div
+            v-for="c in goodHeatMaps[h.id] || []"
+            :key="c.date"
+            :title="c.date"
+            class="w-3.5 h-3.5 rounded-sm"
+            :class="c.done ? 'bg-emerald-400' : 'bg-slate-100 dark:bg-slate-700'"
+          ></div>
         </div>
       </div>
     </div>
@@ -156,20 +215,35 @@ function removeHabit(id: string) {
             <button class="text-xs text-red-400" @click="removeHabit(h.id)">删除</button>
           </div>
           <!-- 每日克制打卡 -->
-          <button class="btn w-full mb-2"
+          <button
+            class="btn w-full mb-2"
             :class="h.checkins?.[today()] ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-            @click="toggleCheckin(h)">
+            @click="toggleCheckin(h)"
+          >
             {{ h.checkins?.[today()] ? '✓ 今日已克制' : '今日克制打卡' }}
           </button>
           <div class="flex items-center gap-3">
             <button class="btn-danger" @click="record(h, (Number(h.records[today()]) || 0) + 1)">+1 次</button>
-            <span class="text-sm">今日：<b class="text-red-500">{{ h.records[today()] || 0 }}</b> 次</span>
-            <button v-if="Number(h.records[today()]) > 0" class="text-xs text-slate-400" @click="record(h, Number(h.records[today()]) - 1)">撤销</button>
+            <span class="text-sm"
+              >今日：<b class="text-red-500">{{ h.records[today()] || 0 }}</b> 次</span
+            >
+            <button
+              v-if="Number(h.records[today()]) > 0"
+              class="text-xs text-slate-400"
+              @click="record(h, Number(h.records[today()]) - 1)"
+            >
+              撤销
+            </button>
           </div>
           <!-- 近30天克制情况热力 -->
           <div class="flex gap-[3px] flex-wrap mt-3">
-            <div v-for="c in badHeatMaps[h.id] || []" :key="c.date" :title="`${c.date}：${c.text}`"
-              class="w-3.5 h-3.5 rounded-sm" :class="c.cls"></div>
+            <div
+              v-for="c in badHeatMaps[h.id] || []"
+              :key="c.date"
+              :title="`${c.date}：${c.text}`"
+              class="w-3.5 h-3.5 rounded-sm"
+              :class="c.cls"
+            ></div>
           </div>
           <div class="text-[10px] text-slate-400 mt-1.5 flex gap-3">
             <span><span class="inline-block w-2 h-2 rounded-sm bg-emerald-400 mr-1"></span>已克制</span>
@@ -182,17 +256,36 @@ function removeHabit(id: string) {
 
     <Modal title="新建习惯" :show="showModal" @close="showModal = false">
       <div class="space-y-3">
-        <div><label class="label">习惯名称</label><input v-model="form.name" class="input" placeholder="如：每日复盘" /></div>
         <div>
-          <label class="label">量化方式</label>
+          <label class="label" for="habit-name">习惯名称</label
+          ><input id="habit-name" v-model="form.name" class="input" placeholder="如：每日复盘" />
+        </div>
+        <div>
+          <div class="label">量化方式</div>
           <div class="grid grid-cols-4 gap-1.5">
-            <button v-for="t in [{ k: 'checkbox', l: '勾选' }, { k: 'minutes', l: '时长' }, { k: 'count', l: '次数' }, { k: 'time', l: '时刻' }]"
-              :key="t.k" class="btn !text-xs" :class="form.type === t.k ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
-              @click="form.type = t.k as HabitType">{{ t.l }}</button>
+            <button
+              v-for="t in [
+                { k: 'checkbox', l: '勾选' },
+                { k: 'minutes', l: '时长' },
+                { k: 'count', l: '次数' },
+                { k: 'time', l: '时刻' }
+              ]"
+              :key="t.k"
+              class="btn !text-xs"
+              :class="form.type === t.k ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+              @click="form.type = t.k as HabitType"
+            >
+              {{ t.l }}
+            </button>
           </div>
         </div>
-        <div v-if="form.type !== 'checkbox'"><label class="label">每日目标</label><input v-model.number="form.target" type="number" min="1" class="input" /></div>
-        <label class="flex items-center gap-2 text-sm"><input type="checkbox" v-model="form.bad" class="accent-red-500" /> 这是坏习惯（监督模式）</label>
+        <div v-if="form.type !== 'checkbox'">
+          <label class="label" for="habit-target">每日目标</label
+          ><input id="habit-target" v-model.number="form.target" type="number" min="1" class="input" />
+        </div>
+        <label class="flex items-center gap-2 text-sm"
+          ><input type="checkbox" v-model="form.bad" class="accent-red-500" /> 这是坏习惯（监督模式）</label
+        >
       </div>
       <template #footer>
         <button class="btn-ghost" @click="showModal = false">取消</button>
