@@ -1,5 +1,5 @@
 import type { Env } from '../../index'
-import { first, HttpError } from '../../db'
+import { first, HttpError, utc8Today } from '../../db'
 import { isAdmin } from '../community/shared'
 
 /**
@@ -43,7 +43,25 @@ export interface ChallengeRow {
 }
 
 export function mapChallenge(r: ChallengeRow & { my_progress?: number; my_completed?: number }) {
+  const today = utc8Today()
+  const status = r.is_cancelled
+    ? 'cancelled'
+    : r.is_completed
+      ? 'completed'
+      : today < r.start_date
+        ? 'upcoming'
+        : today > r.end_date
+          ? 'ended'
+          : 'active'
+  const nextTransitionAt =
+    status === 'upcoming'
+      ? Date.parse(r.start_date + 'T00:00:00+08:00')
+      : status === 'active'
+        ? Date.parse(r.end_date + 'T00:00:00+08:00') + 86400000
+        : null
   return {
+    status,
+    nextTransitionAt,
     id: r.id,
     teamId: r.team_id,
     type: r.type,

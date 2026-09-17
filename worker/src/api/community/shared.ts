@@ -68,6 +68,7 @@ export function mapComment(r: any) {
     userName: r.user_name || '升本人',
     userAvatar: r.user_avatar ?? undefined,
     parentId: r.parent_id ?? undefined,
+    replyCount: r.reply_count ?? 0,
     content: r.content,
     imageUrls: parseStrArray(r.image_urls),
     userVerified: !!r.user_verified,

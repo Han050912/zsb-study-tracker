@@ -1,3 +1,5 @@
+import type { Ctx } from '../../router'
+import { readCommentPage } from './comment-page'
 import { z } from 'zod'
 import { on, body } from '../../router'
 import { all, first, run, batch, uid, utc8Today, HttpError } from '../../db'
@@ -94,6 +96,7 @@ export function registerPostsRoutes() {
     const url = new URL(ctx.request.url)
     const sort = url.searchParams.get('sort') === 'hot' ? 'hot' : 'latest'
     const tag = (url.searchParams.get('tag') || '').trim()
+    const keyword = (url.searchParams.get('keyword') || '').trim().slice(0, 100)
     const type = (url.searchParams.get('type') || '').trim()
     const featured = url.searchParams.get('featured') === '1'
     const follow = url.searchParams.get('follow') === '1'
@@ -107,6 +110,10 @@ export function registerPostsRoutes() {
     const admin = await isAdmin(ctx.env, ctx.userId, ctx.role)
     const where: string[] = []
     const params: unknown[] = [ctx.userId, ctx.userId]
+    if (keyword) {
+      where.push("p.content LIKE ? ESCAPE '\\'")
+      params.push('%' + escapeLike(keyword) + '%')
+    }
     if (!admin) {
       where.push('p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)')
       params.push(ctx.userId)
@@ -186,7 +193,7 @@ export function registerPostsRoutes() {
   })
 
   // 帖子详情（含评论列表，前端组装二级树；管理员可见隐藏内容）
-  on('GET', '/api/community/posts/:id', false, async (ctx) => {
+  const readPost = async (ctx: Ctx) => {
     await rateLimit(ctx, 'community:post-detail', 30)
     const admin = await isAdmin(ctx.env, ctx.userId, ctx.role)
     const postWhere = admin ? 'p.id = ?' : 'p.id = ? AND p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)'
@@ -196,6 +203,9 @@ export function registerPostsRoutes() {
     if (!post) throw new HttpError(404, '帖子不存在')
     // 圈子帖：与列表接口同一口径校验可读性（审核圈仅活跃成员/管理员可见）
     if (post.circle_id) await assertCircleReadable(ctx, post.circle_id)
+    const url = new URL(ctx.request.url)
+    if (url.searchParams.get('paginate') === '1' || url.pathname.endsWith('/comments'))
+      return Response.json({ post: mapPost(post), ...(await readCommentPage(ctx, admin, url)) })
     const commentWhere = admin
       ? 'c.post_id = ?'
       : 'c.post_id = ? AND c.is_hidden = 0 AND (c.is_flagged = 0 OR c.user_id = ?)'
@@ -218,7 +228,9 @@ export function registerPostsRoutes() {
       ...commentParams
     )
     return Response.json({ post: mapPost(post), comments: comments.map(mapComment) })
-  })
+  }
+  on('GET', '/api/community/posts/:id', false, readPost)
+  on('GET', '/api/community/posts/:id/comments', false, readPost)
 
   // 发帖（每日首帖 +5 积分，按日期去重）
   on('POST', '/api/community/posts', true, async (ctx) => {
@@ -535,7 +547,7 @@ export function registerPostsRoutes() {
     await batch(ctx.env, [...revoke, ...statements])
     // DB 删除成功后清理评论配图（失败仅留孤儿对象，不影响主流程）
     await deleteUploads(ctx.env, imageIds)
-    return Response.json({ ok: true })
+    return Response.json({ ok: true, removed: removedIds.length })
   })
 
   // 提问帖标记解决/取消解决（仅楼主；已采纳最佳答案时需先取消采纳，避免「已采纳但未解答」矛盾态）

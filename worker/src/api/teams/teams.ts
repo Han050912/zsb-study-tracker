@@ -119,11 +119,14 @@ function removeMemberStmts(
   env: Env,
   teamId: string,
   userId: string,
-  notify?: { actorId: string; content: string }
+  notify?: { actorId: string; content: string },
+  transferred = false
 ): D1PreparedStatement[] {
   const stmts: D1PreparedStatement[] = [
     env.DB.prepare('DELETE FROM team_members WHERE team_id = ? AND user_id = ?').bind(teamId, userId),
-    env.DB.prepare('UPDATE study_teams SET member_count = MAX(member_count - 1, 0) WHERE id = ?').bind(teamId),
+    env.DB.prepare(
+      'UPDATE study_teams SET member_count = (SELECT COUNT(*) FROM team_members WHERE team_id = ?) WHERE id = ?'
+    ).bind(teamId, teamId),
     // 清理退组/被踢者在未完成挑战中的进度，避免其残留进度把「全员达标」永久卡死
     env.DB.prepare(
       'DELETE FROM team_challenge_progress WHERE user_id = ? AND challenge_id IN ' +
@@ -136,6 +139,18 @@ function removeMemberStmts(
         'WHERE team_id = ? AND is_completed = 0'
     ).bind(teamId)
   ]
+  if (!transferred) {
+    // 退出/踢人校验和转让可能并发；批内再确认目标仍是普通成员，不能删掉刚接任的队长。
+    stmts.unshift(
+      env.DB.prepare(
+        "UPDATE study_teams SET member_count = CASE WHEN EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ? AND role = 'member') " +
+          (notify
+            ? "AND EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ? AND role = 'leader') "
+            : '') +
+          'THEN member_count ELSE NULL END WHERE id = ?'
+      ).bind(teamId, userId, ...(notify ? [teamId, notify.actorId] : []), teamId)
+    )
+  }
   if (notify) {
     stmts.push(
       notifyStatement(env, {
@@ -151,6 +166,16 @@ function removeMemberStmts(
   return stmts
 }
 
+async function removeMemberBatch(env: Env, statements: D1PreparedStatement[]) {
+  try {
+    await batch(env, statements)
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('NOT NULL constraint failed: study_teams.member_count'))
+      throw new HttpError(409, '小组成员身份已变化，请刷新后重试')
+    throw error
+  }
+}
+
 export function registerTeamsRoutes() {
   /** GET /api/teams - 获取公开小组列表（公开：访客可浏览公开小组，my=true 分支依赖登录态返回空） */
   on('GET', '/api/teams', false, async (ctx) => {
@@ -158,6 +183,62 @@ export function registerTeamsRoutes() {
 
     const url = new URL(ctx.request.url)
     const myTeams = url.searchParams.get('my') === 'true'
+    if (url.searchParams.get('paged') === '1') {
+      const conditions = [myTeams ? 'm.user_id IS NOT NULL' : 't.is_public = 1']
+      const values: unknown[] = [ctx.userId]
+      const keyword = (url.searchParams.get('keyword') || '').trim().slice(0, 100)
+      if (keyword) {
+        conditions.push('instr(t.name, ?) > 0')
+        values.push(keyword)
+      }
+      if (url.searchParams.get('capacity') === 'available') conditions.push('t.member_count < t.max_members')
+      const type = url.searchParams.get('challengeType')
+      if (type && ['streak', 'minutes', 'problems'].includes(type)) {
+        conditions.push(
+          'EXISTS (SELECT 1 FROM team_challenges c WHERE c.team_id = t.id AND c.type = ? AND c.is_cancelled = 0 AND c.start_date <= ? AND c.end_date >= ?)'
+        )
+        values.push(type, utc8Today(), utc8Today())
+      }
+      const cursor = url.searchParams.get('cursor') || ''
+      const split = cursor.indexOf('_')
+      if (split > 0 && Number.isFinite(Number(cursor.slice(0, split)))) {
+        conditions.push('(t.created_at < ? OR (t.created_at = ? AND t.id < ?))')
+        values.push(Number(cursor.slice(0, split)), Number(cursor.slice(0, split)), cursor.slice(split + 1))
+      }
+      const rows = await all<TeamRow & { my_role?: string; pending_count: number }>(
+        ctx.env,
+        "SELECT t.*, m.role AS my_role, CASE WHEN m.role = 'leader' THEN (SELECT COUNT(*) FROM team_join_requests r WHERE r.team_id = t.id) ELSE 0 END AS pending_count " +
+          'FROM study_teams t LEFT JOIN team_members m ON m.team_id = t.id AND m.user_id = ? WHERE ' +
+          conditions.join(' AND ') +
+          ' ORDER BY t.created_at DESC, t.id DESC LIMIT 21',
+        ...values
+      )
+      const page = rows.slice(0, 20)
+      const challenges = page.length
+        ? await all<ChallengeRow & { my_progress: number; my_completed: number }>(
+            ctx.env,
+            'SELECT c.*, p.current_value AS my_progress, p.is_completed AS my_completed FROM team_challenges c LEFT JOIN team_challenge_progress p ON p.challenge_id = c.id AND p.user_id = ? ' +
+              'WHERE c.team_id IN (' +
+              page.map(() => '?').join(',') +
+              ') AND c.is_cancelled = 0 AND c.is_completed = 0 AND c.start_date <= ? AND c.end_date >= ? ORDER BY c.end_date, c.id',
+            ctx.userId,
+            ...page.map((t) => t.id),
+            utc8Today(),
+            utc8Today()
+          )
+        : []
+      const last = page.at(-1)
+      return Response.json({
+        teams: page.map((t) => ({
+          ...mapTeam(t),
+          pendingRequestCount: t.pending_count,
+          activeChallenge: challenges.find((c) => c.team_id === t.id)
+            ? mapChallenge(challenges.find((c) => c.team_id === t.id)!)
+            : undefined
+        })),
+        nextCursor: rows.length > 20 && last ? last.created_at + '_' + last.id : null
+      })
+    }
 
     if (myTeams) {
       // 我加入的小组
@@ -286,16 +367,20 @@ export function registerTeamsRoutes() {
       hasPendingRequest: !!myRequest
     })
 
+    const section = new URL(ctx.request.url).searchParams.get('section')
     // 获取成员列表
-    const members = await all<{
-      user_id: string
-      user_name: string
-      role: string
-      joined_at: number
-      user_avatar?: string
-    }>(
-      ctx.env,
-      `
+    const members =
+      section && section !== 'members'
+        ? []
+        : await all<{
+            user_id: string
+            user_name: string
+            role: string
+            joined_at: number
+            user_avatar?: string
+          }>(
+            ctx.env,
+            `
     SELECT m.user_id, COALESCE(s.user_name, u.username) AS user_name, m.role, m.joined_at, s.avatar AS user_avatar
     FROM team_members m
     JOIN users u ON u.id = m.user_id
@@ -303,22 +388,25 @@ export function registerTeamsRoutes() {
     WHERE m.team_id = ?
     ORDER BY m.role DESC, m.joined_at ASC
   `,
-      teamId
-    )
+            teamId
+          )
 
     // 获取挑战列表
-    const challenges = await all<ChallengeRow & { my_progress?: number; my_completed?: number }>(
-      ctx.env,
-      `
+    const challenges =
+      section && section !== 'challenges'
+        ? []
+        : await all<ChallengeRow & { my_progress?: number; my_completed?: number }>(
+            ctx.env,
+            `
     SELECT c.*, p.current_value AS my_progress, p.is_completed AS my_completed
     FROM team_challenges c
     LEFT JOIN team_challenge_progress p ON p.challenge_id = c.id AND p.user_id = ?
     WHERE c.team_id = ?
     ORDER BY c.created_at DESC
   `,
-      ctx.userId,
-      teamId
-    )
+            ctx.userId,
+            teamId
+          )
 
     return Response.json({
       team: mapTeam(team),
@@ -437,7 +525,7 @@ export function registerTeamsRoutes() {
       throw new HttpError(400, '队长不能退出，请先转让队长或解散小组')
     }
 
-    await batch(ctx.env, removeMemberStmts(ctx.env, teamId, ctx.userId))
+    await removeMemberBatch(ctx.env, removeMemberStmts(ctx.env, teamId, ctx.userId))
 
     return Response.json({ ok: true })
   })
@@ -462,7 +550,7 @@ export function registerTeamsRoutes() {
 
     const team = await first<{ name: string }>(ctx.env, 'SELECT name FROM study_teams WHERE id = ?', teamId)
 
-    await batch(
+    await removeMemberBatch(
       ctx.env,
       removeMemberStmts(ctx.env, teamId, userId, {
         actorId: ctx.userId,
@@ -470,6 +558,50 @@ export function registerTeamsRoutes() {
       })
     )
 
+    return Response.json({ ok: true })
+  })
+
+  /** D1 batch 中校验身份并转让、退出，任一写入失败整批回滚。 */
+  on('POST', '/api/teams/:id/transfer-and-leave', true, async (ctx) => {
+    const teamId = ctx.params.id
+    await assertTeamLeader(ctx.env, ctx.userId, teamId)
+    const { newLeaderId } = await body<{ newLeaderId?: unknown }>(ctx.request)
+    if (typeof newLeaderId !== 'string' || !newLeaderId || newLeaderId === ctx.userId)
+      throw new HttpError(400, '请选择其他成员接任队长')
+    const target = await first(
+      ctx.env,
+      'SELECT user_id FROM team_members WHERE team_id = ? AND user_id = ?',
+      teamId,
+      newLeaderId
+    )
+    if (!target) throw new HttpError(400, '接任成员已不在小组中')
+    try {
+      await batch(ctx.env, [
+        // NOT NULL 约束充当批内断言，防止读校验后成员/队长变化导致部分转让。
+        ctx.env.DB.prepare(
+          'UPDATE study_teams SET creator_id = CASE WHEN ' +
+            "EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ? AND role = 'leader') AND " +
+            'EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?) THEN ? ELSE NULL END WHERE id = ?'
+        ).bind(teamId, ctx.userId, teamId, newLeaderId, newLeaderId, teamId),
+        ctx.env.DB.prepare("UPDATE team_members SET role = 'leader' WHERE team_id = ? AND user_id = ?").bind(
+          teamId,
+          newLeaderId
+        ),
+        ...removeMemberStmts(ctx.env, teamId, ctx.userId, undefined, true),
+        notifyStatement(ctx.env, {
+          userId: newLeaderId,
+          type: 'system',
+          actorId: ctx.userId,
+          targetType: 'team',
+          targetId: teamId,
+          content: '原队长已退出，你已接任小组队长'
+        })
+      ])
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('NOT NULL constraint failed: study_teams.creator_id'))
+        throw new HttpError(409, '小组成员已变化，请刷新后重试')
+      throw error
+    }
     return Response.json({ ok: true })
   })
 
