@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { communityApi } from '../../api/community'
+import { postsApi } from '../../api/community/posts'
 import { levelOf } from '../../data/defaults'
 import type { CommunityLeaderboard } from '../../types'
 import UserAvatar from './UserAvatar.vue'
@@ -11,7 +11,7 @@ const data = ref<CommunityLeaderboard | null>(null)
 
 onMounted(async () => {
   try {
-    data.value = await communityApi.leaderboard()
+    data.value = await postsApi.leaderboard()
   } catch {
     /* 榜单加载失败不阻塞广场 */
   }

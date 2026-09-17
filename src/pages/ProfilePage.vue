@@ -6,7 +6,7 @@
  */
 import { onMounted, ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { communityApi } from '../api/community'
+import { usersApi } from '../api/community/users'
 import { TriangleAlert } from '@lucide/vue'
 import { COMMUNITY_BADGES } from '../data/defaults'
 import { sessionUser } from '../services/auth'
@@ -57,7 +57,7 @@ const monthMinutes = computed(() => (stats.value?.monthStudy.minutes ?? 0) % 60)
 // profile 与 stats 分开加载：私密主页（非本人）时 stats 会 403，但不阻塞资料卡与关注按钮渲染
 async function loadAll() {
   try {
-    profile.value = await communityApi.profile(userId)
+    profile.value = await usersApi.profile(userId)
   } catch (e) {
     if ((e as { status?: number } | null)?.status === 403) error.value = '对方设置了主页仅自己可见'
     else error.value = '用户不存在或已注销'
@@ -74,7 +74,7 @@ async function loadStats() {
   statsError.value = false
   stats.value = null
   try {
-    stats.value = await communityApi.stats(userId)
+    stats.value = await usersApi.stats(userId)
   } catch {
     statsError.value = true // 统计加载失败不阻塞主页展示，但明确告知失败
   }

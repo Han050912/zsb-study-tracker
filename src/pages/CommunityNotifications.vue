@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
-import { useCommunityStore } from '../stores/community'
+import { useNotificationStore } from '../stores/community'
 import type { CommunityNotification, NotificationType } from '../types'
 import NotificationCommentItem from '../components/community/NotificationCommentItem.vue'
 import NotificationLikeItem from '../components/community/NotificationLikeItem.vue'
@@ -10,7 +10,7 @@ import NotificationFollowItem from '../components/community/NotificationFollowIt
 import NotificationPartnerItem from '../components/community/NotificationPartnerItem.vue'
 import NotificationGenericItem from '../components/community/NotificationGenericItem.vue'
 
-const store = useCommunityStore()
+const store = useNotificationStore()
 const toast = useToast()
 
 /** 列表加载中：首屏与切筛选期间显示骨架屏，避免先闪「暂无通知」空态 */

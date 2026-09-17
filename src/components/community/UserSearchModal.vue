@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import Modal from '../Modal.vue'
 import UserAvatar from './UserAvatar.vue'
 import FollowButton from '../profile/FollowButton.vue'
-import { communityApi } from '../../api/community'
+import { usersApi } from '../../api/community/users'
 import type { UserLookupResult } from '../../types'
 
 defineProps<{ show: boolean }>()
@@ -26,7 +26,7 @@ async function search() {
   notFound.value = false
   error.value = false
   try {
-    result.value = await communityApi.lookup(key)
+    result.value = await usersApi.lookup(key)
   } catch (e) {
     if ((e as { status?: number } | null)?.status === 404) notFound.value = true
     else error.value = true

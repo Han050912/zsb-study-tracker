@@ -22,9 +22,9 @@ const iconCls = computed(() =>
 const ROUTES: Partial<Record<NotificationTargetType, string>> = {
   post: '/community/post',
   user: '/profile',
-  team: '/teams',
+  team: '/teams/squads',
   circle: '/community/circles',
-  partner: '/community/partners'
+  partner: '/teams?mode=partners'
 }
 const STATIC: NotificationTargetType[] = ['partner']
 

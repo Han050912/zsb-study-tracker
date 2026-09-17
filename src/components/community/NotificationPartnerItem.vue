@@ -37,7 +37,11 @@ function openPartners() {
     return
   }
   if (tt === 'partner_plan') {
-    router.push('/partners/plans')
+    router.push(
+      props.n.targetId
+        ? { name: 'partner-plan-detail', params: { planId: props.n.targetId } }
+        : { name: 'partner-plans' }
+    )
     return
   }
   if (tt === 'partner_review') {

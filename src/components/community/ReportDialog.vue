@@ -3,7 +3,7 @@ import { ref, watch } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
 import Modal from '../Modal.vue'
-import { communityApi } from '../../api/community'
+import { postsApi } from '../../api/community/posts'
 
 /** 举报弹窗：预设原因单选 + 补充说明（选「其他」时必填） */
 const props = withDefaults(
@@ -45,7 +45,7 @@ async function submit() {
   }
   submitting.value = true
   try {
-    await communityApi.report(props.targetType, props.targetId, reason.value, detail.value.trim() || undefined)
+    await postsApi.report(props.targetType, props.targetId, reason.value, detail.value.trim() || undefined)
     toast('举报已提交，感谢你的监督')
     emit('update:show', false)
     emit('reported')

@@ -5,7 +5,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { communityApi } from '../../api/community'
+import { postsApi } from '../../api/community/posts'
 import { formatMinutes } from '../../utils/date'
 import { levelOf } from '../../data/defaults'
 import type { ProgressBoardData } from '../../types'
@@ -16,7 +16,7 @@ const sub = ref<'weekMinutes' | 'monthProblems'>('weekMinutes')
 
 onMounted(async () => {
   try {
-    data.value = await communityApi.progressBoard()
+    data.value = await postsApi.progressBoard()
   } catch {
     /* 静默降级 */
   }

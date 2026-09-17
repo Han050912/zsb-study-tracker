@@ -3,7 +3,8 @@ import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
-import { communityApi, imageUrl } from '../api/community'
+import { moderationApi } from '../api/community/moderation'
+import { imageUrl } from '../api/community'
 import { feedbackApi } from '../api/feedback'
 import { fromNow } from '../utils/date'
 import { useBack } from '../composables/useBack'
@@ -73,7 +74,7 @@ onMounted(() => {
 async function load() {
   loading.value = true
   try {
-    const res = await communityApi.adminReports()
+    const res = await moderationApi.adminReports()
     reports.value = res.reports
     reportsHasMore.value = !!res.hasMore
   } catch (e) {
@@ -97,7 +98,7 @@ async function confirmResolve() {
   if (!confirming.value || submitting.value) return
   submitting.value = true
   try {
-    await communityApi.adminResolveReport(confirming.value.id, confirming.value.action, note.value.trim() || undefined)
+    await moderationApi.adminResolveReport(confirming.value.id, confirming.value.action, note.value.trim() || undefined)
     reports.value = reports.value.filter((r) => r.id !== confirming.value!.id)
     toast('已处理并通知当事人')
     confirming.value = null
@@ -117,7 +118,7 @@ const hotForm = ref({ text: '', tag: '', action: 'pin' as 'pin' | 'block' })
 async function loadHotTopics() {
   hotLoading.value = true
   try {
-    const res = await communityApi.adminHotTopics()
+    const res = await moderationApi.adminHotTopics()
     hotStats.value = res.stats
     hotOverrides.value = res.overrides
   } catch (e) {
@@ -129,7 +130,7 @@ async function loadHotTopics() {
 
 async function pinOrBlockHot(tag: string, action: 'pin' | 'block') {
   try {
-    await communityApi.adminAddHotTopic({ text: tag, tag, action })
+    await moderationApi.adminAddHotTopic({ text: tag, tag, action })
     toast(action === 'pin' ? '已置顶展示' : '已从自动统计屏蔽')
     await loadHotTopics()
   } catch (e) {
@@ -144,7 +145,7 @@ async function addHotTopic() {
     return
   }
   try {
-    await communityApi.adminAddHotTopic({ text: f.text.trim(), tag: f.tag.trim(), action: f.action })
+    await moderationApi.adminAddHotTopic({ text: f.text.trim(), tag: f.tag.trim(), action: f.action })
     hotForm.value = { text: '', tag: '', action: 'pin' }
     toast('已添加')
     await loadHotTopics()
@@ -155,7 +156,7 @@ async function addHotTopic() {
 
 async function removeHotTopic(id: string) {
   try {
-    await communityApi.adminDeleteHotTopic(id)
+    await moderationApi.adminDeleteHotTopic(id)
     hotOverrides.value = hotOverrides.value.filter((o) => o.id !== id)
     toast('已删除')
   } catch (e) {

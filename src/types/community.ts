@@ -73,6 +73,7 @@ export interface CommunityPost {
 
 /** 社区评论；parentId 为空为一级评论，否则为二级回复（最多二级） */
 export interface CommunityComment {
+  replyCount?: number
   id: string
   postId: string
   userId: string

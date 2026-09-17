@@ -1,11 +1,11 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { useCommunityStore } from '../stores/community'
+import { useNotificationStore } from '../stores/community'
 import { isLoggedIn } from '../services/auth'
-import { communityApi } from '../api/community'
+import { messagesApi } from '../api/community/messages'
 
 /** 未读轮询：登录后定时拉取社区未读通知数 + 消息未读数（实时红点）；切后台暂停、回前台立即补拉；退出/过期时停止轮询 */
 export function useUnreadPolling() {
-  const community = useCommunityStore()
+  const community = useNotificationStore()
 
   let unreadTimer: ReturnType<typeof setInterval> | null = null
   /** 本轮未读拉取的中止令牌（单飞）：新一轮发起前 abort 上一轮，旧轮结果作废不回写，
@@ -19,7 +19,7 @@ export function useUnreadPolling() {
     unreadController = controller
     void Promise.allSettled([
       community.fetchUnreadCount(),
-      communityApi.messageUnreadCount().then((r) => {
+      messagesApi.messageUnreadCount().then((r) => {
         // 旧轮已被新一轮 abort：响应晚到也作废，不覆盖最新一轮的数据
         if (controller.signal.aborted) return
         // 慢网下响应可能晚于登出到达，回写前校验登录态，避免显示上一账号的未读数

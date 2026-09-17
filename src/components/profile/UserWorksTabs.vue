@@ -5,7 +5,8 @@ import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
 import { useRouter } from 'vue-router'
 import type { CommunityPost } from '../../types'
-import { communityApi } from '../../api/community'
+import { usePostCollection } from '../../features/community/composables/usePostCollection'
+import { postsApi } from '../../api/community/posts'
 import PostCard from '../community/PostCard.vue'
 
 const props = defineProps<{ userId: string; isSelf: boolean }>()
@@ -13,7 +14,7 @@ const activeTab = defineModel<'posts' | 'likes'>('activeTab', { default: 'posts'
 const router = useRouter()
 const toast = useToast()
 
-const posts = ref<CommunityPost[]>([])
+const { posts, entities } = usePostCollection()
 const cursor = ref<string | null>(null)
 const loading = ref(false)
 const loadError = ref(false)
@@ -30,11 +31,9 @@ async function loadMore() {
   loadError.value = false
   try {
     const res =
-      tab === 'posts'
-        ? await communityApi.userPosts(props.userId, cursor.value)
-        : await communityApi.likedPosts(cursor.value)
+      tab === 'posts' ? await postsApi.userPosts(props.userId, cursor.value) : await postsApi.likedPosts(cursor.value)
     if (ticket !== loadTicket || tab !== activeTab.value) return // 已有更新请求或已切 tab，丢弃本次过期结果
-    posts.value.push(...res.posts)
+    posts.value = [...posts.value, ...res.posts]
     cursor.value = res.nextCursor
     loaded.value = true
   } catch {
@@ -67,14 +66,7 @@ onMounted(reset)
 /** 帖子点赞 toggle：计数口径同 community store likePost（赞踩互斥，点赞成功反向清踩）；先请求后改数，失败不改计数仅 toast */
 async function onLike(p: CommunityPost) {
   try {
-    const { liked } = await communityApi.toggleLike('post', p.id)
-    p.likedByMe = liked
-    p.likesCount = Math.max(0, p.likesCount + (liked ? 1 : -1))
-    // 后端点赞会反向取消踩（赞踩互斥），本地同步清除踩状态
-    if (liked && p.dislikedByMe) {
-      p.dislikedByMe = false
-      p.dislikesCount = Math.max(0, p.dislikesCount - 1)
-    }
+    await entities.likePost(p.id)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   }
@@ -83,13 +75,7 @@ async function onLike(p: CommunityPost) {
 /** 帖子踩 toggle：计数口径同 community store dislikePost（likeRevoked 时同步清赞）；先请求后改数，失败不改计数仅 toast */
 async function onDislike(p: CommunityPost) {
   try {
-    const res = await communityApi.dislike('post', p.id)
-    p.dislikedByMe = res.disliked
-    p.dislikesCount = Math.max(0, p.dislikesCount + (res.disliked ? 1 : -1))
-    if (res.likeRevoked) {
-      p.likedByMe = false
-      p.likesCount = Math.max(0, p.likesCount - 1)
-    }
+    await entities.dislikePost(p.id)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   }

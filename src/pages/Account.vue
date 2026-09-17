@@ -5,7 +5,7 @@ import { ChevronDown } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import { changePassword, passwordPolicyError, sessionUser } from '../services/auth'
 import { getErrorMessage } from '../utils/error'
-import { communityApi } from '../api/community'
+import { usersApi } from '../api/community/users'
 import type { CommunityUserProfile } from '../types'
 import Modal from '../components/Modal.vue'
 import ProfileHeader from '../components/profile/ProfileHeader.vue'
@@ -31,7 +31,7 @@ async function reloadProfile() {
   profileLoading.value = true
   profileError.value = false
   try {
-    profile.value = await communityApi.profile(myId.value)
+    profile.value = await usersApi.profile(myId.value)
   } catch {
     profileError.value = true
   } finally {

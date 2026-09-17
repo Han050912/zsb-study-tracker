@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRoute, useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { postsApi } from '../api/community/posts'
 import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import PostCard from '../components/community/PostCard.vue'
@@ -12,12 +12,12 @@ import UserProfileModal from '../components/community/UserProfileModal.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import { useBack } from '../composables/useBack'
 import { subjectLabel } from '../utils/subject'
-import type { CommunityPost } from '../types'
+import { usePostCollection } from '../features/community/composables/usePostCollection'
 
 /**
  * 知识点讨论区（P2-6）：以「科目 + 章节」为讨论单元的帖子流。
  * 讨论帖经 topicRef（'subjectId|chapterName'）标记归属，不进公共广场；
- * 复用 communityApi.feed(topicSubject, topicChapter) 拉取。
+ * 复用 postsApi.feed(topicSubject, topicChapter) 拉取。
  */
 const route = useRoute()
 const router = useRouter()
@@ -31,7 +31,7 @@ const topicRef = `${subjectId}|${chapterName}`
 
 const subject = computed(() => appStore.subjectMap[subjectId])
 
-const posts = ref<CommunityPost[]>([])
+const { posts, entities } = usePostCollection()
 const feedCursor = ref<string | null>(null)
 const loading = ref(true)
 const feedLoading = ref(false)
@@ -53,7 +53,7 @@ async function loadFeed(reset = false) {
   feedLoading.value = true
   feedError.value = ''
   try {
-    const res = await communityApi.feed({
+    const res = await postsApi.feed({
       topicSubject: subjectId,
       topicChapter: chapterName,
       cursor: reset ? null : feedCursor.value
@@ -80,9 +80,7 @@ async function likePost(id: string) {
   const p = posts.value.find((x) => x.id === id)
   if (!p) return
   try {
-    const { liked } = await communityApi.toggleLike('post', id)
-    p.likedByMe = liked
-    p.likesCount = Math.max(0, p.likesCount + (liked ? 1 : -1))
+    await entities.likePost(id)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   }

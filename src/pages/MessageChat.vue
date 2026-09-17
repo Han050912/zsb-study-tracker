@@ -4,7 +4,9 @@ import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useImageUpload } from '../composables/useImageUpload'
 import { useRoute, useRouter } from 'vue-router'
-import { communityApi, imageUrl, IMAGE_MAX_PER_MESSAGE } from '../api/community'
+import { messagesApi } from '../api/community/messages'
+import { usersApi } from '../api/community/users'
+import { imageUrl, IMAGE_MAX_PER_MESSAGE } from '../api/community'
 import { ImageOff, RefreshCw } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import ImageUploadPreview from '../components/community/ImageUploadPreview.vue'
@@ -56,7 +58,7 @@ let pollInFlight = false
 
 async function load(reset = false) {
   try {
-    const res = await communityApi.messagesWith(peerId, reset ? null : nextCursor.value)
+    const res = await messagesApi.messagesWith(peerId, reset ? null : nextCursor.value)
     // 打开/刷新即已读对方消息：本次标记数即时同步全局未读计数，无需等轮询
     if (res.markedRead > 0) window.dispatchEvent(new CustomEvent('message:read', { detail: res.markedRead }))
     if (reset) {
@@ -80,7 +82,7 @@ async function load(reset = false) {
     olderError.value = false
     // 会话列表接口拿不到对方名/头像，从资料卡补
     if (!peerName.value) {
-      const p = await communityApi.profile(peerId)
+      const p = await usersApi.profile(peerId)
       peerName.value = p.userName
       peerAvatar.value = p.avatar || ''
     }
@@ -159,7 +161,7 @@ onMounted(async () => {
   // 「打招呼」跳转：自动发送一条问候语（清除 query 防重复触发）
   if (route.query.greet === '1' && !messages.value.some((m) => m.fromMe && m.content === GREETING)) {
     try {
-      const m = await communityApi.sendMessage(peerId, GREETING)
+      const m = await messagesApi.sendMessage(peerId, GREETING)
       messages.value.unshift(m)
       await scrollToBottom()
     } catch {
@@ -268,7 +270,7 @@ async function send() {
   const urls = images.value.map((i) => i.url!).filter(Boolean)
   sending.value = true
   try {
-    const m = await communityApi.sendMessage(peerId, t, urls)
+    const m = await messagesApi.sendMessage(peerId, t, urls)
     messages.value.unshift(m) // 倒序数组头部插入（最新）
     text.value = ''
     reset()

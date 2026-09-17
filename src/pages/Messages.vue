@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { messagesApi } from '../api/community/messages'
 import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import { fromNow } from '../utils/date'
@@ -22,7 +22,7 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await communityApi.conversations()
+    const res = await messagesApi.conversations()
     conversations.value = res.conversations
   } catch (e) {
     loadError.value = getErrorMessage(e, '加载失败')

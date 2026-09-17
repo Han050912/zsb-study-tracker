@@ -3,11 +3,11 @@
  * 每周学习周报卡（P1）：上周学习数据惰性计算 + 一键分享到广场。
  * 上周无学习数据（时长与刷题均为 0）时不渲染，不打扰。
  */
-import { computed, onMounted, ref } from 'vue'
-import { communityApi } from '../../api/community'
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { postsApi } from '../../api/community/posts'
 import { formatMinutes } from '../../utils/date'
 import { useAppStore } from '../../stores/app'
-import PostComposer from './PostComposer.vue'
+const PostComposer = defineAsyncComponent(() => import('./PostComposer.vue'))
 import type { WeeklyReport } from '../../types'
 
 const store = useAppStore()
@@ -15,7 +15,7 @@ const data = ref<WeeklyReport | null>(null)
 
 onMounted(async () => {
   try {
-    data.value = await communityApi.weeklyReport()
+    data.value = await postsApi.weeklyReport()
   } catch {
     /* 静默降级 */
   }
@@ -86,6 +86,7 @@ function openShare() {
       <span v-if="daysLeft != null && daysLeft > 0">距考试 {{ daysLeft }} 天</span>
     </div>
     <PostComposer
+      v-if="showComposer"
       v-model:show="showComposer"
       type="checkin"
       :preset-content="composerContent"

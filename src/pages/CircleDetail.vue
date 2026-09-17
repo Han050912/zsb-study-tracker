@@ -4,7 +4,8 @@ import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { circlesApi } from '../api/community/circles'
+import { postsApi } from '../api/community/posts'
 import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
@@ -12,7 +13,8 @@ import UserAvatar from '../components/community/UserAvatar.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import { useBack } from '../composables/useBack'
-import type { CircleDetail, CommunityPost } from '../types'
+import type { CircleDetail } from '../types'
+import { usePostCollection } from '../features/community/composables/usePostCollection'
 
 /**
  * 圈子详情：信息头 + 成员列表 + 圈内帖子流（局部管理，不进广场 store）。
@@ -26,7 +28,7 @@ const confirm = useConfirm()
 const circleId = route.params.id as string
 
 const detail = ref<CircleDetail | null>(null)
-const posts = ref<CommunityPost[]>([])
+const { posts, entities } = usePostCollection()
 const feedCursor = ref<string | null>(null)
 const loading = ref(true)
 const feedLoading = ref(false)
@@ -37,7 +39,7 @@ const isActiveMember = computed(() => circle.value?.myStatus === 'owner' || circ
 
 onMounted(async () => {
   try {
-    detail.value = await communityApi.circleDetail(circleId)
+    detail.value = await circlesApi.circleDetail(circleId)
   } catch (e) {
     toast(getErrorMessage(e, '圈子不存在'))
     router.replace('/community/circles')
@@ -53,7 +55,7 @@ async function loadFeed(reset = false) {
   feedLoading.value = true
   feedError.value = ''
   try {
-    const res = await communityApi.feed({ circle: circleId, cursor: reset ? null : feedCursor.value })
+    const res = await postsApi.feed({ circle: circleId, cursor: reset ? null : feedCursor.value })
     posts.value = reset ? res.posts : [...posts.value, ...res.posts]
     feedCursor.value = res.nextCursor
   } catch (e) {
@@ -71,7 +73,7 @@ async function toggleJoin() {
   if (!circle.value || joinSubmitting.value) return
   joinSubmitting.value = true
   try {
-    const res = await communityApi.joinCircle(circleId)
+    const res = await circlesApi.joinCircle(circleId)
     const c = circle.value
     if (res.status === 'active') {
       c.myStatus = 'member'
@@ -87,7 +89,7 @@ async function toggleJoin() {
       if (!c.isPublic) posts.value = [] // 审核圈退出后不可再看内容
     }
     // 成员列表刷新
-    detail.value = await communityApi.circleDetail(circleId)
+    detail.value = await circlesApi.circleDetail(circleId)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   } finally {
@@ -102,8 +104,8 @@ async function approve(userId: string) {
   if (acting.value[userId]) return
   acting.value[userId] = true
   try {
-    await communityApi.approveCircleMember(circleId, userId)
-    detail.value = await communityApi.circleDetail(circleId)
+    await circlesApi.approveCircleMember(circleId, userId)
+    detail.value = await circlesApi.circleDetail(circleId)
     toast('已通过')
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
@@ -117,8 +119,8 @@ async function removeMember(userId: string, name: string) {
   if (acting.value[userId]) return
   acting.value[userId] = true
   try {
-    await communityApi.removeCircleMember(circleId, userId)
-    detail.value = await communityApi.circleDetail(circleId)
+    await circlesApi.removeCircleMember(circleId, userId)
+    detail.value = await circlesApi.circleDetail(circleId)
     toast('已移除')
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
@@ -138,9 +140,7 @@ async function likePost(id: string) {
   const p = posts.value.find((x) => x.id === id)
   if (!p) return
   try {
-    const { liked } = await communityApi.toggleLike('post', id)
-    p.likedByMe = liked
-    p.likesCount = Math.max(0, p.likesCount + (liked ? 1 : -1))
+    await entities.likePost(id)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   }

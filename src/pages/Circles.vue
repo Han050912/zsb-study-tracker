@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { circlesApi } from '../api/community/circles'
 import { useBack } from '../composables/useBack'
 import Modal from '../components/Modal.vue'
 import type { CommunityCircle } from '../types'
@@ -18,7 +18,7 @@ const loading = ref(true)
 
 onMounted(async () => {
   try {
-    const res = await communityApi.circles()
+    const res = await circlesApi.circles()
     circles.value = res.circles
   } catch (e) {
     toast(getErrorMessage(e, '加载失败'))
@@ -43,7 +43,7 @@ async function submitCreate() {
   if (creating.value) return
   creating.value = true
   try {
-    const c = await communityApi.createCircle({
+    const c = await circlesApi.createCircle({
       name,
       description: createDesc.value.trim(),
       isPublic: createPublic.value

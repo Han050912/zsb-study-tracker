@@ -8,13 +8,13 @@ import RelationTag from './RelationTag.vue'
 import LikeButton from './LikeButton.vue'
 import { imageUrl } from '../../api/community'
 import { fromNow } from '../../utils/date'
-import { useCommunityStore } from '../../stores/community'
+import { usePostStore } from '../../stores/community'
 import type { CommunityNotification } from '../../types'
 
 const props = defineProps<{ n: CommunityNotification }>()
 const emit = defineEmits<{ read: [] }>()
 const router = useRouter()
-const store = useCommunityStore()
+const store = usePostStore()
 const toast = useToast()
 
 function openProfile() {

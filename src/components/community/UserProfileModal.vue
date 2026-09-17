@@ -7,7 +7,8 @@ import { useRouter } from 'vue-router'
 import Modal from '../Modal.vue'
 import UserAvatar from './UserAvatar.vue'
 import FollowButton from '../profile/FollowButton.vue'
-import { communityApi } from '../../api/community'
+import { usersApi } from '../../api/community/users'
+import { moderationApi } from '../../api/community/moderation'
 import { COMMUNITY_BADGES, levelOf } from '../../data/defaults'
 import { isAdmin, sessionUser, goLogin, requireLogin } from '../../services/auth'
 import { fromNow } from '../../utils/date'
@@ -53,7 +54,7 @@ watch(
     notFound.value = false
     loading.value = true
     try {
-      const result = await communityApi.profile(props.userId)
+      const result = await usersApi.profile(props.userId)
       if (ticket !== loadTicket) return
       profile.value = result
       expertiseInput.value = result.expertise
@@ -98,7 +99,7 @@ async function grantVerify() {
   if (!profile.value || verifySubmitting.value) return
   verifySubmitting.value = true
   try {
-    const res = await communityApi.adminVerifyUser(props.userId, expertise)
+    const res = await moderationApi.adminVerifyUser(props.userId, expertise)
     profile.value.verified = true
     profile.value.expertise = res.expertise
     toast('已授予专家认证')
@@ -114,7 +115,7 @@ async function revokeVerify() {
   if (!(await confirm(`确认撤销 ${profile.value.userName} 的专家认证？`))) return
   verifySubmitting.value = true
   try {
-    await communityApi.adminUnverifyUser(props.userId)
+    await moderationApi.adminUnverifyUser(props.userId)
     profile.value.verified = false
     profile.value.expertise = ''
     expertiseInput.value = ''

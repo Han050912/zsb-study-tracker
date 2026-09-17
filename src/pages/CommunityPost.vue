@@ -1,391 +1,78 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onMounted, ref, type Ref } from 'vue'
-import { getErrorMessage } from '../utils/error'
-import { useToast } from '../composables/useToast'
-import { useConfirm } from '../composables/useConfirm'
-import { useRoute, useRouter } from 'vue-router'
-import { useCommunityStore } from '../stores/community'
-import { communityApi } from '../api/community'
-import { sessionUser, isAdmin, requireLogin } from '../services/auth'
-import type { CommunityComment, CommunityPost } from '../types'
+import { usePostDetail } from '../features/community/composables/usePostDetail'
+import AsyncState from '../shared/components/AsyncState.vue'
 import PostCard from '../components/community/PostCard.vue'
 import CommentItem from '../components/community/CommentItem.vue'
 import CommentInput from '../components/community/CommentInput.vue'
 import Lightbox from '../components/community/Lightbox.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
 import UserProfileModal from '../components/community/UserProfileModal.vue'
-import { useBack } from '../composables/useBack'
-
-const route = useRoute()
-const router = useRouter()
-const { goBack } = useBack()
-const store = useCommunityStore()
-const toast = useToast()
-const confirm = useConfirm()
-/** 侧边栏是否折叠（App.vue 注入），用于底部回复框与主内容区同列对齐 */
-const navCollapsed = inject<Ref<boolean>>('navCollapsed', ref(false))
-
-const postId = route.params.id as string
-const post = ref<CommunityPost | null>(null)
-const comments = ref<CommunityComment[]>([])
-const loading = ref(true)
-const notFound = ref(false)
-/** 通知跳转锚定的评论 id（经 ?comment= 查询参数进入），用于滚动定位与高亮 */
-const highlightCommentId = ref('')
-
-onMounted(async () => {
-  try {
-    const d = await communityApi.post(postId)
-    post.value = d.post
-    comments.value = d.comments
-    const anchor = typeof route.query.comment === 'string' ? route.query.comment : ''
-    if (anchor) await anchorToComment(anchor)
-  } catch {
-    notFound.value = true
-  } finally {
-    loading.value = false
-  }
-})
-
-/** 滚动定位并高亮指定评论（通知跳转锚定；二级回复先展开其一级评论再定位；query reply=1 时自动进入回复态） */
-async function anchorToComment(id: string) {
-  const c = findComment(id)
-  if (!c) return
-  if (c.parentId) expandedReplies.value = new Set([...expandedReplies.value, c.parentId])
-  highlightCommentId.value = id
-  await nextTick()
-  document.getElementById(`comment-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  if (route.query.reply === '1') reply(c)
-}
-
-const isMine = computed(() => post.value?.userId === sessionUser.value?.id)
-const canDeletePost = computed(() => isMine.value || isAdmin.value)
-
-/** 评论排序：热度（默认，抖音习惯）或最新 */
-const commentSort = ref<'hot' | 'latest'>('hot')
-/** 已展开回复的一级评论 id 集合（二级回复默认折叠，抖音式） */
-const expandedReplies = ref(new Set<string>())
-function toggleReplies(id: string) {
-  const s = new Set(expandedReplies.value)
-  if (s.has(id)) s.delete(id)
-  else s.add(id)
-  expandedReplies.value = s
-}
-
-/** 一级评论 + 二级回复树（回复的 parentId 始终指向一级评论）；最佳答案置顶，其余按热度/时间排序 */
-const commentTree = computed(() => {
-  const roots = comments.value.filter((c) => !c.parentId)
-  const byParent = new Map<string, CommunityComment[]>()
-  for (const c of comments.value) {
-    if (!c.parentId) continue
-    const list = byParent.get(c.parentId) || []
-    list.push(c)
-    byParent.set(c.parentId, list)
-  }
-  const accepted = roots.filter((c) => c.isAccepted)
-  const others = roots.filter((c) => !c.isAccepted)
-  others.sort((a, b) =>
-    commentSort.value === 'hot' ? b.likesCount - a.likesCount || b.createdAt - a.createdAt : b.createdAt - a.createdAt
-  )
-  return [...accepted, ...others].map((r) => ({ ...r, replies: byParent.get(r.id) || [] }))
-})
-
-function findComment(id: string): CommunityComment | undefined {
-  return comments.value.find((c) => c.id === id)
-}
-
-// ---- 点赞 ----
-async function likePost() {
-  if (requireLogin(router)) return
-  if (!post.value) return
-  const liked = await store.likePost(postId).catch((e) => {
-    toast(getErrorMessage(e, '操作失败'))
-    return null
-  })
-  if (liked === null) return
-  post.value.likedByMe = liked
-  post.value.likesCount = Math.max(0, post.value.likesCount + (liked ? 1 : -1))
-}
-
-async function likeComment(c: CommunityComment) {
-  if (requireLogin(router)) return
-  const liked = await store.likeComment(c.id).catch((e) => {
-    toast(getErrorMessage(e, '操作失败'))
-    return null
-  })
-  if (liked === null) return
-  // 一级评论在 commentTree 中被展开为副本（携带 replies），必须更新原始数组中的对象
-  const target = findComment(c.id)
-  if (target) {
-    target.likedByMe = liked
-    target.likesCount = Math.max(0, target.likesCount + (liked ? 1 : -1))
-  }
-}
-
-// ---- 踩 ----
-async function dislikePost() {
-  if (requireLogin(router)) return
-  if (!post.value) return
-  const res = await store.dislikePost(postId).catch((e) => {
-    toast(getErrorMessage(e, '操作失败'))
-    return null
-  })
-  if (res === null) return
-  post.value.dislikedByMe = res.disliked
-  post.value.dislikesCount = Math.max(0, post.value.dislikesCount + (res.disliked ? 1 : -1))
-  if (res.likeRevoked) {
-    post.value.likedByMe = false
-    post.value.likesCount = Math.max(0, post.value.likesCount - 1)
-  }
-}
-
-async function dislikeComment(c: CommunityComment) {
-  if (requireLogin(router)) return
-  const res = await store.dislikeComment(c.id).catch((e) => {
-    toast(getErrorMessage(e, '操作失败'))
-    return null
-  })
-  if (res === null) return
-  const target = findComment(c.id)
-  if (target) {
-    target.dislikedByMe = res.disliked
-    target.dislikesCount = Math.max(0, target.dislikesCount + (res.disliked ? 1 : -1))
-    if (res.likeRevoked) {
-      target.likedByMe = false
-      target.likesCount = Math.max(0, target.likesCount - 1)
-    }
-  }
-}
-
-// ---- 评论 / 回复 ----
-/** 发送时的 parentId（回复二级评论时仍指向其一级评论，最多二级） */
-const replyTarget = ref<CommunityComment | null>(null)
-/** 用户实际点击的评论（用于高亮锚定与「正在回复 @xxx」提示） */
-const replySource = ref<CommunityComment | null>(null)
-const commentInputRef = ref<{ focus: () => void; reset: () => void } | null>(null)
-
-function reply(c: CommunityComment) {
-  if (requireLogin(router)) return
-  // 重复点击同一条评论：保持现有回复状态，不重置输入
-  if (replySource.value?.id === c.id) return
-  replySource.value = c
-  replyTarget.value = c.parentId ? findComment(c.parentId) || c : c
-  // 聚焦输入框，用户直接输入回复内容（不再自动填入 @用户名）
-  commentInputRef.value?.focus()
-}
-
-function cancelReply() {
-  replyTarget.value = null
-  replySource.value = null
-}
-
-/** 评论提交中：承载 AI 复审约 1-3s 延迟，禁用发送按钮防重复提交 */
-const commentSubmitting = ref(false)
-
-/**
- * 本页详情帖的评论计数增减。详情帖（communityApi.post()）与 store.posts 中的列表条目是两个不同对象，
- * store 的评论动作只同步列表条目，本页必须**无条件**同步自己持有的 post.commentsCount，
- * 否则帖子在广场列表时详情页计数会一直不动（两处显示不一致）。
- */
-function bumpCommentsCount(delta: number) {
-  if (post.value) post.value.commentsCount = Math.max(0, post.value.commentsCount + delta)
-}
-
-async function send(text: string, imageUrls: string[]) {
-  if (requireLogin(router)) return
-  if (commentSubmitting.value) return
-  commentSubmitting.value = true
-  try {
-    const c = await store.postComment(postId, text, replyTarget.value?.id, imageUrls)
-    comments.value.push(c)
-    bumpCommentsCount(1) // store 同步广场列表条目，本页详情帖各自更新，两处计数保持一致
-    replyTarget.value = null
-    replySource.value = null
-    // 发送成功后清空输入框（失败时保留用户输入，避免重打内容）
-    commentInputRef.value?.reset()
-  } catch (e) {
-    toast(getErrorMessage(e, '评论失败'))
-  } finally {
-    commentSubmitting.value = false
-  }
-}
-
-async function removeComment(c: CommunityComment) {
-  if (!(await confirm('确认删除这条评论？', { danger: true }))) return
-  const removed = 1 + (c.replies?.length ?? 0)
-  try {
-    await store.removeComment(c.id, postId, removed)
-    // 本地移除该评论及其回复
-    const ids = new Set([c.id, ...(c.replies?.map((r) => r.id) ?? [])])
-    comments.value = comments.value.filter((x) => !ids.has(x.id) && x.parentId !== c.id)
-    bumpCommentsCount(-removed) // 同发表：store 回退列表条目，本页详情帖各自回退
-    // 删除的若为最佳答案：服务端级联已解除采纳并回退为待解答，本地同步（含广场列表副本）
-    if (c.isAccepted && post.value) {
-      post.value.acceptedAnswerId = undefined
-      post.value.isResolved = false
-      const p = store.posts.find((x) => x.id === postId)
-      if (p) {
-        p.acceptedAnswerId = undefined
-        p.isResolved = false
-      }
-    }
-  } catch (e) {
-    toast(getErrorMessage(e, '删除失败'))
-  }
-}
-
-// ---- 删帖 ----
-async function removePost() {
-  if (!(await confirm('确认删除这篇帖子？评论和点赞将一并删除。', { danger: true }))) return
-  try {
-    await store.removePost(postId)
-    toast('帖子已删除')
-    router.replace('/community')
-  } catch (e) {
-    toast(getErrorMessage(e, '删除失败'))
-  }
-}
-
-// ---- 图片灯箱 ----
-const showLightbox = ref(false)
-const lightboxIndex = ref(0)
-function openLightbox(i: number) {
-  lightboxIndex.value = i
-  showLightbox.value = true
-}
-
-// ---- 举报 ----
-const showReport = ref(false)
-const reportTarget = ref<{ type: 'post' | 'comment'; id: string }>({ type: 'post', id: '' })
-function openReport(type: 'post' | 'comment', id: string) {
-  if (requireLogin(router)) return
-  reportTarget.value = { type, id }
-  showReport.value = true
-}
-
-// ---- 提问帖标记解决 ----
-async function toggleResolve() {
-  if (requireLogin(router)) return
-  if (!post.value) return
-  try {
-    const { isResolved } = await communityApi.resolvePost(postId)
-    post.value.isResolved = isResolved
-    const p = store.posts.find((x) => x.id === postId)
-    if (p) p.isResolved = isResolved
-    toast(isResolved ? '已标记为已解答' : '已重新开放为待解答')
-  } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
-  }
-}
-
-// ---- 最佳答案采纳（仅提问帖楼主；仅一级评论；不能采纳自己的评论） ----
-const canAccept = computed(() => !!post.value && post.value.type === 'question' && isMine.value && !post.value.isHidden)
-
-function acceptVisible(c: CommunityComment) {
-  return canAccept.value && !c.parentId && !c.isHidden && c.userId !== sessionUser.value?.id
-}
-
-const accepting = ref(false) // 采纳请求在途标记：防止双击并发采纳导致积分重复发放
-
-async function accept(c: CommunityComment) {
-  if (requireLogin(router)) return
-  if (!post.value || accepting.value) return
-  const current = post.value.acceptedAnswerId
-  if (current === c.id) {
-    if (!(await confirm('取消采纳这条最佳答案？双方将扣除相应积分。'))) return
-  } else if (current) {
-    if (!(await confirm('改采纳这条评论？原最佳答案的采纳将被撤销。'))) return
-  } else {
-    if (!(await confirm(`采纳 @${c.userName} 的回答为最佳答案？对方 +10 积分，你 +3 积分。`))) return
-  }
-  accepting.value = true
-  try {
-    const res = await store.acceptAnswer(postId, c.id)
-    post.value.acceptedAnswerId = res.acceptedAnswerId ?? undefined
-    post.value.isResolved = res.isResolved
-    // 同步评论标记：旧采纳清除，新采纳置位（commentTree 为展开副本，必须改原始数组）
-    for (const x of comments.value) x.isAccepted = x.id === res.acceptedAnswerId
-    toast(res.acceptedAnswerId ? '已采纳最佳答案' : '已取消采纳，帖子重新开放为待解答')
-  } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
-  } finally {
-    accepting.value = false
-  }
-}
-
-// ---- 评论图片灯箱 ----
-const showCommentLightbox = ref(false)
-const commentLightboxIndex = ref(0)
-const commentLightboxUrls = ref<string[]>([])
-function openCommentLightbox(c: CommunityComment, i: number) {
-  commentLightboxUrls.value = c.imageUrls
-  commentLightboxIndex.value = i
-  showCommentLightbox.value = true
-}
-
-// ---- 用户资料卡 ----
-const showProfile = ref(false)
-const profileUserId = ref('')
-function openProfile(userId: string) {
-  // 资料卡后端公开（auth:false）；访客可见性由弹窗内 401 引导处理
-  profileUserId.value = userId
-  showProfile.value = true
-}
-
-// ---- 管理员操作 ----
-async function togglePin() {
-  if (!post.value) return
-  try {
-    const pinned = await store.adminPinPost(postId)
-    post.value.isPinned = pinned
-    toast(pinned ? '已置顶' : '已取消置顶')
-  } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
-  }
-}
-
-async function toggleFeature() {
-  if (!post.value) return
-  try {
-    const featured = await store.adminFeaturePost(postId)
-    post.value.isFeatured = featured
-    toast(featured ? '已加精' : '已取消加精')
-  } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
-  }
-}
-
-async function toggleHidePost() {
-  if (!post.value) return
-  try {
-    const hidden = await store.adminHidePost(postId)
-    post.value.isHidden = hidden
-    toast(hidden ? '已隐藏' : '已取消隐藏')
-  } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
-  }
-}
-
-async function toggleHideComment(c: CommunityComment) {
-  try {
-    const hidden = await store.adminHideComment(c.id)
-    const target = findComment(c.id)
-    if (target) target.isHidden = hidden
-    toast(hidden ? '评论已隐藏' : '评论已恢复')
-  } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
-  }
-}
+const {
+  post,
+  loading,
+  notFound,
+  highlightCommentId,
+  loadError,
+  commentError,
+  commentsLoading,
+  commentCursor,
+  replyCursors,
+  replyErrors,
+  replyLoading,
+  loadPost,
+  loadComments,
+  retryComments,
+  loadReplies,
+  isMine,
+  canDeletePost,
+  commentSort,
+  expandedReplies,
+  toggleReplies,
+  commentTree,
+  likePost,
+  likeComment,
+  dislikePost,
+  dislikeComment,
+  replySource,
+  commentInputRef,
+  reply,
+  cancelReply,
+  commentSubmitting,
+  send,
+  removeComment,
+  removePost,
+  showLightbox,
+  lightboxIndex,
+  openLightbox,
+  showReport,
+  reportTarget,
+  openReport,
+  toggleResolve,
+  acceptVisible,
+  accept,
+  showCommentLightbox,
+  commentLightboxIndex,
+  commentLightboxUrls,
+  openCommentLightbox,
+  showProfile,
+  profileUserId,
+  openProfile,
+  togglePin,
+  toggleFeature,
+  toggleHidePost,
+  toggleHideComment,
+  goBack
+} = usePostDetail()
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4 pb-36 md:pb-32">
+  <div class="collaboration-page p-4 md:p-6 max-w-3xl mx-auto space-y-4">
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2.5" @click="goBack">← 返回</button>
       <h1 class="page-title">帖子详情</h1>
     </div>
 
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+    <AsyncState v-if="loading || loadError" :loading="loading" :error="loadError" @retry="loadPost" />
     <div v-else-if="notFound" class="card text-center py-10 text-slate-400 text-sm">
       <p>帖子不存在或已被删除</p>
     </div>
@@ -448,7 +135,12 @@ async function toggleHideComment(c: CommunityComment) {
           </div>
         </div>
 
-        <div v-if="!commentTree.length" class="text-center text-xs text-slate-400 py-4">暂无评论，来抢沙发～</div>
+        <div
+          v-if="!commentTree.length && !commentsLoading && !commentError"
+          class="text-center text-xs text-slate-400 py-4"
+        >
+          暂无评论，来抢沙发～
+        </div>
         <div v-for="c in commentTree" :key="c.id" :id="`comment-${c.id}`" class="space-y-3 scroll-mt-24">
           <CommentItem
             :comment="c"
@@ -467,13 +159,13 @@ async function toggleHideComment(c: CommunityComment) {
             @profile="openProfile(c.userId)"
           />
           <!-- 二级回复：默认折叠，点击展开（抖音式） -->
-          <template v-if="c.replies?.length">
+          <template v-if="c.replyCount || c.replies?.length">
             <button
               v-if="!expandedReplies.has(c.id)"
               class="text-xs text-slate-400 hover:text-primary-500 ml-11"
               @click="toggleReplies(c.id)"
             >
-              展开 {{ c.replies.length }} 条回复 ↓
+              展开 {{ c.replyCount ?? c.replies.length }} 条回复 ↓
             </button>
             <div v-else class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
               <div v-for="r in c.replies" :key="r.id" :id="`comment-${r.id}`" class="scroll-mt-24">
@@ -492,6 +184,16 @@ async function toggleHideComment(c: CommunityComment) {
                   @profile="openProfile(r.userId)"
                 />
               </div>
+              <p v-if="replyErrors[c.id]" role="status" class="text-sm text-red-500">{{ replyErrors[c.id] }}</p>
+              <button
+                v-if="!(c.id in replyCursors) || replyCursors[c.id] || replyErrors[c.id]"
+                class="btn-ghost"
+                :disabled="replyLoading[c.id]"
+                @click="loadReplies(c.id)"
+              >
+                {{ replyErrors[c.id] ? '重试回复' : '更多回复' }}
+              </button>
+              <p v-if="replyLoading[c.id]" role="status" class="text-sm text-slate-500">正在加载回复…</p>
               <button class="text-xs text-slate-400 hover:text-primary-500" @click="toggleReplies(c.id)">
                 收起回复 ↑
               </button>
@@ -500,6 +202,10 @@ async function toggleHideComment(c: CommunityComment) {
         </div>
       </div>
 
+      <AsyncState v-if="commentError" :error="commentError" @retry="retryComments" />
+      <button v-if="commentCursor" class="btn-ghost w-full" :disabled="commentsLoading" @click="loadComments()">
+        {{ commentsLoading ? '正在加载评论' : '加载更多评论' }}
+      </button>
       <Lightbox v-model:show="showLightbox" v-model:index="lightboxIndex" :urls="post.imageUrls" />
       <Lightbox v-model:show="showCommentLightbox" v-model:index="commentLightboxIndex" :urls="commentLightboxUrls" />
       <ReportDialog v-model:show="showReport" :target-type="reportTarget.type" :target-id="reportTarget.id" />
@@ -508,8 +214,8 @@ async function toggleHideComment(c: CommunityComment) {
       <!-- 抖音式：评论输入框固定在视口底部（移动端避开底导航）；
            白色背景条在 max-w-2xl 内再缩进 页面padding+cardpadding，与评论区 card 同栏宽对齐
            （移动端 px-8=32，桌面 px-6=24），并加圆角与上阴影与 card 视觉协调 -->
-      <div class="fixed bottom-16 md:bottom-0 inset-x-0 z-20" :class="navCollapsed ? 'md:left-16' : 'md:left-56'">
-        <div class="max-w-2xl mx-auto px-8 md:px-6">
+      <div class="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] md:bottom-0 z-20 pb-safe-bottom">
+        <div class="w-full">
           <div
             class="px-4 py-2 bg-white dark:bg-slate-800 border-t border-x border-slate-100 dark:border-slate-700 rounded-t-2xl shadow-[0_-2px_8px_rgba(0,0,0,0.04)]"
           >

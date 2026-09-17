@@ -2,7 +2,7 @@
 /** 粉丝/关注/互关关系列表页：路由 /follows/:id?tab=fans|following|mutual；游标分页 + 切 tab 令牌防竞态 */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { usersApi } from '../api/community/users'
 import UserRelationItem from '../components/profile/UserRelationItem.vue'
 import { useBack } from '../composables/useBack'
 import { sessionUser } from '../services/auth'
@@ -29,9 +29,9 @@ const loading = ref(false)
 const loadError = ref(false)
 
 const FETCHERS = {
-  fans: communityApi.followers,
-  following: communityApi.following,
-  mutual: communityApi.mutualFollows
+  fans: usersApi.followers,
+  following: usersApi.following,
+  mutual: usersApi.mutualFollows
 } as const
 const TITLES = { fans: '粉丝', following: '关注', mutual: '互关' } as const
 const EMPTY_TEXTS = {
@@ -89,7 +89,7 @@ watch(
 onMounted(async () => {
   loadMore()
   try {
-    ownerName.value = (await communityApi.profile(userId)).userName
+    ownerName.value = (await usersApi.profile(userId)).userName
   } catch {
     /* 标题降级为 我的/TA 的 */
   }

@@ -4,7 +4,7 @@ import { computed, ref } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
 import { useRouter } from 'vue-router'
-import { communityApi } from '../../api/community'
+import { usersApi } from '../../api/community/users'
 import { requireLogin } from '../../services/auth'
 
 const props = defineProps<{ userId: string; followedByMe: boolean; followsMe?: boolean }>()
@@ -24,7 +24,7 @@ async function toggle() {
   const next = !props.followedByMe
   emit('change', next) // 乐观更新
   try {
-    const res = await communityApi.follow(props.userId)
+    const res = await usersApi.follow(props.userId)
     if (res.following !== next) emit('change', res.following) // 以服务端为准纠偏
   } catch (e) {
     emit('change', !next) // 回滚
