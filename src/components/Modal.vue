@@ -2,7 +2,10 @@
 import { ref, useId } from 'vue'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
-const props = withDefaults(defineProps<{ title: string; show: boolean; elevated?: boolean }>(), { elevated: false })
+const props = withDefaults(defineProps<{ title: string; show: boolean; elevated?: boolean; panelClass?: string }>(), {
+  elevated: false,
+  panelClass: ''
+})
 const emit = defineEmits<{ close: [] }>()
 
 /** 对话框面板（Teleport 内的真实 HTMLElement）：焦点陷阱与 aria-labelledby 的锚点 */
@@ -34,6 +37,7 @@ const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(() => emit('clo
           aria-modal="true"
           :aria-labelledby="titleId"
           tabindex="-1"
+          :class="panelClass"
           class="bg-white dark:bg-slate-800 w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[88vh] flex flex-col animate-pop outline-none"
         >
           <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-700">

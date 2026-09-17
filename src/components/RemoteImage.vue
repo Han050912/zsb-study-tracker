@@ -9,22 +9,28 @@ import { resolveErrorImageUrl } from '../api/errorImages'
  * 加载中显示骨架占位、失败显示占位提示；点击抛出已解析的真实 URL 供放大查看。
  * 注意：组件为多根节点（fragment），class 不会自动透传；调用方须用 imgClass 传样式类。
  */
-const props = defineProps<{ image: string; alt?: string; imgClass?: string }>()
+const props = defineProps<{
+  image?: string
+  src?: string
+  alt?: string
+  imgClass?: string
+  loading?: 'lazy' | 'eager'
+}>()
 const emit = defineEmits<{ open: [url: string] }>()
 
-const src = ref('')
+const resolvedSrc = ref('')
 const imgEl = ref<HTMLImageElement | null>(null)
 const failed = ref(false)
 let seq = 0
 
 async function resolve() {
   const s = ++seq
-  src.value = ''
+  resolvedSrc.value = ''
   failed.value = false
   try {
-    const url = await resolveErrorImageUrl(props.image)
+    const url = props.src || (props.image ? await resolveErrorImageUrl(props.image) : '')
     if (s !== seq) return
-    src.value = url
+    resolvedSrc.value = url
   } catch {
     if (s !== seq) return
     failed.value = true
@@ -32,28 +38,31 @@ async function resolve() {
 }
 
 onMounted(resolve)
-watch(() => props.image, resolve)
+watch(() => [props.image, props.src], resolve)
 
 /** 仅在事件来自当前绑定元素时置失败态，避免已卸载旧元素迟到的 error 误伤新图 */
 function onDecodeError(e: Event) {
   if (e.target !== imgEl.value) return
-  src.value = ''
+  resolvedSrc.value = ''
   failed.value = true
 }
 </script>
 
 <template>
   <img
-    v-if="src"
+    v-if="resolvedSrc"
     ref="imgEl"
-    :src="src"
+    :src="resolvedSrc"
     :alt="alt || ''"
+    :loading="loading"
     :class="imgClass"
     @error="onDecodeError"
-    @click="emit('open', src)"
+    @click="emit('open', resolvedSrc)"
   />
   <div
     v-else-if="failed"
+    role="img"
+    :aria-label="`${alt || '图片'}加载失败`"
     :class="imgClass"
     class="flex items-center justify-center text-slate-400 bg-slate-50 dark:bg-slate-700/50"
   >

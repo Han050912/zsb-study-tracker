@@ -1,3 +1,4 @@
+@import './shared/styles/collaboration.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
