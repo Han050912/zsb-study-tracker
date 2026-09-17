@@ -39,7 +39,9 @@ jobs:
         run: npm run format:check
 
       - name: Unit tests
-        run: npm test
+        run: |
+          npm ci --prefix worker
+          npm test
 
       - name: Build
         run: npx vite build

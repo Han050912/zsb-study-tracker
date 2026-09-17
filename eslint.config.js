@@ -17,6 +17,7 @@ export default tseslint.config(
       'docs/**',
       // 工具生成的工作目录（已被 .gitignore 忽略），不参与 lint
       '.superpowers/**',
+      '.cache/**',
       '.codebuddy/**'
     ]
   },

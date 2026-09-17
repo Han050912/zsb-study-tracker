@@ -9,7 +9,6 @@ worker/package-lock.json
 .superpowers/
 .codebuddy/
 gitlog/
-.claude/
 .codex/
 .opensquilla/
 worker/.wrangler/
