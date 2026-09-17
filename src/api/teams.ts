@@ -1,9 +1,23 @@
 import { request } from './client'
-import type { StudyTeam, TeamDetail, ChallengeType, TeamJoinRequest } from '../types'
+import type { StudyTeam, TeamDetail, ChallengeType, TeamJoinRequest, TeamChallenge } from '../types'
 
 /** 获取公开小组列表或我加入的小组 */
-export async function getTeams(myTeams = false): Promise<StudyTeam[]> {
-  return request<StudyTeam[]>(`/api/teams?my=${myTeams}`)
+export interface SquadQuery {
+  filter: 'my' | 'public'
+  keyword: string
+  capacity: string
+  challengeType: string
+}
+export function getTeams(query: SquadQuery, cursor?: string | null) {
+  const params = new URLSearchParams({
+    paged: '1',
+    my: String(query.filter === 'my'),
+    keyword: query.keyword,
+    capacity: query.capacity,
+    challengeType: query.challengeType
+  })
+  if (cursor) params.set('cursor', cursor)
+  return request<{ teams: StudyTeam[]; nextCursor: string | null }>(`/api/teams?${params}`)
 }
 
 /** 创建学习小组 */
@@ -20,8 +34,15 @@ export async function createTeam(data: {
 }
 
 /** 获取小组详情（私密小组需携带有效邀请码方可读，用于邀请码申请入口） */
-export async function getTeamDetail(teamId: string, inviteCode?: string): Promise<TeamDetail> {
-  const query = inviteCode ? `?invite=${encodeURIComponent(inviteCode)}` : ''
+export async function getTeamDetail(
+  teamId: string,
+  inviteCode?: string,
+  section?: 'members' | 'challenges' | 'overview'
+): Promise<TeamDetail> {
+  const params = new URLSearchParams()
+  if (inviteCode) params.set('invite', inviteCode)
+  if (section) params.set('section', section)
+  const query = params.size ? `?${params}` : ''
   return request<TeamDetail>(`/api/teams/${teamId}${query}`)
 }
 
@@ -169,4 +190,12 @@ export async function cancelChallenge(challengeId: string): Promise<void> {
 /** 恢复挑战 */
 export async function resumeChallenge(challengeId: string): Promise<void> {
   await request(`/api/teams/challenges/${challengeId}/resume`, { method: 'POST' })
+}
+
+export function syncActiveChallenges(teamId: string) {
+  return request<{ challenges: TeamChallenge[] }>(`/api/teams/${teamId}/sync-active`, { method: 'POST' })
+}
+
+export async function transferAndLeave(teamId: string, newLeaderId: string): Promise<void> {
+  await request(`/api/teams/${teamId}/transfer-and-leave`, { method: 'POST', body: JSON.stringify({ newLeaderId }) })
 }

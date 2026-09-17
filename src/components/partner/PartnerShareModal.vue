@@ -1,21 +1,23 @@
 <script setup lang="ts">
+import { usePartnerStore } from '../../features/collaboration/stores/partners'
+import { storeToRefs } from 'pinia'
+const partnerStore = usePartnerStore()
 /** 错题/笔记定向分享弹窗：列出我的搭子，点击即分享；重复分享时二次确认 */
 import { computed, onMounted, ref } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
-import { communityApi } from '../../api/community'
+import { partnersApi } from '../../api/community/partners'
 import { useAppStore } from '../../stores/app'
 import { TriangleAlert } from '@lucide/vue'
 import Modal from '../Modal.vue'
 import UserAvatar from '../community/UserAvatar.vue'
-import type { PartnerItem } from '../../types'
 
 const props = defineProps<{ itemType: 'error' | 'note'; itemId: string }>()
 const emit = defineEmits<{ close: []; done: [] }>()
 const toast = useToast()
 const store = useAppStore()
 
-const partners = ref<PartnerItem[]>([])
+const { partners } = storeToRefs(partnerStore)
 const loading = ref(true)
 const sending = ref('')
 
@@ -31,8 +33,7 @@ const pendingPartnerId = ref('')
 
 onMounted(async () => {
   try {
-    const res = await communityApi.partners()
-    partners.value = res.partners
+    await partnerStore.load()
   } catch (e) {
     toast(getErrorMessage(e, '搭子列表加载失败'))
   } finally {
@@ -44,7 +45,7 @@ async function share(userId: string) {
   if (sending.value) return
   sending.value = userId
   try {
-    const res = await communityApi.createPartnerShare(userId, props.itemType, props.itemId)
+    const res = await partnersApi.createPartnerShare(userId, props.itemType, props.itemId)
     if (res.duplicate) {
       // 重复分享：弹出二次确认
       pendingPartnerId.value = userId
@@ -70,7 +71,7 @@ async function confirmShare() {
   if (sending.value) return
   sending.value = pendingPartnerId.value
   try {
-    await communityApi.createPartnerShare(pendingPartnerId.value, props.itemType, props.itemId, true)
+    await partnersApi.createPartnerShare(pendingPartnerId.value, props.itemType, props.itemId, true)
     toast('已分享给搭子')
     emit('done')
     emit('close')

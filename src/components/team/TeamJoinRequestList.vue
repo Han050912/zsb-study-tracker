@@ -15,7 +15,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  refresh: []
+  reviewed: [userId: string, accepted: boolean]
   'open-profile': [userId: string]
 }>()
 
@@ -32,7 +32,7 @@ async function handleApprove(r: TeamJoinRequest) {
   try {
     await approveRequest(props.teamId, r.userId)
     toast('已同意')
-    emit('refresh')
+    emit('reviewed', r.userId, true)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   } finally {
@@ -51,8 +51,8 @@ async function handleReject() {
   try {
     await rejectRequest(props.teamId, rejectTarget.value.userId, rejectReason.value.trim() || undefined)
     toast('已拒绝')
+    emit('reviewed', rejectTarget.value.userId, false)
     rejectTarget.value = null
-    emit('refresh')
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   } finally {

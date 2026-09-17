@@ -2,7 +2,7 @@
 /** 搭子周报对比弹窗：本周学习时长/连续打卡/刷题数/番茄专注 四项指标「我 vs 搭子」；
  *  对方未开放学习数据共享（shared=false）时仅展示提示 */
 import { onMounted, ref } from 'vue'
-import { communityApi } from '../../api/community'
+import { partnersApi } from '../../api/community/partners'
 import Modal from '../Modal.vue'
 import { formatMinutes } from '../../utils/date'
 import type { PartnerWeeklyReport, PartnerWeeklyStats } from '../../types'
@@ -23,7 +23,7 @@ const METRICS: { key: keyof PartnerWeeklyStats; label: string; fmt: (v: number) 
 
 onMounted(async () => {
   try {
-    report.value = await communityApi.partnerWeeklyReport(props.partnerId)
+    report.value = await partnersApi.partnerWeeklyReport(props.partnerId)
   } catch {
     loadError.value = true
   } finally {

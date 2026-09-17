@@ -20,6 +20,7 @@ export const STATUS_LABEL = {
 export type ChallengeStatus = keyof typeof STATUS_LABEL
 
 export function challengeStatus(c: TeamChallenge): ChallengeStatus {
+  if (c.status && (!c.nextTransitionAt || Date.now() < c.nextTransitionAt)) return c.status
   if (c.isCancelled) return 'cancelled'
   if (c.isCompleted) return 'completed'
   const t = today()

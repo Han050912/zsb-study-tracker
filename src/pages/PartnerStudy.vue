@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { usePartnerStore } from '../features/collaboration/stores/partners'
+
+const partnerStore = usePartnerStore()
 /**
  * 双人番茄自习室（开黑）—— 沉浸式全屏 + 番茄钟联动：
  * - 邀请开黑时设定专注/休息时长（默认 25/5，双方一致）
@@ -13,7 +16,7 @@ import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { communityApi } from '../api/community'
+import { partnersApi } from '../api/community/partners'
 import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import Modal from '../components/Modal.vue'
 import PartnerPickerCard from '../components/partner/PartnerPickerCard.vue'
@@ -22,14 +25,14 @@ import PartnerStudyRoom from '../components/partner/PartnerStudyRoom.vue'
 import { useBack } from '../composables/useBack'
 import { useWallpaperRotation } from '../composables/useWallpaperRotation'
 import { useStudyTimerStore } from '../stores/studyTimer'
-import type { PartnerItem, PartnerStudyRecord } from '../types'
+import type { PartnerStudyRecord } from '../types'
 
 const route = useRoute()
 const { goBack } = useBack()
 const toast = useToast()
 
 const loading = ref(true)
-const partners = ref<PartnerItem[]>([])
+const { partners } = storeToRefs(partnerStore)
 const selectedId = ref((route.query.partner as string) || '')
 const focusMinutes = ref(25)
 const mode = ref<'countdown' | 'countup'>('countdown')
@@ -50,8 +53,7 @@ const historyError = ref('')
 // ---- 会话管理 ----
 async function loadPartners() {
   try {
-    const res = await communityApi.partners()
-    partners.value = res.partners ?? []
+    await partnerStore.load()
     if (selectedId.value && !partners.value.some((p) => p.userId === selectedId.value)) selectedId.value = ''
   } catch (e) {
     toast(getErrorMessage(e, '搭子列表加载失败'))
@@ -62,7 +64,7 @@ async function loadHistory() {
   historyLoading.value = true
   historyError.value = ''
   try {
-    const res = await communityApi.studyHistory()
+    const res = await partnersApi.studyHistory()
     history.value = res.records ?? []
   } catch (e) {
     historyError.value = getErrorMessage(e, '历史记录加载失败')
@@ -76,12 +78,12 @@ async function invite() {
   if (!selectedId.value || creating.value) return
   creating.value = true
   try {
-    const res = await communityApi.createStudySession(
+    const res = await partnersApi.createStudySession(
       selectedId.value,
       mode.value,
       mode.value === 'countdown' ? focusMinutes.value : undefined
     )
-    const detail = await communityApi.studySession(res.id)
+    const detail = await partnersApi.studySession(res.id)
     if (!detail?.session) {
       toast('会话已创建，但获取详情失败，请返回后重试')
       await loadPartners()
@@ -150,7 +152,7 @@ async function init() {
   }
   loading.value = true
   try {
-    const res = await communityApi.activeStudySession()
+    const res = await partnersApi.activeStudySession()
     if (res.session) {
       timer.enterSession(res.session)
       if (timer.phase !== 'idle' && timer.phase !== 'done') {
@@ -200,7 +202,7 @@ watch(
 <template>
   <div class="min-h-screen">
     <!-- 无会话：卡片式选择搭子（非全屏） -->
-    <div v-if="!session" class="max-w-2xl mx-auto px-4 py-6 space-y-5">
+    <div v-if="!session" class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
       <button class="btn-ghost !text-xs" @click="handleBack">← 返回</button>
       <div class="section-title !mb-0">开黑自习室</div>
 

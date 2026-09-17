@@ -2,6 +2,8 @@
 
 /** 学习小组 */
 export interface StudyTeam {
+  activeChallenge?: TeamChallenge
+  pendingRequestCount?: number
   id: string
   name: string
   description: string
@@ -36,6 +38,8 @@ export type ChallengeType = 'streak' | 'minutes' | 'problems'
 
 /** 组队挑战 */
 export interface TeamChallenge {
+  status?: 'upcoming' | 'active' | 'cancelled' | 'completed' | 'ended'
+  nextTransitionAt?: number | null
   id: string
   teamId: string
   type: ChallengeType

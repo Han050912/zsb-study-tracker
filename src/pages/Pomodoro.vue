@@ -8,7 +8,7 @@ import { useWallpaperRotation } from '../composables/useWallpaperRotation'
 import dayjs from 'dayjs'
 import { useAppStore } from '../stores/app'
 import { useStudyTimerStore } from '../stores/studyTimer'
-import { communityApi } from '../api/community'
+import { partnersApi } from '../api/community/partners'
 import { businessDate, formatMinutes } from '../utils/date'
 import Modal from '../components/Modal.vue'
 import type { PomodoroRecord } from '../types'
@@ -28,7 +28,7 @@ const partyActive = computed(() => !!studyTimer.session || serverPartyActive.val
 /** 回源服务端确认是否已有进行中的开黑会话（挂载时调用，用于补上刷新后内存态丢失的判定缺口） */
 async function syncPartyActive() {
   try {
-    serverPartyActive.value = !!(await communityApi.activeStudySession()).session
+    serverPartyActive.value = !!(await partnersApi.activeStudySession()).session
   } catch {
     /* 查询失败按无开黑处理：不因网络异常阻断单人番茄；同标签页内仍由 studyTimer.session 兜底 */
   }

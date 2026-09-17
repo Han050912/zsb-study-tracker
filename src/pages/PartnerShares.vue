@@ -6,7 +6,7 @@ import { computed, onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { partnersApi } from '../api/community/partners'
 import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import { useBack } from '../composables/useBack'
@@ -34,7 +34,7 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await communityApi.partnerShares()
+    const res = await partnersApi.partnerShares()
     received.value = res.received
     sent.value = res.sent
     hasMore.value = !!res.hasMore

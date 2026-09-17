@@ -5,7 +5,8 @@ import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { partnersApi } from '../api/community/partners'
+import { postsApi } from '../api/community/posts'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import PdfViewer from '../components/PdfViewer.vue'
 import Modal from '../components/Modal.vue'
@@ -80,17 +81,17 @@ async function load() {
   loadError.value = ''
   const id = String(route.params.id)
   try {
-    detail.value = await communityApi.partnerShare(id)
+    detail.value = await partnersApi.partnerShare(id)
     if (errorView.value?.image) {
       try {
-        errorImageUrl.value = URL.createObjectURL(await communityApi.partnerShareImage(id))
+        errorImageUrl.value = URL.createObjectURL(await partnersApi.partnerShareImage(id))
       } catch {
         errorImageUrl.value = ''
       }
     }
     if (noteView.value?.type === 'pdf') {
       try {
-        pdfBytes.value = await communityApi.partnerSharePdf(id)
+        pdfBytes.value = await partnersApi.partnerSharePdf(id)
       } catch (e) {
         pdfError.value = getErrorMessage(e, 'PDF 加载失败')
       }
@@ -112,7 +113,7 @@ async function load() {
 async function refreshDetail() {
   if (!detail.value) return
   try {
-    detail.value = await communityApi.partnerShare(detail.value.id)
+    detail.value = await partnersApi.partnerShare(detail.value.id)
   } catch (e) {
     toast(getErrorMessage(e, '刷新失败'))
   }
@@ -128,7 +129,7 @@ async function addComment() {
   }
   sendingComment.value = true
   try {
-    await communityApi.addShareComment(d.id, content)
+    await postsApi.addShareComment(d.id, content)
     commentText.value = ''
     await refreshDetail()
   } catch (e) {
@@ -143,7 +144,7 @@ async function removeShare() {
   if (!d) return
   if (!(await confirm('删除这条分享？其中的批注将一并删除。', { danger: true }))) return
   try {
-    await communityApi.deleteShare(d.id)
+    await postsApi.deleteShare(d.id)
     toast('已删除分享')
     goBack()
   } catch (e) {
@@ -169,7 +170,7 @@ async function confirmCopy() {
   }
   copying.value = true
   try {
-    const note = await communityApi.copyPartnerShare(d.id, copySubjectId.value)
+    const note = await partnersApi.copyPartnerShare(d.id, copySubjectId.value)
     store.importNotes(copySubjectId.value, [
       { id: note.id, title: note.title, content: note.content, tags: note.tags, type: note.type }
     ])

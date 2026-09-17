@@ -1,316 +1,195 @@
+<script setup lang="ts">
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useSquadStore } from '../features/collaboration/stores/squads'
+import { isLoggedIn, requireLogin } from '../services/auth'
+import AppTabs from '../shared/components/AppTabs.vue'
+import AsyncState from '../shared/components/AsyncState.vue'
+import CompanionProgress from '../components/team/CompanionProgress.vue'
+const Partners = defineAsyncComponent(() => import('./Partners.vue'))
+const SquadDialogs = defineAsyncComponent(() => import('../components/team/SquadDialogs.vue'))
+const store = useSquadStore(),
+  route = useRoute(),
+  router = useRouter()
+const mode = computed(() => (route.query.mode === 'partners' ? 'partners' : 'squads'))
+const activeTab = computed(() => (route.query.filter === 'public' || !isLoggedIn.value ? 'public' : 'my'))
+const dialog = ref<'create' | 'invite' | null>(null),
+  keyword = ref('')
+const setQuery = (patch: Record<string, string | undefined>) =>
+  router.push({ name: 'teams', query: { ...route.query, ...patch } })
+function chooseMode(value: string) {
+  if (value === 'partners' && requireLogin(router)) return
+  void setQuery({ mode: value })
+}
+function chooseTab(value: string) {
+  if (value === 'my' && requireLogin(router)) return
+  void setQuery({ filter: value })
+}
+function openDialog(value: 'create' | 'invite') {
+  if (!requireLogin(router)) dialog.value = value
+}
+function openTeam(id: string) {
+  if (!requireLogin(router)) void router.push({ name: 'team-detail', params: { teamId: id } })
+}
+watch(
+  () => route.query,
+  () => {
+    if (route.name !== 'teams' || mode.value !== 'squads') return
+    keyword.value = typeof route.query.q === 'string' ? route.query.q : ''
+    store.query = {
+      filter: activeTab.value,
+      keyword: keyword.value,
+      capacity: route.query.capacity === 'available' ? 'available' : '',
+      challengeType: typeof route.query.challengeType === 'string' ? route.query.challengeType : ''
+    }
+    void store.loadList()
+  },
+  { immediate: true }
+)
+</script>
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-gray-900">
-    <!-- 头部 -->
-    <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-      <div class="max-w-4xl mx-auto px-4 py-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">组队挑战</h1>
-            <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">和小伙伴一起坚持学习，达标获徽章</p>
+  <div class="collaboration-page max-w-6xl mx-auto p-4 md:p-6 space-y-6">
+    <header class="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p class="text-xs text-slate-500 mb-1">有人和你一起，把目标走完</p>
+        <h1 class="collaboration-title">组队协作</h1>
+      </div>
+      <button class="btn-ghost" @click="openDialog('invite')">加入小队 ↗</button>
+    </header>
+    <AppTabs
+      id="collaboration-mode"
+      :model-value="mode"
+      :items="[
+        { value: 'squads', label: '小队挑战' },
+        { value: 'partners', label: '搭子协作' }
+      ]"
+      label="协作方式"
+      @update:model-value="chooseMode"
+    />
+    <div id="collaboration-mode-panel" role="tabpanel" :aria-labelledby="`collaboration-mode-tab-${mode}`">
+      <Partners v-if="mode === 'partners' && isLoggedIn" />
+      <div v-else class="grid lg:grid-cols-[minmax(0,1fr)_260px] gap-8 items-start">
+        <section class="min-w-0 space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <AppTabs
+              id="squad-filter"
+              :model-value="activeTab"
+              :items="[
+                { value: 'my', label: '我的小队' },
+                { value: 'public', label: '发现小队' }
+              ]"
+              label="小队范围"
+              @update:model-value="chooseTab"
+            /><button class="btn-primary" @click="openDialog('create')">＋ 创建小队</button>
           </div>
-          <div class="flex items-center gap-2">
+          <form class="flex flex-wrap gap-2" @submit.prevent="setQuery({ q: keyword || undefined })">
             <input
-              v-model="inviteCode"
-              type="text"
-              maxlength="8"
-              placeholder="邀请码"
-              class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-white w-32"
-              @keyup.enter="handleJoinByInvite"
-            />
-            <button
-              @click="handleJoinByInvite"
-              :disabled="inviteSubmitting"
-              class="px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors text-sm"
+              v-model="keyword"
+              class="input flex-1 !w-auto !min-w-[12rem]"
+              aria-label="搜索小队"
+              placeholder="搜索共同目标或小队名称"
+              maxlength="100"
+            /><button class="btn-ghost">搜索</button
+            ><select
+              :value="store.query.challengeType"
+              class="input !w-auto"
+              aria-label="挑战类型"
+              @change="setQuery({ challengeType: ($event.target as HTMLSelectElement).value || undefined })"
             >
-              {{ inviteSubmitting ? '查询中…' : '邀请码加入' }}
+              <option value="">全部挑战</option>
+              <option value="streak">连续打卡</option>
+              <option value="minutes">学习时长</option>
+              <option value="problems">刷题数量</option></select
+            ><label class="flex items-center gap-2 text-sm"
+              ><input
+                type="checkbox"
+                class="!min-h-0"
+                :checked="store.query.capacity === 'available'"
+                @change="setQuery({ capacity: ($event.target as HTMLInputElement).checked ? 'available' : undefined })"
+              />未满员</label
+            >
+          </form>
+          <div
+            id="squad-filter-panel"
+            role="tabpanel"
+            :aria-labelledby="`squad-filter-tab-${activeTab}`"
+            class="space-y-4"
+          >
+            <AsyncState
+              :loading="store.bucket?.loading && !store.teams.length"
+              :error="!store.teams.length ? store.bucket?.error : undefined"
+              :empty="!store.teams.length && !store.bucket?.loading"
+              :message="
+                activeTab === 'my' ? '还没有同行的小队，加入一个共同目标。' : '没有符合筛选的小队，试试其他名称或条件。'
+              "
+              @retry="store.loadList()"
+            >
+              <template #action
+                ><button
+                  class="btn-ghost"
+                  @click="
+                    activeTab === 'my'
+                      ? chooseTab('public')
+                      : setQuery({ q: undefined, capacity: undefined, challengeType: undefined })
+                  "
+                >
+                  {{ activeTab === 'my' ? '发现公开小队' : '清除筛选' }}
+                </button></template
+              >
+              <AsyncState
+                v-if="store.bucket?.error"
+                :error="store.bucket.error"
+                @retry="store.loadList(store.bucket?.retryReset ?? true)"
+              />
+              <p v-if="store.bucket?.loading" role="status" class="text-xs text-slate-500">正在更新小队…</p>
+              <article v-for="team in store.teams" :key="team.id" class="card space-y-5">
+                <div class="flex justify-between items-start gap-3">
+                  <div class="min-w-0">
+                    <button class="text-lg text-left font-semibold break-words" @click="openTeam(team.id)">
+                      {{ team.name }} <span aria-hidden="true" class="text-primary-500">↗</span>
+                    </button>
+                    <p class="text-sm text-slate-500 mt-1 break-words">
+                      {{ team.description || '和同学一起完成学习目标' }}
+                    </p>
+                  </div>
+                  <span v-if="team.myRole === 'leader'" class="text-xs shrink-0 pt-3">队长</span>
+                </div>
+                <CompanionProgress
+                  v-if="team.activeChallenge"
+                  :challenge="team.activeChallenge"
+                  :member-count="team.memberCount"
+                  :show-mine="!!team.myRole"
+                />
+                <p v-else class="text-sm text-slate-500 py-2">
+                  {{ team.myRole === 'leader' ? '发起一个挑战，约定下一次达标。' : '正在集结，等待下一个共同目标。' }}
+                </p>
+                <div class="flex justify-between flex-wrap gap-2 text-xs text-slate-500">
+                  <span class="training-number"
+                    >{{ team.memberCount }} / {{ team.maxMembers }} 人 · {{ team.isPublic ? '公开' : '私密' }}</span
+                  ><button v-if="team.pendingRequestCount" class="text-red-500" @click="openTeam(team.id)">
+                    {{ team.pendingRequestCount }} 条申请待审核</button
+                  ><span v-else-if="!isLoggedIn">登录后可查看详情</span>
+                </div>
+              </article>
+            </AsyncState>
+            <button
+              v-if="store.bucket?.cursor && !store.bucket.error"
+              class="btn-ghost w-full"
+              :disabled="store.bucket.loading"
+              @click="store.loadList(false)"
+            >
+              加载更多小队
             </button>
           </div>
-          <button
-            @click="openCreate"
-            class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
-          >
-            创建小组
-          </button>
-        </div>
+        </section>
+        <aside class="card space-y-4">
+          <p class="text-xs text-slate-500">一对一，也能走得更远</p>
+          <h2 class="font-semibold text-lg">约一位学习搭子</h2>
+          <p class="text-sm text-slate-500 leading-relaxed">一起自习，把计划拆成每天的行动，再约一次复盘。</p>
+          <button class="btn-ghost w-full" @click="chooseMode('partners')">进入搭子协作 →</button>
+        </aside>
       </div>
     </div>
-
-    <!-- Tab 切换 -->
-    <div class="max-w-4xl mx-auto px-4 py-4">
-      <div class="flex space-x-4 border-b border-gray-200 dark:border-gray-700">
-        <button
-          @click="switchTab('my')"
-          :class="[
-            'px-4 py-2 border-b-2 transition-colors',
-            activeTab === 'my'
-              ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-              : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-          ]"
-        >
-          我的小组
-        </button>
-        <button
-          @click="switchTab('public')"
-          :class="[
-            'px-4 py-2 border-b-2 transition-colors',
-            activeTab === 'public'
-              ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-              : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-          ]"
-        >
-          公开小组
-        </button>
-      </div>
-    </div>
-
-    <!-- 小组列表 -->
-    <div class="max-w-4xl mx-auto px-4 pb-8">
-      <div v-if="loading" class="text-center py-12 text-gray-600 dark:text-gray-400">加载中...</div>
-      <div v-else-if="teams.length === 0" class="text-center py-12 text-gray-600 dark:text-gray-400">
-        {{ activeTab === 'my' ? '还未加入任何小组' : '暂无公开小组' }}
-      </div>
-      <div v-else class="space-y-4">
-        <div
-          v-for="team in teams"
-          :key="team.id"
-          @click="openTeam(team.id)"
-          class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 transition-shadow cursor-pointer hover:shadow-md"
-        >
-          <div class="flex items-start justify-between">
-            <div class="flex-1">
-              <div class="flex items-center space-x-2">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ team.name }}</h3>
-                <span
-                  v-if="team.myRole === 'leader'"
-                  class="px-2 py-0.5 bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 text-xs rounded"
-                >
-                  队长
-                </span>
-                <span
-                  v-else-if="team.myRole === 'member'"
-                  class="px-2 py-0.5 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-xs rounded"
-                >
-                  成员
-                </span>
-                <!-- 访客：详情需登录（成员名单敏感），提前标注避免点击后才被跳到登录页 -->
-                <span
-                  v-if="!isLoggedIn"
-                  class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 text-xs rounded"
-                >
-                  <Lock :size="12" aria-hidden="true" />
-                  登录后可查看详情
-                </span>
-              </div>
-              <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">{{ team.description || '暂无描述' }}</p>
-              <div class="flex items-center space-x-4 mt-3 text-xs text-gray-500 dark:text-gray-400">
-                <span> {{ team.memberCount }} / {{ team.maxMembers }} 人</span>
-                <span>{{ team.isPublic ? '公开' : '私密' }}</span>
-                <span>{{ formatDate(team.createdAt) }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 创建小组对话框 -->
-    <Modal :show="showCreateDialog" title="创建学习小组" @close="showCreateDialog = false">
-      <form @submit.prevent="handleCreate">
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="team-name">
-              小组名称 <span class="text-red-500">*</span>
-            </label>
-            <input
-              id="team-name"
-              v-model="form.name"
-              type="text"
-              maxlength="30"
-              required
-              placeholder="1-30 字"
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-            />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="team-desc"
-              >小组描述</label
-            >
-            <textarea
-              id="team-desc"
-              v-model="form.description"
-              maxlength="200"
-              rows="3"
-              placeholder="0-200 字"
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-            ></textarea>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" for="team-max-members"
-              >最大人数</label
-            >
-            <input
-              id="team-max-members"
-              v-model.number="form.maxMembers"
-              type="number"
-              min="2"
-              max="50"
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
-            />
-          </div>
-          <div class="flex items-center">
-            <input
-              v-model="form.isPublic"
-              type="checkbox"
-              id="isPublic"
-              class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-            />
-            <label for="isPublic" class="ml-2 text-sm text-gray-700 dark:text-gray-300">
-              公开小组（所有人可见可加入）
-            </label>
-          </div>
-        </div>
-        <div class="flex justify-end space-x-3 mt-6">
-          <button
-            type="button"
-            @click="showCreateDialog = false"
-            class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-          >
-            取消
-          </button>
-          <button
-            type="submit"
-            :disabled="creating"
-            class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
-          >
-            {{ creating ? '创建中...' : '创建' }}
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <SquadDialogs v-if="dialog" :mode="dialog" @close="dialog = null" @created="store.loadList()" />
   </div>
 </template>
-
-<script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { getErrorMessage } from '../utils/error'
-import { useToast } from '../composables/useToast'
-import { useRouter } from 'vue-router'
-import { getTeams, createTeam, getTeamByInvite } from '../api/teams'
-import { isLoggedIn, requireLogin } from '../services/auth'
-import { Lock } from '@lucide/vue'
-import type { StudyTeam } from '../types'
-import Modal from '../components/Modal.vue'
-
-const toast = useToast()
-const router = useRouter()
-
-const activeTab = ref<'my' | 'public'>('my')
-const loading = ref(false)
-const teams = ref<StudyTeam[]>([])
-const showCreateDialog = ref(false)
-const creating = ref(false)
-const inviteCode = ref('')
-const inviteSubmitting = ref(false)
-
-async function handleJoinByInvite() {
-  if (requireLogin(router)) return
-  const code = inviteCode.value.trim()
-  if (!code) {
-    toast('请输入邀请码')
-    return
-  }
-  if (inviteSubmitting.value) return
-  inviteSubmitting.value = true
-  try {
-    const team = await getTeamByInvite(code)
-    router.push(`/teams/${team.id}?invite=${encodeURIComponent(code)}`)
-  } catch (e) {
-    toast(getErrorMessage(e, '邀请码无效'))
-  } finally {
-    inviteSubmitting.value = false
-  }
-}
-
-const form = ref({
-  name: '',
-  description: '',
-  maxMembers: 10,
-  isPublic: true
-})
-
-// 请求序号：快速切换 tab 时，旧请求的响应可能晚于新请求返回，
-// 若不丢弃过期响应，会把「公开小组」数据覆盖到「我的小组」列表上
-let loadSeq = 0
-
-async function loadTeams() {
-  const seq = ++loadSeq
-  loading.value = true
-  try {
-    const result = await getTeams(activeTab.value === 'my')
-    if (seq === loadSeq) teams.value = result
-  } catch (e) {
-    if (seq === loadSeq) toast(getErrorMessage(e, '加载失败'))
-  } finally {
-    if (seq === loadSeq) loading.value = false
-  }
-}
-
-function switchTab(tab: 'my' | 'public') {
-  if (activeTab.value === tab) return
-  // 「我的小组」需登录：访客点击引导登录
-  if (tab === 'my' && requireLogin(router)) return
-  activeTab.value = tab
-  loadTeams()
-}
-
-function openCreate() {
-  if (requireLogin(router)) return
-  showCreateDialog.value = true
-}
-
-async function handleCreate() {
-  if (!form.value.name.trim()) {
-    toast('请输入小组名称')
-    return
-  }
-
-  creating.value = true
-  try {
-    await createTeam(form.value)
-    toast('小组创建成功')
-    showCreateDialog.value = false
-    form.value = { name: '', description: '', maxMembers: 10, isPublic: true }
-    // 新建后切到「我的小组」查看刚创建的小组
-    activeTab.value = 'my'
-    loadTeams()
-  } catch (e) {
-    toast(getErrorMessage(e, '创建失败'))
-  } finally {
-    creating.value = false
-  }
-}
-
-function formatDate(timestamp: number): string {
-  const date = new Date(timestamp * 1000)
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-
-  if (days === 0) return '今天'
-  if (days === 1) return '昨天'
-  if (days < 7) return `${days} 天前`
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
-}
-
-function openTeam(id: string) {
-  // 小组详情接口需登录（含成员名单），访客点击引导登录
-  if (requireLogin(router)) return
-  router.push('/teams/' + id)
-}
-
-onMounted(() => {
-  // 访客默认浏览公开小组；登录用户默认「我的小组」
-  activeTab.value = isLoggedIn.value ? 'my' : 'public'
-  loadTeams()
-})
-</script>

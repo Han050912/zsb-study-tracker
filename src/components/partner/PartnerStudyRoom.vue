@@ -105,6 +105,19 @@ onUnmounted(() => {
       <div class="absolute inset-0 bg-gradient-to-b from-black/55 via-black/35 to-black/60 pointer-events-none"></div>
     </template>
 
+    <div class="absolute top-16 inset-x-4 text-center text-sm" role="status" aria-live="polite">
+      <span>{{
+        {
+          connecting: '连接中',
+          connected: '已连接',
+          reconnecting: '重连中 · 数据可能延迟',
+          offline: '已离线 · 本地计时仍在继续'
+        }[timer.connection]
+      }}</span>
+      <button v-if="timer.connection === 'offline'" class="ml-2 underline min-h-11" @click="timer.reconnect()">
+        重新连接
+      </button>
+    </div>
     <!-- 左上角：返回（不结束会话，稍后可继续） -->
     <button class="absolute top-4 left-4 z-10 text-sm opacity-60 hover:opacity-100" @click="emit('back')">
       ← 返回

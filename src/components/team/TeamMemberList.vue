@@ -22,7 +22,11 @@ const emit = defineEmits<{
     <div class="label !mb-2">成员（{{ members.length }}）</div>
     <div class="divide-y divide-slate-100 dark:divide-slate-700">
       <div v-for="m in members" :key="m.userId" class="flex items-center gap-3 py-2">
-        <button class="shrink-0" @click="emit('open-profile', m.userId)">
+        <button
+          class="shrink-0 min-w-11"
+          :aria-label="`查看${m.userName}的资料`"
+          @click="emit('open-profile', m.userId)"
+        >
           <UserAvatar :name="m.userName" :avatar="m.userAvatar" size="sm" />
         </button>
         <button
@@ -41,21 +45,30 @@ const emit = defineEmits<{
         >
           {{ m.role === 'leader' ? '队长' : '成员' }}
         </span>
-        <div v-if="myRole === 'leader' && m.role === 'member'" class="flex items-center gap-1.5 shrink-0">
-          <button
-            class="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-600 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 transition-colors hover:text-primary-500 hover:border-primary-300"
-            :disabled="transferSubmitting"
-            @click="emit('transfer', m.userId, m.userName)"
-          >
-            <Crown class="w-3.5 h-3.5" />设为队长
-          </button>
-          <button
-            class="inline-flex items-center gap-1 rounded-full border border-red-200 dark:border-red-900/50 px-2.5 py-1 text-xs text-red-500 dark:text-red-400 transition-colors hover:bg-red-50 dark:hover:bg-red-900/20"
-            @click="emit('kick', m)"
-          >
-            <UserMinus class="w-3.5 h-3.5" />踢出
-          </button>
-        </div>
+        <details
+          v-if="myRole === 'leader' && m.role === 'member'"
+          class="relative"
+          @keydown.esc="($event.currentTarget as HTMLDetailsElement).open = false"
+        >
+          <summary class="btn-ghost !px-2 text-xs list-none cursor-pointer" :aria-label="`管理${m.userName}`">
+            ···
+          </summary>
+          <div class="absolute z-20 right-0 card !p-2 min-w-36 space-y-1 shadow-lg">
+            <button
+              class="inline-flex items-center gap-1 rounded-full border border-slate-200 dark:border-slate-600 px-2.5 py-1 text-xs text-slate-500 dark:text-slate-400 transition-colors hover:text-primary-500 hover:border-primary-300"
+              :disabled="transferSubmitting"
+              @click="emit('transfer', m.userId, m.userName)"
+            >
+              <Crown class="w-3.5 h-3.5" />设为队长
+            </button>
+            <button
+              class="inline-flex items-center gap-1 rounded-full border border-red-200 dark:border-red-900/50 px-2.5 py-1 text-xs text-red-500 dark:text-red-400 transition-colors hover:bg-red-50 dark:hover:bg-red-900/20"
+              @click="emit('kick', m)"
+            >
+              <UserMinus class="w-3.5 h-3.5" />踢出
+            </button>
+          </div>
+        </details>
       </div>
     </div>
   </div>

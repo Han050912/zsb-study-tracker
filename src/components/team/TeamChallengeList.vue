@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { formatMinutes } from '../../utils/date'
 import { useToast } from '../../composables/useToast'
@@ -28,7 +28,6 @@ const emit = defineEmits<{
   create: []
   edit: [challenge: TeamChallenge]
   refresh: []
-  'auto-sync': []
 }>()
 
 const toast = useToast()
@@ -38,9 +37,6 @@ const manageSubmitting = ref<Record<string, boolean>>({})
 
 /** 进入详情自动同步进行中的挑战（静默）：页面在首次 loadDetail 完成后渲染本组件，此处上抛意图由页面执行。
  *  非成员（未登录 / 未加入）无同步权限，不上抛意图，避免必然 403 的静默请求。 */
-onMounted(() => {
-  if (isMember.value) emit('auto-sync')
-})
 
 async function handleDelete(c: TeamChallenge) {
   if (manageSubmitting.value[c.id]) return
@@ -147,38 +143,41 @@ async function handleResume(c: TeamChallenge) {
             >
               {{ syncSubmitting[c.id] ? '同步中…' : '同步进度' }}
             </button>
-            <template v-if="myRole === 'leader'">
-              <button
-                v-if="challengeStatus(c) === 'upcoming' || challengeStatus(c) === 'active'"
-                class="btn-ghost !text-xs"
-                @click="emit('edit', c)"
-              >
-                编辑
-              </button>
-              <button
-                v-if="challengeStatus(c) === 'active'"
-                class="btn-ghost !text-xs !text-amber-500"
-                :disabled="manageSubmitting[c.id]"
-                @click="handleCancel(c)"
-              >
-                取消
-              </button>
-              <button
-                v-if="challengeStatus(c) === 'cancelled'"
-                class="btn-ghost !text-xs !text-emerald-500"
-                :disabled="manageSubmitting[c.id]"
-                @click="handleResume(c)"
-              >
-                恢复
-              </button>
-              <button
-                class="btn-ghost !text-xs !text-red-500"
-                :disabled="manageSubmitting[c.id]"
-                @click="handleDelete(c)"
-              >
-                删除
-              </button>
-            </template>
+            <details v-if="myRole === 'leader'" class="relative">
+              <summary class="btn-ghost cursor-pointer">管理</summary>
+              <div class="absolute right-0 z-10 card !p-2 w-32 flex flex-col">
+                <button
+                  v-if="challengeStatus(c) === 'upcoming' || challengeStatus(c) === 'active'"
+                  class="btn-ghost !text-xs"
+                  @click="emit('edit', c)"
+                >
+                  编辑
+                </button>
+                <button
+                  v-if="challengeStatus(c) === 'active'"
+                  class="btn-ghost !text-xs !text-amber-500"
+                  :disabled="manageSubmitting[c.id]"
+                  @click="handleCancel(c)"
+                >
+                  取消
+                </button>
+                <button
+                  v-if="challengeStatus(c) === 'cancelled'"
+                  class="btn-ghost !text-xs !text-emerald-500"
+                  :disabled="manageSubmitting[c.id]"
+                  @click="handleResume(c)"
+                >
+                  恢复
+                </button>
+                <button
+                  class="btn-ghost !text-xs !text-red-500"
+                  :disabled="manageSubmitting[c.id]"
+                  @click="handleDelete(c)"
+                >
+                  删除
+                </button>
+              </div>
+            </details>
           </div>
         </div>
       </div>

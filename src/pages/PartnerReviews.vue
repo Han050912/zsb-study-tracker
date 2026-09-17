@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { usePartnerStore } from '../features/collaboration/stores/partners'
+import { storeToRefs } from 'pinia'
+const partnerStore = usePartnerStore()
 /**
  * 双向复盘邀约：
  * - 列表：搭子/预约时间/状态/复盘记录 note；每条可「取消」（删除）
@@ -11,10 +14,10 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
-import { communityApi } from '../api/community'
+import { partnersApi } from '../api/community/partners'
 import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import { useBack } from '../composables/useBack'
-import type { PartnerItem, PartnerReview } from '../types'
+import type { PartnerReview } from '../types'
 
 const route = useRoute()
 const { goBack } = useBack()
@@ -25,7 +28,7 @@ const loading = ref(true)
 /** 首屏加载失败信息：持久错误态（区别于「还没有复盘邀约」空态），提供重试 */
 const loadError = ref('')
 const items = ref<PartnerReview[]>([])
-const partners = ref<PartnerItem[]>([])
+const { partners } = storeToRefs(partnerStore)
 
 // ---- 新建邀约 ----
 const newPartner = ref((route.query.partner as string) || '')
@@ -56,9 +59,8 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const [r, l] = await Promise.all([communityApi.partnerReviews(), communityApi.partners()])
+    const [r, l] = await Promise.all([partnersApi.partnerReviews(), partnerStore.load()])
     items.value = r.items
-    partners.value = l.partners
     if (newPartner.value && !l.partners.some((x) => x.userId === newPartner.value)) newPartner.value = ''
   } catch (e) {
     loadError.value = getErrorMessage(e, '加载失败')
@@ -71,7 +73,7 @@ async function load() {
 /** 操作后的增量刷新：仅拉邀约列表，失败时 toast 不清空现有列表 */
 async function reloadItems() {
   try {
-    items.value = (await communityApi.partnerReviews()).items
+    items.value = (await partnersApi.partnerReviews()).items
   } catch (e) {
     toast(getErrorMessage(e, '加载失败'))
   }
@@ -94,7 +96,7 @@ async function create() {
   }
   creating.value = true
   try {
-    await communityApi.createPartnerReview(newPartner.value, scheduledAt)
+    await partnersApi.createPartnerReview(newPartner.value, scheduledAt)
     newTime.value = ''
     toast('邀约已发送')
     await reloadItems()
@@ -112,7 +114,7 @@ async function accept(r: PartnerReview) {
   if (acting.value[r.id]) return
   acting.value[r.id] = true
   try {
-    await communityApi.updatePartnerReview(r.id, 'accept')
+    await partnersApi.updatePartnerReview(r.id, 'accept')
     toast('已接受邀约')
     await reloadItems()
   } catch (e) {
@@ -129,7 +131,7 @@ function openComplete(r: PartnerReview) {
 
 async function complete(r: PartnerReview) {
   try {
-    await communityApi.updatePartnerReview(r.id, 'done', noteText.value.trim())
+    await partnersApi.updatePartnerReview(r.id, 'done', noteText.value.trim())
     completingId.value = ''
     noteText.value = ''
     toast('复盘已完成')
@@ -142,7 +144,7 @@ async function complete(r: PartnerReview) {
 async function cancel(r: PartnerReview) {
   if (!(await confirm('取消这条复盘邀约？'))) return
   try {
-    await communityApi.deletePartnerReview(r.id)
+    await partnersApi.deletePartnerReview(r.id)
     if (completingId.value === r.id) completingId.value = ''
     toast('已取消')
     await reloadItems()
@@ -153,7 +155,7 @@ async function cancel(r: PartnerReview) {
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto px-4 py-6 space-y-5">
+  <div class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
     <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
     <div class="section-title !mb-0">复盘邀约</div>
 

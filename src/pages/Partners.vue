@@ -1,24 +1,24 @@
 <script setup lang="ts">
+import { storeToRefs } from 'pinia'
+import { usePartnerStore } from '../features/collaboration/stores/partners'
+const partnerStore = usePartnerStore()
+const { partners, incoming, suggestions } = storeToRefs(partnerStore)
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
-import { communityApi } from '../api/community'
+import { partnersApi } from '../api/community/partners'
+import { usersApi } from '../api/community/users'
 import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import PartnerWeeklyModal from '../components/partner/PartnerWeeklyModal.vue'
-import { useBack } from '../composables/useBack'
-import type { PartnerSuggestion, PartnerItem, UserLookupResult } from '../types'
+import type { PartnerItem, UserLookupResult } from '../types'
 
 const router = useRouter()
 const route = useRoute()
-const { goBack } = useBack()
 const toast = useToast()
 const confirm = useConfirm()
-const suggestions = ref<PartnerSuggestion[]>([])
-const incoming = ref<PartnerItem[]>([])
-const partners = ref<PartnerItem[]>([])
 const loading = ref(false)
 /** 列表加载失败信息：持久错误态（区别于「还没有搭子」空态），提供重试 */
 const loadError = ref('')
@@ -32,14 +32,11 @@ onMounted(async () => {
   }
 })
 
-async function load() {
+async function load(force = false) {
   loading.value = true
   loadError.value = ''
   try {
-    const [s, l] = await Promise.all([communityApi.partnerSuggestions(), communityApi.partners()])
-    suggestions.value = s.suggestions
-    incoming.value = l.incoming
-    partners.value = l.partners
+    await Promise.all([partnerStore.load(force), partnerStore.loadSuggestions()])
   } catch (e) {
     loadError.value = getErrorMessage(e, '加载失败')
     toast(loadError.value)
@@ -55,9 +52,9 @@ async function send(userId: string) {
   if (acting.value[userId]) return
   acting.value[userId] = true
   try {
-    const res = await communityApi.sendPartner(userId)
+    const res = await partnersApi.sendPartner(userId)
     toast(res.accepted ? '你们已成为搭子！' : '已发送请求')
-    await load()
+    await load(true)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   } finally {
@@ -69,9 +66,9 @@ async function respond(reqId: string, action: 'accept' | 'reject') {
   if (acting.value[reqId]) return
   acting.value[reqId] = true
   try {
-    await communityApi.respondPartner(reqId, action)
+    await partnerStore.respond(reqId, action)
     toast(action === 'accept' ? '已接受' : '已拒绝')
-    await load()
+    await load(true)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   } finally {
@@ -90,7 +87,7 @@ async function remind(p: PartnerItem) {
   if (acting.value[p.userId]) return
   acting.value[p.userId] = true
   try {
-    await communityApi.partnerRemind(p.userId)
+    await partnersApi.partnerRemind(p.userId)
     toast('已发送学习提醒')
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
@@ -102,9 +99,9 @@ async function remind(p: PartnerItem) {
 async function unbind(p: PartnerItem) {
   if (!(await confirm(`确认与「${p.userName}」解除搭子关系？`, { danger: true }))) return
   try {
-    await communityApi.unbindPartner(p.userId)
+    await partnerStore.unbind(p.userId)
     toast('已解除搭子关系')
-    await load()
+    await load(true)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   }
@@ -125,7 +122,7 @@ async function searchPartner() {
   searchNotFound.value = false
   searchError.value = false
   try {
-    searchResult.value = await communityApi.lookup(key)
+    searchResult.value = await usersApi.lookup(key)
   } catch (e) {
     if ((e as { status?: number } | null)?.status === 404) searchNotFound.value = true
     else searchError.value = true
@@ -138,10 +135,10 @@ async function addPartner(userId: string) {
   if (acting.value[userId]) return
   acting.value[userId] = true
   try {
-    const res = await communityApi.sendPartner(userId)
+    const res = await partnersApi.sendPartner(userId)
     toast(res.accepted ? '你们已成为搭子！' : '已发送请求')
     if (searchResult.value) searchResult.value.partnerStatus = res.accepted ? 'accepted' : 'pending_sent'
-    await load()
+    await load(true)
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
   } finally {
@@ -151,10 +148,7 @@ async function addPartner(userId: string) {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto px-4 py-6 space-y-5">
-    <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
-    <div class="section-title !mb-0">学习搭子</div>
-
+  <div class="collaboration-page space-y-5">
     <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
 
     <template v-else>
@@ -250,13 +244,15 @@ async function addPartner(userId: string) {
           <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">
             我的搭子（{{ partners.length }}/3）
           </div>
-          <button class="ml-auto btn-ghost !text-xs" @click="router.push('/partners/shares')">搭子分享 →</button>
+          <button class="ml-auto btn-ghost !text-xs" @click="router.push({ name: 'partner-shares' })">
+            搭子分享 →
+          </button>
         </div>
         <!-- 加载失败：持久错误态 + 重试，不落「还没有搭子」空态 -->
         <div v-if="loadError" class="flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
           <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
           <span class="flex-1">{{ loadError }}</span>
-          <button class="btn-ghost !text-xs shrink-0" @click="load">
+          <button class="btn-ghost !text-xs shrink-0" @click="load(true)">
             <RefreshCw :size="14" aria-hidden="true" />
             重试
           </button>
@@ -273,16 +269,36 @@ async function addPartner(userId: string) {
             <UserAvatar :name="p.userName" :avatar="p.userAvatar" size="sm" />
             <span class="font-medium group-hover:text-primary-500">{{ p.userName }}</span>
           </div>
-          <div class="flex flex-wrap gap-1">
-            <button class="btn-ghost !text-xs" @click="openWeekly(p)">周报</button>
-            <button class="btn-ghost !text-xs" @click="remind(p)">提醒</button>
-            <button class="btn-ghost !text-xs" @click="router.push(`/partners/study?partner=${p.userId}`)">开黑</button>
-            <button class="btn-ghost !text-xs" @click="router.push(`/partners/plans?partner=${p.userId}`)">计划</button>
-            <button class="btn-ghost !text-xs" @click="router.push(`/partners/reviews?partner=${p.userId}`)">
-              复盘
+          <div class="flex flex-wrap items-center gap-2">
+            <button class="btn-primary" @click="router.push({ name: 'partner-study', query: { partner: p.userId } })">
+              开始自习
             </button>
-            <button class="btn-ghost !text-xs" @click="router.push(`/messages/${p.userId}`)">私信</button>
-            <button class="btn-ghost !text-xs text-red-400" @click="unbind(p)">解绑</button>
+            <button class="btn-ghost" @click="router.push({ name: 'partner-plans', query: { partner: p.userId } })">
+              计划
+            </button>
+            <details class="relative">
+              <summary class="cursor-pointer px-3 flex items-center text-sm" aria-label="更多搭子操作">
+                更多 ···
+              </summary>
+              <div class="absolute right-0 top-full z-10 w-40 card !p-2 shadow-lg flex flex-col">
+                <button
+                  class="text-left px-3"
+                  @click="router.push({ name: 'partner-reviews', query: { partner: p.userId } })"
+                >
+                  复盘
+                </button>
+                <button class="text-left px-3" @click="openWeekly(p)">查看周报</button>
+                <button class="text-left px-3" :disabled="acting[p.userId]" @click="remind(p)">学习提醒</button>
+                <button class="text-left px-3" @click="router.push({ name: 'partner-shares' })">搭子分享</button>
+                <button
+                  class="text-left px-3"
+                  @click="router.push({ name: 'message-chat', params: { peerId: p.userId } })"
+                >
+                  私信
+                </button>
+                <button class="text-left px-3 text-red-500" @click="unbind(p)">解除搭子</button>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -294,7 +310,7 @@ async function addPartner(userId: string) {
         <div v-if="loadError" class="flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
           <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
           <span class="flex-1">{{ loadError }}</span>
-          <button class="btn-ghost !text-xs shrink-0" @click="load">
+          <button class="btn-ghost !text-xs shrink-0" @click="load(true)">
             <RefreshCw :size="14" aria-hidden="true" />
             重试
           </button>

@@ -1,21 +1,26 @@
 <script setup lang="ts">
+import { usePartnerStore } from '../features/collaboration/stores/partners'
+import { storeToRefs } from 'pinia'
+const partnerStore = usePartnerStore()
 /**
  * 协作备考计划：
  * - 列表视图：我的计划（标题/搭子/我的进度 myDone-taskTotal），点进详情
  * - 新建计划：选择搭子（?partner= 可预选）+ 标题 → createPartnerPlan
  * - 详情视图：任务列表（标题/阶段/「我完成」可勾选 /「搭子完成」只读）、添加任务、删除任务、删除计划
  */
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import AsyncState from '../shared/components/AsyncState.vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
-import { useRoute } from 'vue-router'
-import { communityApi } from '../api/community'
+import { useRoute, useRouter } from 'vue-router'
+import { partnersApi } from '../api/community/partners'
 import { RefreshCw, TriangleAlert } from '@lucide/vue'
 import { useBack } from '../composables/useBack'
-import type { PartnerItem, PartnerPlan, PartnerPlanDetail, PartnerPlanTask } from '../types'
+import type { PartnerPlan, PartnerPlanDetail, PartnerPlanTask } from '../types'
 
 const route = useRoute()
+const router = useRouter()
 const { goBack } = useBack()
 const toast = useToast()
 const confirm = useConfirm()
@@ -24,7 +29,7 @@ const loading = ref(true)
 /** 首屏加载失败信息：持久错误态（区别于「还没有协作计划」空态），提供重试 */
 const loadError = ref('')
 const plans = ref<PartnerPlan[]>([])
-const partners = ref<PartnerItem[]>([])
+const { partners } = storeToRefs(partnerStore)
 
 // ---- 新建计划 ----
 const newPartner = ref((route.query.partner as string) || '')
@@ -34,6 +39,9 @@ const creating = ref(false)
 // ---- 详情视图 ----
 const detail = ref<PartnerPlanDetail | null>(null)
 const detailLoading = ref(false)
+const detailError = ref('')
+let detailTicket = 0
+onBeforeUnmount(() => detailTicket++)
 const newTaskTitle = ref('')
 const newTaskPhase = ref('')
 
@@ -43,9 +51,8 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const [p, l] = await Promise.all([communityApi.partnerPlans(), communityApi.partners()])
+    const [p, l] = await Promise.all([partnersApi.partnerPlans(), partnerStore.load()])
     plans.value = p.items
-    partners.value = l.partners
     if (newPartner.value && !l.partners.some((x) => x.userId === newPartner.value)) newPartner.value = ''
   } catch (e) {
     loadError.value = getErrorMessage(e, '加载失败')
@@ -57,7 +64,7 @@ async function load() {
 
 async function loadPlans() {
   try {
-    plans.value = (await communityApi.partnerPlans()).items
+    plans.value = (await partnersApi.partnerPlans()).items
   } catch (e) {
     toast(getErrorMessage(e, '加载失败'))
   }
@@ -75,7 +82,7 @@ async function createPlan() {
   }
   creating.value = true
   try {
-    await communityApi.createPartnerPlan(newPartner.value, newTitle.value.trim())
+    await partnersApi.createPartnerPlan(newPartner.value, newTitle.value.trim())
     newTitle.value = ''
     toast('计划已创建')
     await loadPlans()
@@ -86,27 +93,45 @@ async function createPlan() {
   }
 }
 
-async function openDetail(id: string) {
+function openDetail(id: string) {
+  void router.push({ name: 'partner-plan-detail', params: { planId: id }, query: route.query })
+}
+watch(
+  () => route.params.planId,
+  (id) => {
+    if (typeof id === 'string') void loadDetail(id)
+    else {
+      detailTicket++
+      detail.value = null
+      detailError.value = ''
+      detailLoading.value = false
+    }
+  },
+  { immediate: true }
+)
+async function loadDetail(id: string) {
+  const ticket = ++detailTicket
   detailLoading.value = true
+  detailError.value = ''
   detail.value = null
   try {
-    detail.value = await communityApi.partnerPlan(id)
+    const result = await partnersApi.partnerPlan(id)
+    if (ticket === detailTicket) detail.value = result
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    if (ticket === detailTicket) detailError.value = getErrorMessage(e, '计划加载失败，请重试')
   } finally {
-    detailLoading.value = false
+    if (ticket === detailTicket) detailLoading.value = false
   }
 }
 
 function backToList() {
-  detail.value = null
-  loadPlans()
+  void router.push({ name: 'partner-plans', query: route.query })
 }
 
 async function refreshDetail() {
   if (!detail.value) return
   try {
-    detail.value = await communityApi.partnerPlan(detail.value.id)
+    detail.value = await partnersApi.partnerPlan(detail.value.id)
   } catch (e) {
     toast(getErrorMessage(e, '刷新失败'))
   }
@@ -115,7 +140,7 @@ async function refreshDetail() {
 async function toggleTask(t: PartnerPlanTask, done: boolean) {
   if (!detail.value) return
   try {
-    await communityApi.updatePlanTask(detail.value.id, t.id, done)
+    await partnersApi.updatePlanTask(detail.value.id, t.id, done)
     t.myDone = done
   } catch (e) {
     toast(getErrorMessage(e, '操作失败'))
@@ -133,7 +158,7 @@ async function addTask() {
   }
   addingTask.value = true
   try {
-    await communityApi.addPlanTask(detail.value.id, newTaskTitle.value.trim(), newTaskPhase.value.trim())
+    await partnersApi.addPlanTask(detail.value.id, newTaskTitle.value.trim(), newTaskPhase.value.trim())
     newTaskTitle.value = ''
     newTaskPhase.value = ''
     await refreshDetail()
@@ -148,7 +173,7 @@ async function removeTask(t: PartnerPlanTask) {
   if (!detail.value) return
   if (!(await confirm(`删除任务「${t.title}」？`, { danger: true }))) return
   try {
-    await communityApi.deletePlanTask(detail.value.id, t.id)
+    await partnersApi.deletePlanTask(detail.value.id, t.id)
     toast('任务已删除')
     await refreshDetail()
   } catch (e) {
@@ -160,9 +185,10 @@ async function removePlan() {
   if (!detail.value) return
   if (!(await confirm(`删除计划「${detail.value.title}」？其中的任务将一并删除。`, { danger: true }))) return
   try {
-    await communityApi.deletePartnerPlan(detail.value.id)
+    await partnersApi.deletePartnerPlan(detail.value.id)
     toast('计划已删除')
     detail.value = null
+    backToList()
     await loadPlans()
   } catch (e) {
     toast(getErrorMessage(e, '删除失败'))
@@ -171,16 +197,21 @@ async function removePlan() {
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto px-4 py-6 space-y-5">
+  <div class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
     <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
     <div class="section-title !mb-0">协作备考计划</div>
 
     <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
 
     <!-- 详情视图 -->
-    <template v-else-if="detail || detailLoading">
+    <template v-else-if="route.params.planId">
       <div class="card space-y-3">
-        <div v-if="detailLoading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+        <AsyncState
+          v-if="detailLoading || detailError"
+          :loading="detailLoading"
+          :error="detailError"
+          @retry="loadDetail(String(route.params.planId))"
+        />
         <template v-else-if="detail">
           <div class="flex items-center gap-2">
             <button class="btn-ghost !text-xs !px-2" @click="backToList">← 列表</button>

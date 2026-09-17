@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useAsyncCommand } from '../../shared/composables/useAsyncCommand'
 import { useRoute } from 'vue-router'
 import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
@@ -32,53 +33,50 @@ const toast = useToast()
 const confirm = useConfirm()
 
 const inviteInput = ref(typeof route.query.invite === 'string' ? route.query.invite : '')
-const applySubmitting = ref(false)
-const withdrawing = ref(false)
-const resettingCode = ref(false)
-const joinSubmitting = ref(false)
+const command = useAsyncCommand('team-membership')
+const {
+  pending: applySubmitting,
+  pending: withdrawing,
+  pending: resettingCode,
+  pending: joinSubmitting,
+  error: commandError
+} = command
 
 async function handleApply() {
   if (!inviteInput.value.trim() || applySubmitting.value) return
-  applySubmitting.value = true
   try {
-    await applyTeam(props.teamId, inviteInput.value.trim())
+    await command.run(() => applyTeam(props.teamId, inviteInput.value.trim()))
     toast('申请已提交，等待队长审核')
     inviteInput.value = ''
     emit('refresh')
   } catch (e) {
     toast(getErrorMessage(e, '申请失败'))
-  } finally {
-    applySubmitting.value = false
   }
 }
 
 async function handleWithdraw() {
   if (withdrawing.value) return
-  withdrawing.value = true
   try {
-    await withdrawRequest(props.teamId)
+    await command.run(() => withdrawRequest(props.teamId))
     toast('已撤回申请')
     // 撤回后 URL 无邀请码时详情接口必然 403，改为交由页面回列表，避免错误提示
     emit('withdrawn')
   } catch (e) {
     toast(getErrorMessage(e, '撤回失败'))
-  } finally {
-    withdrawing.value = false
   }
 }
 
 async function handleResetCode() {
   if (resettingCode.value) return
   if (!(await confirm('确认重新生成邀请码？旧邀请码将立即失效。'))) return
-  resettingCode.value = true
   try {
-    await resetInviteCode(props.teamId)
+    await command.run(async () => {
+      await resetInviteCode(props.teamId)
+    })
     toast('邀请码已重置')
     emit('refresh')
   } catch (e) {
     toast(getErrorMessage(e, '重置失败'))
-  } finally {
-    resettingCode.value = false
   }
 }
 
@@ -94,20 +92,23 @@ async function copyInvite() {
 
 async function handleJoin() {
   if (joinSubmitting.value) return
-  joinSubmitting.value = true
   try {
-    await joinTeam(props.teamId)
+    await command.run(() => joinTeam(props.teamId))
     toast('已加入小组')
     emit('refresh')
   } catch (e) {
     toast(getErrorMessage(e, '加入失败'))
-  } finally {
-    joinSubmitting.value = false
   }
 }
 
 function formatDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+function menuAction(action: 'edit' | 'leave' | 'leader-leave', event: Event) {
+  ;(event.currentTarget as HTMLElement).closest('details')?.removeAttribute('open')
+  if (action === 'edit') emit('edit')
+  else if (action === 'leave') emit('leave')
+  else emit('leader-leave')
 }
 </script>
 
@@ -139,7 +140,7 @@ function formatDate(timestamp: number): string {
     <p v-if="team.description" class="text-sm text-slate-500 dark:text-slate-400 whitespace-pre-wrap">
       {{ team.description }}
     </p>
-    <div class="flex items-center gap-3 text-xs text-slate-400">
+    <div class="flex flex-wrap items-center gap-3 text-xs text-slate-400">
       <span>{{ team.memberCount }} / {{ team.maxMembers }} 人</span>
       <span>创建于 {{ formatDate(team.createdAt) }}</span>
       <div class="flex-1"></div>
@@ -168,19 +169,27 @@ function formatDate(timestamp: number): string {
           {{ joinSubmitting ? '加入中…' : '加入小组' }}
         </button>
       </template>
-      <button
-        v-else-if="team.myRole === 'member'"
-        class="btn-ghost !text-xs !text-red-500"
-        :disabled="leaveSubmitting"
-        @click="emit('leave')"
-      >
-        {{ leaveSubmitting ? '退出中…' : '退出小组' }}
-      </button>
-      <template v-else-if="team.myRole === 'leader'">
-        <button class="btn-ghost !text-xs" @click="emit('edit')">编辑</button>
-        <button class="btn-ghost !text-xs !text-red-500" @click="emit('leader-leave')">退出小组</button>
-      </template>
+      <details v-else class="relative ml-auto" @keydown.esc="($event.currentTarget as HTMLDetailsElement).open = false">
+        <summary class="btn-ghost !text-xs cursor-pointer list-none" aria-label="小队设置">设置 ···</summary>
+        <div class="absolute right-0 z-20 card !p-2 min-w-36 shadow-lg">
+          <button
+            v-if="team.myRole === 'member'"
+            class="btn-ghost !text-xs !text-red-500"
+            :disabled="leaveSubmitting"
+            @click="menuAction('leave', $event)"
+          >
+            {{ leaveSubmitting ? '退出中…' : '退出小组' }}
+          </button>
+          <template v-else-if="team.myRole === 'leader'">
+            <button class="btn-ghost !text-xs w-full" @click="menuAction('edit', $event)">编辑小队</button>
+            <button class="btn-ghost !text-xs !text-red-500" @click="menuAction('leader-leave', $event)">
+              退出小组
+            </button>
+          </template>
+        </div>
+      </details>
     </div>
+    <p v-if="commandError" role="status" class="text-sm text-red-500">{{ commandError }}</p>
     <div
       v-if="team.myRole === 'leader' && !team.isPublic && inviteCode"
       class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700"

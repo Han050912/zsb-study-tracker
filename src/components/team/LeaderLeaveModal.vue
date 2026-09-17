@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import Modal from '../Modal.vue'
 import UserAvatar from '../community/UserAvatar.vue'
 import type { TeamMember } from '../../types'
@@ -8,8 +8,9 @@ import type { TeamMember } from '../../types'
  * 队长退出弹窗：解散 / 转让并退出。
  * 只发 confirm 意图（携带模式与接任者），解散/转让/router 跳转等离开页面类动作留页面层执行
  */
-defineProps<{
+const props = defineProps<{
   show: boolean
+  teamName: string
   members: TeamMember[]
   submitting: boolean
 }>()
@@ -21,6 +22,14 @@ const emit = defineEmits<{
 
 const leaveMode = ref<'disband' | 'transfer'>('disband')
 const transferTargetId = ref('')
+const confirmName = ref('')
+watch(
+  () => props.show,
+  () => {
+    confirmName.value = ''
+    transferTargetId.value = ''
+  }
+)
 </script>
 
 <template>
@@ -57,6 +66,11 @@ const transferTargetId = ref('')
         <div
           v-for="m in members.filter((x) => x.role === 'member')"
           :key="m.userId"
+          role="radio"
+          :aria-checked="transferTargetId === m.userId"
+          tabindex="0"
+          @keydown.enter="transferTargetId = m.userId"
+          @keydown.space.prevent="transferTargetId = m.userId"
           class="flex items-center gap-2 py-1.5 cursor-pointer"
           @click="transferTargetId = m.userId"
         >
@@ -71,11 +85,19 @@ const transferTargetId = ref('')
         </div>
       </div>
     </div>
+    <div v-if="leaveMode === 'disband'" class="mt-4">
+      <label for="disband-name" class="label">输入「{{ teamName }}」确认解散</label
+      ><input id="disband-name" v-model="confirmName" class="input" autocomplete="off" />
+    </div>
     <template #footer>
       <button class="btn-ghost" @click="emit('update:show', false)">取消</button>
       <button
         class="btn-primary"
-        :disabled="submitting || (leaveMode === 'transfer' && !transferTargetId)"
+        :disabled="
+          submitting ||
+          (leaveMode === 'disband' && confirmName !== teamName) ||
+          (leaveMode === 'transfer' && !transferTargetId)
+        "
         @click="emit('confirm', { mode: leaveMode, targetId: transferTargetId })"
       >
         {{ submitting ? '处理中…' : '确认' }}
