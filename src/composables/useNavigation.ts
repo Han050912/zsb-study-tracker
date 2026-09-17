@@ -15,7 +15,7 @@ export function useNavigation() {
     if (!isLoggedIn.value) {
       return [
         { path: '/community', icon: '💬', label: '社区', subject: false },
-        { path: '/teams', icon: '👥', label: '组队', subject: false }
+        { path: '/teams', icon: '👥', label: '组队协作', subject: false }
       ]
     }
     const subjectItems = store.subjects.map((s) => ({
@@ -27,7 +27,7 @@ export function useNavigation() {
     return [
       { path: '/', icon: '🏠', label: '首页', subject: false },
       { path: '/community', icon: '💬', label: '社区', subject: false },
-      { path: '/teams', icon: '👥', label: '组队', subject: false },
+      { path: '/teams', icon: '👥', label: '组队协作', subject: false },
       ...subjectItems,
       { path: '/pomodoro', icon: '🍅', label: '专注', subject: false },
       { path: '/notes', icon: '📔', label: '笔记', subject: false },
@@ -48,7 +48,7 @@ export function useNavigation() {
     if (!isLoggedIn.value) {
       return [
         { path: '/community', icon: '💬', label: '社区', subject: false },
-        { path: '/teams', icon: '👥', label: '组队', subject: false },
+        { path: '/teams', icon: '👥', label: '组队协作', subject: false },
         { path: `/login?redirect=${encodeURIComponent(route.path || '/community')}`, label: '登录', subject: false }
       ]
     }
@@ -56,7 +56,7 @@ export function useNavigation() {
       .filter((n) => n.subject)
       .slice(0, 1)
       .map((n) => n.path)
-    const picks = ['/', ...subjectPaths, '/community', '/pomodoro', '/daily-summary', '/settings']
+    const picks = ['/', ...subjectPaths, '/community', '/teams', '/pomodoro', '/settings']
     return picks.map((p) => nav.value.find((n) => n.path === p)).filter((n): n is NonNullable<typeof n> => !!n)
   })
 

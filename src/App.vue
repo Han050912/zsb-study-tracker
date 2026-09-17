@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { usePartnerStore } from './features/collaboration/stores/partners'
+import { useSquadStore } from './features/collaboration/stores/squads'
+import { useStudyTimerStore } from './stores/studyTimer'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
-import { useCommunityStore } from './stores/community'
+import { useCommunityFeedStore, usePostStore, useNotificationStore } from './stores/community'
 import { sessionUser, logout, isLoggedIn, goLogin } from './services/auth'
 import Toast from './components/Toast.vue'
 import Onboarding from './components/Onboarding.vue'
@@ -22,7 +25,7 @@ import { useAppReady } from './composables/useAppBoot'
 const AchievementModal = defineAsyncComponent(() => import('./components/AchievementModal.vue'))
 
 const store = useAppStore()
-const community = useCommunityStore()
+const community = useNotificationStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -65,15 +68,20 @@ onMounted(() => {
 function onAuthExpired() {
   logout()
   store.resetState()
+  usePartnerStore().resetState()
+  useSquadStore().resetState()
+  useStudyTimerStore().finishSession()
   community.resetState()
+  useCommunityFeedStore().resetState()
+  usePostStore().resetState()
 }
 window.addEventListener('auth:expired', onAuthExpired)
 
 const dndActive = computed(() => isDndActive(store.settings))
 
 // 全屏沉浸页：番茄钟 + 开黑自习室（进入后隐藏全局导航，实现真正全屏）
-const isFullscreenPage = computed(() => route.path === '/pomodoro' || route.path === '/partners/study')
-const isAuthPage = computed(() => route.path === '/login')
+const isFullscreenPage = computed(() => route.meta.layout === 'immersive')
+const isAuthPage = computed(() => route.meta.layout === 'auth')
 // 笔记页打开具体笔记时隐藏右上角头像浮层，把顶部右侧让给编辑工具栏
 const isNotesEditing = computed(() => route.path === '/notes' && (!!route.query.id || route.query.new === '1'))
 const hideNav = computed(() => isFullscreenPage.value || isAuthPage.value)
@@ -124,6 +132,9 @@ async function accountLogout(switchAccount: boolean) {
   // ② 清理会话状态并跳转登录页
   logout()
   store.resetState()
+  usePartnerStore().resetState()
+  useSquadStore().resetState()
+  useStudyTimerStore().finishSession()
   community.resetState()
   // 退出后回登录页；访客浏览模式仅能由登录页「先随便看看」入口进入
   router.replace('/login')
