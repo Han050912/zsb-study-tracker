@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hashPassword, verifyPassword, signToken, verifyTokenFull, JWT_TTL_SECONDS } from '../src/auth.ts'
+import { hashPassword, verifyPassword, needsRehash, signToken, verifyTokenFull, JWT_TTL_SECONDS } from '../src/auth.ts'
 
 test('hashPassword/verifyPassword: PBKDF2 回环，同密码校验通过', async () => {
   const hash = await hashPassword('MyP@ssw0rd')
@@ -47,6 +47,17 @@ test('verifyPassword: 存量 bcrypt 哈希走兼容路径', async () => {
   assert.equal(await verifyPassword('wrong-pw', hash), false)
   // 无法识别的哈希格式落入 bcrypt 比较，返回 false 而不抛异常
   assert.equal(await verifyPassword('pw', 'garbage'), false)
+})
+
+test('needsRehash: 仅非 pbkdf2$ 前缀的哈希需要升级', async () => {
+  const bcrypt = (await import('bcryptjs')).default
+  // PBKDF2 哈希（字面量与 hashPassword 实产）无需升级
+  assert.equal(needsRehash('pbkdf2$100000$c2FsdA==$aGFzaA=='), false)
+  assert.equal(needsRehash(await hashPassword('any-pw')), false)
+  // 存量 bcrypt 哈希、无法识别的格式、空串一律视为需要升级（能否放行仍由 verifyPassword 决定）
+  assert.equal(needsRehash(bcrypt.hashSync('legacy-pw', 10)), true)
+  assert.equal(needsRehash('garbage'), true)
+  assert.equal(needsRehash(''), true)
 })
 
 test('signToken/verifyTokenFull: 回环返回完整载荷', async () => {

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { on } from '../router'
-import { hashPassword, verifyPassword, signToken, verifyTokenFull } from '../auth'
+import { hashPassword, verifyPassword, needsRehash, signToken, verifyTokenFull } from '../auth'
 import { first, all, run, batch, uid, randomCode, HttpError } from '../db'
 import { parseBody, registerSchema, loginSchema, passwordSchema, timingSafeEqual } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
@@ -133,6 +133,20 @@ export function registerAuthRoutes() {
     const row = await first<UserRow>(ctx.env, 'SELECT * FROM users WHERE username = ?', username.trim())
     if (!row || !(await verifyPassword(password, row.password_hash))) {
       throw new HttpError(401, '用户名或密码错误')
+    }
+    // 存量 bcrypt 哈希：登录成功后立即重写为 PBKDF2，账号逐个自愈（rehash-on-login）。
+    // 密码本身未变，已签发 token 与 user_sessions 不受影响，无需吊销；
+    // 写入失败不吞异常（如实报错，用户重试，下次登录会再尝试升级）。
+    // CAS：WHERE 以本次读到的旧哈希为前置条件。若在 bcrypt 校验窗口内密码被
+    // 改密/管理员重置并发改写，本次升级写 0 行、顺延到下次登录，避免用旧密码的哈希覆盖新哈希。
+    if (needsRehash(row.password_hash)) {
+      await run(
+        ctx.env,
+        'UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?',
+        await hashPassword(password),
+        row.id,
+        row.password_hash
+      )
     }
     const token = await signToken(row.id, ctx.env.JWT_SECRET, row.role || 'user')
     await recordSession(ctx.env, token, row.id)

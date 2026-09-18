@@ -3,6 +3,8 @@ import { SignJWT, jwtVerify } from 'jose'
 
 /** PBKDF2 迭代次数（登录热路径 CPU 成本与安全性的权衡值） */
 const PBKDF2_ITERATIONS = 100_000
+/** PBKDF2 哈希前缀：存量 bcrypt 哈希（$2 前缀）无此标记，据此判定是否需要升级 */
+const PBKDF2_PREFIX = 'pbkdf2$'
 /** JWT 有效期（秒）：3 天。配合登出吊销黑名单（jwt_blacklist）缩短泄露窗口 */
 export const JWT_TTL_SECONDS = 3 * 24 * 3600
 
@@ -31,11 +33,16 @@ async function pbkdf2Hash(password: string, salt: Uint8Array): Promise<string> {
 
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16))
-  return `pbkdf2$${PBKDF2_ITERATIONS}$${toB64(salt)}$${await pbkdf2Hash(password, salt)}`
+  return `${PBKDF2_PREFIX}${PBKDF2_ITERATIONS}$${toB64(salt)}$${await pbkdf2Hash(password, salt)}`
+}
+
+/** 该哈希是否需要在下次登录时升级为 PBKDF2（存量 bcrypt 与任何非 pbkdf2$ 格式均返回 true） */
+export function needsRehash(hash: string): boolean {
+  return !hash.startsWith(PBKDF2_PREFIX)
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  if (hash.startsWith('pbkdf2$')) {
+  if (hash.startsWith(PBKDF2_PREFIX)) {
     const [, iterStr, saltB64, hashB64] = hash.split('$')
     const iterations = Number(iterStr)
     if (!Number.isInteger(iterations) || iterations <= 0 || iterations > 10_000_000) return false
@@ -50,7 +57,8 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
     )
     return toB64(bits) === hashB64
   }
-  return bcrypt.compareSync(password, hash) // 存量 bcrypt 哈希（$2 前缀）
+  // 存量 bcrypt 哈希（$2 前缀）：用异步 compare 按时间片让出，避免同步计算阻塞整个 isolate
+  return bcrypt.compare(password, hash)
 }
 
 function secretKey(secret: string): Uint8Array {
