@@ -127,7 +127,7 @@ export interface CrudMapping<Body = any> {
    * REST create/update 与记录级同步（api/sync.ts）都经 `assertMappingBody` 用它校验，失败抛 400
    * （首个 issue 的字段路径 + 中文文案）；缺席时行为不变。
    */
-  schema?: z.ZodTypeAny
+  schema?: z.ZodType
 }
 
 /**
