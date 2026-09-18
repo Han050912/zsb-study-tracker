@@ -18,7 +18,8 @@ export default tseslint.config(
       // 工具生成的工作目录（已被 .gitignore 忽略），不参与 lint
       '.superpowers/**',
       '.cache/**',
-      '.codebuddy/**'
+      '.codebuddy/**',
+      '.planning/**'
     ]
   },
   js.configs.recommended,
@@ -26,9 +27,12 @@ export default tseslint.config(
   ...pluginVue.configs['flat/essential'],
   prettierConfig,
   {
+    // no-explicit-any 保持 recommended 的 error：存量 122 处（worker 89 / src 33）已冻结进仓库根的
+    // eslint-suppressions.json（重新生成：`npx eslint . --suppress-rule @typescript-eslint/no-explicit-any`），
+    // 新增的 any 会立即让 lint 失败（棘轮）。修好 any 或重命名/移动文件后必须跑
+    // `npx eslint . --prune-suppressions` 更新基线，否则 lint 以 exit 2 报 unused suppressions。
+    // 该文件由 ESLint 生成、已列入 .prettierignore，不要手动编辑或用 prettier 格式化。
     rules: {
-      // 已有 242 处历史 any：降为 warning，保持可见但不阻塞门禁，后续增量治理
-      '@typescript-eslint/no-explicit-any': 'warn',
       // 允许用下划线前缀显式标注「有意不使用的参数/变量」（如路由 handler 的占位参数）
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       // 项目组件命名约定为单词名（Modal / Toast / Heatmap 等），不强制多词

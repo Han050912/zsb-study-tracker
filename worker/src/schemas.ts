@@ -14,7 +14,7 @@ z.config(z.locales.zhCN())
  * `maxBytes`：端点级上限，默认 `JSON_BODY_MAX_BYTES`（256KB）——不允许任何端点无上限读体（issue #52），
  * 与 router.ts 的 `body()` 共用 db.parseJsonBody 同一份「Content-Length 预检 + 读取后复核」实现。
  */
-export async function parseBody<S extends z.ZodTypeAny>(
+export async function parseBody<S extends z.ZodType>(
   request: Request,
   schema: S,
   maxBytes: number = JSON_BODY_MAX_BYTES

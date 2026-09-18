@@ -5,6 +5,7 @@ docs/
 public/
 package-lock.json
 worker/package-lock.json
+eslint-suppressions.json
 *.md
 .superpowers/
 .codebuddy/
