@@ -7,6 +7,16 @@
   --surface: #fff;
   --line: #e2e8f0;
   --muted: #64748b;
+  --surface-soft: #f1f5f9;
+  --action-soft: #eff4ff;
+  --radius-card: 16px;
+  --radius-control: 12px;
+  --shadow-card: 0 2px 6px rgb(23 50 77 / 3%);
+  --shadow-raised: 0 8px 24px rgb(23 50 77 / 8%);
+  --motion-fast: 100ms;
+  --motion-base: 160ms;
+  --motion-enter: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 .dark {
   --ink: #e2e8f0;
@@ -15,18 +25,20 @@
   --surface: #182333;
   --line: #334155;
   --muted: #a3b3c6;
+  --surface-soft: #223044;
+  --action-soft: #233657;
+  --shadow-card: 0 2px 6px rgb(0 0 0 / 10%);
+  --shadow-raised: 0 8px 24px rgb(0 0 0 / 20%);
 }
 .collaboration-page {
   color: var(--ink);
-  font-family: 'Noto Sans SC', 'Source Han Sans CN', 'Microsoft YaHei', sans-serif;
   min-width: 0;
 }
 .collaboration-title {
-  font-family: 'Smiley Sans', 'Microsoft YaHei', sans-serif;
-  font-size: clamp(1.6rem, 3vw, 2rem);
-  font-weight: 750;
-  letter-spacing: -0.04em;
-  line-height: 1.35;
+  font-size: clamp(1.375rem, 2.5vw, 1.625rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.4;
 }
 .training-number {
   font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
@@ -35,7 +47,7 @@
 .collaboration-page .card {
   background: var(--surface);
   border-color: var(--line);
-  box-shadow: none;
+  box-shadow: var(--shadow-card);
 }
 .collaboration-page :is(button, .btn, .btn-primary, .btn-ghost, .btn-danger, summary) {
   min-height: 44px;
@@ -63,19 +75,38 @@
   display: flex;
   gap: 0.25rem;
   overflow-x: auto;
-  border-bottom: 1px solid var(--line);
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
+  scrollbar-width: thin;
 }
 .app-tabs button {
-  min-height: 48px;
-  padding: 0.6rem 1rem;
+  position: relative;
+  min-height: 44px;
+  flex: 1 0 auto;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
   white-space: nowrap;
   color: var(--muted);
-  border-bottom: 3px solid transparent;
+  transition:
+    color var(--motion-base),
+    background-color var(--motion-base),
+    box-shadow var(--motion-base);
 }
 .app-tabs button[aria-selected='true'] {
   color: var(--action);
-  border-bottom-color: var(--action);
-  font-weight: 700;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  font-weight: 600;
+}
+.app-tabs button:focus-visible {
+  outline-offset: -3px;
+}
+.app-tabs button:hover:not([aria-selected='true']) {
+  color: var(--ink);
+  background: var(--action-soft);
 }
 .feed-filters {
   position: sticky;
@@ -102,14 +133,4 @@
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
-}
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
 }

@@ -40,11 +40,14 @@ export function useChart(
   const el = ref<HTMLElement>()
   const status = ref<ChartStatus>('loading')
   let chart: ECharts | null = null
+  const motionPreference = window.matchMedia('(prefers-reduced-motion: reduce)')
 
   const isDark = () => document.documentElement.classList.contains('dark')
 
   function render() {
     if (!el.value || status.value !== 'ready' || !echartsModule) return
+    // 隐藏的标签面板没有尺寸，等 ResizeObserver 收到真实尺寸后再初始化。
+    if (!el.value.clientWidth || !el.value.clientHeight) return
     if (!chart) {
       chart = echartsModule.init(el.value)
       if (onClick) chart.on('click', onClick)
@@ -54,7 +57,12 @@ export function useChart(
       chart.clear()
       return
     }
-    chart.setOption(option)
+    chart.setOption({
+      ...option,
+      animation: !motionPreference.matches && option.animation !== false,
+      animationDuration: motionPreference.matches ? 0 : 200,
+      animationDurationUpdate: motionPreference.matches ? 0 : 160
+    })
   }
 
   const onResize = () => chart?.resize()
@@ -82,9 +90,12 @@ export function useChart(
     ro = null
     if (!node) return
     ro = new ResizeObserver(() => {
-      if (!el.value || !chart) return
+      if (!el.value) return
       const { width, height } = el.value.getBoundingClientRect()
-      if (width > 0 && height > 0) chart.resize()
+      if (width > 0 && height > 0) {
+        render()
+        chart?.resize()
+      }
     })
     ro.observe(node)
   }
@@ -109,11 +120,13 @@ export function useChart(
   }
 
   onMounted(() => {
+    motionPreference.addEventListener('change', render)
     window.addEventListener('resize', onResize)
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
     load()
   })
   onUnmounted(() => {
+    motionPreference.removeEventListener('change', render)
     window.removeEventListener('resize', onResize)
     observer.disconnect()
     ro?.disconnect()

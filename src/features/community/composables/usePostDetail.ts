@@ -130,7 +130,10 @@ export function usePostDetail() {
     if (c.parentId) expandedReplies.value = new Set([...expandedReplies.value, c.parentId])
     highlightCommentId.value = id
     await nextTick()
-    document.getElementById(`comment-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    document.getElementById(`comment-${id}`)?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+      block: 'center'
+    })
     if (route.query.reply === '1') reply(c)
   }
 

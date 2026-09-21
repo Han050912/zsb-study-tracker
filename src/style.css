@@ -5,13 +5,24 @@
 
 @layer components {
   .card {
-    @apply bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 p-4;
+    @apply bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-4;
+    background-color: var(--surface);
+    border-color: var(--line);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
   }
   .btn {
     @apply inline-flex items-center justify-center gap-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors cursor-pointer select-none;
+    min-height: 44px;
+    border-radius: var(--radius-control);
+    transition:
+      background-color var(--motion-base),
+      color var(--motion-base),
+      box-shadow var(--motion-base),
+      transform var(--motion-fast);
   }
   .btn-primary {
-    @apply btn bg-primary-500 text-white hover:bg-primary-600 active:bg-primary-700;
+    @apply btn bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-800;
   }
   .btn-ghost {
     @apply btn bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600;
@@ -21,16 +32,151 @@
   }
   .input {
     @apply w-full rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary-300 dark:text-slate-100;
+    min-height: 44px;
+    min-width: 0;
+    border-radius: var(--radius-control);
+    transition:
+      border-color var(--motion-base),
+      box-shadow var(--motion-base),
+      background-color var(--motion-base);
   }
   .label {
     @apply block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1;
   }
   .page-title {
     @apply text-xl font-bold text-slate-800 dark:text-slate-100;
+    letter-spacing: -0.025em;
+    line-height: 1.4;
+    font-size: clamp(1.375rem, 2.5vw, 1.625rem);
   }
   .section-title {
     @apply text-sm font-semibold text-slate-700 dark:text-slate-200 mb-2;
   }
+}
+
+/* 页面标题以书签线定位，正文与图表不添加装饰。 */
+.page-title,
+.collaboration-title {
+  border-inline-start: 3px solid var(--action);
+  padding-inline-start: 0.7rem;
+}
+.btn:not(:disabled):active,
+.btn-primary:not(:disabled):active,
+.btn-ghost:not(:disabled):active,
+.btn-danger:not(:disabled):active,
+.icon-button:not(:disabled):active {
+  transform: scale(0.97);
+}
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--radius-control);
+  transition:
+    background-color var(--motion-base),
+    color var(--motion-base),
+    transform var(--motion-fast);
+}
+.input:focus-visible {
+  outline: none;
+  border-color: var(--action);
+}
+.interactive-card {
+  transition:
+    border-color var(--motion-base),
+    box-shadow var(--motion-base),
+    transform var(--motion-base) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) {
+  .interactive-card:hover {
+    border-color: var(--action);
+    box-shadow: var(--shadow-raised);
+    transform: translateY(-2px);
+  }
+}
+.interactive-card:focus-within {
+  border-color: var(--action);
+}
+.nav-link {
+  min-height: 44px;
+  transition:
+    color var(--motion-base),
+    background-color var(--motion-base),
+    box-shadow var(--motion-base);
+}
+.nav-link[aria-current='page'] {
+  box-shadow: inset 3px 0 var(--action);
+}
+.mobile-nav .nav-link[aria-current='page'] {
+  background: var(--action-soft);
+  box-shadow: none;
+}
+.account-menu {
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: var(--shadow-raised);
+  transform-origin: top right;
+}
+.account-menu button {
+  min-height: 44px;
+  transition:
+    background-color var(--motion-base),
+    color var(--motion-base);
+}
+.modal-panel {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 20%);
+}
+.modal-header,
+.modal-footer {
+  border-color: var(--line);
+}
+.modal-footer {
+  background: var(--surface-soft);
+  border-radius: 0 0 var(--radius-card) var(--radius-card);
+  padding-bottom: max(0.875rem, theme('spacing.safe-bottom'));
+}
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 2rem 1.25rem;
+  text-align: center;
+}
+.state-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  background: var(--action-soft);
+  color: var(--action);
+}
+.state-title {
+  color: var(--ink);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.state-description {
+  max-width: 30rem;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.8;
+}
+.skeleton-line {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+}
+.loading-spinner {
+  animation: spin 1s linear infinite;
 }
 
 html {
@@ -40,6 +186,25 @@ html {
 body {
   @apply bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background-color: var(--paper);
+  line-height: 1.6;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+:is(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 3px;
+}
+.record-action {
+  min-height: 44px;
+  min-width: 44px;
+  flex-shrink: 0;
+}
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
 /* 路由切换只做入场淡入，不做离场动画：
@@ -47,13 +212,99 @@ body {
    2. 无 mode 时若保留离场淡出，新旧页面会短暂同时占位导致布局跳动
    因此离场立即隐藏，新页面直接淡入 */
 .fade-enter-active {
-  transition: opacity 0.18s ease;
+  transition: opacity var(--motion-base) ease;
 }
 .fade-enter-from {
   opacity: 0;
 }
 .fade-leave-active {
   display: none;
+}
+
+/* 弹层/菜单与路由分别定义，退出层立即失去命中能力。 */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity var(--motion-enter) var(--ease-out);
+}
+.modal-enter-active .modal-panel,
+.modal-leave-active .modal-panel {
+  transition: transform var(--motion-enter) var(--ease-out);
+}
+.modal-leave-active {
+  transition-duration: var(--motion-fast);
+  pointer-events: none;
+}
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+.modal-enter-from .modal-panel,
+.modal-leave-to .modal-panel {
+  transform: translateY(12px) scale(0.99);
+}
+.menu-enter-active,
+.menu-leave-active,
+.toast-enter-active,
+.toast-leave-active,
+.list-enter-active,
+.list-leave-active {
+  transition:
+    opacity var(--motion-base),
+    transform var(--motion-enter) var(--ease-out);
+}
+.menu-enter-from,
+.menu-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.list-enter-from,
+.list-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.toast-move,
+.list-move {
+  transition: transform var(--motion-enter) var(--ease-out);
+}
+.toast-leave-active,
+.list-leave-active {
+  position: absolute;
+  pointer-events: none;
+}
+.menu-leave-active {
+  pointer-events: none;
+}
+.panel-reveal,
+details[open] > .details-panel {
+  animation: panel-in var(--motion-base) ease;
+}
+@keyframes panel-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.progress-motion {
+  transition:
+    width var(--motion-enter) var(--ease-out),
+    stroke-dashoffset var(--motion-enter) var(--ease-out);
+}
+
+/* 旧页面的辅助文案保留语义，但提高浅色主题下的可读性。 */
+@layer utilities {
+  .text-slate-400 {
+    color: #64748b;
+  }
+  .dark .text-slate-400 {
+    color: #a3b3c6;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -66,11 +317,11 @@ body {
 
 @keyframes pop {
   0% {
-    transform: scale(0.5);
+    transform: translateY(8px) scale(0.98);
     opacity: 0;
   }
   70% {
-    transform: scale(1.1);
+    transform: scale(1);
   }
   100% {
     transform: scale(1);
@@ -78,7 +329,39 @@ body {
   }
 }
 .animate-pop {
-  animation: pop 0.4s ease forwards;
+  animation: pop 0.18s ease forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-delay: 0ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+  .interactive-card:hover,
+  .btn:active,
+  .btn-primary:active,
+  .btn-ghost:active,
+  .btn-danger:active,
+  .icon-button:active,
+  .modal-enter-from .modal-panel,
+  .modal-leave-to .modal-panel,
+  .menu-enter-from,
+  .menu-leave-to,
+  .toast-enter-from,
+  .toast-leave-to,
+  .list-enter-from,
+  .list-leave-to {
+    transform: none !important;
+  }
+  .confetti-particle {
+    display: none;
+  }
 }
 
 @keyframes confetti-fall {

@@ -4,6 +4,7 @@ const props = defineProps<{
   items: { value: string; label: string }[]
   label: string
   id: string
+  panelPerTab?: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 function move(event: KeyboardEvent, index: number) {
@@ -29,7 +30,7 @@ function move(event: KeyboardEvent, index: number) {
       role="tab"
       type="button"
       :aria-selected="modelValue === item.value"
-      :aria-controls="`${id}-panel`"
+      :aria-controls="panelPerTab ? `${id}-panel-${item.value}` : `${id}-panel`"
       :tabindex="modelValue === item.value ? 0 : -1"
       @click="emit('update:modelValue', item.value)"
       @keydown="move($event, index)"
