@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
 import { computed, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor } from '../composables/useChart'
@@ -402,13 +403,13 @@ const report = computed(() => {
         <div class="section-title">科目时长占比</div>
         <ChartFallback v-if="pieStatus === 'error'" class="h-56" @retry="retryPie" />
         <div v-else-if="subjectMinutes.length" ref="pieEl" class="h-56"></div>
-        <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
+        <EmptyState v-else title="暂无数据" />
       </div>
       <div class="card">
         <div class="section-title">题型分布（累计 {{ store.totalProblems }} 题）</div>
         <ChartFallback v-if="typeStatus === 'error'" class="h-56" @retry="retryType" />
         <div v-else-if="typeStats.length" ref="typeEl" class="h-56"></div>
-        <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
+        <EmptyState v-else title="暂无数据" />
       </div>
     </div>
 

@@ -359,12 +359,12 @@ onUnmounted(() => {
       <template v-if="draft">
         <!-- 工具栏 -->
         <div
-          class="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700"
+          class="flex flex-wrap items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700"
         >
-          <button class="btn-ghost !py-1 !px-2 md:hidden" title="返回列表" @click="backToList">←</button>
+          <button class="btn-ghost !py-1 !px-2 w-11 md:hidden" title="返回列表" @click="backToList">←</button>
           <input
             v-model="draft.title"
-            class="flex-1 min-w-0 bg-transparent text-base font-bold outline-none dark:text-slate-100"
+            class="flex-1 basis-[calc(100%-4rem)] sm:basis-0 min-w-0 bg-transparent text-base font-bold outline-none dark:text-slate-100"
             placeholder="笔记标题"
             @input="dirty = true"
           />
@@ -440,6 +440,7 @@ onUnmounted(() => {
           <div
             v-show="previewMode !== 'edit'"
             class="relative flex-1 min-w-0 overflow-y-auto bg-white dark:bg-slate-800 p-4"
+            :class="previewMode === 'split' ? 'hidden sm:block' : ''"
           >
             <span
               v-if="previewPending"

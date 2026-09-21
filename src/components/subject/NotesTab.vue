@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../../shared/components/EmptyState.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { CloudOff } from '@lucide/vue'
 import { useRouter } from 'vue-router'
@@ -139,7 +140,7 @@ onUnmounted(() => {
       <p class="text-[10px] text-slate-400 mb-2">
         支持 .md / .markdown / .txt 上传或拖拽导入；PDF 导入与预览请前往「笔记」页面 · 点击卡片进入全屏编辑
       </p>
-      <div v-if="!filteredNotes.length" class="text-xs text-slate-400 text-center py-4">暂无笔记</div>
+      <EmptyState v-if="!filteredNotes.length" title="暂无笔记" />
       <div class="grid sm:grid-cols-2 gap-2">
         <div
           v-for="n in filteredNotes"

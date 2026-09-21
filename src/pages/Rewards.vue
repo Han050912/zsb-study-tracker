@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
 import { computed, ref } from 'vue'
 import { BookOpenCheck, Clock3, Flame, Pencil } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
@@ -141,7 +142,7 @@ const stats = computed(() => [
           </div>
           <div class="w-full h-2 bg-white/10 rounded-full mt-2 overflow-hidden">
             <div
-              class="h-full rounded-full transition-all duration-700"
+              class="h-full rounded-full progress-motion"
               :style="{ width: levelProgress + '%', background: store.level.color }"
             ></div>
           </div>
@@ -236,9 +237,7 @@ const stats = computed(() => [
           <span class="flex-1">{{ l.reason }}</span>
           <span class="font-bold text-amber-500">+{{ l.points }}</span>
         </div>
-        <div v-if="!store.gamification.pointsLog.length" class="text-xs text-slate-400 text-center py-4">
-          还没有积分记录，快去学习打卡吧！
-        </div>
+        <EmptyState v-if="!store.gamification.pointsLog.length" title="还没有积分记录，快去学习打卡吧！" />
       </div>
     </div>
   </div>

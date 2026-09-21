@@ -6,6 +6,8 @@ import { useAppStore } from '../stores/app'
 import { habitDone } from '../stores/app/habits'
 import { businessDate, today } from '../utils/date'
 import Modal from '../components/Modal.vue'
+import EmptyState from '../shared/components/EmptyState.vue'
+import { prepareListLeave, resetEnteringItem } from '../utils/motion'
 import type { Habit, HabitType } from '../types'
 import { VOCAB_HABIT_ID, PROBLEM_HABIT_ID } from '../data/defaults'
 
@@ -20,8 +22,20 @@ const showModal = ref(false)
 const form = ref({ name: '', type: 'checkbox' as HabitType, target: 1, bad: false })
 
 function add() {
-  if (!form.value.name.trim()) return
-  store.addHabit({ ...form.value, target: form.value.type === 'checkbox' ? undefined : form.value.target })
+  if (!showModal.value) return
+  const name = form.value.name.trim()
+  if (!name) {
+    toast('请填写习惯名称')
+    return
+  }
+  if (
+    (form.value.type === 'count' || form.value.type === 'minutes') &&
+    (!Number.isSafeInteger(form.value.target) || form.value.target <= 0)
+  ) {
+    toast('每日目标需为大于 0 的整数')
+    return
+  }
+  store.addHabit({ ...form.value, name, target: form.value.type === 'checkbox' ? undefined : form.value.target })
   showModal.value = false
   form.value = { name: '', type: 'checkbox', target: 1, bad: false }
   toast('习惯已添加')
@@ -122,7 +136,21 @@ async function removeHabit(id: string) {
       <button class="btn-primary" @click="showModal = true">+ 新习惯</button>
     </div>
 
-    <div class="grid md:grid-cols-2 gap-3">
+    <EmptyState
+      v-if="!goodHabits.length && !badHabits.length"
+      class="card"
+      title="从一个小习惯开始"
+      description="选一件每天能坚持的小事，记录你的进步。"
+    >
+      <button class="btn-primary" @click="showModal = true">创建第一个习惯</button>
+    </EmptyState>
+    <TransitionGroup
+      name="list"
+      tag="div"
+      class="relative grid md:grid-cols-2 gap-3"
+      @before-leave="prepareListLeave"
+      @before-enter="resetEnteringItem"
+    >
       <div v-for="h in goodHabits" :key="h.id" class="card">
         <div class="flex items-center justify-between mb-2">
           <span class="font-medium text-sm"
@@ -204,11 +232,17 @@ async function removeHabit(id: string) {
           ></div>
         </div>
       </div>
-    </div>
+    </TransitionGroup>
 
     <div v-if="badHabits.length">
       <h2 class="section-title !text-base mt-2">坏习惯监督</h2>
-      <div class="grid md:grid-cols-2 gap-3">
+      <TransitionGroup
+        name="list"
+        tag="div"
+        class="relative grid md:grid-cols-2 gap-3"
+        @before-leave="prepareListLeave"
+        @before-enter="resetEnteringItem"
+      >
         <div v-for="h in badHabits" :key="h.id" class="card border-red-100 dark:border-red-900/40">
           <div class="flex items-center justify-between mb-2">
             <span class="font-medium text-sm">{{ h.name }}</span>
@@ -251,14 +285,14 @@ async function removeHabit(id: string) {
             <span><span class="inline-block w-2 h-2 rounded-sm bg-slate-100 dark:bg-slate-700 mr-1"></span>无记录</span>
           </div>
         </div>
-      </div>
+      </TransitionGroup>
     </div>
 
     <Modal title="新建习惯" :show="showModal" @close="showModal = false">
       <div class="space-y-3">
         <div>
           <label class="label" for="habit-name">习惯名称</label
-          ><input id="habit-name" v-model="form.name" class="input" placeholder="如：每日复盘" />
+          ><input id="habit-name" v-model="form.name" class="input" placeholder="如：每日复盘" data-autofocus />
         </div>
         <div>
           <div class="label">量化方式</div>

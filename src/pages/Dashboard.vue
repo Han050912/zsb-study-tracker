@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
 import { computed, onUnmounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useAppStore } from '../stores/app'
@@ -292,10 +293,7 @@ onUnmounted(() => {
         <div class="text-2xl font-black text-primary-500">{{ formatMinutes(store.todayMinutes) }}</div>
         <div class="text-[11px] text-slate-400 mt-0.5">今日学习时长</div>
         <div class="w-full h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full mt-2 overflow-hidden">
-          <div
-            class="h-full bg-primary-400 rounded-full transition-all duration-700"
-            :style="{ width: goalPercent + '%' }"
-          ></div>
+          <div class="h-full bg-primary-400 rounded-full progress-motion" :style="{ width: goalPercent + '%' }"></div>
         </div>
         <div class="text-[10px] text-slate-400 mt-1">目标 {{ formatMinutes(store.settings.dailyGoalMinutes) }}</div>
       </div>
@@ -331,9 +329,7 @@ onUnmounted(() => {
           />
           <button class="btn-primary shrink-0" @click="openAddSchedule">添加</button>
         </div>
-        <div v-if="!store.todayTodos.length" class="text-xs text-slate-400 py-4 text-center">
-          暂无待办，添加一个吧～
-        </div>
+        <EmptyState v-if="!store.todayTodos.length" title="暂无待办，添加一个吧～" />
         <div ref="listRef" class="space-y-1.5">
           <div
             v-for="t in store.todayTodos"
@@ -471,7 +467,7 @@ onUnmounted(() => {
               </div>
             </div>
             <button
-              class="opacity-0 group-hover:opacity-100 text-xs text-red-400 shrink-0"
+              class="icon-button text-red-400 hover:bg-red-50 dark:hover:bg-red-950 shrink-0"
               title="删除"
               @click="store.deleteTodo(t.id)"
             >
@@ -528,7 +524,7 @@ onUnmounted(() => {
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
-      <div v-if="showQuickLinks" class="grid grid-cols-4 sm:grid-cols-8 gap-2">
+      <div v-if="showQuickLinks" class="panel-reveal grid grid-cols-4 sm:grid-cols-8 gap-2">
         <RouterLink
           v-for="q in [
             { to: '/pomodoro', icon: '🍅', label: '专注' },
@@ -542,7 +538,7 @@ onUnmounted(() => {
           ]"
           :key="q.to"
           :to="q.to"
-          class="card !p-3 flex flex-col items-center gap-1 hover:shadow-md transition-shadow"
+          class="card interactive-card !p-3 flex flex-col items-center gap-1"
         >
           <span class="text-xl">{{ q.icon }}</span>
           <span class="text-[11px] text-slate-500 dark:text-slate-400">{{ q.label }}</span>

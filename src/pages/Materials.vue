@@ -5,6 +5,8 @@ import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
 import { MAX_FIELD_CHARS } from '../stores/app/sync'
 import Modal from '../components/Modal.vue'
+import EmptyState from '../shared/components/EmptyState.vue'
+import { prepareListLeave, resetEnteringItem } from '../utils/motion'
 import { normalizeUrl } from '../utils/url'
 import { subjectLabel } from '../utils/subject'
 import type { Material } from '../types'
@@ -191,20 +193,28 @@ const priorityColor: Record<string, string> = {
       </select>
     </div>
 
-    <div v-if="!list.length" class="card text-center text-slate-400 text-sm py-10">
-      <template v-if="hasFilter">
-        <p>没有符合条件的资料</p>
-        <button class="mt-2 text-xs text-primary-500 hover:underline" @click="clearFilters">清除筛选</button>
-      </template>
-      <template v-else>资料库空空如也，添加你的第一本教材吧</template>
-    </div>
+    <EmptyState
+      v-if="!list.length"
+      class="card"
+      :title="hasFilter ? '没有符合条件的资料' : '整理你的学习资料'"
+      :description="hasFilter ? '换个条件试试，或查看全部资料。' : '把教材、课程和常用链接放在一起，随时继续学习。'"
+    >
+      <button v-if="hasFilter" class="btn-ghost" @click="clearFilters">清除筛选</button>
+      <button v-else class="btn-primary" @click="open()">添加第一份资料</button>
+    </EmptyState>
 
-    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      <div v-for="m in list" :key="m.id" class="card cursor-pointer hover:shadow-md transition-shadow" @click="open(m)">
+    <TransitionGroup
+      name="list"
+      tag="div"
+      class="relative grid sm:grid-cols-2 lg:grid-cols-3 gap-3"
+      @before-leave="prepareListLeave"
+      @before-enter="resetEnteringItem"
+    >
+      <div v-for="m in list" :key="m.id" class="card interactive-card cursor-pointer" @click="open(m)">
         <div class="flex items-start justify-between gap-2">
-          <div class="text-sm font-bold flex-1">
+          <button type="button" class="text-sm text-left font-bold flex-1 min-w-0 break-words" @click.stop="open(m)">
             {{ TYPES.find((t) => t.k === m.type)?.l.split(' ')[0] }} {{ m.title }}
-          </div>
+          </button>
           <span class="text-[10px] px-1.5 py-0.5 rounded shrink-0" :class="priorityColor[m.priority]">{{
             m.priority
           }}</span>
@@ -231,11 +241,11 @@ const priorityColor: Record<string, string> = {
           {{ m.fileName ? `打开文件「${m.fileName}」↗` : '打开链接 ↗' }}
         </button>
       </div>
-    </div>
+    </TransitionGroup>
 
     <Modal title="资料信息" :show="showModal" @close="showModal = false">
       <div class="space-y-3">
-        <input v-model="form.title" class="input" placeholder="标题，如：《高等数学（同济版）》*" />
+        <input v-model="form.title" class="input" placeholder="标题，如：《高等数学（同济版）》*" data-autofocus />
         <div class="grid grid-cols-3 gap-2">
           <div>
             <label class="label" for="mat-type">类型</label>

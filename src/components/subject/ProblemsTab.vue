@@ -73,8 +73,9 @@ function onCorrectInput(e: Event) {
   }
 }
 function confirmSave() {
+  if (!showConfirm.value) return
   const total = pTotalLocked.value ? pTypesSum.value : Math.max(0, Math.floor(Number(confirmTotal.value) || 0))
-  if (total <= 0) {
+  if (!Number.isFinite(total) || total <= 0) {
     toast('请填写做题数量或各题型')
     return
   }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronDown, Pencil, X } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '../../composables/useToast'
@@ -157,52 +158,61 @@ const expanded = ref<Record<string, boolean>>({})
         :key="ch.id"
         class="border border-slate-100 dark:border-slate-700 rounded-xl overflow-hidden"
       >
-        <div
-          class="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700/50 group cursor-pointer"
-          role="button"
-          tabindex="0"
-          @click="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])"
-          @keyup.enter="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])"
-          @keyup.space.prevent="editingChapterId === ch.id ? null : (expanded[ch.id] = !expanded[ch.id])"
-        >
-          <span class="flex items-center gap-1.5 min-w-0">
-            <!-- 编辑态：行内输入框，保持原标题字号与字重，排版不受影响 -->
-            <input
-              v-if="editingChapterId === ch.id"
-              v-model="editingChapterName"
-              v-focus
-              class="input !py-0.5 !px-1.5 !text-sm !font-medium !w-48 max-w-full"
-              @click.stop
-              @dblclick.stop
-              @keyup.enter.stop="saveChapterName(ch.id)"
-              @keyup.esc="cancelEditChapter"
-              @blur="saveChapterName(ch.id)"
+        <div class="flex items-center gap-1 px-3 py-1">
+          <input
+            v-if="editingChapterId === ch.id"
+            v-model="editingChapterName"
+            v-focus
+            class="input flex-1 min-w-0 !font-medium"
+            aria-label="章节标题"
+            @keyup.enter.stop="saveChapterName(ch.id)"
+            @keyup.esc="cancelEditChapter"
+            @blur="saveChapterName(ch.id)"
+          />
+          <button
+            v-else
+            type="button"
+            class="flex-1 min-w-0 min-h-11 flex items-center gap-2 text-left text-sm font-medium"
+            :aria-expanded="!!expanded[ch.id]"
+            :aria-controls="`chapter-${subjectId}-${ch.id}`"
+            @click="expanded[ch.id] = !expanded[ch.id]"
+          >
+            <ChevronDown
+              :size="16"
+              class="shrink-0 transition-transform duration-150"
+              :class="expanded[ch.id] ? 'rotate-180' : ''"
+              aria-hidden="true"
             />
-            <template v-else>
-              <span class="cursor-text select-none" title="双击编辑章节标题" @dblclick.stop="startEditChapter(ch)">{{
-                ch.name
-              }}</span>
-              <span class="text-xs text-slate-400 ml-1.5">{{ ch.topics.length }} 个知识点</span>
-              <span
-                class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-primary-500 text-xs cursor-pointer transition-opacity"
-                title="编辑章节标题"
-                @click.stop="startEditChapter(ch)"
-                >✏️</span
-              >
-            </template>
-          </span>
-          <span class="flex items-center gap-2 shrink-0">
-            <span
-              class="text-primary-500 text-xs hover:underline cursor-pointer"
-              title="去社区讨论本章节知识点"
-              @click.stop="openTopicDiscussion(ch.name)"
-              >讨论</span
+            <span class="break-words">{{ ch.name }}</span>
+            <span class="hidden sm:inline text-xs text-slate-400 whitespace-nowrap"
+              >{{ ch.topics.length }} 个知识点</span
             >
-            <span class="text-red-400 text-xs hover:underline" @click.stop="removeChapter(ch.id)">删除</span>
-            <span class="text-slate-400 text-xs">{{ expanded[ch.id] ? '▲' : '▼' }}</span>
-          </span>
+          </button>
+          <button
+            type="button"
+            class="icon-button text-slate-400 hover:text-primary-500"
+            title="编辑章节标题"
+            aria-label="编辑章节标题"
+            @click="startEditChapter(ch)"
+          >
+            <Pencil :size="15" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="min-h-11 px-1 text-primary-500 text-xs hover:underline"
+            @click="openTopicDiscussion(ch.name)"
+          >
+            讨论
+          </button>
+          <button
+            type="button"
+            class="min-h-11 px-1 text-red-500 text-xs hover:underline"
+            @click="removeChapter(ch.id)"
+          >
+            删除
+          </button>
         </div>
-        <div v-if="expanded[ch.id]" class="px-3 pb-2 space-y-1.5">
+        <div v-if="expanded[ch.id]" :id="`chapter-${subjectId}-${ch.id}`" class="panel-reveal px-3 pb-2 space-y-1.5">
           <div v-if="!ch.topics.length" class="text-xs text-slate-400 py-1">
             暂无知识点，在下方添加小标题后可评估掌握度
           </div>
@@ -221,12 +231,12 @@ const expanded = ref<Record<string, boolean>>({})
                 {{ importanceMeta(topic).l }}
               </span>
               <button
-                class="opacity-0 group-hover:opacity-100 text-red-400 text-xs"
+                class="icon-button text-red-400 text-xs"
                 title="删除知识点"
                 @click.stop="removeTopic(ch.id, topic)"
                 @dblclick.stop
               >
-                ×
+                <X :size="14" aria-hidden="true" />
               </button>
             </span>
             <StarRating

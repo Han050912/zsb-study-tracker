@@ -7,10 +7,12 @@ import { MOODS } from '../data/defaults'
 import PostComposer from '../components/community/PostComposer.vue'
 import { TriangleAlert } from '@lucide/vue'
 import dayjs from 'dayjs'
+import { useRoute } from 'vue-router'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
 const store = useAppStore()
 const toast = useToast()
+const route = useRoute()
 
 // 编辑区固定为「今日（UTC+8 业务日）」总结；往日总结通过点击日历弹出悬浮卡片查看
 const editDate = ref(today())
@@ -129,6 +131,21 @@ function openDayCard(d: string) {
 // ---- 日历 ----
 // 初始月份取业务日期所在月（本页所有日期键均为 UTC+8，不依赖设备时区）
 const calMonth = ref(editDate.value.slice(0, 7))
+watch(
+  () => route.query.date,
+  (value) => {
+    if (
+      typeof value !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+      dayjs(value).format('YYYY-MM-DD') !== value ||
+      value > today()
+    )
+      return
+    calMonth.value = value.slice(0, 7)
+    openDayCard(value)
+  },
+  { immediate: true }
+)
 // 跨午夜/跨月后日历自动切换到当前月
 watch(editDate, (d) => {
   const m = d.slice(0, 7)
@@ -153,33 +170,46 @@ function hasRecord(d: string | null) {
 
 // ---- 分享卡片 ----
 const showShare = ref(false)
-const { onOverlayMousedown: onShareMousedown, onOverlayClick: onShareClick } = useOverlayDismiss(() => {
-  showShare.value = false
-})
+const sharePanelRef = ref<HTMLElement | null>(null)
+const { onOverlayMousedown: onShareMousedown, onOverlayClick: onShareClick } = useOverlayDismiss(
+  () => {
+    showShare.value = false
+  },
+  { show: () => showShare.value, panel: () => sharePanelRef.value }
+)
 /** 分享卡片 DOM 引用，用于渲染成图片 */
 const shareCardRef = ref<HTMLElement | null>(null)
 /** 卡片渲染后的图片 dataURL；非空时用 <img> 替换 DOM 卡片，支持移动端长按保存 */
 const shareImg = ref('')
 const shareImgLoading = ref(false)
+const copyFallback = ref('')
+let shareGeneration = 0
+onUnmounted(() => {
+  shareGeneration++
+})
 
 function openShare() {
   if (save()) showShare.value = true
 }
 
 watch(showShare, async (v) => {
+  const generation = ++shareGeneration
   shareImg.value = ''
+  copyFallback.value = ''
   if (!v) return
   shareImgLoading.value = true
   // 等待弹窗 DOM 渲染完成后再截图
   await nextTick()
   try {
     const html2canvas = (await import('html2canvas')).default
-    const canvas = await html2canvas(shareCardRef.value!, { scale: 2, useCORS: true })
+    if (generation !== shareGeneration || !shareCardRef.value) return
+    const canvas = await html2canvas(shareCardRef.value, { scale: 2, useCORS: true })
+    if (generation !== shareGeneration) return
     shareImg.value = canvas.toDataURL('image/png')
   } catch {
-    toast('图片生成失败，可截图保存或使用分享文案')
+    if (generation === shareGeneration) toast('图片生成失败，可截图保存或使用分享文案')
   } finally {
-    shareImgLoading.value = false
+    if (generation === shareGeneration) shareImgLoading.value = false
   }
 })
 
@@ -193,9 +223,15 @@ function downloadShareImage() {
   toast('图片已开始下载')
 }
 
-function copyShareText() {
+async function copyShareText() {
   const text = `我正在用「专升本学习助手」备考，今日学习 ${formatMinutes(dayData.value.minutes)}，完成 ${dayData.value.pTotal} 道题，连续学习 ${store.gamification.streak} 天！\nhttps://github.com/Han050912/zsb-study-tracker`
-  navigator.clipboard.writeText(text).then(() => toast('分享文案已复制'))
+  try {
+    await navigator.clipboard.writeText(text)
+    toast('分享文案已复制')
+  } catch {
+    copyFallback.value = text
+    toast('无法访问剪贴板，请长按或选中下方文案复制')
+  }
 }
 
 // ---- 分享到社区广场 ----
@@ -492,7 +528,14 @@ function openCommunityShare() {
         @mousedown="onShareMousedown"
         @click="onShareClick"
       >
-        <div class="max-w-sm w-full">
+        <div
+          ref="sharePanelRef"
+          role="dialog"
+          aria-modal="true"
+          aria-label="学习日报分享"
+          tabindex="-1"
+          class="max-w-sm w-full max-h-[90dvh] overflow-y-auto"
+        >
           <!-- 图片生成成功后用 <img> 展示，移动端可长按保存；生成期间/失败时展示原 DOM 卡片 -->
           <img
             v-if="shareImg"
@@ -507,7 +550,7 @@ function openCommunityShare() {
           >
             <!-- Logo + 品牌 -->
             <div class="flex items-center gap-2 mb-3">
-              <img src="/logo.png" alt="Logo" class="w-6 h-6 rounded" onerror="this.style.display = 'none'" />
+              <img :src="'./logo.png'" alt="Logo" class="w-6 h-6 rounded" />
               <span class="text-xs font-medium opacity-90">专升本学习助手</span>
             </div>
             <div class="text-xs opacity-80">{{ editDate }} · 备考打卡</div>
@@ -550,6 +593,15 @@ function openCommunityShare() {
             <button v-if="shareImg" class="btn-ghost flex-1" @click="downloadShareImage">保存图片</button>
             <button class="btn-ghost flex-1" @click="showShare = false">关闭</button>
           </div>
+          <textarea
+            v-if="copyFallback"
+            :value="copyFallback"
+            readonly
+            aria-label="可手动复制的分享文案"
+            class="input mt-3"
+            rows="4"
+            @focus="($event.target as HTMLTextAreaElement).select()"
+          ></textarea>
         </div>
       </div>
     </Teleport>
