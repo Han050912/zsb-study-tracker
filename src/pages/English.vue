@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
 import { computed, ref, onMounted } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -6,6 +7,7 @@ import { useConfirm } from '../composables/useConfirm'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import SubjectPanel from '../components/SubjectPanel.vue'
+import AppTabs from '../shared/components/AppTabs.vue'
 import { today } from '../utils/date'
 import { fetchMaimemoToday, fetchMaimemoTodayDetail } from '../services/maimemo'
 import type { MaimemoWordDetail } from '../services/maimemo'
@@ -15,6 +17,8 @@ import VocabChart from '../components/english/VocabChart.vue'
 import ReadingForm from '../components/english/ReadingForm.vue'
 import ListeningForm from '../components/english/ListeningForm.vue'
 import EssayTemplatePanel from '../components/english/EssayTemplatePanel.vue'
+import { sessionUser } from '../services/auth'
+import { vocabError } from '../utils/studyValidation'
 
 const store = useAppStore()
 const route = useRoute()
@@ -25,6 +29,9 @@ const eng = computed(() => store.english)
 const subjectExists = computed(() => !!store.subjectMap.english)
 
 const tab = ref<'panel' | 'vocab' | 'reading' | 'listening' | 'templates'>('panel')
+function selectTab(value: string) {
+  tab.value = value as typeof tab.value
+}
 onMounted(() => {
   const t = route.query.tab as string
   if (['panel', 'vocab', 'reading', 'listening', 'templates'].includes(t)) {
@@ -35,13 +42,19 @@ onMounted(() => {
 // ---- 词汇（逐条打卡记录） ----
 const newWords = ref(30)
 const reviewWords = ref(50)
+let lastVocabSavedAt = 0
 function addVocab() {
-  // v-model.number 清空后为 ''，入 store 前统一净化为非负整数，避免污染统计聚合
-  const n = Math.max(0, Math.floor(Number(newWords.value) || 0))
-  const r = Math.max(0, Math.floor(Number(reviewWords.value) || 0))
-  if (n <= 0 && r <= 0) return
+  if (Date.now() - lastVocabSavedAt < 1200) return
+  const n = newWords.value,
+    r = reviewWords.value
+  const error = vocabError(n, r)
+  if (error) {
+    toast(error)
+    return
+  }
   // 每完成一次背诵单独生成一条打卡记录
   store.addVocabRecord(n, r)
+  lastVocabSavedAt = Date.now()
   toast(`本次背单词打卡成功 +${Math.round((n + r) / 20)} 积分`)
 }
 /** 删除单条打卡记录：本条积分全额回收，同步删除积分流水 */
@@ -92,14 +105,16 @@ async function syncMaimemo() {
 }
 
 // ---- 墨墨今日单词明细（词汇打卡列表） ----
-/** 今日单词本地缓存键（按日期隔离） */
-const WORDS_CACHE_KEY = `maimemo-today-words:${today()}`
+/** 今日单词本地缓存键（按账号和日期隔离） */
+const cacheOwner = sessionUser.value?.id ?? 'guest'
+const WORDS_CACHE_KEY = `maimemo-today-words:${cacheOwner}:${today()}`
 
 /** 从本地缓存恢复今日单词（界面切换/页面跳转/组件卸载后自动恢复） */
 function loadCachedWords(): MaimemoWordDetail[] {
   try {
     const raw = localStorage.getItem(WORDS_CACHE_KEY)
-    return raw ? JSON.parse(raw) : []
+    const parsed: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed : []
   } catch {
     return []
   }
@@ -167,30 +182,40 @@ async function loadTodayWords() {
     <template v-else>
       <h1 class="page-title mb-4">英语</h1>
 
-      <div class="flex gap-1 overflow-x-auto bg-slate-100 dark:bg-slate-800 rounded-xl p-1 mb-4">
-        <button
-          v-for="t in [
-            { k: 'panel', l: '综合' },
-            { k: 'vocab', l: '词汇' },
-            { k: 'reading', l: '阅读' },
-            { k: 'listening', l: '听力' },
-            { k: 'templates', l: '作文模板' }
-          ]"
-          :key="t.k"
-          class="flex-1 whitespace-nowrap text-xs px-3 py-2 rounded-lg font-medium"
-          :class="tab === t.k ? 'bg-white dark:bg-slate-700 shadow-sm' : 'text-slate-500'"
-          @click="tab = t.k as any"
-        >
-          {{ t.l }}
-        </button>
-      </div>
+      <AppTabs
+        id="english"
+        :model-value="tab"
+        :items="[
+          { value: 'panel', label: '综合' },
+          { value: 'vocab', label: '词汇' },
+          { value: 'reading', label: '阅读' },
+          { value: 'listening', label: '听力' },
+          { value: 'templates', label: '作文模板' }
+        ]"
+        label="英语学习内容"
+        panel-per-tab
+        class="mb-4"
+        @update:model-value="selectTab"
+      />
 
-      <div v-show="tab === 'panel'">
+      <div
+        v-show="tab === 'panel'"
+        id="english-panel-panel"
+        role="tabpanel"
+        aria-labelledby="english-tab-panel"
+        class="panel-reveal space-y-3"
+      >
         <SubjectPanel subject-id="english" />
       </div>
 
       <!-- 词汇 -->
-      <div v-show="tab === 'vocab'" class="space-y-3">
+      <div
+        v-show="tab === 'vocab'"
+        id="english-panel-vocab"
+        role="tabpanel"
+        aria-labelledby="english-tab-vocab"
+        class="panel-reveal space-y-3"
+      >
         <div class="card">
           <div class="grid grid-cols-3 gap-3 text-center mb-3">
             <div>
@@ -227,7 +252,7 @@ async function loadTodayWords() {
         <MaimemoPanel :syncing="syncing" @sync="syncMaimemo" />
         <div class="card">
           <div class="section-title">打卡记录</div>
-          <div v-if="!eng.vocab.length" class="text-xs text-slate-400 text-center py-3">暂无打卡记录</div>
+          <EmptyState v-if="!eng.vocab.length" title="暂无打卡记录" />
           <div class="space-y-1.5 max-h-72 overflow-y-auto">
             <div v-for="v in eng.vocab.slice().reverse()" :key="v.id" class="flex items-center gap-2 text-sm group">
               <span class="text-xs text-slate-400 w-20 shrink-0">{{ v.date }}</span>
@@ -251,17 +276,35 @@ async function loadTodayWords() {
       </div>
 
       <!-- 阅读 -->
-      <div v-show="tab === 'reading'" class="space-y-3">
+      <div
+        v-show="tab === 'reading'"
+        id="english-panel-reading"
+        role="tabpanel"
+        aria-labelledby="english-tab-reading"
+        class="panel-reveal space-y-3"
+      >
         <ReadingForm />
       </div>
 
       <!-- 听力 -->
-      <div v-show="tab === 'listening'" class="space-y-3">
+      <div
+        v-show="tab === 'listening'"
+        id="english-panel-listening"
+        role="tabpanel"
+        aria-labelledby="english-tab-listening"
+        class="panel-reveal space-y-3"
+      >
         <ListeningForm />
       </div>
 
       <!-- 作文模板 -->
-      <div v-show="tab === 'templates'" class="space-y-3">
+      <div
+        v-show="tab === 'templates'"
+        id="english-panel-templates"
+        role="tabpanel"
+        aria-labelledby="english-tab-templates"
+        class="panel-reveal space-y-3"
+      >
         <EssayTemplatePanel />
       </div>
     </template>

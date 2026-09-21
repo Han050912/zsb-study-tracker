@@ -3,6 +3,7 @@
 import { computed, ref } from 'vue'
 import { useToast } from '../../composables/useToast'
 import { useAppStore } from '../../stores/app'
+import { readingError } from '../../utils/studyValidation'
 
 const store = useAppStore()
 const toast = useToast()
@@ -11,15 +12,16 @@ const eng = computed(() => store.english)
 // ---- 阅读 ----
 const readWpm = ref(80)
 const readAcc = ref(75)
+let lastSavedAt = 0
 function addReading() {
-  // v-model.number 清空后为 ''，入 store 前净化，避免污染历史与统计
-  const wpm = Math.max(0, Math.floor(Number(readWpm.value) || 0))
-  const acc = Math.min(100, Math.max(0, Math.floor(Number(readAcc.value) || 0)))
-  if (wpm <= 0) {
-    toast('请填写有效的阅读速度')
+  if (Date.now() - lastSavedAt < 1200) return
+  const error = readingError(readWpm.value, readAcc.value)
+  if (error) {
+    toast(error)
     return
   }
-  store.addReadingRecord(wpm, acc)
+  store.addReadingRecord(readWpm.value, readAcc.value)
+  lastSavedAt = Date.now()
   toast('阅读记录已保存 +5 积分')
 }
 </script>

@@ -3,6 +3,7 @@
 import { computed, ref } from 'vue'
 import { useToast } from '../../composables/useToast'
 import { useAppStore } from '../../stores/app'
+import { studyMinutesError } from '../../utils/studyValidation'
 
 const store = useAppStore()
 const toast = useToast()
@@ -12,14 +13,17 @@ const eng = computed(() => store.english)
 const lisMinutes = ref(20)
 const lisMaterial = ref('')
 const lisMode = ref<'精听' | '泛听'>('精听')
+let lastSavedAt = 0
 function addListening() {
-  // v-model.number 清空后为 ''，入 store 前净化
-  const mins = Math.max(0, Math.floor(Number(lisMinutes.value) || 0))
-  if (mins <= 0) {
-    toast('请填写有效的听力时长')
+  if (Date.now() - lastSavedAt < 1200) return
+  const mins = lisMinutes.value
+  const error = studyMinutesError(mins)
+  if (error) {
+    toast(error)
     return
   }
   store.addListeningRecord(mins, lisMaterial.value || '未注明', lisMode.value)
+  lastSavedAt = Date.now()
   lisMaterial.value = ''
   toast(`听力记录已保存 +${Math.round(mins / 10)} 积分`)
 }

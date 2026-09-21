@@ -11,6 +11,7 @@ import { computed, ref, watch } from 'vue'
 import { today } from '../utils/date'
 import type { MaimemoWordDetail } from '../services/maimemo'
 import PostComposer from './community/PostComposer.vue'
+import { sessionUser } from '../services/auth'
 
 // ---- Props & Emits ----
 const props = defineProps<{
@@ -49,10 +50,11 @@ const emptyAnswer = (): AnswerState => ({ answer: '', validation: null, show: fa
 // ---- 本地存储（按日期隔离，跨天由 English 页统一清理） ----
 // 使用本地日期（与 English 页缓存键口径一致）；toISOString 为 UTC 日期，凌晨时段会错位一天。
 // key 每次读写动态取值：页面驻留跨午夜后，作答写入当天 key 而不是固化在组件创建日的 key
+const cacheOwner = sessionUser.value?.id ?? 'guest'
 function storageKey(): string {
-  return `vocab-checkin:${today()}`
+  return `vocab-checkin:${cacheOwner}:${today()}`
 }
-const MODE_KEY = 'vocab-checkin-mode'
+const MODE_KEY = `vocab-checkin-mode:${cacheOwner}`
 
 function loadState(): Record<string, ModeStates> {
   try {
@@ -240,7 +242,7 @@ function onInput(vocId: string) {
 /** 输入框样式类 */
 function inputClass(w: AnswerState): string {
   const base =
-    'w-full rounded-xl px-3 py-2 text-sm outline-none transition-all duration-300 border bg-white/80 dark:bg-slate-700/80 dark:text-slate-100'
+    'w-full rounded-xl px-3 py-2 text-sm outline-none transition-colors duration-150 border bg-white/80 dark:bg-slate-700/80 dark:text-slate-100'
   if (w.validation === true)
     return `${base} border-emerald-400 dark:border-emerald-500 ring-2 ring-emerald-100 dark:ring-emerald-900/30`
   if (w.validation === false)
@@ -266,7 +268,7 @@ function inputClass(w: AnswerState): string {
           <!-- 模式切换：英译汉 / 汉译英 -->
           <div class="flex shrink-0 rounded-lg bg-slate-100 dark:bg-slate-700 p-0.5 text-[11px] font-medium">
             <button
-              class="px-2.5 py-1 rounded-md transition-all duration-300"
+              class="px-2.5 py-1 rounded-md transition-colors duration-150"
               :class="
                 mode === 'zh'
                   ? 'bg-white dark:bg-slate-600 text-indigo-600 dark:text-indigo-300 shadow-sm'
@@ -277,7 +279,7 @@ function inputClass(w: AnswerState): string {
               英译汉
             </button>
             <button
-              class="px-2.5 py-1 rounded-md transition-all duration-300"
+              class="px-2.5 py-1 rounded-md transition-colors duration-150"
               :class="
                 mode === 'en'
                   ? 'bg-white dark:bg-slate-600 text-indigo-600 dark:text-indigo-300 shadow-sm'
@@ -296,7 +298,7 @@ function inputClass(w: AnswerState): string {
           <!-- 进度条 -->
           <div class="w-16 sm:w-20 h-1.5 rounded-full bg-slate-200 dark:bg-slate-600 overflow-hidden">
             <div
-              class="h-full rounded-full bg-gradient-to-r from-indigo-400 to-violet-400 transition-all duration-500"
+              class="h-full rounded-full bg-gradient-to-r from-indigo-400 to-violet-400 progress-motion"
               :style="{ width: `${progressPercent}%` }"
             />
           </div>
@@ -304,14 +306,14 @@ function inputClass(w: AnswerState): string {
           <!-- 分享到社区广场 -->
           <button
             v-if="totalCount"
-            class="text-[11px] px-2.5 py-1 rounded-lg bg-white/80 dark:bg-slate-700 text-indigo-500 dark:text-indigo-300 border border-indigo-200 dark:border-slate-600 hover:bg-indigo-50 dark:hover:bg-slate-600 active:scale-95 transition-all duration-300"
+            class="text-[11px] px-2.5 py-1 rounded-lg bg-white/80 dark:bg-slate-700 text-indigo-500 dark:text-indigo-300 border border-indigo-200 dark:border-slate-600 hover:bg-indigo-50 dark:hover:bg-slate-600 active:scale-95 transition-colors duration-150"
             @click="showShare = true"
           >
             分享
           </button>
           <!-- 拉取/刷新 -->
           <button
-            class="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-500 text-white hover:bg-indigo-600 active:scale-95 transition-all duration-300 disabled:opacity-50"
+            class="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-500 text-white hover:bg-indigo-600 active:scale-95 transition-colors duration-150 disabled:opacity-50"
             :disabled="loading"
             @click="emit('refresh')"
           >
@@ -355,7 +357,7 @@ function inputClass(w: AnswerState): string {
         <div
           v-for="word in words"
           :key="word.vocId"
-          class="group relative rounded-2xl bg-white/80 dark:bg-slate-700/60 border border-slate-100/80 dark:border-slate-600/50 p-3.5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-100/50 dark:hover:shadow-slate-900/50"
+          class="group relative rounded-2xl bg-white/80 dark:bg-slate-700/60 border border-slate-100/80 dark:border-slate-600/50 p-3.5 transition-colors duration-150 hover:border-indigo-200 dark:hover:border-slate-500"
         >
           <div class="flex items-start gap-3">
             <!-- 左侧：主词条 + 标签 -->
@@ -479,10 +481,14 @@ function inputClass(w: AnswerState): string {
 
 /* 释义展开/收起过渡 */
 .meaning-enter-active {
-  transition: all 0.3s ease;
+  transition:
+    opacity var(--motion-base),
+    transform var(--motion-base);
 }
 .meaning-leave-active {
-  transition: all 0.2s ease;
+  transition:
+    opacity var(--motion-fast),
+    transform var(--motion-fast);
 }
 .meaning-enter-from,
 .meaning-leave-to {
@@ -492,7 +498,7 @@ function inputClass(w: AnswerState): string {
 
 /* 校验成功图标弹性缩放 */
 .pop-enter-active {
-  animation: pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: pop-in var(--motion-enter) var(--ease-out);
 }
 .pop-leave-active {
   transition: opacity 0.15s ease;
@@ -503,11 +509,11 @@ function inputClass(w: AnswerState): string {
 
 @keyframes pop-in {
   0% {
-    transform: translateY(-50%) scale(0.3);
+    transform: translateY(-50%) scale(0.85);
     opacity: 0;
   }
   60% {
-    transform: translateY(-50%) scale(1.15);
+    transform: translateY(-50%) scale(1.03);
   }
   100% {
     transform: translateY(-50%) scale(1);

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../../shared/components/EmptyState.vue'
 /** 作文模板面板：分类模板库列表 + 新增/编辑弹窗（含内置模板一键生成）；数据直接读写 app store */
 import { computed, ref } from 'vue'
 import { useToast } from '../../composables/useToast'
@@ -73,9 +74,10 @@ const tplGroups = computed(() =>
         <button class="btn-primary !py-1.5" @click="openTpl()">+ 自定义模板</button>
       </div>
     </div>
-    <div v-if="!eng.templates.length" class="text-xs text-slate-400 text-center py-6">
-      暂无模板。点击「生成内置模板库」一键获取 10 套高分模板（议论文 5 套 · 图表文 2 套 · 信件文 3 套）
-    </div>
+    <EmptyState
+      v-if="!eng.templates.length"
+      title="暂无模板。点击「生成内置模板库」一键获取 10 套高分模板（议论文 5 套 · 图表文 2 套 · 信件文 3 套）"
+    />
     <!-- 分分类多列布局 -->
     <div v-for="g in tplGroups" :key="g.cat" class="mb-4">
       <div class="flex items-center gap-2 mb-2">
