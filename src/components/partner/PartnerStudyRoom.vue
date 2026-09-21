@@ -86,7 +86,7 @@ onUnmounted(() => {
 <template>
   <div
     v-if="session"
-    class="min-h-screen relative flex flex-col items-center justify-center p-6 transition-colors duration-700 overflow-hidden"
+    class="min-h-screen relative flex flex-col items-center justify-center p-6 transition-colors duration-200 overflow-hidden"
     :class="
       bgUrl
         ? 'text-white'
@@ -100,7 +100,7 @@ onUnmounted(() => {
       <img
         :src="bgUrl"
         alt=""
-        class="absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 pointer-events-none"
+        class="absolute inset-0 w-full h-full object-cover transition-opacity duration-200 pointer-events-none"
       />
       <div class="absolute inset-0 bg-gradient-to-b from-black/55 via-black/35 to-black/60 pointer-events-none"></div>
     </template>
@@ -181,7 +181,7 @@ onUnmounted(() => {
 
     <!-- 底部控制按钮（鼠标滑至底部唤起，3 秒无操作自动隐藏） -->
     <div
-      class="absolute bottom-8 inset-x-0 flex flex-col items-center gap-3 px-6 z-10 transition-all duration-500 ease-out"
+      class="absolute bottom-8 inset-x-0 flex flex-col items-center gap-3 px-6 z-10 transition-[opacity,transform] duration-200 ease-out"
       :class="
         controlsVisible
           ? 'opacity-100 translate-y-0 pointer-events-auto'

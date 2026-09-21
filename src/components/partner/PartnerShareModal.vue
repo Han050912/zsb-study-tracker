@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../../shared/components/EmptyState.vue'
+import LoadingState from '../../shared/components/LoadingState.vue'
 import { usePartnerStore } from '../../features/collaboration/stores/partners'
 import { storeToRefs } from 'pinia'
 const partnerStore = usePartnerStore()
@@ -107,10 +109,8 @@ function cancelShare() {
     </div>
 
     <!-- 搭子列表 -->
-    <div v-else-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
-    <div v-else-if="!partners.length" class="text-center text-xs text-slate-400 py-10">
-      还没有搭子，先去搭子页添加一位吧
-    </div>
+    <LoadingState v-else-if="loading" />
+    <EmptyState v-else-if="!partners.length" title="还没有搭子，先去搭子页添加一位吧" />
     <div v-else class="space-y-1">
       <!-- 分享前置引导：未开启「允许搭子查看我的学习数据」时提示去设置开启（可跳转设置） -->
       <div

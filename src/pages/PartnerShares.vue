@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../shared/components/LoadingState.vue'
 /**
  * 搭子错题/笔记分享列表：收到的 + 我发出的；点击统一跳转全屏预览页
  */
@@ -54,9 +55,9 @@ function openPreview(item: PartnerShareItem) {
 <template>
   <div class="max-w-2xl mx-auto px-4 py-6 space-y-5">
     <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
-    <div class="section-title !mb-0">搭子分享</div>
+    <h1 class="page-title">搭子分享</h1>
 
-    <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <template v-else>
       <!-- 加载失败：持久错误态 + 重试，不落「还没有收到搭子的分享」空态 -->

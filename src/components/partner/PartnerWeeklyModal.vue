@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../../shared/components/LoadingState.vue'
 /** 搭子周报对比弹窗：本周学习时长/连续打卡/刷题数/番茄专注 四项指标「我 vs 搭子」；
  *  对方未开放学习数据共享（shared=false）时仅展示提示 */
 import { onMounted, ref } from 'vue'
@@ -34,7 +35,7 @@ onMounted(async () => {
 
 <template>
   <Modal :title="`周报对比 · ${partnerName}`" :show="true" @close="emit('close')">
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+    <LoadingState v-if="loading" />
     <div v-else-if="loadError" class="text-center text-xs text-slate-400 py-10">加载失败，请稍后重试</div>
     <div v-else-if="report && !report.shared" class="text-center text-xs text-slate-400 py-10">
       对方未开放学习数据共享

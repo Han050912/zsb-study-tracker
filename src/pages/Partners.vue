@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 import { storeToRefs } from 'pinia'
 import { usePartnerStore } from '../features/collaboration/stores/partners'
 const partnerStore = usePartnerStore()
@@ -149,7 +151,7 @@ async function addPartner(userId: string) {
 
 <template>
   <div class="collaboration-page space-y-5">
-    <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <template v-else>
       <!-- 查找搭子 -->
@@ -257,9 +259,7 @@ async function addPartner(userId: string) {
             重试
           </button>
         </div>
-        <div v-else-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">
-          还没有搭子，去下方推荐里找一个吧
-        </div>
+        <EmptyState v-else-if="!partners.length" title="还没有搭子，去下方推荐里找一个吧" />
         <div
           v-for="p in partners"
           :key="p.reqId"
@@ -315,9 +315,7 @@ async function addPartner(userId: string) {
             重试
           </button>
         </div>
-        <div v-else-if="!suggestions.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">
-          暂无可推荐的搭子
-        </div>
+        <EmptyState v-else-if="!suggestions.length" title="暂无可推荐的搭子" />
         <div
           v-for="s in suggestions"
           :key="s.userId"

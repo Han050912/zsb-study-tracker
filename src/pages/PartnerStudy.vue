@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../shared/components/LoadingState.vue'
 import { usePartnerStore } from '../features/collaboration/stores/partners'
 
 const partnerStore = usePartnerStore()
@@ -204,9 +205,9 @@ watch(
     <!-- 无会话：卡片式选择搭子（非全屏） -->
     <div v-if="!session" class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
       <button class="btn-ghost !text-xs" @click="handleBack">← 返回</button>
-      <div class="section-title !mb-0">开黑自习室</div>
+      <h1 class="page-title">开黑自习室</h1>
 
-      <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
+      <LoadingState v-if="loading" />
       <PartnerPickerCard
         v-else
         v-model:selected-id="selectedId"

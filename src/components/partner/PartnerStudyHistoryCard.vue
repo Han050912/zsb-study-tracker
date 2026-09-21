@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../../shared/components/EmptyState.vue'
+import LoadingState from '../../shared/components/LoadingState.vue'
 /** 历史开黑记录卡片：纯展示（时间/双方在线时长），数据由页面层加载后传入 */
 import dayjs from 'dayjs'
 import UserAvatar from '../community/UserAvatar.vue'
@@ -19,10 +21,8 @@ function fmtDateTime(sec: number): string {
 <template>
   <div class="card space-y-3">
     <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">历史开黑记录</div>
-    <div v-if="loading" class="text-xs text-slate-400 dark:text-slate-500 text-center py-3">加载中…</div>
-    <div v-else-if="!records.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-4">
-      还没有开黑记录
-    </div>
+    <LoadingState v-if="loading" />
+    <EmptyState v-else-if="!records.length" title="还没有开黑记录" />
     <template v-else>
       <div
         v-for="r in records"

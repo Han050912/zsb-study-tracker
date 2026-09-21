@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 import { usePartnerStore } from '../features/collaboration/stores/partners'
 import { storeToRefs } from 'pinia'
 const partnerStore = usePartnerStore()
@@ -157,9 +159,9 @@ async function cancel(r: PartnerReview) {
 <template>
   <div class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
     <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
-    <div class="section-title !mb-0">复盘邀约</div>
+    <h1 class="page-title">复盘邀约</h1>
 
-    <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <template v-else>
       <!-- 首屏加载失败：持久错误态 + 重试，不落「还没有复盘邀约」空态 -->
@@ -193,9 +195,7 @@ async function cancel(r: PartnerReview) {
       <!-- 邀约列表 -->
       <div v-if="!loadError" class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">我的邀约（{{ items.length }}）</div>
-        <div v-if="!items.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
-          还没有复盘邀约，在上方发起一个吧
-        </div>
+        <EmptyState v-if="!items.length" title="还没有复盘邀约，在上方发起一个吧" />
         <div
           v-for="r in items"
           :key="r.id"

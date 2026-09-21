@@ -12,6 +12,7 @@ import { partnersApi } from '../api/community/partners'
 import { businessDate, formatMinutes } from '../utils/date'
 import Modal from '../components/Modal.vue'
 import type { PomodoroRecord } from '../types'
+import { sessionUser } from '../services/auth'
 
 const store = useAppStore()
 const toast = useToast()
@@ -53,7 +54,9 @@ let activeDescription = ''
 
 // ---- 单人专注持久化：刷新 / 误导航后按墙钟续算恢复未结束的专注 ----
 /** 本地存储键（只存一条进行中的会话，正常结束 / 放弃即清理） */
-const SOLO_STATE_KEY = 'zsb-pomodoro-solo-v1'
+const soloOwner = sessionUser.value?.id
+const SOLO_STATE_KEY = `zsb-pomodoro-solo-v1:${soloOwner}`
+let disposed = false
 /** 僵尸状态上限：落盘时间或续算出的时长超过该值一律视为过期残留，直接清理不恢复 */
 const MAX_SOLO_STALE_MS = 4 * 60 * 60 * 1000
 
@@ -91,6 +94,7 @@ function clearSoloState() {
 
 /** 落盘当前专注状态；已回到配置页（idle）则清理，避免残留 */
 function syncSoloState() {
+  if (!soloOwner || sessionUser.value?.id !== soloOwner) return
   if (phase.value === 'idle') {
     clearSoloState()
     return
@@ -129,7 +133,15 @@ function restoreSoloState() {
     clearSoloState()
     return
   }
-  if (saved.phase !== 'focus' && saved.phase !== 'break') {
+  if (
+    !saved ||
+    (saved.phase !== 'focus' && saved.phase !== 'break') ||
+    !Number.isFinite(saved.savedAt) ||
+    saved.savedAt > Date.now() ||
+    !Number.isFinite(saved.pausedElapsed) ||
+    saved.pausedElapsed < 0 ||
+    (saved.running && (!Number.isFinite(saved.startTimestamp) || saved.startTimestamp > Date.now()))
+  ) {
     clearSoloState()
     return
   }
@@ -237,6 +249,7 @@ function handleVisibilityChange() {
 }
 
 function start() {
+  if (running.value || disposed) return
   // 与开黑自习室互斥（partyActive 单一口径：内存态或服务端态命中即拒绝）
   if (partyActive.value) {
     toast('开黑自习室计时进行中，请先结束开黑再开始单人番茄')
@@ -245,8 +258,15 @@ function start() {
   if (phase.value === 'idle') {
     // P2-03：启动前校验专注时长 —— 清空（v-model.number 得空串）/0/负数一律阻止启动，
     // 避免 0 分钟「秒完成」后弹出与实际不符的加分提示
-    if (!(focusMinutes.value > 0)) {
-      toast('请输入大于 0 的专注时长')
+    if (
+      !Number.isFinite(focusMinutes.value) ||
+      focusMinutes.value <= 0 ||
+      focusMinutes.value > 240 ||
+      !Number.isFinite(breakMinutes.value) ||
+      breakMinutes.value < 0 ||
+      breakMinutes.value > 60
+    ) {
+      toast('专注时长需大于 0 且不超过 240 分钟，休息时长需在 0～60 分钟之间')
       return
     }
     phase.value = 'focus'
@@ -410,9 +430,11 @@ onMounted(async () => {
   // 互斥优先：先回源服务端确认开黑会话，再决定是否恢复本地单人专注
   // （否则刷新后内存态丢失，会与仍在服务端进行中的开黑会话同时计时、重复计入专注时长）
   await syncPartyActive()
+  if (disposed || sessionUser.value?.id !== soloOwner || phase.value !== 'idle') return
   restoreSoloState()
 })
 onUnmounted(() => {
+  disposed = true
   stopTimer()
   if (hideControlsTimer) clearTimeout(hideControlsTimer)
   window.removeEventListener('mousemove', handleMouseMove)
@@ -473,7 +495,7 @@ function cancelEdit() {
 
 <template>
   <div
-    class="min-h-screen relative flex flex-col items-center justify-center p-6 transition-colors duration-700 overflow-hidden"
+    class="min-h-screen relative flex flex-col items-center justify-center p-6 transition-colors duration-200 overflow-hidden"
     :class="
       bgUrl
         ? 'text-white'
@@ -486,7 +508,7 @@ function cancelEdit() {
   >
     <!-- 背景图 + 遮罩（图片加载失败时 bgUrl 为空，自动降级为上方渐变） -->
     <template v-if="bgUrl">
-      <img :src="bgUrl" alt="" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-1000" />
+      <img :src="bgUrl" alt="" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-200" />
       <div class="absolute inset-0 bg-gradient-to-b from-black/55 via-black/35 to-black/60"></div>
     </template>
 
@@ -672,7 +694,7 @@ function cancelEdit() {
 
       <!-- 控制按钮（底部，低干扰，鼠标滑至底部自动唤起） -->
       <div
-        class="absolute bottom-8 inset-x-0 flex gap-3 justify-center px-6 transition-all duration-500 ease-out"
+        class="absolute bottom-8 inset-x-0 flex gap-3 justify-center px-6 transition-[opacity,transform] duration-200 ease-out"
         :class="
           controlsVisible
             ? 'opacity-100 translate-y-0 pointer-events-auto'

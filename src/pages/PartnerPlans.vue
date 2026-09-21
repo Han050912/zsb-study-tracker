@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 import { usePartnerStore } from '../features/collaboration/stores/partners'
 import { storeToRefs } from 'pinia'
 const partnerStore = usePartnerStore()
@@ -199,9 +201,9 @@ async function removePlan() {
 <template>
   <div class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
     <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
-    <div class="section-title !mb-0">协作备考计划</div>
+    <h1 class="page-title">协作备考计划</h1>
 
-    <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <!-- 详情视图 -->
     <template v-else-if="route.params.planId">
@@ -222,9 +224,7 @@ async function removePlan() {
             <button class="ml-auto btn-danger !text-xs shrink-0" @click="removePlan">删除计划</button>
           </div>
 
-          <div v-if="!detail.tasks.length" class="text-xs text-slate-400 text-center py-6">
-            还没有任务，在下方添加第一个任务吧
-          </div>
+          <EmptyState v-if="!detail.tasks.length" title="还没有任务，在下方添加第一个任务吧" />
           <div
             v-for="t in detail.tasks"
             :key="t.id"
@@ -312,9 +312,7 @@ async function removePlan() {
       <!-- 计划列表 -->
       <div v-if="!loadError" class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">我的计划（{{ plans.length }}）</div>
-        <div v-if="!plans.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-6">
-          还没有协作计划，在上方创建一个吧
-        </div>
+        <EmptyState v-if="!plans.length" title="还没有协作计划，在上方创建一个吧" />
         <button
           v-for="p in plans"
           :key="p.id"

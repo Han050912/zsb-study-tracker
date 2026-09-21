@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../../shared/components/EmptyState.vue'
 import { computed, ref } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { formatMinutes } from '../../utils/date'
@@ -91,7 +92,7 @@ async function handleResume(c: TeamChallenge) {
       <button v-if="myRole === 'leader'" class="btn-ghost !text-xs" @click="emit('create')">＋ 创建挑战</button>
     </div>
 
-    <div v-if="!challenges.length" class="text-center text-sm text-slate-400 py-6">暂无挑战</div>
+    <EmptyState v-if="!challenges.length" title="暂无挑战" />
 
     <div v-else class="space-y-3">
       <div v-for="c in challenges" :key="c.id" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3">

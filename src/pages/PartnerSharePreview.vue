@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 /** 搭子分享全屏预览：通知中心与搭子分享页统一入口；完整展示错题/笔记（含图片）+ 批注交流 + 添加到我的笔记 */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
@@ -187,9 +189,9 @@ async function confirmCopy() {
 <template>
   <div class="max-w-3xl mx-auto px-4 py-6 space-y-5">
     <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
-    <div class="section-title !mb-0">分享预览</div>
+    <h1 class="page-title">分享预览</h1>
 
-    <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <div v-else-if="loadError" class="card text-center text-xs text-slate-400 dark:text-slate-500 py-10">
       {{ loadError }}
@@ -251,9 +253,7 @@ async function confirmCopy() {
         <div class="text-xs font-semibold text-slate-500 dark:text-slate-300">
           批注交流（{{ detail.comments.length }}）
         </div>
-        <div v-if="!detail.comments.length" class="text-xs text-slate-400 text-center py-4">
-          还没有批注，来聊聊解题思路吧
-        </div>
+        <EmptyState v-if="!detail.comments.length" title="还没有批注，来聊聊解题思路吧" />
         <div v-for="c in detail.comments" :key="c.id" class="flex items-start gap-2">
           <UserAvatar :name="c.userName" size="sm" />
           <div class="min-w-0 flex-1 rounded-lg bg-slate-50 dark:bg-slate-700/50 px-2 py-1.5">
