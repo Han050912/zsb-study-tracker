@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../../shared/components/LoadingState.vue'
 import { computed, ref, watch } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
@@ -130,7 +131,7 @@ async function revokeVerify() {
 
 <template>
   <Modal :show="show" title="用户资料" @close="emit('update:show', false)">
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-8">加载中…</div>
+    <LoadingState v-if="loading" />
     <div v-else-if="needLogin" class="text-center py-8 space-y-3">
       <div class="text-xs text-slate-400">该用户仅对登录用户公开主页</div>
       <button

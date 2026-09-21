@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../../shared/components/EmptyState.vue'
 /**
  * 学习进步榜（P1）：本周学习时长 / 本月刷题数 TOP 50，仅「参与学习进步榜」用户上榜。
  * 不展示末位排名；本人上榜高亮，未上榜显示排名与百分位；未参与显示开通引导。
@@ -98,7 +99,7 @@ function goProfile(userId: string) {
         </span>
       </div>
     </div>
-    <div v-else class="text-center text-xs text-slate-400 py-3">暂无上榜数据</div>
+    <EmptyState v-else title="暂无上榜数据" />
 
     <!-- 本人位置 -->
     <div

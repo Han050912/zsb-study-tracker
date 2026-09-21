@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../shared/components/LoadingState.vue'
 import { computed, onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -163,7 +164,7 @@ function openReport(postId: string) {
 
 <template>
   <div class="max-w-3xl mx-auto space-y-4">
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <template v-else-if="circle">
       <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
@@ -171,7 +172,7 @@ function openReport(postId: string) {
       <!-- 圈子信息头 -->
       <div class="card space-y-3">
         <div class="flex items-center gap-2 flex-wrap">
-          <h2 class="text-lg font-bold flex-1 min-w-0 truncate">{{ circle.name }}</h2>
+          <h1 class="page-title flex-1 min-w-0 truncate">{{ circle.name }}</h1>
           <span
             class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
             :class="

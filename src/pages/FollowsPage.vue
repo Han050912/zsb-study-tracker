@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../shared/components/LoadingState.vue'
 /** 粉丝/关注/互关关系列表页：路由 /follows/:id?tab=fans|following|mutual；游标分页 + 切 tab 令牌防竞态 */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -118,7 +119,7 @@ function onFollowChange(uid: string, following: boolean) {
     <!-- 顶部导航行 -->
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
-      <h2 class="text-lg font-bold">{{ isSelf ? '我的' : ownerName || 'TA 的' }}{{ TITLES[tab] }}</h2>
+      <h1 class="page-title">{{ isSelf ? '我的' : ownerName || 'TA 的' }}{{ TITLES[tab] }}</h1>
     </div>
 
     <!-- Tab 头 -->
@@ -139,7 +140,7 @@ function onFollowChange(uid: string, following: boolean) {
       <UserRelationItem v-for="it in items" :key="it.userId" :item="it" @follow-change="onFollowChange" />
 
       <!-- 加载中 -->
-      <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+      <LoadingState v-if="loading" />
       <!-- 错误态 -->
       <div v-else-if="loadError" class="text-center text-xs text-slate-400 py-10">
         加载失败

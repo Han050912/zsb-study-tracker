@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -69,15 +71,13 @@ const statusLabel = (c: CommunityCircle) =>
   <div class="space-y-4 max-w-3xl mx-auto">
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
-      <h2 class="text-lg font-bold flex-1">话题圈子</h2>
+      <h1 class="page-title flex-1">话题圈子</h1>
       <button class="btn-primary !text-xs" @click="showCreate = true">＋ 创建圈子</button>
     </div>
     <p class="text-xs text-slate-400">圈内专属讨论——圈子帖子不会出现在公共广场。公开圈可直接加入，审核圈需圈主批准。</p>
 
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-8">加载中…</div>
-    <div v-else-if="!circles.length" class="card text-center text-sm text-slate-400 py-10">
-      还没有圈子，来创建第一个吧～
-    </div>
+    <LoadingState v-if="loading" />
+    <EmptyState v-else-if="!circles.length" class="card" title="还没有圈子，来创建第一个吧～" />
 
     <div v-else class="grid gap-3 sm:grid-cols-2">
       <button

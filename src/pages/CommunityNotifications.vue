@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -86,10 +87,12 @@ async function readAll() {
       </div>
     </div>
 
-    <div v-else-if="!store.notifications.length" class="card text-center py-10 text-slate-400 text-sm">
-      <div class="text-3xl mb-2"></div>
-      <p>暂无通知</p>
-    </div>
+    <EmptyState
+      v-else-if="!store.notifications.length"
+      class="card"
+      title="暂无通知"
+      description="新的互动和学习提醒会显示在这里。"
+    />
 
     <div v-else class="card !p-0 divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
       <template v-for="n in store.notifications" :key="n.id">

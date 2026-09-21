@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { Heart } from '@lucide/vue'
 
 const props = withDefaults(defineProps<{ liked: boolean; count: number; vertical?: boolean }>(), { vertical: false })
 const emit = defineEmits<{ toggle: [] }>()
@@ -24,11 +25,17 @@ function onClick() {
       props.liked ? 'text-rose-500' : 'text-slate-400 hover:text-rose-400'
     ]"
     :aria-pressed="props.liked"
+    :aria-label="props.liked ? '取消点赞' : '点赞'"
     @click.stop="onClick"
   >
-    <span :class="[{ 'animate-like': beating }, props.vertical ? 'text-xl leading-none' : '']">{{
-      props.liked ? '❤️' : '🤍'
-    }}</span>
+    <Heart
+      :size="props.vertical ? 21 : 17"
+      :stroke-width="1.75"
+      :fill="props.liked ? 'currentColor' : 'none'"
+      :class="{ 'animate-like': beating }"
+      aria-hidden="true"
+      @animationend="beating = false"
+    />
     <span :class="props.vertical ? 'text-xs' : ''">{{ props.count || '' }}</span>
   </button>
 </template>
@@ -39,14 +46,14 @@ function onClick() {
     transform: scale(1);
   }
   40% {
-    transform: scale(1.35);
+    transform: scale(1.16);
   }
   100% {
     transform: scale(1);
   }
 }
 .animate-like {
-  animation: like-beat 0.3s ease;
+  animation: like-beat var(--motion-enter) ease;
   display: inline-block;
 }
 </style>

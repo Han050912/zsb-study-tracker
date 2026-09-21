@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
 import { usePostDetail } from '../features/community/composables/usePostDetail'
 import AsyncState from '../shared/components/AsyncState.vue'
 import PostCard from '../components/community/PostCard.vue'
@@ -135,12 +136,7 @@ const {
           </div>
         </div>
 
-        <div
-          v-if="!commentTree.length && !commentsLoading && !commentError"
-          class="text-center text-xs text-slate-400 py-4"
-        >
-          暂无评论，来抢沙发～
-        </div>
+        <EmptyState v-if="!commentTree.length && !commentsLoading && !commentError" title="暂无评论，来抢沙发～" />
         <div v-for="c in commentTree" :key="c.id" :id="`comment-${c.id}`" class="space-y-3 scroll-mt-24">
           <CommentItem
             :comment="c"

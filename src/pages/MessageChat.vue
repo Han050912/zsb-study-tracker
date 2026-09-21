@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../shared/components/LoadingState.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -43,6 +44,8 @@ const olderError = ref(false)
 const peerName = ref('')
 const peerAvatar = ref('')
 const loading = ref(true)
+const loadError = ref('')
+let disposed = false
 const sending = ref(false)
 const text = ref('')
 const { images, uploading, hasError, fileInput, pickImages, onFileChange, removeImage, retryImage, reset } =
@@ -59,6 +62,8 @@ let pollInFlight = false
 async function load(reset = false) {
   try {
     const res = await messagesApi.messagesWith(peerId, reset ? null : nextCursor.value)
+    if (disposed) return
+    loadError.value = ''
     // 打开/刷新即已读对方消息：本次标记数即时同步全局未读计数，无需等轮询
     if (res.markedRead > 0) window.dispatchEvent(new CustomEvent('message:read', { detail: res.markedRead }))
     if (reset) {
@@ -83,10 +88,13 @@ async function load(reset = false) {
     // 会话列表接口拿不到对方名/头像，从资料卡补
     if (!peerName.value) {
       const p = await usersApi.profile(peerId)
+      if (disposed) return
       peerName.value = p.userName
       peerAvatar.value = p.avatar || ''
     }
   } catch (e) {
+    if (disposed) return
+    if (!cursorEstablished.value) loadError.value = getErrorMessage(e, '消息加载失败，请重试')
     // 轮询失败静默（否则每 5s 弹一次）；首屏与翻页失败给出提示
     if (loading.value || loadingOlder.value) {
       toast(getErrorMessage(e, '加载失败'))
@@ -96,6 +104,12 @@ async function load(reset = false) {
   } finally {
     loading.value = false
   }
+}
+
+function retryLoad() {
+  if (loading.value || disposed) return
+  loading.value = true
+  void load(true)
 }
 
 /** 加载更早的消息：按钮可见即点击可用（nextCursor 为 null 时按钮根本不渲染） */
@@ -124,7 +138,7 @@ function isNearBottom() {
 
 /** 拉取一次最新消息，仅当轮询前用户已接近底部时才自动滚底；上次未返回则跳过本次（失败也不阻塞后续轮询） */
 async function pollOnce() {
-  if (pollInFlight) return
+  if (pollInFlight || disposed) return
   pollInFlight = true
   try {
     const before = messages.value.length
@@ -137,6 +151,7 @@ async function pollOnce() {
 }
 /** 页面可见时每 5s 轮询新消息；切后台（标签页隐藏/桌面端最小化）暂停，回前台立即补拉一次 */
 function startPolling() {
+  if (disposed) return
   stopPolling()
   pollTimer = setInterval(pollOnce, 5000)
 }
@@ -157,24 +172,35 @@ function onVisibilityChange() {
 
 onMounted(async () => {
   await load(true)
+  if (disposed) return
   await scrollToBottom()
   // 「打招呼」跳转：自动发送一条问候语（清除 query 防重复触发）
-  if (route.query.greet === '1' && !messages.value.some((m) => m.fromMe && m.content === GREETING)) {
+  if (
+    !loadError.value &&
+    route.query.greet === '1' &&
+    !messages.value.some((m) => m.fromMe && m.content === GREETING)
+  ) {
     try {
       const m = await messagesApi.sendMessage(peerId, GREETING)
+      if (disposed) return
       messages.value.unshift(m)
       await scrollToBottom()
     } catch {
-      /* 发送失败静默忽略，用户可手动发消息 */
+      if (!disposed) {
+        text.value = GREETING
+        toast('问候发送失败，已保留在输入框中，可重新发送')
+      }
     }
   }
-  if (route.query.greet) router.replace({ query: {} })
+  if (disposed) return
+  if (route.query.greet) router.replace({ query: { ...route.query, greet: undefined } })
   startPolling()
   document.addEventListener('visibilitychange', onVisibilityChange)
   updateThumb()
 })
 
 onUnmounted(() => {
+  disposed = true
   stopPolling()
   document.removeEventListener('visibilitychange', onVisibilityChange)
   if (thumbHideTimer) clearTimeout(thumbHideTimer)
@@ -309,7 +335,11 @@ function openReport(msgId: string) {
         @mouseenter="onChatMouseEnter"
         @mouseleave="onChatMouseLeave"
       >
-        <div v-if="loading" class="text-center text-xs text-slate-400 py-8">加载中…</div>
+        <LoadingState v-if="loading" />
+        <div v-else-if="loadError && !messages.length" role="alert" class="text-center p-6 space-y-3">
+          <p class="text-sm text-slate-500">{{ loadError }}</p>
+          <button class="btn-ghost" @click="retryLoad">重新加载消息</button>
+        </div>
         <template v-else>
           <div v-if="nextCursor" class="text-center">
             <button

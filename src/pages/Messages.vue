@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -38,10 +40,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="space-y-3 max-w-2xl mx-auto">
-    <h2 class="text-lg font-bold">消息</h2>
+  <div class="p-4 md:p-6 space-y-4 max-w-2xl mx-auto">
+    <h1 class="page-title">消息</h1>
 
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+    <LoadingState v-if="loading" />
     <!-- 加载失败：持久错误态 + 重试，不落「还没有消息」空态 -->
     <div v-else-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
       <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
@@ -51,11 +53,13 @@ onMounted(() => {
         重试
       </button>
     </div>
-    <div v-else-if="!conversations.length" class="card text-center text-sm text-slate-400 py-10">
-      还没有消息。到社区里找聊得来的同学，点头像 → 发消息吧～
-    </div>
+    <EmptyState
+      v-else-if="!conversations.length"
+      class="card"
+      title="还没有消息。到社区里找聊得来的同学，点头像 → 发消息吧～"
+    />
 
-    <div v-else class="card !p-0 divide-y divide-slate-100 dark:divide-slate-700">
+    <div v-else class="card !p-0 overflow-hidden divide-y divide-slate-100 dark:divide-slate-700">
       <button
         v-for="c in conversations"
         :key="c.peerId"

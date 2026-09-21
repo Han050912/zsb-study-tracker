@@ -6,7 +6,7 @@ defineEmits<{ pin: []; feature: []; daily: []; hide: [] }>()
 <template>
   <details class="relative">
     <summary class="cursor-pointer px-2 text-sm flex items-center min-h-11">管理 ···</summary>
-    <div class="absolute right-0 top-full z-20 card !p-2 w-36 flex flex-col text-sm">
+    <div class="details-panel account-menu absolute right-0 top-full z-20 card !p-2 w-36 flex flex-col text-sm">
       <button class="text-left px-2 min-h-11" @click="$emit('pin')">{{ post.isPinned ? '取消置顶' : '置顶' }}</button
       ><button class="text-left px-2 min-h-11" @click="$emit('feature')">
         {{ post.isFeatured ? '取消加精' : '加精' }}</button

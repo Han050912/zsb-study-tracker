@@ -82,8 +82,8 @@ const tooltip = (d: Cell) => {
 </script>
 
 <template>
-  <div>
-    <div class="flex gap-0.5">
+  <div class="max-w-full overflow-x-auto pb-1">
+    <div class="flex gap-0.5 w-max" role="group" aria-label="学习热力图">
       <!-- 热力图列：月份标签 + 7 格 -->
       <div v-for="(col, ci) in cols" :key="ci" class="flex flex-col gap-0.5">
         <div class="h-4 text-[10px] text-slate-400 whitespace-nowrap leading-4">{{ col.monthLabel }}</div>

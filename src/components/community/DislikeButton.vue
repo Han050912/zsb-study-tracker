@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { ThumbsDown } from '@lucide/vue'
 
 const props = defineProps<{ disliked: boolean; count: number }>()
 const emit = defineEmits<{ toggle: [] }>()
@@ -22,9 +23,16 @@ function onClick() {
       props.disliked ? 'text-slate-600 dark:text-slate-300' : 'text-slate-300 dark:text-slate-600 hover:text-slate-500'
     "
     :aria-pressed="props.disliked"
+    :aria-label="props.disliked ? '取消点踩' : '点踩'"
     @click.stop="onClick"
   >
-    <span :class="{ 'animate-like': beating }">👎</span>
+    <ThumbsDown
+      :size="17"
+      :stroke-width="1.75"
+      :class="{ 'animate-like': beating }"
+      aria-hidden="true"
+      @animationend="beating = false"
+    />
     <span>{{ props.count || '' }}</span>
   </button>
 </template>
@@ -35,14 +43,14 @@ function onClick() {
     transform: scale(1);
   }
   40% {
-    transform: scale(1.25);
+    transform: scale(1.16);
   }
   100% {
     transform: scale(1);
   }
 }
 .animate-like {
-  animation: like-beat 0.3s ease;
+  animation: like-beat var(--motion-enter) ease;
   display: inline-block;
 }
 </style>

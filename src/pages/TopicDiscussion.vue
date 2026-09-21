@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 import { computed, onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -105,13 +107,11 @@ function openReport(postId: string) {
   <div class="max-w-3xl mx-auto space-y-4">
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
-      <h2 class="text-lg font-bold flex-1 min-w-0 truncate">
-        {{ subjectLabel(subject, subjectId) }} · {{ chapterName }}
-      </h2>
+      <h1 class="page-title flex-1 min-w-0 truncate">{{ subjectLabel(subject, subjectId) }} · {{ chapterName }}</h1>
     </div>
     <p class="text-xs text-slate-400 -mt-2">本章节疑难讨论（仅本讨论区可见，不进公共广场）</p>
 
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <template v-else>
       <!-- 发帖入口 -->
@@ -129,9 +129,7 @@ function openReport(postId: string) {
         </button>
       </div>
       <template v-else>
-        <div v-if="!posts.length && !feedLoading" class="card text-center text-sm text-slate-400 py-8">
-          还没有讨论，来发第一帖吧～
-        </div>
+        <EmptyState v-if="!posts.length && !feedLoading" class="card" title="还没有讨论，来发第一帖吧～" />
         <PostCard
           v-for="p in posts"
           :key="p.id"
