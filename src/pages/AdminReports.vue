@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../shared/components/LoadingState.vue'
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -192,7 +193,7 @@ async function removeHotTopic(id: string) {
     </div>
 
     <div v-show="activeTab === 'reports'">
-      <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+      <LoadingState v-if="loading" />
       <div v-else-if="!reports.length" class="card text-center py-10 text-slate-400 text-sm">
         <div class="text-3xl mb-2"></div>
         <p>暂无待处理举报，社区一片祥和</p>
@@ -266,7 +267,7 @@ async function removeHotTopic(id: string) {
     <!-- 热门话题运营位管理 -->
     <div v-show="activeTab === 'topics'" class="card space-y-3">
       <div class="section-title !mb-0">热门话题管理</div>
-      <div v-if="hotLoading" class="text-xs text-slate-400 text-center py-3">加载中…</div>
+      <LoadingState v-if="hotLoading" />
       <template v-else>
         <!-- 近 7 天自动统计 -->
         <div v-if="hotStats.length">
@@ -360,7 +361,7 @@ async function removeHotTopic(id: string) {
         </button>
       </div>
 
-      <div v-if="feedbackLoading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+      <LoadingState v-if="feedbackLoading" />
       <div v-else-if="!feedbacks.length" class="card text-center py-10 text-slate-400 text-sm">
         <div class="text-3xl mb-2"></div>
         <p>暂无反馈</p>

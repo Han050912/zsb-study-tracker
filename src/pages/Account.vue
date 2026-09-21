@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../shared/components/LoadingState.vue'
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
 import { ChevronDown } from '@lucide/vue'
@@ -163,7 +164,7 @@ async function exportBackup() {
 <template>
   <div class="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
     <!-- 加载中 -->
-    <div v-if="profileLoading" class="text-center text-xs text-slate-400 py-20">加载中…</div>
+    <LoadingState v-if="profileLoading" />
     <!-- 加载失败 -->
     <div v-else-if="profileError" class="card text-center py-10">
       <p class="text-xs text-slate-400">资料加载失败</p>

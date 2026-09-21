@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../../shared/components/LoadingState.vue'
 /** 用户作品 Tab：帖子 / 点赞（仅本人）。游标分页 + 加载更多 + 空态/错误重试；点赞/踩计数口径与 community store 一致 */
 import { onMounted, ref, watch } from 'vue'
 import { getErrorMessage } from '../../utils/error'
@@ -127,7 +128,7 @@ async function onDislike(p: CommunityPost) {
       <button class="btn-ghost !text-xs ml-1" @click="loadMore">重试</button>
     </div>
     <!-- 加载中 -->
-    <div v-else-if="loading" class="text-center text-xs text-slate-400 py-6">加载中…</div>
+    <LoadingState v-else-if="loading" />
     <!-- 加载更多 -->
     <div v-else-if="cursor" class="text-center py-4">
       <button class="btn-ghost !text-xs" @click="loadMore">加载更多</button>

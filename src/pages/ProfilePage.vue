@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../shared/components/LoadingState.vue'
 /**
  * 个人主页（访客态/本人态通用）：社交资料 + 作品 + 学习履历可视化。
  * 公开信息：等级/积分/徽章墙/连续打卡/学习时长热力图/做题统计/科目分布。
@@ -99,15 +100,15 @@ onMounted(loadAll)
 </script>
 
 <template>
-  <div class="max-w-4xl mx-auto space-y-6">
+  <div class="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
     <!-- 返回导航 -->
     <div class="flex items-center gap-2">
       <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
-      <h2 class="text-lg font-bold flex-1">主页</h2>
+      <h1 class="page-title flex-1">主页</h1>
     </div>
 
     <!-- 加载中 -->
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-20">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <!-- 错误/不存在 -->
     <div v-else-if="error" class="card text-center py-20">

@@ -82,9 +82,13 @@ async function clearAll() {
   toast('数据已清除')
   // 立即推送到云端，避免防抖 save() 与 location.reload() 竞态
   try {
-    await store.saveAsync()
+    if (!(await store.saveAsync())) {
+      toast(syncIssue.value || '本地已清除，云端尚未同步，请点击立即同步重试')
+      return
+    }
   } catch {
     toast('云端同步失败，请稍后重试')
+    return
   }
   setTimeout(() => location.reload(), 300)
 }

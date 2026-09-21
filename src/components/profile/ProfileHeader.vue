@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 个人主页头部：粘土质感 Banner + 悬浮资料卡（头像/昵称/蓝V/等级/简介/积分打卡 + 本人编辑或访客关注/私信操作） */
+/** 个人主页头部：柔和色带 + 悬浮资料卡（头像/昵称/蓝V/等级/简介/积分打卡 + 本人编辑或访客关注/私信操作） */
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { BadgeCheck, Camera } from '@lucide/vue'
@@ -36,11 +36,11 @@ function goMessage() {
 
 <template>
   <div>
-    <!-- 粘土质感 Banner -->
-    <div class="clay-banner h-28 md:h-36"></div>
+    <!-- 柔和色带 -->
+    <div class="profile-cover h-28 md:h-36"></div>
 
     <!-- 悬浮资料卡 -->
-    <div class="-mt-10 mx-3 card relative flex items-center gap-4">
+    <div class="-mt-10 mx-3 card relative flex flex-wrap sm:flex-nowrap items-center gap-4">
       <!-- 头像区：本人态可点击编辑资料（悬停显示 Camera 遮罩，参考 Account.vue group-hover 模式） -->
       <div
         class="relative w-20 h-20 shrink-0"
@@ -97,7 +97,7 @@ function goMessage() {
       </div>
 
       <!-- 操作区 -->
-      <div class="shrink-0 flex items-center gap-2">
+      <div class="w-full sm:w-auto shrink-0 flex items-center justify-end gap-2">
         <button v-if="isSelf" class="btn-primary !text-xs" @click="emit('edit')">编辑资料</button>
         <template v-else>
           <FollowButton
@@ -119,23 +119,9 @@ function goMessage() {
 </template>
 
 <style scoped>
-/* 粘土质感（claymorphism）：柔和粉彩底 + 外部投影 + 内部高光，营造柔软凸起的黏土感 */
-.clay-banner {
-  border-radius: 1.5rem;
-  background: linear-gradient(135deg, #b8d4ff 0%, #cdbaff 55%, #ffcce4 100%);
-  box-shadow:
-    10px 16px 32px rgba(84, 94, 150, 0.18),
-    -6px -8px 24px rgba(255, 255, 255, 0.65),
-    inset 3px 3px 8px rgba(255, 255, 255, 0.95),
-    inset -5px -5px 12px rgba(92, 92, 165, 0.14);
-}
-
-:global(.dark) .clay-banner {
-  background: linear-gradient(135deg, #1d3f8f 0%, #3b2e8f 55%, #7c2d86 100%);
-  box-shadow:
-    10px 16px 32px rgba(0, 0, 0, 0.45),
-    -4px -6px 16px rgba(255, 255, 255, 0.05),
-    inset 2px 2px 6px rgba(255, 255, 255, 0.1),
-    inset -5px -5px 12px rgba(0, 0, 0, 0.4);
+.profile-cover {
+  border-radius: var(--radius-card);
+  border: 1px solid var(--line);
+  background: linear-gradient(120deg, var(--action-soft), var(--surface-soft));
 }
 </style>

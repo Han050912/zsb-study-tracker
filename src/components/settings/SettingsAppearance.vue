@@ -78,7 +78,7 @@ function toggleMutedType(t: NotificationType) {
         {{ t.l }}
       </button>
     </div>
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between gap-3">
       <span class="text-sm">每日学习提醒</span>
       <div class="flex items-center gap-2">
         <input
@@ -88,7 +88,7 @@ function toggleMutedType(t: NotificationType) {
           @change="update('reminderTime', ($event.target as HTMLInputElement).value)"
         />
         <button
-          class="btn !text-xs"
+          class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
           :class="s.reminderEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
           @click="toggleReminder(!s.reminderEnabled)"
         >
@@ -96,23 +96,23 @@ function toggleMutedType(t: NotificationType) {
         </button>
       </div>
     </div>
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between gap-3">
       <div>
         <span class="text-sm">参与学习进步榜</span>
-        <p class="text-[10px] text-slate-400 mt-0.5">在社区「进步榜」展示昵称与学习时长/刷题数排名，默认关闭</p>
+        <p class="text-xs text-slate-400 mt-0.5">在社区「进步榜」展示昵称与学习时长/刷题数排名，默认关闭</p>
       </div>
       <button
-        class="btn !text-xs"
+        class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
         :class="s.joinProgressBoard ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
         @click="update('joinProgressBoard', !s.joinProgressBoard)"
       >
         {{ s.joinProgressBoard ? '已参与' : '未参与' }}
       </button>
     </div>
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between gap-3">
       <div>
         <span class="text-sm">主页可见性</span>
-        <p class="text-[10px] text-slate-400 mt-0.5">控制他人访问你成长主页的权限</p>
+        <p class="text-xs text-slate-400 mt-0.5">控制他人访问你成长主页的权限</p>
       </div>
       <select
         class="input !w-auto !py-1.5 !text-xs"
@@ -126,26 +126,26 @@ function toggleMutedType(t: NotificationType) {
         <option value="private">仅自己可见</option>
       </select>
     </div>
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between gap-3">
       <div>
         <span class="text-sm">允许搭子查看我的学习数据</span>
-        <p class="text-[10px] text-slate-400 mt-0.5">开启后搭子可查看你的周报对比与定向分享内容，默认关闭</p>
+        <p class="text-xs text-slate-400 mt-0.5">开启后搭子可查看你的周报对比与定向分享内容，默认关闭</p>
       </div>
       <button
-        class="btn !text-xs"
+        class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
         :class="s.partnerShareEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
         @click="update('partnerShareEnabled', !s.partnerShareEnabled)"
       >
         {{ s.partnerShareEnabled ? '已开启' : '已关闭' }}
       </button>
     </div>
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between gap-3">
       <div>
         <span class="text-sm">允许搭子向我发送学习提醒</span>
-        <p class="text-[10px] text-slate-400 mt-0.5">关闭后搭子将无法向你发送学习鼓励提醒，默认开启</p>
+        <p class="text-xs text-slate-400 mt-0.5">关闭后搭子将无法向你发送学习鼓励提醒，默认开启</p>
       </div>
       <button
-        class="btn !text-xs"
+        class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
         :class="s.partnerRemindEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
         @click="update('partnerRemindEnabled', !s.partnerRemindEnabled)"
       >
@@ -153,13 +153,13 @@ function toggleMutedType(t: NotificationType) {
       </button>
     </div>
     <div class="pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3">
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between gap-3">
         <div>
           <span class="text-sm">勿扰模式</span>
-          <p class="text-[10px] text-slate-400 mt-0.5">开启后不弹数字角标、不弹系统推送，通知中心照常记录历史</p>
+          <p class="text-xs text-slate-400 mt-0.5">开启后不弹数字角标、不弹系统推送，通知中心照常记录历史</p>
         </div>
         <button
-          class="btn !text-xs"
+          class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
           :class="s.doNotDisturb ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
           @click="update('doNotDisturb', !s.doNotDisturb)"
         >

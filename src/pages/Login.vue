@@ -1,15 +1,12 @@
 <script setup lang="ts">
 import { ref, defineAsyncComponent } from 'vue'
 import { getErrorMessage } from '../utils/error'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { Eye, EyeOff } from '@lucide/vue'
 import { login, register, enterGuestMode } from '../services/auth'
-import { useAppStore } from '../stores/app'
-import { sanitizeInternalPath } from '../utils/path'
+import { retryBoot } from '../composables/useAppBoot'
 
 const router = useRouter()
-const route = useRoute()
-const store = useAppStore()
 
 const mode = ref<'login' | 'register'>('login')
 const username = ref('')
@@ -40,11 +37,13 @@ function retryTurnstile() {
 
 /** 访客入口：唯一进入访客浏览模式的路径（开启后路由守卫才放行公开页） */
 function enterGuest() {
+  if (loading.value) return
   enterGuestMode()
   router.replace('/community')
 }
 
 function switchMode(m: 'login' | 'register') {
+  if (loading.value) return
   mode.value = m
   errorMsg.value = ''
   showForgotHint.value = false
@@ -55,16 +54,8 @@ function switchMode(m: 'login' | 'register') {
   turnstileWidget.value?.reset()
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label}超时，请检查网络或禁用浏览器插件后重试`)), ms)
-    )
-  ])
-}
-
 async function submit() {
+  if (loading.value) return
   errorMsg.value = ''
   if (!username.value.trim() || !password.value) {
     errorMsg.value = '请输入用户名和密码'
@@ -95,15 +86,12 @@ async function submit() {
   loading.value = true
   try {
     if (mode.value === 'login') {
-      await withTimeout(login(username.value.trim(), password.value, turnstileToken.value), 15000, '登录')
+      await login(username.value.trim(), password.value, turnstileToken.value)
     } else {
-      await withTimeout(register(username.value.trim(), password.value, turnstileToken.value), 15000, '注册')
+      await register(username.value.trim(), password.value, turnstileToken.value)
     }
     // 登录/注册成功后从云端载入该用户的历史数据
-    await withTimeout(store.hydrate(), 20000, '数据同步')
-    // 回跳：登录前从某页面触发（携带 redirect）则返回原页面；否则回首页。仅允许站内路径，防 open redirect
-    const redirect = sanitizeInternalPath(route.query.redirect) ?? '/'
-    router.replace(redirect)
+    await retryBoot.value?.()
   } catch (e) {
     const msg = getErrorMessage(e, '操作失败，请重试')
     // 桌面端没有 Turnstile 组件，人机验证完全依赖 X-Desktop-Token：
