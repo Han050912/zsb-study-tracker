@@ -86,7 +86,10 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../pages/Notes.vue'),
     meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '笔记' }
   },
-  { path: '/daily-summary/:date', redirect: '/daily-summary' },
+  {
+    path: '/daily-summary/:date',
+    redirect: (to) => ({ path: '/daily-summary', query: { ...to.query, date: to.params.date } })
+  },
   {
     path: '/statistics',
     name: 'statistics',
@@ -134,6 +137,12 @@ const routes: RouteRecordRaw[] = [
     name: 'settings',
     component: () => import('../pages/Settings.vue'),
     meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '设置' }
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'not-found',
+    component: () => import('../pages/NotFound.vue'),
+    meta: { layout: 'app', requiresAuth: false, guestAllowed: true, title: '页面不存在' }
   }
 ]
 
@@ -162,7 +171,8 @@ router.beforeEach((to) => {
   if (!isLoggedIn.value) {
     const guestAllowed = to.meta.guestAllowed === true
     const canBrowse = isGuestMode.value && guestAllowed
-    if (to.meta.requiresAuth !== false && to.meta.layout !== 'auth' && !canBrowse) return { name: 'login' }
+    if (to.meta.requiresAuth !== false && to.meta.layout !== 'auth' && !canBrowse)
+      return { name: 'login', query: { redirect: to.fullPath } }
   }
 
   if (to.meta.adminOnly && !isAdmin.value) return { name: 'community' }
