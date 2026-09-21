@@ -19,7 +19,8 @@ import { useConfirmProvider } from './composables/useConfirm'
 import { useUnreadPolling } from './composables/useUnreadPolling'
 import { useReminders } from './composables/useReminders'
 import { useNavigation } from './composables/useNavigation'
-import { useAppReady } from './composables/useAppBoot'
+import { useAppReady, bootError, bootRetrying, retryBoot } from './composables/useAppBoot'
+import { syncIssue } from './stores/app/sync'
 
 // 成就分享弹窗按需异步加载：切断入口对 markdown-it/katex 依赖链（AchievementModal → PostComposer → utils/markdown）的静态引用
 const AchievementModal = defineAsyncComponent(() => import('./components/AchievementModal.vue'))
@@ -45,6 +46,27 @@ const { nav: NAV, mobileNav, isNavActive, navCollapsed, toggleNav } = useNavigat
 
 // ---- 首屏补水门控（main.ts 把云端数据拉取移出挂载路径；未就绪前只渲染骨架） ----
 const ready = useAppReady()
+const offline = ref(!navigator.onLine)
+const retryingSync = ref(false)
+function updateNetwork() {
+  offline.value = !navigator.onLine
+}
+window.addEventListener('online', updateNetwork)
+window.addEventListener('offline', updateNetwork)
+onUnmounted(() => {
+  window.removeEventListener('online', updateNetwork)
+  window.removeEventListener('offline', updateNetwork)
+})
+async function retrySync() {
+  if (retryingSync.value) return
+  retryingSync.value = true
+  try {
+    const result = await store.syncNow()
+    toastRef.value?.show(result.ok ? '数据已同步' : syncIssue.value || '同步失败，请检查网络后重试')
+  } finally {
+    retryingSync.value = false
+  }
+}
 
 // ---- 主题 ----
 function applyTheme() {
@@ -136,6 +158,8 @@ async function accountLogout(switchAccount: boolean) {
   useSquadStore().resetState()
   useStudyTimerStore().finishSession()
   community.resetState()
+  useCommunityFeedStore().resetState()
+  usePostStore().resetState()
   // 退出后回登录页；访客浏览模式仅能由登录页「先随便看看」入口进入
   router.replace('/login')
 }
@@ -157,8 +181,18 @@ onUnmounted(() => {
 
 <template>
   <!-- 首屏补水门控：视觉与 index.html 内联骨架一致；数据未就位前不渲染主界面（骨架态 ≠ 空态） -->
+  <div v-if="!ready && bootError" class="min-h-screen flex items-center justify-center p-6">
+    <section class="card max-w-md w-full space-y-4" role="alert">
+      <h1 class="page-title">暂时无法加载学习数据</h1>
+      <p class="text-sm text-slate-600 dark:text-slate-300">{{ bootError }}</p>
+      <p class="text-sm text-slate-500">已保存的数据不会因此被清空，连接恢复后可继续加载。</p>
+      <button class="btn-primary w-full" :disabled="bootRetrying" @click="retryBoot?.()">
+        {{ bootRetrying ? '正在重试…' : '重新加载' }}
+      </button>
+    </section>
+  </div>
   <div
-    v-if="!ready"
+    v-else-if="!ready"
     class="fixed inset-0 z-[100] flex flex-col gap-3 bg-slate-50 dark:bg-slate-900 pt-content-top px-4"
   >
     <div class="h-4 w-2/5 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
@@ -206,7 +240,8 @@ onUnmounted(() => {
           v-for="item in NAV"
           :key="item.path"
           :to="item.path"
-          class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors"
+          class="nav-link flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm"
+          :aria-current="isNavActive(item.path) ? 'page' : undefined"
           :class="[
             isNavActive(item.path)
               ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-semibold'
@@ -255,7 +290,7 @@ onUnmounted(() => {
       <template v-if="isLoggedIn">
         <button
           ref="avatarBtn"
-          class="relative z-50 w-9 h-9 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
+          class="relative z-50 w-11 h-11 rounded-full bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-sm font-bold flex items-center justify-center shadow-md hover:shadow-lg transition-shadow"
           title="账号菜单"
           aria-haspopup="true"
           :aria-expanded="avatarOpen"
@@ -281,57 +316,59 @@ onUnmounted(() => {
           </span>
         </button>
         <div v-if="avatarOpen" class="fixed inset-0 z-40" @click="avatarOpen = false"></div>
-        <div
-          v-if="avatarOpen"
-          class="absolute right-0 top-11 z-50 w-40 rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-lg py-1.5"
-        >
-          <button
-            class="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
-            @click="goMessages"
+        <Transition name="menu">
+          <div
+            v-if="avatarOpen"
+            class="account-menu absolute right-0 top-14 z-50 w-40 rounded-xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-700 shadow-lg py-1.5"
           >
-            <span>消息</span>
-            <span
-              v-if="messageUnread"
-              class="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center"
-              >{{ messageUnread > 99 ? '99+' : messageUnread }}</span
+            <button
+              class="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+              @click="goMessages"
             >
-          </button>
-          <button
-            class="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
-            @click="goNotifications"
-          >
-            <span>通知中心</span>
-            <span
-              v-if="community.unreadCount"
-              class="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center"
-              >{{ community.unreadCount > 99 ? '99+' : community.unreadCount }}</span
+              <span>消息</span>
+              <span
+                v-if="messageUnread"
+                class="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center"
+                >{{ messageUnread > 99 ? '99+' : messageUnread }}</span
+              >
+            </button>
+            <button
+              class="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+              @click="goNotifications"
             >
-          </button>
-          <button
-            class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
-            @click="goFeedback"
-          >
-            意见反馈
-          </button>
-          <button
-            class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
-            @click="goAccount"
-          >
-            个人中心
-          </button>
-          <button
-            class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
-            @click="accountLogout(true)"
-          >
-            切换账号
-          </button>
-          <button
-            class="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-            @click="accountLogout(false)"
-          >
-            退出登录
-          </button>
-        </div>
+              <span>通知中心</span>
+              <span
+                v-if="community.unreadCount"
+                class="min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center"
+                >{{ community.unreadCount > 99 ? '99+' : community.unreadCount }}</span
+              >
+            </button>
+            <button
+              class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+              @click="goFeedback"
+            >
+              意见反馈
+            </button>
+            <button
+              class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+              @click="goAccount"
+            >
+              个人中心
+            </button>
+            <button
+              class="w-full text-left px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+              @click="accountLogout(true)"
+            >
+              切换账号
+            </button>
+            <button
+              class="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+              @click="accountLogout(false)"
+            >
+              退出登录
+            </button>
+          </div>
+        </Transition>
       </template>
       <button
         v-else
@@ -352,6 +389,16 @@ onUnmounted(() => {
             (isNotesEditing ? '' : ' pt-content-top')
       "
     >
+      <div
+        v-if="isLoggedIn && (offline || syncIssue)"
+        role="status"
+        class="mx-4 mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100 flex flex-wrap items-center gap-3"
+      >
+        <span class="flex-1 min-w-0">{{ offline ? '网络已断开，当前修改待同步。连接恢复后请重试。' : syncIssue }}</span>
+        <button class="btn-ghost" :disabled="offline || retryingSync" @click="retrySync">
+          {{ retryingSync ? '同步中…' : '重试同步' }}
+        </button>
+      </div>
       <!--
         按 route.path 作 key：同一路由记录内仅参数变化（/profile/a → /profile/b、/messages/a → /messages/b）
         时路由复用组件实例、onMounted 不再触发，而多个页面（ProfilePage / FollowsPage / UserWorksTabs /
@@ -361,7 +408,9 @@ onUnmounted(() => {
       -->
       <RouterView v-slot="{ Component }">
         <Transition name="fade">
-          <component :is="Component" :key="route.path" />
+          <div :key="route.path" class="min-w-0">
+            <component :is="Component" />
+          </div>
         </Transition>
       </RouterView>
     </main>
@@ -369,13 +418,14 @@ onUnmounted(() => {
     <!-- 移动端底部导航 -->
     <nav
       v-if="!hideNav"
-      class="md:hidden fixed bottom-0 inset-x-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 z-30 flex justify-around pt-1.5 pb-safe-bottom pl-safe-left pr-safe-right"
+      class="mobile-nav md:hidden fixed bottom-0 inset-x-0 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700 z-30 flex justify-around pt-1.5 pb-safe-bottom pl-safe-left pr-safe-right"
     >
       <RouterLink
         v-for="item in mobileNav"
         :key="item.path"
         :to="item.path"
-        class="flex flex-col items-center px-2 py-1 text-[10px] rounded-lg max-w-[64px]"
+        class="nav-link flex flex-col gap-1 items-center justify-center px-2 py-1 text-[11px] rounded-xl max-w-[64px]"
+        :aria-current="isNavActive(item.path) ? 'page' : undefined"
         :class="
           isNavActive(item.path)
             ? 'text-primary-600 dark:text-primary-400 font-semibold'

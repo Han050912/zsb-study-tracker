@@ -7,6 +7,9 @@ import { inject, ref, type InjectionKey, type Ref } from 'vue'
  * 因此弱网下立刻有加载反馈，也不会出现「数据未到却渲染成空态」的误导（骨架态 ≠ 空态）。
  */
 export const APP_READY_KEY: InjectionKey<Ref<boolean>> = Symbol('app-ready')
+export const bootError = ref('')
+export const bootRetrying = ref(false)
+export const retryBoot = ref<(() => Promise<void>) | null>(null)
 
 /** 读取首屏补水是否就绪（未 provide 时视为已就绪，便于组件独立挂载） */
 export function useAppReady(): Ref<boolean> {
