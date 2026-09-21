@@ -38,7 +38,7 @@ const offset = computed(() => c.value * (1 - Math.min(100, Math.max(0, props.per
         stroke-linecap="round"
         :stroke-dasharray="c"
         :stroke-dashoffset="offset"
-        class="transition-all duration-700"
+        class="progress-motion"
       />
     </svg>
     <div class="absolute inset-0 flex flex-col items-center justify-center">

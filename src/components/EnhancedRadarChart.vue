@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useChart, chartTextColor } from '../composables/useChart'
 import ChartFallback from './ChartFallback.vue'
@@ -39,7 +40,11 @@ const navRef = ref<HTMLElement | null>(null)
 /** 将导航条滚动定位到当前选中章节标签 */
 function scrollNavToActive() {
   const target = navRef.value?.children[currentPage.value] as HTMLElement | undefined
-  target?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+  target?.scrollIntoView({
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
+    inline: 'center',
+    block: 'nearest'
+  })
 }
 
 // 章节选中变化时联动导航条定位
@@ -371,7 +376,7 @@ function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
     </div>
 
     <!-- 无数据提示 -->
-    <div v-if="totalTopics === 0" class="text-center py-8 text-sm text-slate-400">暂无掌握度数据</div>
+    <EmptyState v-if="totalTopics === 0" title="暂无掌握度数据" />
   </div>
 </template>
 

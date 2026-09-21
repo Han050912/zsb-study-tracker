@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Ban } from '@lucide/vue'
 import { useToast } from '../composables/useToast'
@@ -229,7 +230,7 @@ onBeforeUnmount(() => {
                 </ul>
               </div>
             </template>
-            <div v-else class="text-sm text-slate-400 py-6 text-center">暂无详细更新说明</div>
+            <EmptyState v-else title="暂无详细更新说明" />
 
             <p v-if="stage === 'downloading'" class="text-xs text-slate-400 mt-2">
               可关闭弹窗，下载将在后台继续，完成后会重新打开本窗口。

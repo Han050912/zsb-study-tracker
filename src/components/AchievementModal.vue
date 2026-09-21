@@ -118,7 +118,7 @@ onUnmounted(() => {
       <span
         v-for="i in 30"
         :key="i"
-        class="fixed top-0 w-2 h-3 rounded-sm pointer-events-none"
+        class="confetti-particle fixed top-0 w-2 h-3 rounded-sm pointer-events-none"
         :style="{
           left: ((i * 37) % 100) + 'vw',
           background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
