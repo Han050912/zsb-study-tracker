@@ -61,3 +61,15 @@ test('corsHeaders: 拒绝来源不回显 Allow-Origin', () => {
   // 方法与预检缓存等基础头仍在（预检响应由调用方按状态码拒绝）
   assert.equal(headers['Access-Control-Allow-Methods'], 'GET, POST, PUT, DELETE, OPTIONS')
 })
+
+test('corsHeaders: 允许笔记正文的版本请求头，浏览器预检可放行 PUT', () => {
+  const headers = corsHeaders('https://zsb-study-tracker.sryze.cc', false)
+  assert.ok(
+    headers['Access-Control-Allow-Headers']
+      .toLowerCase()
+      .split(',')
+      .map((h) => h.trim())
+      .includes('x-updated-at')
+  )
+  assert.ok(headers['Access-Control-Allow-Methods'].includes('PUT'))
+})

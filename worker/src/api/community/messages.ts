@@ -30,8 +30,11 @@ export function registerMessagesRoutes() {
         AND (t.peer = CASE WHEN m.from_id = ? THEN m.to_id ELSE m.from_id END)
       JOIN users u ON u.id = t.peer
       LEFT JOIN user_settings s ON s.user_id = t.peer
-      ORDER BY m.created_at DESC
+      WHERE m.from_id = ? OR m.to_id = ?
+      ORDER BY m.created_at DESC, m.id DESC
       LIMIT 100`,
+      ctx.userId,
+      ctx.userId,
       ctx.userId,
       ctx.userId,
       ctx.userId,

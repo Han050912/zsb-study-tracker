@@ -9,7 +9,7 @@ import path from 'node:path'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const code = await build({
   stdin: {
-    contents: `import { registerTeamsRoutes } from './worker/src/api/teams/teams'; import { registerChallengeRoutes } from './worker/src/api/teams/challenges'; import { registerPostsRoutes } from './worker/src/api/community/posts'; export { route } from './worker/src/router'; registerTeamsRoutes(); registerChallengeRoutes(); registerPostsRoutes();`,
+    contents: `import { registerTeamsRoutes } from './worker/src/api/teams/teams'; import { registerChallengeRoutes } from './worker/src/api/teams/challenges'; import { registerPostsRoutes } from './worker/src/api/community/posts'; import { registerMessagesRoutes } from './worker/src/api/community/messages'; import { registerPartnerStudy } from './worker/src/api/partnerCollab'; export { route } from './worker/src/router'; registerTeamsRoutes(); registerChallengeRoutes(); registerPostsRoutes(); registerMessagesRoutes(); registerPartnerStudy();`,
     resolveDir: root
   },
   bundle: true,
@@ -93,6 +93,52 @@ async function api(url, user = 'leader', method = 'GET', body) {
     env
   )
 }
+
+test('私信会话摘要不会混入搭子同秒发给第三人的消息', async () => {
+  db.exec(`INSERT INTO community_messages (id,from_id,to_id,content,created_at) VALUES
+    ('a-private','member','other','第三人私密内容',100),
+    ('z-mine','member','leader','发给我的内容',100)`)
+  const response = await (await api('/api/community/messages/conversations')).json()
+  assert.equal(response.conversations.length, 1)
+  assert.equal(response.conversations[0].lastContent, '发给我的内容')
+})
+
+test('双方并发邀请仅保留一个自习房间和一条邀请通知', async () => {
+  db.exec(
+    "INSERT INTO study_partners (id,from_id,to_id,pair_key,status,created_at,updated_at) VALUES ('pair','leader','member','leader:member','accepted',1,1)"
+  )
+  const results = await Promise.allSettled([
+    api('/api/partner-study/sessions', 'leader', 'POST', { partnerId: 'member', focusMinutes: 25 }),
+    api('/api/partner-study/sessions', 'member', 'POST', { partnerId: 'leader', focusMinutes: 25 })
+  ])
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1)
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM partner_study_sessions WHERE status='active'").get().n, 1)
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS n FROM community_notifications WHERE target_type='partner_study'").get().n,
+    1
+  )
+})
+
+test('自习创建：busy 检查后出现的新房间仍能阻止本次写入和幽灵通知', async () => {
+  db.exec(
+    "INSERT INTO study_partners (id,from_id,to_id,pair_key,status,created_at,updated_at) VALUES ('pair','leader','member','leader:member','accepted',1,1)"
+  )
+  beforeBatch = () =>
+    db
+      .prepare(
+        "INSERT INTO partner_study_sessions (id,from_id,to_id,status,created_at,updated_at,last_active_at) VALUES ('racing','member','leader','active',?,?,?)"
+      )
+      .run(...Array(3).fill(Math.floor(Date.now() / 1000)))
+  await assert.rejects(
+    api('/api/partner-study/sessions', 'leader', 'POST', { partnerId: 'member' }),
+    (error) => error.status === 409
+  )
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM partner_study_sessions WHERE status='active'").get().n, 1)
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS n FROM community_notifications WHERE target_type='partner_study'").get().n,
+    0
+  )
+})
 test('transfer-and-leave: 同批转让、退出、成员计数与通知', async () => {
   const response = await api('/api/teams/team/transfer-and-leave', 'leader', 'POST', { newLeaderId: 'member' })
   assert.equal(response.status, 200)
