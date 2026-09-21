@@ -10,7 +10,13 @@
  * - 去重：同一 URL 的在飞 GET 复用同一个 Promise
  * - 并发闸门：单域名在飞请求数上限
  */
-import { hasActiveSession, clearSession, desktopAuthHeaders, ensureDesktopToken } from '../utils/session'
+import {
+  hasActiveSession,
+  clearSession,
+  desktopAuthHeaders,
+  ensureDesktopToken,
+  getSessionVersion
+} from '../utils/session'
 import { isNetworkError } from '../utils/error'
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8787'
@@ -100,12 +106,15 @@ async function fetchOnce(
   url: string,
   options: RequestInit,
   headers: Record<string, string>,
-  timeoutMs: number
+  timeoutMs: number,
+  assertSession: () => void
 ): Promise<Response> {
   await acquireSlot()
   // 槽位申请成功后，下面任何一步抛异常都必须在 finally 里归还，否则 6 个槽位耗尽后全部请求永久排队
   let timeout: TimeoutSignal | null = null
   try {
+    // 排队期间可能切换账号；发送前再次检查，避免旧操作使用新账号 Cookie。
+    assertSession()
     timeout = options.signal ? null : createTimeoutSignal(timeoutMs)
     const init: RequestInit = {
       ...options,
@@ -183,8 +192,13 @@ export async function authFetch(
   /** 默认 30s 超时，防止弱网下请求永久挂起；下载大文件等慢请求由调用方传更大的 timeoutMs */
   timeoutMs = 30_000
 ): Promise<Response> {
+  const version = getSessionVersion()
+  const assertSession = () => {
+    if (version !== getSessionVersion()) throw new ApiError('登录状态已改变，请重试', 409)
+  }
   // 桌面端先经 IPC 换取桌面令牌（幂等，命中内存缓存即返回），再附加认证头
   if (isDesktop) await ensureDesktopToken()
+  assertSession()
   const headers: Record<string, string> = {
     ...baseHeaders,
     ...((options.headers as Record<string, string>) || {})
@@ -196,9 +210,11 @@ export async function authFetch(
   const maxRetries = isRetryable ? GET_MAX_RETRIES : 0
   const url = `${API_BASE}${path}`
   for (let attempt = 0; ; attempt++) {
+    assertSession()
     let res: Response
     try {
-      res = await fetchOnce(url, options, headers, timeoutMs)
+      res = await fetchOnce(url, options, headers, timeoutMs, assertSession)
+      assertSession()
     } catch (e) {
       // 瞬时故障退避后重试；其余异常（调用方中止等）原样抛出——
       // 非 ApiError 的网络类异常由 src/utils/error.ts 的 getErrorMessage 单点本地化
@@ -226,22 +242,30 @@ export async function authFetch(
 const inflightRequests = new Map<string, Promise<unknown>>()
 
 /** 去重键：仅幂等 GET（含 query 的完整 path）；带 body 或非 GET 的请求有副作用，不参与去重 */
-function dedupeKey(path: string, options: RequestInit): string | null {
-  if (options.body || (options.method ?? 'GET').toUpperCase() !== 'GET') return null
-  return `GET ${path}`
+function dedupeKey(path: string, options: RequestInit, timeoutMs?: number): string | null {
+  if (
+    Object.keys(options).some((key) => key !== 'method') ||
+    timeoutMs !== undefined ||
+    (options.method ?? 'GET').toUpperCase() !== 'GET'
+  )
+    return null
+  return `${getSessionVersion()} GET ${path}`
 }
 
 async function sendRequest<T>(path: string, options: RequestInit, timeoutMs?: number): Promise<T> {
+  const version = getSessionVersion()
   const res = await authFetch(path, options, { 'Content-Type': 'application/json' }, timeoutMs)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: '请求失败' }))
     throw new ApiError(err.message || `HTTP ${res.status}`, res.status)
   }
-  return res.json()
+  const data = await res.json()
+  if (version !== getSessionVersion()) throw new ApiError('登录状态已改变，请重试', 409)
+  return data
 }
 
 export function request<T>(path: string, options: RequestInit = {}, timeoutMs?: number): Promise<T> {
-  const key = dedupeKey(path, options)
+  const key = dedupeKey(path, options, timeoutMs)
   if (!key) return sendRequest<T>(path, options, timeoutMs)
   const existing = inflightRequests.get(key)
   if (existing) return existing as Promise<T>
@@ -263,9 +287,10 @@ export function requestKeepalive(path: string, body: unknown, method: 'POST' | '
   // 卸载兜底必须同步发出，无法 await IPC：桌面令牌由 session.ts 模块加载时预热进内存缓存
   Object.assign(headers, desktopAuthHeaders())
   const payload = JSON.stringify(body)
-  if (payload.length > KEEPALIVE_MAX_BYTES) {
+  const payloadBytes = new TextEncoder().encode(payload).byteLength
+  if (payloadBytes > KEEPALIVE_MAX_BYTES) {
     console.warn(
-      `keepalive 推送载荷 ${(payload.length / 1024).toFixed(1)}KB 超过安全上限，本次兜底推送将跳过（日常推送不走此路径，不影响数据完整性）`
+      `keepalive 推送载荷 ${(payloadBytes / 1024).toFixed(1)}KB 超过安全上限，本次兜底推送将跳过（日常推送不走此路径，不影响数据完整性）`
     )
     return
   }

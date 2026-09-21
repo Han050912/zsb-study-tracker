@@ -8,6 +8,7 @@ import { uid } from '../../utils/date'
 import { stageDelete } from '../../services/syncOutbox'
 import { touchRecord } from './staging'
 import type { StudyRecord } from '../../types'
+import { studyMinutesError } from '../../utils/studyValidation'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type RecordsActionsShape = {
@@ -17,6 +18,8 @@ type RecordsActionsShape = {
 
 export const recordsActions: RecordsActionsShape = {
   addRecord(this: AppStoreThis, rec: Omit<StudyRecord, 'id' | 'createdAt'>) {
+    const error = studyMinutesError(rec.minutes)
+    if (error) throw new Error(error)
     const id = uid()
     const record: StudyRecord = { ...rec, id, createdAt: Date.now() }
     this.records.push(record)

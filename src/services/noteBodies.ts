@@ -21,6 +21,7 @@ const STORE_NAME = 'bodies'
 const PULL_BATCH = 50
 
 let activeUserId: string | null = null
+let userGeneration = 0
 let dbPromise: Promise<IDBDatabase | null> | null = null
 const cache = new Map<string, CachedNoteBody>()
 const searchIndex = new Map<string, string>()
@@ -126,21 +127,27 @@ function setCached(row: CachedNoteBody): void {
 }
 
 export async function setNoteBodyUser(userId: string | null): Promise<void> {
+  const generation = ++userGeneration
   await settleWrites()
+  if (generation !== userGeneration) return
   activeUserId = userId
+  maxBytes = 0
   cache.clear()
   searchIndex.clear()
   noteBodyIndexVersion.value++
   if (!userId) return
   try {
-    maxBytes = await fetchNoteBodyLimit()
+    const limit = await fetchNoteBodyLimit()
+    if (generation !== userGeneration) return
+    maxBytes = limit
   } catch (error) {
     // 取不到上限不影响缓存读取：本地不拦超限，交给服务端 413 兜底
     console.warn('读取笔记正文上限失败，本次会话不做本地长度拦截', error)
   }
+  if (generation !== userGeneration) return
   try {
     const rows = await rowsForUser(userId)
-    if (activeUserId !== userId) return
+    if (generation !== userGeneration || activeUserId !== userId) return
     for (const row of rows) {
       cache.set(row.noteId, { ...row, unsyncable: row.unsyncable ?? null })
       searchIndex.set(row.noteId, row.content.toLocaleLowerCase())
@@ -218,12 +225,14 @@ export interface NoteBodyFlushResult {
  * 且会一直保持 dirty（若被 `hasPendingNoteBodies()` 计入，卸载兜底推送会被永久短路）。
  */
 export async function flushPendingNoteBodies(): Promise<NoteBodyFlushResult> {
-  await settleWrites()
+  const generation = userGeneration
   const userId = activeUserId
   const revisions = new Map<string, { from: number; to: number }>()
   const failures: NoteBodyPushFailure[] = []
-  if (!userId) return { revisions, failures }
+  await settleWrites()
+  if (!userId || generation !== userGeneration) return { revisions, failures }
   for (const current of [...cache.values()].filter((row) => row.dirty)) {
+    if (generation !== userGeneration) return { revisions, failures }
     // 已知不可推送：跳过网络请求，但每次同步都上报，让提示常驻可见直到正文被改短
     if (current.unsyncable) {
       failures.push({ noteId: current.noteId, reason: current.unsyncable, permanent: true })
@@ -231,12 +240,12 @@ export async function flushPendingNoteBodies(): Promise<NoteBodyFlushResult> {
     }
     try {
       const result = await putNoteBody(current.noteId, current.content, current.updatedAt)
-      if (activeUserId !== userId) return { revisions, failures }
+      if (generation !== userGeneration || activeUserId !== userId) return { revisions, failures }
       const latest = cache.get(current.noteId)
       if (!latest || latest.updatedAt !== current.updatedAt || latest.content !== current.content) continue
       if (!result.applied) {
         const remote = (await pullNoteBodies([current.noteId]))[0]
-        if (activeUserId !== userId) return { revisions, failures }
+        if (generation !== userGeneration || activeUserId !== userId) return { revisions, failures }
         if (!remote) throw new Error(`服务端拒绝笔记正文 ${current.noteId}，但未返回权威正文`)
         setCached({
           key: cacheKey(userId, remote.id),
@@ -255,6 +264,7 @@ export async function flushPendingNoteBodies(): Promise<NoteBodyFlushResult> {
         revisions.set(current.noteId, { from: current.updatedAt, to: result.updatedAt })
       }
     } catch (error) {
+      if (generation !== userGeneration || activeUserId !== userId) return { revisions, failures }
       // 413 = 服务端明确告诉我们是正文超限：必然重试失败，标记后交给界面提示，
       // 其余（网络 / 5xx / 429）保留 dirty 待下次同步重试（服务端按 updatedAt LWW 幂等）
       const oversize = (error as { status?: number } | null)?.status === 413
@@ -276,9 +286,10 @@ export async function flushPendingNoteBodies(): Promise<NoteBodyFlushResult> {
 }
 
 export async function reconcileNoteBodies(notes: Note[]): Promise<void> {
-  await settleWrites()
+  const generation = userGeneration
   const userId = activeUserId
-  if (!userId) return
+  await settleWrites()
+  if (!userId || generation !== userGeneration) return
   const markdown = notes.filter((note) => note.type !== 'pdf')
   const liveIds = new Set(notes.map((note) => note.id))
 
@@ -296,7 +307,7 @@ export async function reconcileNoteBodies(notes: Note[]): Promise<void> {
   })
   for (let start = 0; start < stale.length; start += PULL_BATCH) {
     const bodies = await pullNoteBodies(stale.slice(start, start + PULL_BATCH).map((note) => note.id))
-    if (activeUserId !== userId) return
+    if (generation !== userGeneration || activeUserId !== userId) return
     for (const body of bodies) {
       const local = cache.get(body.id)
       if (local?.dirty && local.updatedAt >= body.updatedAt) continue

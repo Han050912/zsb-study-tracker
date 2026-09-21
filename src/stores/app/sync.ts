@@ -44,6 +44,11 @@ let hasHydrated = false
  * 不能依赖 sessionUser（logout 先于 resetState 执行，那时已是 null）。
  */
 let activeUserId: string | null = null
+let syncGeneration = 0
+
+function isCurrentSync(generation: number, userId: string | null): boolean {
+  return generation === syncGeneration && !!userId && userId === activeUserId && userId === sessionUser.value?.id
+}
 
 /**
  * 本次会话是否已完成过全量拉取。
@@ -179,9 +184,13 @@ export const syncActions: SyncActionsShape = {
    */
   async flushOutbox(this: AppStoreThis): Promise<{ ok: boolean; applied: number; rejected: number }> {
     if (!hasHydrated) return { ok: true, applied: 0, rejected: 0 }
+    const generation = syncGeneration
+    const userId = activeUserId
+    const cancelled = { ok: false, applied: 0, rejected: 0 }
     // flushPendingNoteBodies 逐行隔离失败、从不抛错：正文级失败经 bodyIssue 常驻可见，
     // 且不阻断 outbox 推送（毒正文不该连累其余数据域长期无法上云）
     const { revisions, failures } = await flushPendingNoteBodies()
+    if (!isCurrentSync(generation, userId)) return cancelled
     for (const [id, revision] of revisions) {
       const note = this.notes.find((item) => item.id === id)
       if (!note || note.bodyUpdatedAt !== revision.from) continue
@@ -193,7 +202,7 @@ export const syncActions: SyncActionsShape = {
     syncIssue.value = describeNoteBodyFailures(failures, this.notes)
 
     const snapshot = takeForFlush()
-    if (!snapshot) return { ok: true, applied: 0, rejected: 0 }
+    if (!snapshot) return { ok: !failures.length, applied: 0, rejected: 0 }
 
     const domains: PushDomains = {}
     for (const domain of new Set([...Object.keys(snapshot.upserts), ...Object.keys(snapshot.deletes)])) {
@@ -204,7 +213,7 @@ export const syncActions: SyncActionsShape = {
     if (!Object.keys(domains).length && !snapshot.points.length && !snapshot.achievements.length) {
       // 全部条目都被序列化裁掉（如仅剩空的 itr:）→ 直接确认，避免服务端 400
       ack(snapshot)
-      return { ok: true, applied: 0, rejected: 0 }
+      return { ok: !failures.length, applied: 0, rejected: 0 }
     }
 
     try {
@@ -213,13 +222,15 @@ export const syncActions: SyncActionsShape = {
         points: snapshot.points,
         achievements: snapshot.achievements
       })
+      if (!isCurrentSync(generation, userId)) return cancelled
       ack(snapshot)
       if (res.gamification) this.$patch({ gamification: res.gamification })
       const rejected = res.rejected?.length ?? 0
       if (rejected) console.warn(`服务端按 LWW 拒绝了 ${rejected} 条变更（本地保留，待下次拉取覆盖）`, res.rejected)
       const applied = Object.values(res.applied ?? {}).reduce((s, n) => s + n, 0)
-      return { ok: true, applied, rejected }
+      return { ok: !failures.length, applied, rejected }
     } catch (e) {
+      if (!isCurrentSync(generation, userId)) return cancelled
       // 4xx 是服务端明确拒绝（毒记录会让整批推送长期被拒），必须把原因暴露出去，不能只打日志
       const pushIssue = describePushFailure(e, domains)
       syncIssue.value = syncIssue.value ? `${syncIssue.value}；${pushIssue}` : pushIssue
@@ -299,14 +310,22 @@ export const syncActions: SyncActionsShape = {
    */
   async hydrate(this: AppStoreThis) {
     const userId = sessionUser.value?.id ?? null
+    if (!userId) throw new Error('请先登录')
+    if (activeUserId && activeUserId !== userId) this.resetState()
     activeUserId = userId
+    const generation = syncGeneration
+    const assertCurrent = () => {
+      if (!isCurrentSync(generation, userId)) throw new Error('登录状态已改变，请重试')
+    }
     setOutboxUser(userId)
     await setNoteBodyUser(userId)
+    assertCurrent()
 
     const full = !hasFullSynced
     const res = full
       ? await syncApi.pullChanges({ full: true })
       : await syncApi.pullChanges({ cursors: loadCursors(userId) })
+    assertCurrent()
 
     const isNewUser =
       full &&
@@ -318,11 +337,20 @@ export const syncActions: SyncActionsShape = {
 
     this.applyPull(res, full && !isNewUser)
     await reconcileNoteBodies(this.notes)
+    assertCurrent()
     hasHydrated = true
     hasFullSynced = true
 
+    // 默认科目/习惯也是真实数据：首次即入队，否则保存任一记录后刷新会被 full pull 清空。
+    if (isNewUser) {
+      const updatedAt = Date.now()
+      for (const subject of this.subjects) stageUpsert('subjects', subject.id, subject, updatedAt)
+      for (const habit of this.habits) stageUpsert('habits', habit.id, habit, updatedAt)
+    }
+
     // 先 pull 后 flush（设计 §6.1）
     await this.flushOutbox()
+    assertCurrent()
     // 存量 base64 错题图片外置：后台执行，不阻塞首屏；失败下次 hydrate 自动重试
     if (!isNewUser) this.migrateErrorImages()
   },
@@ -333,12 +361,17 @@ export const syncActions: SyncActionsShape = {
    */
   async syncNow(this: AppStoreThis): Promise<{ ok: boolean; applied: number; rejected: number; changed: number }> {
     if (!hasHydrated) return { ok: false, applied: 0, rejected: 0, changed: 0 }
+    const generation = syncGeneration
+    const userId = activeUserId
     const flushed = await this.flushOutbox()
-    if (!flushed.ok) return { ok: false, applied: flushed.applied, rejected: flushed.rejected, changed: 0 }
+    if (!flushed.ok || !isCurrentSync(generation, userId))
+      return { ok: false, applied: flushed.applied, rejected: flushed.rejected, changed: 0 }
     try {
       const res = await syncApi.pullChanges({ cursors: loadCursors(activeUserId) })
+      if (!isCurrentSync(generation, userId)) return { ...flushed, ok: false, changed: 0 }
       const changed = this.applyPull(res, false)
       await reconcileNoteBodies(this.notes)
+      if (!isCurrentSync(generation, userId)) return { ...flushed, ok: false, changed: 0 }
       return { ok: true, applied: flushed.applied, rejected: flushed.rejected, changed }
     } catch (e) {
       console.error('增量拉取失败', e)
@@ -348,6 +381,7 @@ export const syncActions: SyncActionsShape = {
 
   /** 退出登录/切换账号时清空本地同步状态并重置为空白数据，避免串号 */
   resetState(this: AppStoreThis) {
+    syncGeneration++
     hasHydrated = false
     hasFullSynced = false
     if (saveTimer) {

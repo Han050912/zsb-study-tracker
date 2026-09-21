@@ -73,12 +73,15 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   })
 
   function beginTimer() {
+    if (running.value) return
+    if (handle) clearInterval(handle)
     startTimestamp = Date.now()
     running.value = true
     handle = setInterval(tick, 1000)
   }
 
   function stopTimer() {
+    if (!running.value) return
     running.value = false
     if (handle) {
       clearInterval(handle)
@@ -103,7 +106,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   }
 
   async function start() {
-    if (!session.value) return
+    if (!session.value || running.value || phase.value === 'done') return
     if (phase.value === 'idle') {
       phase.value = 'focus'
       seconds.value = 0
@@ -117,6 +120,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   }
 
   async function pause() {
+    if (!running.value) return
     stopTimer()
     await syncState(phase.value)
   }

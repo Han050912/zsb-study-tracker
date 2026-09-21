@@ -36,9 +36,10 @@ export function daysBetween(from: string, to: string): number {
 }
 
 export function formatMinutes(min: number): string {
-  if (min < 60) return `${Math.round(min)}分钟`
-  const h = Math.floor(min / 60)
-  const m = Math.round(min % 60)
+  const total = Number.isFinite(min) ? Math.max(0, Math.round(min)) : 0
+  if (total < 60) return `${total}分钟`
+  const h = Math.floor(total / 60)
+  const m = total % 60
   return m ? `${h}小时${m}分` : `${h}小时`
 }
 

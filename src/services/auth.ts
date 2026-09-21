@@ -72,8 +72,11 @@ export async function restoreSession(): Promise<SessionUser | null> {
     setSession(user)
     return user
   } catch (e) {
-    if ((e as { status?: number } | null)?.status === 401) setSession(null)
-    return null
+    if ((e as { status?: number } | null)?.status === 401) {
+      setSession(null)
+      return null
+    }
+    throw e
   }
 }
 

@@ -10,6 +10,7 @@ import { stageAchievements, stagePoints } from '../../services/syncOutbox'
 import { getNoteBody, queueNoteBody, clearAllNoteBodies } from '../../services/noteBodies'
 import { stageAllDeletes, stageAllUpserts, stageLogAwards, touchRecord } from './staging'
 import type { AppState } from '../../types'
+import { examError, studyMinutesError, validNumber, vocabError, readingError } from '../../utils/studyValidation'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type ImportExportActionsShape = {
@@ -61,12 +62,53 @@ export function isValidBackup(data: unknown): data is Backup {
   const english = data.english as Record<string, unknown>
   const pomodoro = data.pomodoro as Record<string, unknown>
   const gamification = data.gamification as Record<string, unknown>
+  // 上传会拒绝非法统计数值；必须在覆盖旧数据和写入删除墓碑之前拦截。
+  if (!(data.records as Record<string, unknown>[]).every((r) => !studyMinutesError(r.minutes))) return false
+  if (
+    !(data.exams as Record<string, unknown>[]).every(
+      (r) =>
+        typeof r.title === 'string' &&
+        !examError({ title: r.title, score: r.score, totalScore: r.totalScore, minutes: r.minutes })
+    )
+  )
+    return false
+  if (
+    !(data.problemSessions as Record<string, unknown>[]).every(
+      (r) =>
+        validNumber(r.total) &&
+        Number.isInteger(r.total) &&
+        r.total > 0 &&
+        validNumber(r.correct) &&
+        Number.isInteger(r.correct) &&
+        r.correct >= 0 &&
+        r.correct <= r.total &&
+        (r.types === undefined ||
+          (isPlainObject(r.types) &&
+            Object.values(r.types).every((n) => validNumber(n) && Number.isInteger(n) && n >= 0)))
+    )
+  )
+    return false
+  if (
+    data.noteBodies !== undefined &&
+    (!isPlainObject(data.noteBodies) ||
+      !Object.values(data.noteBodies).every(
+        (b) => isPlainObject(b) && typeof b.content === 'string' && validNumber(b.updatedAt)
+      ))
+  )
+    return false
+  if (!(data.notes as Record<string, unknown>[]).every((n) => n.content === undefined || typeof n.content === 'string'))
+    return false
   return (
     ['vocab', 'reading', 'listening', 'templates'].every((field) => isRecordArray(english[field])) &&
+    (english.vocab as Record<string, unknown>[]).every((r) => !vocabError(r.newWords, r.reviewWords)) &&
+    (english.reading as Record<string, unknown>[]).every((r) => !readingError(r.wpm, r.accuracy)) &&
+    (english.listening as Record<string, unknown>[]).every((r) => !studyMinutesError(r.minutes)) &&
     isPlainObject(pomodoro.daily) &&
     isRecordArray(pomodoro.interruptions) &&
     isRecordArray(pomodoro.records) &&
-    Array.isArray(gamification.achievements)
+    Array.isArray(gamification.achievements) &&
+    gamification.achievements.every((a) => typeof a === 'string') &&
+    (gamification.pointsLog === undefined || isRecordArray(gamification.pointsLog))
   )
 }
 

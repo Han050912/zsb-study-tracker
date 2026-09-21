@@ -8,6 +8,7 @@ import { uid } from '../../utils/date'
 import { stageDelete } from '../../services/syncOutbox'
 import { touchRecord } from './staging'
 import type { ExamRecord } from '../../types'
+import { examError } from '../../utils/studyValidation'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type ExamsActionsShape = {
@@ -17,6 +18,8 @@ type ExamsActionsShape = {
 
 export const examsActions: ExamsActionsShape = {
   addExam(this: AppStoreThis, e: Omit<ExamRecord, 'id'>) {
+    const error = examError(e)
+    if (error) throw new Error(error)
     const id = uid()
     const exam: ExamRecord = { ...e, id }
     this.exams.push(exam)
