@@ -25,10 +25,12 @@ const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 /** 弹层面板内当前可见的可聚焦元素（面板被 Teleport 到 body，须从面板内部枚举） */
-function focusablesIn(panel: HTMLElement | null): HTMLElement[] {
+type FocusTarget = HTMLElement | SVGElement
+
+function focusablesIn(panel: HTMLElement | null): FocusTarget[] {
   if (!panel) return []
-  return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-    (el) => el.offsetParent !== null || el === document.activeElement
+  return Array.from(panel.querySelectorAll<FocusTarget>(FOCUSABLE_SELECTOR)).filter(
+    (el) => el.getClientRects().length > 0 || el === document.activeElement
   )
 }
 
@@ -55,7 +57,7 @@ function onWindowKeydown(e: KeyboardEvent) {
   const els = focusablesIn(top.panel())
   if (!els.length) return
   e.preventDefault()
-  const idx = els.indexOf(document.activeElement as HTMLElement)
+  const idx = els.indexOf(document.activeElement as FocusTarget)
   const step = e.shiftKey ? -1 : 1
   const target = idx === -1 ? (e.shiftKey ? els[els.length - 1] : els[0]) : els[(idx + step + els.length) % els.length]
   target.focus()
@@ -122,7 +124,7 @@ export function useOverlayDismiss(
 
   const entry: OverlayEntry = { panel, onEscape: onDismiss }
   /** 打开前的活动元素，关闭时还原焦点 */
-  let previousFocus: HTMLElement | null = null
+  let previousFocus: FocusTarget | null = null
 
   /** 退出弹层：出栈 + 解除滚动锁定 + 归还焦点（重复调用只生效一次） */
   function release() {
@@ -153,7 +155,10 @@ export function useOverlayDismiss(
         release()
         return
       }
-      previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      previousFocus =
+        document.activeElement instanceof HTMLElement || document.activeElement instanceof SVGElement
+          ? document.activeElement
+          : null
       overlayStack.push(entry)
       if (!keydownBound) {
         window.addEventListener('keydown', onWindowKeydown)

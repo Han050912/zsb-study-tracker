@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { X } from '@lucide/vue'
+import { Check, X } from '@lucide/vue'
 import PostComposer from './community/PostComposer.vue'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 
@@ -17,8 +17,6 @@ interface Ach {
  */
 const queue = ref<Ach[]>([])
 const current = computed<Ach | null>(() => queue.value[0] ?? null)
-/** 彩纸色板（纯 CSS 色块替代 emoji，避免跨端渲染不一致） */
-const CONFETTI_COLORS = ['#f59e0b', '#3b82f6', '#10b981', '#ef4444', '#8b5cf6', '#ec4899']
 /** 单条成就展示时长 */
 const SHOW_MS = 3500
 const panelRef = ref<HTMLElement | null>(null)
@@ -73,10 +71,10 @@ const showComposer = ref(false)
 const shareContent = ref('')
 const shareRefId = ref('')
 
-/** 「炫耀一下」：生成成就展示帖，可编辑后发布；分享即结束本轮庆祝 */
+/** 先打开可编辑的分享草稿，由用户确认发布。 */
 function share() {
   if (!current.value) return
-  shareContent.value = `我解锁了成就「${current.value.name}」！\n${current.value.icon} ${current.value.desc}\n继续加油，下一个成就见！`
+  shareContent.value = `我完成了「${current.value.name}」。\n${current.value.desc}`
   shareRefId.value = current.value.id
   close()
   showComposer.value = true
@@ -106,7 +104,7 @@ onUnmounted(() => {
 
 <template>
   <Teleport to="body">
-    <!-- :key 让每条成就重新挂载：彩纸与卡片入场动画逐个重放 -->
+    <!-- 每项完成只做一次短暂入场，后续阅读与操作保持静止。 -->
     <div
       v-if="current"
       :key="current.id"
@@ -115,41 +113,31 @@ onUnmounted(() => {
       @mousedown="onOverlayMousedown"
       @click="onOverlayClick"
     >
-      <span
-        v-for="i in 30"
-        :key="i"
-        class="confetti-particle fixed top-0 w-2 h-3 rounded-sm pointer-events-none"
-        :style="{
-          left: ((i * 37) % 100) + 'vw',
-          background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
-          animation: `confetti-fall ${2 + (i % 5) * 0.3}s linear ${(i % 10) * 0.15}s forwards`
-        }"
-      ></span>
       <!-- role="dialog" + aria-modal + aria-labelledby：弹窗语义；悬停/聚焦时暂停自动关闭 -->
       <div
         ref="panelRef"
         role="dialog"
         aria-modal="true"
         aria-labelledby="achievement-title"
-        class="card !p-8 text-center animate-pop max-w-xs mx-4 relative"
+        aria-describedby="achievement-description"
+        class="achievement-feedback"
         @mouseenter="pauseAutoHide"
         @mouseleave="resumeAutoHide"
         @focusin="pauseAutoHide"
         @focusout="resumeAutoHide"
       >
-        <button
-          type="button"
-          class="absolute top-2 right-2 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:text-slate-500 dark:hover:text-slate-300 dark:hover:bg-slate-700 transition-colors"
-          aria-label="关闭"
-          @click="close"
-        >
+        <button type="button" class="btn-ghost absolute top-2 right-2 !p-3" aria-label="关闭成就提示" @click="close">
           <X class="w-4 h-4" aria-hidden="true" />
         </button>
-        <div class="text-6xl mb-3">{{ current.icon }}</div>
-        <div class="text-xs text-primary-500 font-semibold mb-1">成就解锁！</div>
-        <div id="achievement-title" class="text-xl font-bold">{{ current.name }}</div>
-        <div class="text-sm text-slate-500 mt-1">{{ current.desc }}</div>
-        <button class="btn-primary w-full mt-4" @click="share">炫耀一下</button>
+        <div class="achievement-feedback-mark mb-4" aria-hidden="true"><Check :size="22" /></div>
+        <p class="study-eyebrow mb-1">这一步，完成了</p>
+        <h2 id="achievement-title" class="text-xl font-bold">{{ current.name }}</h2>
+        <p id="achievement-description" class="text-sm text-muted mt-2">{{ current.desc }}</p>
+        <p v-if="queue.length > 1" class="text-xs text-muted mt-2">还有 {{ queue.length - 1 }} 项成就</p>
+        <div class="flex flex-wrap gap-2 mt-6">
+          <button class="btn-primary" @click="next">{{ queue.length > 1 ? '查看下一项' : '继续学习' }}</button>
+          <button class="btn-ghost" @click="share">分享到社区</button>
+        </div>
       </div>
     </div>
   </Teleport>

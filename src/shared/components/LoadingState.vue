@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { LoaderCircle } from '@lucide/vue'
-withDefaults(defineProps<{ message?: string }>(), { message: '正在加载，请稍候…' })
+withDefaults(defineProps<{ message?: string }>(), { message: '正在加载…' })
 </script>
 
 <template>

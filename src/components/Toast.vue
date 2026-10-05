@@ -26,7 +26,7 @@ defineExpose({ show })
         <div
           v-for="item in toasts"
           :key="item.id"
-          class="bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-800 text-sm px-4 py-3 rounded-2xl shadow-lg max-w-[min(28rem,calc(100vw-2rem))] break-words"
+          class="toast-message max-w-[min(28rem,calc(100vw-2rem))] break-words"
         >
           {{ item.message }}
         </div>

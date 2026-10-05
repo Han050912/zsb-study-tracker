@@ -1,11 +1,11 @@
 {
   "name": "专升本学习助手",
   "short_name": "升本助手",
-  "description": "专升本每日学习总结记录工具",
+  "description": "专升本学习记录、错题复习与备考社区",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#3b82f6",
+  "background_color": "#eef2f0",
+  "theme_color": "#245c4c",
   "icons": [
     {
       "src": "./icon-192.png",

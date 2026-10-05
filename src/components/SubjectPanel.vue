@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import { formatMinutes } from '../utils/date'
+import { masteryOverview } from '../utils/studyOverview'
 import ChapterTree from './subject/ChapterTree.vue'
 import RecordsTab from './subject/RecordsTab.vue'
 import ProblemsTab from './subject/ProblemsTab.vue'
@@ -33,30 +34,41 @@ const subjectProblems = computed(() =>
 const accuracy = computed(() => {
   const t = subjectProblems.value.reduce((s, p) => s + p.total, 0)
   const c = subjectProblems.value.reduce((s, p) => s + p.correct, 0)
-  return t ? Math.round((c / t) * 100) : 0
+  return t ? Math.round((c / t) * 100) : null
 })
+const mastery = computed(() => (subject.value ? masteryOverview(subject.value) : null))
 const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minutes, 0))
 </script>
 
 <template>
-  <div v-if="subject" class="space-y-4">
-    <!-- 概览 -->
-    <div class="grid grid-cols-3 gap-3">
-      <div class="card !p-3 text-center">
-        <div class="text-xl font-black" :style="{ color: subject.color }">{{ formatMinutes(totalMin) }}</div>
-        <div class="text-[11px] text-slate-400">累计学习</div>
+  <div v-if="subject" class="subject-panel space-y-4">
+    <section class="subject-summary" aria-label="复习进度">
+      <div class="subject-summary-heading">
+        <h2 class="section-title !mb-1">复习进度</h2>
+        <p v-if="mastery" class="study-note">
+          知识点已自评 {{ mastery.rated }}/{{ mastery.total }} 个<span v-if="mastery.weak"
+            >，其中 {{ mastery.weak }} 个低于 3 分，建议先复习。</span
+          ><span v-else>。先自评，再安排复习顺序。</span>
+        </p>
       </div>
-      <div class="card !p-3 text-center">
-        <div class="text-xl font-black" :style="{ color: subject.color }">
-          {{ subjectProblems.reduce((s, p) => s + p.total, 0) }}
+      <dl class="subject-summary-data">
+        <div>
+          <dt>累计学习</dt>
+          <dd>{{ formatMinutes(totalMin) }}</dd>
         </div>
-        <div class="text-[11px] text-slate-400">累计刷题</div>
-      </div>
-      <div class="card !p-3 text-center">
-        <div class="text-xl font-black" :style="{ color: subject.color }">{{ accuracy }}%</div>
-        <div class="text-[11px] text-slate-400">总正确率</div>
-      </div>
-    </div>
+        <div>
+          <dt>累计刷题</dt>
+          <dd>
+            {{ subjectProblems.reduce((sum, p) => sum + p.total, 0) }} <span class="text-xs font-normal">题</span>
+          </dd>
+        </div>
+        <div>
+          <dt>刷题正确率</dt>
+          <dd>{{ accuracy === null ? '—' : accuracy + '%' }}</dd>
+          <p v-if="accuracy === null" class="study-note">还没有刷题记录</p>
+        </div>
+      </dl>
+    </section>
 
     <!-- Tab -->
     <AppTabs
@@ -71,6 +83,7 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
       ]"
       label="学科学习内容"
       panel-per-tab
+      class="subject-tabs"
       @update:model-value="selectTab"
     />
 
@@ -130,3 +143,78 @@ const totalMin = computed(() => subjectRecords.value.reduce((s, r) => s + r.minu
     </div>
   </div>
 </template>
+
+<style scoped>
+.subject-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 20px 32px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+}
+.subject-summary-heading {
+  flex: 1 1 260px;
+}
+.subject-summary-data {
+  display: flex;
+  flex: 1 1 420px;
+  justify-content: space-between;
+  gap: 20px;
+}
+.subject-summary-data dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.subject-summary-data dd {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+}
+.subject-summary-data .study-note {
+  margin-top: 2px;
+  font-size: 11px;
+}
+.subject-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+}
+.subject-tabs :deep(button) {
+  flex: 0 1 auto;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-control) - 3px);
+  color: var(--muted);
+}
+.subject-tabs :deep(button[aria-selected='true']) {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--action);
+}
+@media (max-width: 640px) {
+  .subject-summary {
+    gap: 16px;
+    padding: 16px;
+  }
+  .subject-summary-data {
+    gap: 12px;
+  }
+  .subject-summary-data dd {
+    font-size: 16px;
+  }
+  .subject-tabs :deep(button) {
+    flex: 1 1 auto;
+    padding-inline: 10px;
+  }
+}
+</style>

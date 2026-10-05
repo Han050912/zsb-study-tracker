@@ -9,16 +9,16 @@ const step = ref(0)
 const steps = [
   {
     icon: GraduationCap,
-    title: '欢迎使用专升本学习助手',
-    desc: '记录每日学习、追踪进度、游戏化激励，陪你高效备考上岸！'
+    title: '先对一下今天要做的事',
+    desc: '在首页写下今天的任务，在设置里填入考试日期和每日学习目标。'
   },
   {
     icon: BookOpen,
-    title: '科目模块',
-    desc: '高数、英语内置考纲章节，支持记录学习、刷题、掌握度评估，还能自定义扩展科目。'
+    title: '各科复习到哪了',
+    desc: '按章节记录学习和做题，给知识点做自评。不会的题，留在「我的错题」里重做。'
   },
-  { icon: Timer, title: '番茄专注', desc: '25分钟番茄钟 + 白噪音，帮你保持专注，统计每日专注时长。' },
-  { icon: Trophy, title: '成就激励', desc: '打卡得积分、升级段位、解锁徽章，连续学习天数见证你的坚持！' }
+  { icon: Timer, title: '番茄专注', desc: '选一件任务，开始一个番茄钟。完成后记录这次专注的时间。' },
+  { icon: Trophy, title: '一起备考', desc: '到社区讨论真题和复习方法，也可以约一位搭子一起自习、核对计划。' }
 ]
 
 function finish() {
@@ -38,11 +38,17 @@ useOverlayDismiss(() => {}, { show: () => true, panel: () => panelRef.value })
 
 <template>
   <div class="fixed inset-0 bg-black/50 flex items-center justify-center p-6" :class="OVERLAY_LAYER.guide">
-    <div ref="panelRef" class="card !p-8 max-w-sm w-full text-center animate-pop">
-      <div class="mb-4 flex justify-center">
-        <component :is="steps[step].icon" class="w-16 h-16 text-primary-500" />
+    <div
+      ref="panelRef"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="onboarding-title"
+      class="card !p-8 max-w-sm w-full text-left"
+    >
+      <div class="mb-4 flex">
+        <component :is="steps[step].icon" class="w-8 h-8 text-action" />
       </div>
-      <h2 class="text-lg font-bold mb-2">{{ steps[step].title }}</h2>
+      <h2 id="onboarding-title" class="text-lg font-bold mb-2">{{ steps[step].title }}</h2>
       <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">{{ steps[step].desc }}</p>
       <div class="flex justify-center gap-1.5 my-5">
         <span

@@ -35,7 +35,7 @@ function move(event: KeyboardEvent, index: number) {
       @click="emit('update:modelValue', item.value)"
       @keydown="move($event, index)"
     >
-      {{ item.label }}
+      <slot name="item" :item="item">{{ item.label }}</slot>
     </button>
   </div>
 </template>

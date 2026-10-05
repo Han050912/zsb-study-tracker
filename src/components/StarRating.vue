@@ -2,7 +2,10 @@
 import { ref } from 'vue'
 import { Star } from '@lucide/vue'
 
-const props = withDefaults(defineProps<{ modelValue: number; readonly?: boolean }>(), { readonly: false })
+const props = withDefaults(defineProps<{ modelValue: number; readonly?: boolean; label?: string }>(), {
+  readonly: false,
+  label: '知识点自评'
+})
 const emit = defineEmits<{ 'update:modelValue': [number] }>()
 
 function set(v: number) {
@@ -24,23 +27,18 @@ function onKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <span ref="groupEl" class="inline-flex gap-0.5" role="radiogroup" aria-label="掌握度评分" @keydown="onKeydown">
-    <!-- 视觉尺寸不变（星 16px、间距 2px），命中区由 after 伪元素扩到本排版的安全上限 18×28：
-         相邻星中心距 18px、相邻知识点行 30px，再扩就会被后绘制的邻星/下一行抢占
-         （点本星却改到邻星），44×44 需要 44px 的星间距（整组会从 88px 撑到 228px） -->
+  <span ref="groupEl" class="inline-flex shrink-0" role="radiogroup" :aria-label="label" @keydown="onKeydown">
     <button
       v-for="i in 5"
       :key="i"
       type="button"
       data-star
       :disabled="readonly"
-      class="relative leading-none transition-transform after:absolute after:-inset-x-px after:-inset-y-1.5 after:content-[''] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-      :class="[
-        i <= modelValue ? 'text-amber-400' : 'text-slate-500 dark:text-slate-400',
-        readonly ? 'cursor-default' : 'hover:scale-125 cursor-pointer'
-      ]"
+      :tabindex="i === (modelValue || 1) ? 0 : -1"
+      class="inline-flex items-center justify-center w-7 h-9 rounded leading-none hover:bg-action-soft active:bg-surface-soft"
+      :class="[i <= modelValue ? 'text-action' : 'text-muted', readonly ? 'cursor-default' : 'cursor-pointer']"
       :aria-checked="i === modelValue"
-      :aria-label="`${i} 星`"
+      :aria-label="`${i} 分，满分 5 分`"
       role="radio"
       @click="set(i)"
     >

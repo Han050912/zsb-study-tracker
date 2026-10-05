@@ -6,13 +6,13 @@ import type { RelationStatus } from '../types'
 export const BADGES: Record<RelationStatus, { label: string; cls: string; icon: Component } | null> = {
   mutual: {
     label: '互相关注',
-    cls: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400',
+    cls: 'bg-action-soft text-action',
     icon: Users
   },
-  following: { label: '已关注', cls: 'bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400', icon: UserCheck },
+  following: { label: '已关注', cls: 'bg-surface-soft text-muted', icon: UserCheck },
   follower: {
     label: '粉丝',
-    cls: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400',
+    cls: 'bg-surface-soft text-muted',
     icon: UserPlus
   },
   none: null // 陌生人/自己不显示徽章

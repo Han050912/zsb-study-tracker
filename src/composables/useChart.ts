@@ -57,12 +57,16 @@ export function useChart(
       chart.clear()
       return
     }
-    chart.setOption({
-      ...option,
-      animation: !motionPreference.matches && option.animation !== false,
-      animationDuration: motionPreference.matches ? 0 : 200,
-      animationDurationUpdate: motionPreference.matches ? 0 : 160
-    })
+    chart.setOption(
+      {
+        textStyle: { fontFamily: getComputedStyle(document.body).fontFamily, color: chartTextColor() },
+        ...option,
+        animation: !motionPreference.matches && option.animation !== false,
+        animationDuration: motionPreference.matches ? 0 : 200,
+        animationDurationUpdate: motionPreference.matches ? 0 : 160
+      },
+      { notMerge: true }
+    )
   }
 
   const onResize = () => chart?.resize()
@@ -155,5 +159,29 @@ export function useChart(
 }
 
 export function chartTextColor() {
-  return document.documentElement.classList.contains('dark') ? '#cbd5e1' : '#475569'
+  return chartColor('muted')
+}
+
+/** ECharts 需要具体颜色值；从 CSS 色源解析，深色混合比例与设计令牌保持一致。 */
+export function chartColor(role: 'action' | 'correction' | 'muted' | 'surface' = 'action') {
+  const css = getComputedStyle(document.documentElement)
+  const base = (key: string) => css.getPropertyValue(`--base-${key}`).trim()
+  if (!document.documentElement.classList.contains('dark')) return base(role)
+  if (role === 'surface') return base('ink')
+  const weight = role === 'action' ? 0.35 : role === 'correction' ? 0.45 : 0.42
+  const first = base(role).slice(1),
+    second = base('canvas').slice(1)
+  return (
+    '#' +
+    [0, 2, 4]
+      .map((offset) =>
+        Math.round(
+          parseInt(first.slice(offset, offset + 2), 16) * weight +
+            parseInt(second.slice(offset, offset + 2), 16) * (1 - weight)
+        )
+          .toString(16)
+          .padStart(2, '0')
+      )
+      .join('')
+  )
 }

@@ -6,7 +6,7 @@ defineEmits<{ retry: [] }>()
 </script>
 <template>
   <div v-if="loading" role="status" aria-label="正在加载" class="space-y-3">
-    <p class="text-sm text-slate-500 flex items-center gap-2">正在加载，请稍候…</p>
+    <p class="text-sm text-slate-500 flex items-center gap-2">正在加载…</p>
     <div v-for="i in 3" :key="i" class="card space-y-4" aria-hidden="true">
       <div class="flex gap-3 items-center">
         <div class="h-10 w-10 rounded-full bg-slate-200 dark:bg-slate-700"></div>
@@ -18,11 +18,11 @@ defineEmits<{ retry: [] }>()
     </div>
   </div>
   <div v-else-if="error" class="card flex flex-wrap items-center gap-3" role="alert">
-    <TriangleAlert :size="20" class="text-amber-600 shrink-0" aria-hidden="true" />
+    <TriangleAlert :size="20" class="text-correction shrink-0" aria-hidden="true" />
     <p class="flex-1 min-w-0 break-words text-sm">{{ error }}</p>
     <button class="btn-ghost" @click="$emit('retry')">重试</button>
   </div>
-  <EmptyState v-else-if="empty" class="card" :description="message">
+  <EmptyState v-else-if="empty" class="card" :title="message || '还没有内容'">
     <template v-if="$slots.action" #default><slot name="action" /></template>
   </EmptyState>
   <slot v-else />

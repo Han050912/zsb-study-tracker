@@ -54,13 +54,13 @@ const summary = computed(() => {
         stroke-width="2"
         stroke-linecap="round"
         stroke-linejoin="round"
-        class="text-primary-500 shrink-0"
+        class="text-action shrink-0"
       >
         <circle cx="12" cy="12" r="10" />
         <path d="M12 16v-4" />
         <path d="M12 8h.01" />
       </svg>
-      <p class="text-[11px] leading-relaxed text-primary-600/90 dark:text-primary-300/80">{{ hint }}</p>
+      <p class="text-[11px] leading-relaxed text-action/90 dark:text-action/80">{{ hint }}</p>
     </div>
 
     <TimeFieldCard

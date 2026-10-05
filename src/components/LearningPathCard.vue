@@ -13,24 +13,20 @@ import type { LearningPath } from '../types'
 
 const data = ref<LearningPath | null>(null)
 const loading = ref(true)
+const failed = ref(false)
 
-onMounted(async () => {
+async function loadPlan() {
+  loading.value = true
+  failed.value = false
   try {
     data.value = await learningPathApi.get()
   } catch {
-    // 静默降级：未设置考试日期/网络异常时不打扰，仅不展示计划卡
+    failed.value = true
   } finally {
     loading.value = false
   }
-})
-
-const countdownText = computed(() => {
-  const d = data.value?.daysLeft
-  if (d == null) return '设置考试日期，开启倒计时'
-  if (d > 0) return `距离考试还有 ${d} 天`
-  if (d === 0) return '就是今天，加油！'
-  return '考试已结束，静待佳音'
-})
+}
+onMounted(loadPlan)
 
 const hasPlan = computed(() => (data.value?.subjects ?? []).some((s) => s.dailyMinutes > 0))
 
@@ -66,36 +62,38 @@ function openShare() {
 </script>
 
 <template>
-  <div v-if="!loading && data" class="card">
-    <div class="flex items-center justify-between mb-3">
-      <div class="section-title !mb-0">周学习计划</div>
-      <button class="btn-ghost !text-xs !px-2 !py-1" @click="openShare">分享求监督</button>
+  <div class="card">
+    <p v-if="loading" class="study-note" role="status">正在读取本周时间分配…</p>
+    <div v-else-if="failed" class="flex items-center justify-between gap-3">
+      <p class="study-note">本周时间分配未能加载，检查网络后重试。</p>
+      <button class="btn-ghost" @click="loadPlan">重试</button>
     </div>
-
-    <!-- 倒计时 -->
-    <div class="flex items-center gap-2 text-sm mb-3">
-      <span class="font-semibold" :class="{ 'text-primary-500': (data.daysLeft ?? -1) > 0 }">{{ countdownText }}</span>
-    </div>
-
-    <!-- 科目分配 -->
-    <div v-if="hasPlan" class="space-y-2">
-      <div
-        v-for="s in data.subjects.filter((x) => x.dailyMinutes > 0)"
-        :key="s.id"
-        class="flex items-center gap-2 text-sm"
-      >
-        <SubjectIcon v-if="s.icon" :icon="s.icon" class="w-5 text-center" />
-        <span class="flex-1 truncate">{{ s.name }}</span>
-        <span class="font-semibold text-primary-500 shrink-0">{{ formatMinutes(s.dailyMinutes) }}/天</span>
+    <template v-else-if="data">
+      <div class="flex items-center justify-between mb-3">
+        <div class="section-title !mb-0">本周时间分配</div>
+        <button class="btn-ghost !text-xs !px-2 !py-1" @click="openShare">分享计划</button>
       </div>
-      <div class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-2 mt-2">
-        <span class="text-xs text-slate-400">本周总目标</span>
-        <span class="text-sm font-bold">{{ formatMinutes(data.weeklyTotalMinutes) }}</span>
-      </div>
-      <p v-if="overGoalNote" class="text-xs text-slate-400 dark:text-slate-500">{{ overGoalNote }}</p>
-    </div>
-    <div v-else class="text-xs text-slate-400">暂无科目，去「设置」添加科目并设置每日目标后即可生成计划。</div>
 
+      <p class="study-note mb-3">按科目权重分配时间，作为本周安排的参考。</p>
+      <!-- 科目分配 -->
+      <div v-if="hasPlan" class="space-y-2">
+        <div
+          v-for="s in data.subjects.filter((x) => x.dailyMinutes > 0)"
+          :key="s.id"
+          class="flex items-center gap-2 text-sm"
+        >
+          <SubjectIcon v-if="s.icon" :icon="s.icon" class="w-5 text-center" />
+          <span class="flex-1 truncate">{{ s.name }}</span>
+          <span class="font-semibold text-action shrink-0">{{ formatMinutes(s.dailyMinutes) }}/天</span>
+        </div>
+        <div class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-2 mt-2">
+          <span class="text-xs text-slate-400">本周总目标</span>
+          <span class="text-sm font-bold">{{ formatMinutes(data.weeklyTotalMinutes) }}</span>
+        </div>
+        <p v-if="overGoalNote" class="text-xs text-slate-400 dark:text-slate-500">{{ overGoalNote }}</p>
+      </div>
+      <div v-else class="text-xs text-slate-400">先在设置中添加考试科目和每日目标，再查看时间分配。</div>
+    </template>
     <PostComposer
       v-model:show="showComposer"
       type="checkin"

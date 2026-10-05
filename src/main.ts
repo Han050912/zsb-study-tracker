@@ -5,6 +5,7 @@ import App from './App.vue'
 import { router } from './router'
 import { restoreSession, isLoggedIn } from './services/auth'
 import { useAppStore } from './stores/app'
+import { hasVolatileOutboxChanges } from './services/syncOutbox'
 import { APP_READY_KEY, bootError, bootRetrying, retryBoot } from './composables/useAppBoot'
 import { getErrorMessage } from './utils/error'
 import { sanitizeInternalPath } from './utils/path'
@@ -39,7 +40,13 @@ async function bootstrap() {
 
   const store = useAppStore(pinia)
   // 页面关闭/刷新前兜底推送防抖窗口内的未保存修改
-  window.addEventListener('beforeunload', () => store.flushSave())
+  window.addEventListener('beforeunload', (event) => {
+    store.flushSave()
+    if (hasVolatileOutboxChanges(true)) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+  })
 
   async function loadData() {
     if (bootRetrying.value) return

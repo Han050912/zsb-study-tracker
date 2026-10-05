@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import EmptyState from '../shared/components/EmptyState.vue'
+import { ArrowLeft, ArrowRight } from '@lucide/vue'
+import IconAction from '../shared/components/IconAction.vue'
 import { computed, nextTick, ref, watch } from 'vue'
-import { useChart, chartTextColor } from '../composables/useChart'
+import { useChart, chartTextColor, chartColor } from '../composables/useChart'
 import ChartFallback from './ChartFallback.vue'
-import StarRating from './StarRating.vue'
 import type { TopicImportance } from '../types'
 
 interface RadarDataItem {
@@ -84,19 +84,17 @@ const groups = computed(() => {
   }))
 })
 
+const ratedTopics = computed(() => currentGroup.value.topics.filter((item) => item.value >= 1 && item.value <= 5))
 const totalPages = computed(() => groups.value.length)
 const currentGroup = computed(() => groups.value[currentPage.value] || { chapterName: '', topics: [] })
 const hasMultiplePages = computed(() => totalPages.value > 1)
 
 // 当数据变化时重置页码
-watch(
-  () => props.chapters.length,
-  () => {
-    if (currentPage.value >= totalPages.value) {
-      currentPage.value = Math.max(0, totalPages.value - 1)
-    }
+watch(totalPages, () => {
+  if (currentPage.value >= totalPages.value) {
+    currentPage.value = Math.max(0, totalPages.value - 1)
   }
-)
+})
 
 // 切换页面
 function goToPage(page: number) {
@@ -125,15 +123,17 @@ const {
   status: radarStatus,
   retry: retryRadar
 } = useChart(() => {
-  if (currentGroup.value.topics.length === 0) return null
+  if (ratedTopics.value.length < 3) return null
 
   return {
     radar: {
-      indicator: currentGroup.value.topics.map((item) => ({
+      indicator: ratedTopics.value.map((item) => ({
         name: item.name,
         max: item.max || 5
       })),
       radius: '65%',
+      axisLine: { lineStyle: { color: chartColor('muted') + '55' } },
+      splitLine: { lineStyle: { color: chartColor('muted') + '33' } },
       axisName: {
         color: chartTextColor(),
         fontSize: 10,
@@ -142,7 +142,7 @@ const {
       },
       splitArea: {
         areaStyle: {
-          color: ['rgba(59, 130, 246, 0.05)', 'rgba(59, 130, 246, 0.1)']
+          color: [chartColor('surface')]
         }
       }
     },
@@ -151,17 +151,17 @@ const {
         type: 'radar',
         data: [
           {
-            value: currentGroup.value.topics.map((item) => item.value),
+            value: ratedTopics.value.map((item) => item.value),
             name: '掌握度',
             areaStyle: {
-              color: (props.color || '#3b82f6') + '44'
+              color: chartColor('action') + '22'
             },
             lineStyle: {
-              color: props.color || '#3b82f6',
+              color: chartColor('action'),
               width: 2
             },
             itemStyle: {
-              color: props.color || '#3b82f6'
+              color: chartColor('action')
             }
           }
         ]
@@ -172,13 +172,13 @@ const {
 
 // 统计信息
 const stats = computed(() => {
-  const values = currentGroup.value.topics.map((item) => item.value)
+  const values = ratedTopics.value.map((item) => item.value)
   if (values.length === 0) return null
 
   const avg = values.reduce((sum, v) => sum + v, 0) / values.length
   const min = Math.min(...values)
   const max = Math.max(...values)
-  const weak = currentGroup.value.topics.filter((item) => item.value < 3)
+  const weak = currentGroup.value.topics.filter((item) => item.value > 0 && item.value < 3)
 
   return { avg, min, max, weakCount: weak.length }
 })
@@ -188,19 +188,13 @@ const allWeakTopics = computed(() => {
   const result: Array<{ topic: RadarDataItem; chapterName: string; pageIndex: number }> = []
   groups.value.forEach((group, idx) => {
     group.topics.forEach((topic) => {
-      if (topic.value < 3) {
+      if (topic.value > 0 && topic.value < 3) {
         result.push({ topic, chapterName: group.chapterName, pageIndex: idx })
       }
     })
   })
   return result
 })
-
-const IMPORTANCE_META: Record<TopicImportance, { label: string; cls: string }> = {
-  normal: { label: '普通', cls: 'text-slate-400 bg-slate-100 dark:bg-slate-700' },
-  important: { label: '重要', cls: 'text-amber-500 bg-amber-50 dark:bg-amber-900/30' },
-  must: { label: '必考', cls: 'text-red-500 bg-red-50 dark:bg-red-900/30' }
-}
 
 /** 选中词条的详情数据（名称/掌握度/重要程度/章节） */
 const selectedTopicDetail = computed(() => {
@@ -216,179 +210,83 @@ const selectedTopicDetail = computed(() => {
     chapterName: group.chapterName
   }
 })
-
-function isTopicSelected(item: { topic: RadarDataItem; pageIndex: number }) {
-  return selectedTopic.value?.name === item.topic.name && selectedTopic.value?.pageIndex === item.pageIndex
-}
 </script>
 
 <template>
-  <div class="enhanced-radar-chart">
-    <!-- 标题和统计 -->
-    <div v-if="title || stats" class="flex items-center justify-between mb-3">
-      <h3 v-if="title" class="text-sm font-medium text-slate-700 dark:text-slate-300">
-        {{ title }}
-      </h3>
-      <div v-if="stats" class="flex gap-3 text-xs text-slate-500 dark:text-slate-400">
-        <span
-          >平均: <strong class="text-blue-600 dark:text-blue-400">{{ stats.avg.toFixed(1) }}</strong></span
-        >
-        <span
-          >薄弱: <strong class="text-orange-600 dark:text-orange-400">{{ stats.weakCount }}</strong></span
-        >
-      </div>
-    </div>
-
-    <!-- 当前章节名称 -->
-    <div v-if="hasMultiplePages" class="mb-2 text-center">
-      <span
-        class="inline-block px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-lg text-sm font-medium"
+  <div class="space-y-3">
+    <div class="study-section-heading !mb-0 flex-wrap">
+      <h3 class="text-sm font-bold">{{ title || '知识点自评' }}</h3>
+      <span class="study-note"
+        >已评 {{ ratedTopics.length }}/{{ currentGroup.topics.length }} 个<span v-if="stats">
+          · 均分 {{ stats.avg.toFixed(1) }}/5</span
+        ></span
       >
-        {{ currentGroup.chapterName }}
-      </span>
     </div>
-
-    <!-- 雷达图 -->
-    <ChartFallback v-if="radarStatus === 'error'" class="h-64 sm:h-72 md:h-80" @retry="retryRadar" />
-    <div v-else ref="radarEl" class="h-64 sm:h-72 md:h-80"></div>
-
-    <!-- 分页控制 -->
-    <div v-if="hasMultiplePages" class="mt-4 space-y-3">
-      <!-- 页码指示器 -->
-      <div class="flex items-center justify-center gap-2">
+    <div v-if="hasMultiplePages" class="flex items-center gap-2">
+      <IconAction :icon="ArrowLeft" label="上一章" :disabled="currentPage === 0" class="shrink-0" @click="prevPage" />
+      <div ref="navRef" class="flex gap-2 overflow-x-auto flex-1" @wheel.prevent="onNavWheel">
         <button
-          @click="prevPage"
-          :disabled="currentPage === 0"
-          class="p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700"
-          aria-label="上一章"
+          v-for="(group, index) in groups"
+          :key="group.chapterName"
+          class="btn shrink-0 text-xs"
+          :class="currentPage === index ? 'bg-action-soft text-action' : ''"
+          :aria-current="currentPage === index ? 'true' : undefined"
+          @click="goToPage(index)"
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <polyline points="15 18 9 12 15 6"></polyline>
-          </svg>
-        </button>
-
-        <div
-          ref="navRef"
-          class="relative flex gap-1.5 overflow-x-auto max-w-xs sm:max-w-md"
-          @wheel.prevent="onNavWheel"
-        >
-          <button
-            v-for="(group, idx) in groups"
-            :key="idx"
-            @click="goToPage(idx)"
-            :class="[
-              'px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap',
-              currentPage === idx
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-            ]"
-            :title="group.chapterName"
-            :aria-label="`${group.chapterName}`"
-            :aria-current="currentPage === idx ? 'true' : undefined"
-          >
-            {{ group.chapterName.length > 8 ? group.chapterName.slice(0, 8) + '...' : group.chapterName }}
-          </button>
-        </div>
-
-        <button
-          @click="nextPage"
-          :disabled="currentPage === totalPages - 1"
-          class="p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700"
-          aria-label="下一章"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <polyline points="9 18 15 12 9 6"></polyline>
-          </svg>
+          {{ group.chapterName }}
         </button>
       </div>
-
-      <!-- 当前章节信息 -->
-      <div class="text-center text-xs text-slate-500 dark:text-slate-400">
-        第 {{ currentPage + 1 }} / {{ totalPages }} 章
-        <span class="mx-1">·</span>
-        本章 {{ currentGroup.topics.length }} 个知识点
-        <span class="mx-1">·</span>
-        共 {{ totalTopics }} 个知识点
-      </div>
-
-      <!-- 薄弱知识点快速跳转 -->
-      <div v-if="allWeakTopics.length > 0" class="pt-2 border-t border-slate-200 dark:border-slate-700">
-        <!-- 选中词条详情 -->
+      <IconAction
+        :icon="ArrowRight"
+        label="下一章"
+        :disabled="currentPage === totalPages - 1"
+        class="shrink-0"
+        @click="nextPage"
+      />
+    </div>
+    <div class="grid md:grid-cols-2 gap-4 items-center">
+      <div v-if="ratedTopics.length >= 3">
+        <ChartFallback v-if="radarStatus === 'error'" class="h-64" @retry="retryRadar" />
         <div
-          v-if="selectedTopicDetail"
-          class="mb-2 p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+          v-else
+          ref="radarEl"
+          class="h-64"
+          role="img"
+          :aria-label="`${currentGroup.chapterName}自评雷达，满分5分，具体数值见相邻列表`"
+        ></div>
+      </div>
+      <p v-else class="study-note py-6">至少自评 3 个知识点后显示雷达图。未自评的知识点不会被算作 0 分。</p>
+      <div class="max-h-64 overflow-y-auto">
+        <div
+          v-for="topic in currentGroup.topics"
+          :key="topic.name"
+          class="flex justify-between gap-3 border-b border-line py-2 text-xs"
         >
-          <div class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ selectedTopicDetail.name }}</div>
-          <div class="flex items-center gap-2 mt-1">
-            <StarRating :model-value="selectedTopicDetail.value" readonly />
-            <span class="text-xs text-slate-500 dark:text-slate-400">{{ selectedTopicDetail.value }}/5</span>
-          </div>
-          <div class="flex items-center gap-1.5 mt-1.5">
-            <span
-              class="text-[10px] px-1.5 py-0.5 rounded font-medium"
-              :class="IMPORTANCE_META[selectedTopicDetail.importance].cls"
-              >{{ IMPORTANCE_META[selectedTopicDetail.importance].label }}</span
-            >
-            <span class="text-xs text-slate-500 dark:text-slate-400">{{ selectedTopicDetail.chapterName }}</span>
-          </div>
+          <span>{{ topic.name }}</span
+          ><span class="shrink-0" :class="topic.value > 0 && topic.value < 3 ? 'text-correction' : 'text-muted'">{{
+            topic.value > 0 ? topic.value + '/5' : '未自评'
+          }}</span>
         </div>
-
-        <div class="text-xs text-slate-500 dark:text-slate-400 mb-2">薄弱知识点 (掌握度 &lt; 3):</div>
-        <div class="flex flex-wrap gap-1.5">
-          <button
-            v-for="(item, idx) in allWeakTopics"
-            :key="idx"
-            @click="selectTopic({ name: item.topic.name, pageIndex: item.pageIndex })"
-            :class="[
-              'px-2 py-1 text-xs rounded transition-colors',
-              isTopicSelected(item)
-                ? 'ring-2 ring-orange-500 bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300'
-                : currentPage === item.pageIndex
-                  ? 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300'
-                  : 'bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/30'
-            ]"
-            :title="`${item.chapterName} - ${item.topic.name}`"
-          >
-            {{ item.topic.name }}
-          </button>
-        </div>
+        <p v-if="!totalTopics" class="study-note">先添加章节知识点，再记录自评。</p>
       </div>
     </div>
-
-    <!-- 无数据提示 -->
-    <EmptyState v-if="totalTopics === 0" title="暂无掌握度数据" />
+    <p class="study-note">1 分表示刚接触，5 分表示能独立解题。自评用于安排复习，不代表考试得分。</p>
+    <div v-if="allWeakTopics.length" class="border-t border-line pt-3">
+      <p class="text-xs text-muted mb-2">先复习这些 · 自评低于 3 分</p>
+      <div class="flex flex-wrap gap-2">
+        <button
+          v-for="item in allWeakTopics"
+          :key="`${item.pageIndex}-${item.topic.name}`"
+          class="btn-ghost text-xs"
+          @click="selectTopic({ name: item.topic.name, pageIndex: item.pageIndex })"
+        >
+          {{ item.topic.name }}
+        </button>
+      </div>
+      <p v-if="selectedTopicDetail" class="study-note mt-2" role="status">
+        {{ selectedTopicDetail.chapterName }} · {{ selectedTopicDetail.name }} · 当前自评
+        {{ selectedTopicDetail.value }}/5，可在下方章节中更新。
+      </p>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.enhanced-radar-chart {
-  width: 100%;
-}
-
-/* 确保在小屏幕上也能良好显示 */
-@media (max-width: 640px) {
-  .enhanced-radar-chart :deep(.echarts-container) {
-    font-size: 10px;
-  }
-}
-</style>

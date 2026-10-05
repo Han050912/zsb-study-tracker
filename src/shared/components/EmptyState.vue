@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Inbox } from '@lucide/vue'
 
-withDefaults(defineProps<{ title?: string; description?: string }>(), { title: '暂时没有内容', description: '' })
+withDefaults(defineProps<{ title?: string; description?: string }>(), { title: '还没有内容', description: '' })
 </script>
 
 <template>

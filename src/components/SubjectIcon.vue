@@ -48,7 +48,9 @@ export const SUBJECT_ICONS: Record<string, Component> = {
 import { computed } from 'vue'
 
 const props = defineProps<{ icon?: string | null }>()
-const preset = computed(() => (props.icon ? (SUBJECT_ICONS[props.icon] ?? null) : null))
+// 旧版内置图标继续使用原存储值，呈现统一为界面图标。
+const legacyIcons: Record<string, Component> = { '📐': Calculator, '📖': BookOpen }
+const preset = computed(() => (props.icon ? (SUBJECT_ICONS[props.icon] ?? legacyIcons[props.icon] ?? null) : null))
 </script>
 
 <template>

@@ -33,7 +33,7 @@ const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(() => emit('clo
     <Transition name="modal" @before-enter="enableEnteringPanel" @before-leave="disableLeavingPanel">
       <div
         v-if="show"
-        class="fixed inset-0 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-6"
+        class="fixed inset-0 flex items-end sm:items-center justify-center modal-backdrop p-0 sm:p-6"
         :class="elevated ? OVERLAY_LAYER.confirm : OVERLAY_LAYER.modal"
         @mousedown="onOverlayMousedown"
         @click="onOverlayClick"
@@ -45,7 +45,7 @@ const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(() => emit('clo
           :aria-labelledby="titleId"
           tabindex="-1"
           :class="panelClass"
-          class="modal-panel w-full min-w-0 sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[88dvh] flex flex-col outline-none"
+          class="modal-panel w-full min-w-0 sm:max-w-lg sm:rounded-card rounded-t-card max-h-[88dvh] flex flex-col outline-none"
         >
           <div class="modal-header flex shrink-0 items-center justify-between gap-3 px-5 py-3 border-b">
             <h3 :id="titleId" class="font-bold">{{ title }}</h3>
@@ -59,7 +59,10 @@ const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(() => emit('clo
               <X :size="20" aria-hidden="true" />
             </button>
           </div>
-          <div class="overflow-y-auto min-h-0 px-5 py-4 flex-1">
+          <div
+            class="modal-content overflow-y-auto min-h-0 px-5 py-4 flex-1"
+            :class="{ 'modal-content-no-footer': !$slots.footer }"
+          >
             <slot />
           </div>
           <div v-if="$slots.footer" class="modal-footer px-5 py-3 border-t flex flex-wrap shrink-0 justify-end gap-2">
