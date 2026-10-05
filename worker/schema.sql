@@ -78,7 +78,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_user_code ON users(user_code);
 -- ========== 用户设置（一行一用户） ==========
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id TEXT PRIMARY KEY REFERENCES users(id),
-  user_name TEXT,               -- 显示昵称（注册时初始化为登录用户名；NULL = 未设置，展示端兜底 users.username）
+  user_name TEXT,               -- 显示昵称（注册时初始化为带用户短码的默认昵称）
   daily_goal_minutes INTEGER DEFAULT 240,
   word_goal INTEGER DEFAULT 50,
   problem_goal INTEGER DEFAULT 30,
@@ -101,7 +101,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   partner_share_enabled INTEGER NOT NULL DEFAULT 0, -- 允许搭子查看学习数据（周报对比/定向分享；默认关闭）
   partner_remind_enabled INTEGER NOT NULL DEFAULT 1, -- 允许搭子发送学习鼓励提醒（默认开启）
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
-  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  share_learning_stats INTEGER NOT NULL DEFAULT 0 -- 成长主页展示学习统计（含积分/连续打卡）；默认关闭
 );
 
 -- ========== 科目/章节/知识点（三层级联） ==========
@@ -191,6 +192,8 @@ CREATE TABLE IF NOT EXISTS error_questions (
   image TEXT,                   -- 'r2:<sha256>' 引用（字节存 R2，归属见 error_images）
   review_count INTEGER DEFAULT 0,
   mastered INTEGER DEFAULT 0,
+  last_reviewed_at INTEGER,
+  next_review_date TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
@@ -347,6 +350,7 @@ CREATE TABLE IF NOT EXISTS materials (
   total_pages INTEGER,
   read_pages INTEGER,
   notes TEXT,
+  favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标

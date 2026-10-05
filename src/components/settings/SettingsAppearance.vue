@@ -23,22 +23,33 @@ function applyTheme(t: string) {
 // 统一通知权限（桌面端经 preload 桥接原生通知，无需授权；浏览器端走 Web Notification）
 const notifSupported = isDesktopNotify() || (typeof window !== 'undefined' && 'Notification' in window)
 const notifPermission = ref(notifyPermission())
+const reminderPending = ref(false)
 
 async function toggleReminder(v: boolean) {
-  if (v && notifSupported) {
-    const perm = await requestNotifyPermission()
-    notifPermission.value = perm
-    if (perm !== 'granted' && perm !== 'desktop') {
-      if (perm === 'denied') {
-        toast('通知权限已被拒绝，请在浏览器地址栏左侧的站点设置中手动开启通知')
-      } else {
-        toast('未授权通知权限，无法开启提醒')
-      }
-      return
-    }
-  }
+  if (reminderPending.value) return
+  // 提醒偏好立即落盘；系统通知授权只影响送达方式，不覆盖用户选择。
   update('reminderEnabled', v)
-  toast(v ? '已开启每日提醒（保持应用运行有效）' : '已关闭提醒')
+  if (!v) {
+    toast('已关闭提醒')
+    return
+  }
+  reminderPending.value = true
+  try {
+    if (notifSupported) {
+      try {
+        notifPermission.value = await requestNotifyPermission()
+      } catch {
+        notifPermission.value = 'default'
+      }
+    }
+    toast(
+      notifPermission.value === 'granted' || notifPermission.value === 'desktop'
+        ? '已开启每日提醒（保持应用运行有效）'
+        : '已开启每日提醒；系统通知未授权，将在应用内提醒（保持应用运行有效）'
+    )
+  } finally {
+    reminderPending.value = false
+  }
 }
 
 // ---- 勿扰模式 ----
@@ -96,6 +107,7 @@ function toggleMutedType(t: NotificationType) {
           role="switch"
           :aria-checked="s.reminderEnabled"
           aria-label="每日学习提醒"
+          :disabled="reminderPending"
           @click="toggleReminder(!s.reminderEnabled)"
         >
           {{ s.reminderEnabled ? '已开启' : '已关闭' }}
@@ -138,6 +150,25 @@ function toggleMutedType(t: NotificationType) {
         <option value="login">仅登录用户可见</option>
         <option value="private">仅自己可见</option>
       </select>
+    </div>
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <span class="text-sm">在主页公开学习数据</span>
+        <p class="text-xs text-slate-400 mt-0.5">
+          向有权访问主页的人展示积分、连续打卡、学习热力图和学习统计，并参与打卡榜，默认关闭
+        </p>
+      </div>
+      <button
+        type="button"
+        class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
+        :class="s.shareLearningStats ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+        role="switch"
+        :aria-checked="s.shareLearningStats"
+        aria-label="在主页公开学习数据"
+        @click="update('shareLearningStats', !s.shareLearningStats)"
+      >
+        {{ s.shareLearningStats ? '已公开' : '仅自己可见' }}
+      </button>
     </div>
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
@@ -238,9 +269,11 @@ function toggleMutedType(t: NotificationType) {
         </div>
       </div>
     </div>
-    <p v-if="!notifSupported" class="text-xs text-action">当前浏览器不支持通知功能，无法使用每日提醒。</p>
+    <p v-if="!notifSupported" class="text-xs text-action">
+      当前浏览器不支持系统通知，每日提醒将在应用内显示，需保持应用运行。
+    </p>
     <p v-else-if="notifPermission === 'denied'" class="text-xs text-correction">
-      通知权限已被拒绝。请点击浏览器地址栏左侧的图标，将「通知」改为「允许」，然后重新打开此页面并开启提醒。
+      系统通知权限已被拒绝，每日提醒将在应用内显示。可在浏览器站点设置中允许通知，需保持应用运行。
     </p>
     <p v-else-if="notifPermission === 'default'" class="text-xs text-slate-400">开启提醒时会请求浏览器通知权限。</p>
     <p v-else class="text-xs text-action">通知权限已授权。</p>

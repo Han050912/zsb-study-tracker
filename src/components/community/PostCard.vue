@@ -39,7 +39,7 @@ const TYPE_META: Record<PostType, { label: string; cls: string }> = {
   question: { label: '提问', cls: 'bg-action-soft dark:bg-action-soft text-action dark:text-action' }
 }
 
-const level = computed(() => levelOf(props.post.userPoints))
+const level = computed(() => levelOf(props.post.userPoints ?? 0))
 const meta = computed(() => TYPE_META[props.post.type] || TYPE_META.share)
 const isMine = computed(() => props.post.userId === sessionUser.value?.id)
 /**
@@ -139,7 +139,7 @@ onBeforeUnmount(() => {
               class="text-xs leading-none px-1 py-0.5 rounded border shrink-0 border-slate-300 text-slate-500 dark:border-slate-500 dark:text-slate-400 font-medium"
               >我</span
             >
-            <span class="post-author-level"> {{ level.name }}学者 </span>
+            <span v-if="post.userPoints !== undefined" class="post-author-level"> {{ level.name }}学者 </span>
           </div>
           <div class="post-time">{{ fromNow(post.createdAt) }}</div>
         </div>

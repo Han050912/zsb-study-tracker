@@ -16,6 +16,7 @@ globalThis.localStorage = {
   removeItem: (key) => storage.delete(key)
 }
 globalThis.window = Object.assign(new EventTarget(), { location: { hash: '#/math' } })
+globalThis.sessionStorage = { getItem: () => null, removeItem() {} }
 globalThis.__auditUser = { value: { id: 'a' } }
 
 const result = await build({
@@ -184,6 +185,47 @@ test('备份：保留旧版科目id迁移、英文记录id迁移及缺失偏好�
   backup.habits.push({ id: 'minutes', name: '专注', type: 'minutes', target: 10, records: { '2026-10-02': 1.5 } })
   assert.equal(app.isValidBackup(backup), true)
   assert.deepEqual(app.parseBackup(JSON.stringify(backup)).settings.dndMutedTypes, [])
+})
+
+test('备份：错题排期校验真实日期和毫秒时间戳，非法排期不会覆盖原数据', () => {
+  const question = {
+    id: 'scheduled',
+    subjectId: 'math',
+    date: '2026-10-05',
+    type: '选择',
+    content: '排期题',
+    reviewCount: 1,
+    mastered: false,
+    createdAt: 1
+  }
+  const backup = { ...app.createDefaultState(), errorQuestions: [question] }
+  assert.equal(app.isValidBackup(backup), true)
+  assert.equal(
+    app.isValidBackup({
+      ...backup,
+      errorQuestions: [{ ...question, lastReviewedAt: 1791217800000, nextReviewDate: '2028-02-29' }]
+    }),
+    true
+  )
+  for (const schedule of [
+    { lastReviewedAt: 'bad' },
+    { lastReviewedAt: -1 },
+    { lastReviewedAt: 1.5 },
+    { nextReviewDate: '2026-02-29' },
+    { nextReviewDate: '2026-02-30' },
+    { nextReviewDate: '2026-99-99' }
+  ]) {
+    const invalid = { ...backup, errorQuestions: [{ ...question, ...schedule }] }
+    assert.equal(app.isValidBackup(invalid), false)
+    const store = {
+      ...app.createDefaultState(),
+      $patch() {
+        throw new Error('must not mutate')
+      }
+    }
+    assert.equal(app.importExportActions.importJSON.call(store, JSON.stringify(invalid)), false)
+    assert.equal(app.takeForFlush(), null)
+  }
 })
 
 test('真题/时长：空白、空数值、负值、无穷、超过总分被前后端同时拒绝', () => {

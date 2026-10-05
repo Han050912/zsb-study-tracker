@@ -110,6 +110,8 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         text(q.content) &&
         count(q.reviewCount) &&
         typeof q.mastered === 'boolean' &&
+        optional(q.lastReviewedAt, count) &&
+        optional(q.nextReviewDate, isCalendarDate) &&
         ['image', 'answer', 'chapter'].every((k) => optional(q[k], text))
     )
   )
@@ -143,6 +145,7 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         optional(m.priority, (v) => ['高', '中', '低'].includes(String(v))) &&
         optional(m.totalPages, count) &&
         optional(m.readPages, count) &&
+        optional(m.favorite, (v) => typeof v === 'boolean') &&
         (m.totalPages === undefined || m.readPages === undefined || Number(m.readPages) <= Number(m.totalPages)) &&
         ['url', 'fileName', 'author', 'notes', 'subjectId'].every((k) => optional(m[k], text))
     )
@@ -209,6 +212,7 @@ function validBackupFields(data: Record<string, unknown>): boolean {
       'doNotDisturb',
       'dndMuteMessage',
       'partnerShareEnabled',
+      'shareLearningStats',
       'partnerRemindEnabled'
     ].every((k) => optional(settings[k], (v) => typeof v === 'boolean')) ||
     !['reminderTime', 'dndStartTime', 'dndEndTime'].every((k) =>

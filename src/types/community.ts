@@ -31,7 +31,7 @@ export interface CommunityPost {
   userId: string
   userName: string
   /** 作者当前总积分，前端据此换算等级称号（LEVELS） */
-  userPoints: number
+  userPoints?: number
   /** 作者是否为认证专家（蓝 V） */
   userVerified: boolean
   /** 作者自定义头像相对 URL（未设置 = undefined，前端回退首字母） */
@@ -252,8 +252,10 @@ export interface CommunityUserProfile {
   avatar?: string
   /** 私密主页降级视图：仅含公开子集（昵称/头像/蓝V），积分/徽章/关注等字段缺省 */
   profilePrivate?: boolean
-  points: number
-  streak: number
+  /** 他人未获授权时不返回积分/连续打卡，也不能读取学习统计接口。 */
+  learningStatsPrivate?: boolean
+  points?: number
+  streak?: number
   verified: boolean
   expertise: string
   /** 可见帖子 + 评论总数 */

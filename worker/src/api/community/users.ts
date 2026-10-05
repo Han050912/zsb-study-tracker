@@ -1,6 +1,7 @@
 import { on } from '../../router'
 import { all, first, batch, HttpError } from '../../db'
 import { rateLimit } from '../../middleware/rateLimit'
+import { userDisplayName } from '../../userDisplayName'
 import {
   mapPost,
   POST_SELECT,
@@ -29,7 +30,7 @@ export function registerUsersRoutes() {
       ctx.env,
       `
       SELECT u.id, u.user_code, u.username, u.verified, u.expertise, u.created_at,
-        COALESCE(s.user_name, u.username) AS user_name, s.avatar, s.bio, s.profile_visibility
+        s.user_name, s.avatar, s.bio, s.profile_visibility
       FROM users u
       LEFT JOIN user_settings s ON s.user_id = u.id
       WHERE u.user_code = ?`,
@@ -73,7 +74,7 @@ export function registerUsersRoutes() {
     const card = {
       userId: u.id,
       userCode: u.user_code,
-      userName: u.user_name || '升本人',
+      userName: userDisplayName(u.user_name, u.user_code, u.id),
       avatar: u.avatar ?? undefined,
       verified: !!u.verified,
       expertise: u.expertise || '',
@@ -105,8 +106,8 @@ export function registerUsersRoutes() {
     const u = await first<any>(
       ctx.env,
       `
-      SELECT u.id, u.user_code, COALESCE(s.user_name, u.username) AS user_name, u.verified, u.expertise,
-        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak, s.profile_visibility, s.avatar,
+      SELECT u.id, u.user_code, s.user_name, u.verified, u.expertise,
+        COALESCE(g.points, 0) AS points, COALESCE(g.streak, 0) AS streak, s.profile_visibility, s.share_learning_stats, s.avatar,
         COALESCE(s.bio, '') AS bio
       FROM users u
       LEFT JOIN user_settings s ON s.user_id = u.id
@@ -137,11 +138,12 @@ export function registerUsersRoutes() {
         profilePrivate: true,
         userId: u.id,
         userCode: u.user_code,
-        userName: u.user_name || '升本人',
+        userName: userDisplayName(u.user_name, u.user_code, u.id),
         avatar: u.avatar ?? undefined,
         verified: !!u.verified,
         expertise: u.expertise || '',
         bio: u.bio,
+        learningStatsPrivate: true,
         followedByMe: !!followedByMe,
         followsMe: !!followsMe
       })
@@ -202,10 +204,10 @@ export function registerUsersRoutes() {
     return Response.json({
       userId: u.id,
       userCode: u.user_code,
-      userName: u.user_name || '升本人',
+      userName: userDisplayName(u.user_name, u.user_code, u.id),
       avatar: u.avatar ?? undefined,
-      points: u.points,
-      streak: u.streak,
+      learningStatsPrivate: ctx.userId !== u.id && !u.share_learning_stats,
+      ...(ctx.userId === u.id || u.share_learning_stats ? { points: u.points, streak: u.streak } : {}),
       verified: !!u.verified,
       expertise: u.expertise || '',
       postCount: stats?.posts ?? 0,
@@ -236,13 +238,14 @@ export function registerUsersRoutes() {
   on('GET', '/api/community/users/:id/stats', true, async (ctx) => {
     const userId = ctx.params.id
     // 确认用户存在
-    const u = await first<{ id: string; profile_visibility: string }>(
+    const u = await first<{ id: string; profile_visibility: string; share_learning_stats: number }>(
       ctx.env,
-      `SELECT u.id, s.profile_visibility FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?`,
+      `SELECT u.id, s.profile_visibility, s.share_learning_stats FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?`,
       userId
     )
     if (!u) throw new HttpError(404, '用户不存在')
     await assertProfileVisible(ctx, userId, u.profile_visibility ?? 'login')
+    if (ctx.userId !== userId && !u.share_learning_stats) throw new HttpError(403, '该用户未公开学习数据')
 
     // 365 天热力图：按日期汇总学习分钟数（日期口径与 utc8Today 一致：UTC+8）
     // 364 天前 → 今天共 365 天，避免 off-by-one 多生成一天
@@ -251,9 +254,12 @@ export function registerUsersRoutes() {
     const heatmapRows = await all<{ date: string; minutes: number }>(
       ctx.env,
       `
-      SELECT date, SUM(minutes) AS minutes FROM study_records
-      WHERE user_id = ? AND date >= ?
+      SELECT date, SUM(minutes) AS minutes FROM (
+        SELECT date, minutes FROM study_records WHERE user_id = ?
+        UNION ALL SELECT date, minutes FROM pomodoro_daily WHERE user_id = ?
+      ) WHERE date >= ?
       GROUP BY date ORDER BY date ASC`,
+      userId,
       userId,
       startDate
     )
@@ -274,7 +280,11 @@ export function registerUsersRoutes() {
       ctx.env,
       `
       SELECT COALESCE(SUM(minutes), 0) AS minutes, COUNT(DISTINCT date) AS days
-      FROM study_records WHERE user_id = ?`,
+      FROM (
+        SELECT date, minutes FROM study_records WHERE user_id = ?
+        UNION ALL SELECT date, minutes FROM pomodoro_daily WHERE user_id = ?
+      ) WHERE minutes > 0`,
+      userId,
       userId
     )
 
@@ -285,8 +295,11 @@ export function registerUsersRoutes() {
     const monthStudy = await first<{ minutes: number }>(
       ctx.env,
       `
-      SELECT COALESCE(SUM(minutes), 0) AS minutes FROM study_records
-      WHERE user_id = ? AND date >= ?`,
+      SELECT COALESCE(SUM(minutes), 0) AS minutes FROM (
+        SELECT date, minutes FROM study_records WHERE user_id = ?
+        UNION ALL SELECT date, minutes FROM pomodoro_daily WHERE user_id = ?
+      ) WHERE date >= ?`,
+      userId,
       userId,
       monthStart.toISOString().slice(0, 10)
     )
@@ -433,7 +446,7 @@ export function registerUsersRoutes() {
   interface FollowRow {
     user_id: string
     user_name: string | null
-    username: string
+    user_code: string | null
     avatar: string | null
     verified: number
     bio: string
@@ -477,7 +490,7 @@ export function registerUsersRoutes() {
       const followsMe = myFollowers.has(r.user_id)
       return {
         userId: r.user_id,
-        userName: r.user_name || r.username,
+        userName: userDisplayName(r.user_name, r.user_code, r.user_id),
         avatar: r.avatar ?? undefined,
         verified: !!r.verified,
         bio: r.bio || '',
@@ -511,7 +524,7 @@ export function registerUsersRoutes() {
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const c = parseCursor(url.searchParams.get('cursor') || '')
     let sql = `
-      SELECT u.id AS user_id, s.user_name, u.username, s.avatar, u.verified,
+      SELECT u.id AS user_id, s.user_name, u.user_code, s.avatar, u.verified,
         COALESCE(s.bio, '') AS bio, f.created_at AS created_at, f.follower_id AS rel_id
       FROM user_follows f
       JOIN users u ON u.id = f.follower_id
@@ -539,7 +552,7 @@ export function registerUsersRoutes() {
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const c = parseCursor(url.searchParams.get('cursor') || '')
     let sql = `
-      SELECT u.id AS user_id, s.user_name, u.username, s.avatar, u.verified,
+      SELECT u.id AS user_id, s.user_name, u.user_code, s.avatar, u.verified,
         COALESCE(s.bio, '') AS bio, f.created_at AS created_at, f.followee_id AS rel_id
       FROM user_follows f
       JOIN users u ON u.id = f.followee_id
@@ -567,7 +580,7 @@ export function registerUsersRoutes() {
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 20, 1), MAX_PAGE)
     const c = parseCursor(url.searchParams.get('cursor') || '')
     let sql = `
-      SELECT u.id AS user_id, s.user_name, u.username, s.avatar, u.verified,
+      SELECT u.id AS user_id, s.user_name, u.user_code, s.avatar, u.verified,
         COALESCE(s.bio, '') AS bio, f1.created_at AS created_at, f1.followee_id AS rel_id
       FROM user_follows f1
       JOIN user_follows f2 ON f2.follower_id = f1.followee_id AND f2.followee_id = f1.follower_id

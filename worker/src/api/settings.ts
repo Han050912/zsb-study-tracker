@@ -4,6 +4,7 @@ import { on, body } from '../router'
 import { first, HttpError } from '../db'
 import { assertCleanAsync } from './sensitive'
 import { encryptSecret } from '../crypto'
+import { userDisplayName } from '../userDisplayName'
 
 /** 用户设置（user_settings 单行 + default_quotes ↔ 前端 Settings） */
 
@@ -24,6 +25,7 @@ export interface SettingsFull {
   onboarded: boolean
   joinProgressBoard: boolean
   profileVisibility: 'public' | 'login' | 'private'
+  shareLearningStats: boolean
   avatar?: string
   bio: string
   doNotDisturb: boolean
@@ -75,6 +77,7 @@ export const settingsBodySchema = z
     onboarded: z.boolean().optional(),
     joinProgressBoard: z.boolean().optional(),
     profileVisibility: z.enum(PROFILE_VISIBILITIES, { message: '资料可见性取值无效' }).optional(),
+    shareLearningStats: z.boolean().optional(),
     avatar: z.string().optional(),
     doNotDisturb: z.boolean().optional(),
     dndStartTime: z.string().max(8, '免打扰开始时间最多 8 个字符').optional(),
@@ -139,12 +142,12 @@ export function parseMutedTypes(raw: unknown): string[] {
 export async function getSettings(env: Env, userId: string): Promise<SettingsFull> {
   const row = await first(
     env,
-    'SELECT s.*, u.username FROM user_settings s LEFT JOIN users u ON u.id = s.user_id WHERE s.user_id = ?',
+    'SELECT s.*, u.user_code FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?',
     userId
   )
   const quotesRow = await first(env, 'SELECT quotes FROM default_quotes WHERE user_id = ?', userId)
   return {
-    userName: row?.user_name ?? row?.username ?? '',
+    userName: userDisplayName(row?.user_name, row?.user_code, userId),
     dailyGoalMinutes: row?.daily_goal_minutes ?? 240,
     wordGoal: row?.word_goal ?? 50,
     problemGoal: row?.problem_goal ?? 30,
@@ -157,6 +160,7 @@ export async function getSettings(env: Env, userId: string): Promise<SettingsFul
     onboarded: !!row?.onboarded,
     joinProgressBoard: !!row?.join_progress_board,
     profileVisibility: (row?.profile_visibility as 'public' | 'login' | 'private') ?? 'login',
+    shareLearningStats: !!row?.share_learning_stats,
     avatar: row?.avatar ?? undefined,
     bio: row?.bio ?? '',
     doNotDisturb: !!row?.do_not_disturb,
@@ -180,10 +184,10 @@ export async function settingsReplaceStatements(
   const commonCols =
     'user_name = excluded.user_name, daily_goal_minutes = excluded.daily_goal_minutes, word_goal = excluded.word_goal, ' +
     'problem_goal = excluded.problem_goal, exam_date = excluded.exam_date, theme = excluded.theme, reminder_enabled = excluded.reminder_enabled, ' +
-    'reminder_time = excluded.reminder_time, onboarded = MAX(COALESCE(user_settings.onboarded, 0), excluded.onboarded), join_progress_board = excluded.join_progress_board, profile_visibility = excluded.profile_visibility, bio = excluded.bio, ' +
+    'reminder_time = excluded.reminder_time, onboarded = MAX(COALESCE(user_settings.onboarded, 0), excluded.onboarded), join_progress_board = excluded.join_progress_board, profile_visibility = excluded.profile_visibility, share_learning_stats = excluded.share_learning_stats, bio = excluded.bio, ' +
     'do_not_disturb = excluded.do_not_disturb, dnd_start_time = excluded.dnd_start_time, dnd_end_time = excluded.dnd_end_time, dnd_muted_types = excluded.dnd_muted_types, dnd_mute_message = excluded.dnd_mute_message, ' +
     'partner_share_enabled = excluded.partner_share_enabled, partner_remind_enabled = excluded.partner_remind_enabled, avatar = COALESCE(excluded.avatar, user_settings.avatar)'
-  // 昵称缺失或为空（含纯空白）时写入 NULL：展示端统一回退登录用户名（COALESCE 口径），
+  // 昵称缺失或为空（含纯空白）时写入 NULL：展示端使用稳定的默认昵称，
   // 避免前端误传空字符串导致社区/团队等处出现空白作者名
   const userName = typeof s.userName === 'string' && s.userName.trim() ? s.userName.trim() : null
   const mutedJson = JSON.stringify(Array.isArray(s.dndMutedTypes) ? s.dndMutedTypes : [])
@@ -208,11 +212,12 @@ export async function settingsReplaceStatements(
     s.dndMuteMessage ? 1 : 0,
     s.partnerShareEnabled ? 1 : 0,
     s.partnerRemindEnabled ? 1 : 0,
-    s.avatar ?? null
+    s.avatar ?? null,
+    s.shareLearningStats ? 1 : 0
   ]
   const stmts: D1PreparedStatement[] = []
   const newCols =
-    ', do_not_disturb, dnd_start_time, dnd_end_time, dnd_muted_types, dnd_mute_message, partner_share_enabled, partner_remind_enabled, avatar'
+    ', do_not_disturb, dnd_start_time, dnd_end_time, dnd_muted_types, dnd_mute_message, partner_share_enabled, partner_remind_enabled, avatar, share_learning_stats'
 
   // 墨墨 Token 仅写入时加密存储（AES-256-GCM，密钥派生自 JWT_SECRET）
   const tokenCipher =
@@ -224,7 +229,7 @@ export async function settingsReplaceStatements(
         'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' +
           newCols +
           ') ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
           `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}`
       ).bind(...baseParams)
     )
@@ -234,7 +239,7 @@ export async function settingsReplaceStatements(
         'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' +
           newCols +
           ', maimemo_token) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
           `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}, maimemo_token = excluded.maimemo_token`
       ).bind(...baseParams, tokenCipher)
     )
