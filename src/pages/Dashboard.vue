@@ -7,7 +7,11 @@ import { formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import { DEFAULT_QUOTES } from '../data/defaults'
 import Heatmap from '../components/Heatmap.vue'
-import ProgressRing from '../components/ProgressRing.vue'
+import ExamAnswerStrip from '../components/ExamAnswerStrip.vue'
+import DashboardCompanions from '../components/DashboardCompanions.vue'
+import NavIcon from '../components/NavIcon.vue'
+import { masteryOverview } from '../utils/studyOverview'
+import { Play, GripVertical, Trash2, ChevronUp, ChevronDown, ArrowRight } from '@lucide/vue'
 import SubjectIcon from '../components/SubjectIcon.vue'
 import Modal from '../components/Modal.vue'
 import TodoTimeFields from '../components/TodoTimeFields.vue'
@@ -28,30 +32,45 @@ const quote = computed(() => {
 
 const todayDoneTodos = computed(() => store.todayTodos.filter((t) => t.done).length)
 
-function subjectPercent(subjectId: string) {
-  const s = store.subjectMap[subjectId]
-  if (!s) return 0
-  const topics = s.chapters.flatMap((c) => c.topics)
-  if (!topics.length) {
-    // 无章节时用学习记录天数衡量
-    const days = new Set(store.records.filter((r) => r.subjectId === subjectId).map((r) => r.date)).size
-    return Math.min(100, days * 5)
-  }
-  const sum = topics.reduce((acc, t) => acc + (s.mastery[t] || 0), 0)
-  return (sum / (topics.length * 5)) * 100
+const nextTodo = computed(() => store.todayTodos.find((t) => !t.done))
+const subjectOverviews = computed(() =>
+  store.subjects.map((subject) => ({
+    subject,
+    ...masteryOverview(subject),
+    pendingErrors: store.errorQuestions.filter((q) => q.subjectId === subject.id && !q.mastered).length,
+    lastExam: store.exams
+      .filter((exam) => exam.subjectId === subject.id)
+      .sort((a, b) => b.date.localeCompare(a.date))[0]
+  }))
+)
+function subjectRoute(id: string) {
+  return id === 'math' || id === 'english' ? `/${id}` : `/subject/${id}`
+}
+function moveTodo(id: string, direction: number) {
+  const ids = store.todayTodos.map((todo) => todo.id)
+  const index = ids.indexOf(id)
+  const target = index + direction
+  if (target < 0 || target >= ids.length) return
+  ;[ids[index], ids[target]] = [ids[target], ids[index]]
+  store.reorderTodos(ids)
+  toast(`任务已移至第 ${target + 1} 项`)
+}
+function toggleTodo(todo: Todo) {
+  store.toggleTodo(todo.id)
+  toast(todo.done ? '任务已完成' : '任务已恢复')
 }
 
 // ---- 快捷入口折叠 ----
 const showQuickLinks = ref(false)
 
-// ---- 待办新增：点击「添加」后弹出时间选择器（仅时:分，日期固定为当日）----
+// ---- 任务新增：点击「添加」后弹出时间选择器（仅时:分，日期固定为当日）----
 const newTodo = ref('')
 const showAddSchedule = ref(false)
 const addStart = ref('')
 const addDue = ref('')
 
 function openAddSchedule() {
-  if (!newTodo.value.trim()) return toast('请先输入待办内容')
+  if (!newTodo.value.trim()) return toast('请先输入任务内容')
   addStart.value = ''
   addDue.value = ''
   showAddSchedule.value = true
@@ -65,10 +84,10 @@ function confirmAddTodo() {
   newTodo.value = ''
   showAddSchedule.value = false
   // 两个时间都没填：提示可能无法收到提醒，但仍正常添加（均为可选项）
-  toast(startAt || dueAt ? '已添加待办' : '未设定时间，可能会无法收到待办通知')
+  toast(startAt || dueAt ? '任务已添加，已设置提醒' : '任务已添加，未设置提醒')
 }
 
-// ---- 修改既有待办的开始 / 最晚截止时间（同样仅限当日，不允许跨日）----
+// ---- 修改既有任务的开始 / 最晚截止时间（同样仅限当日，不允许跨日）----
 const scheduleEditId = ref('')
 const editStart = ref('')
 const editDue = ref('')
@@ -85,7 +104,7 @@ function saveSchedule() {
   ensureNotifyPermission(!!startAt || !!dueAt)
   store.setTodoSchedule(scheduleEditId.value, { startAt: startAt ?? null, dueAt: dueAt ?? null })
   scheduleEditId.value = ''
-  toast('已更新待办时间')
+  toast('已更新任务时间')
 }
 
 /** "HH:mm" 字符串 → 当日时间戳（秒/毫秒归零）；空值/非法值返回 undefined。日期强制为今日，不可跨日 */
@@ -96,7 +115,7 @@ function timeToTodayTs(v: string): number | undefined {
   return dayjs().hour(h).minute(m).second(0).millisecond(0).valueOf()
 }
 
-/** 首次为待办设定时间时申请通知权限，确保到点能弹出系统通知 */
+/** 首次为任务设定时间时申请通知权限，确保到点能弹出系统通知 */
 async function ensureNotifyPermission(scheduled: boolean) {
   if (!scheduled || notifyPermission() !== 'default') return
   if ((await requestNotifyPermission()) === 'denied') toast('浏览器已拒绝通知权限，到点将改用页面内提示')
@@ -109,7 +128,7 @@ const nowTimer = setInterval(() => {
 }, 30_000)
 onUnmounted(() => clearInterval(nowTimer))
 
-/** 待办时间展示：当天只显示 HH:mm，跨天带上日期 */
+/** 任务时间展示：当天只显示 HH:mm，跨天带上日期 */
 function fmtTodoTime(ts: number) {
   const d = dayjs(ts)
   return d.isSame(dayjs(), 'day') ? d.format('HH:mm') : d.format('MM-DD HH:mm')
@@ -118,11 +137,6 @@ function fmtTodoTime(ts: number) {
 function isOverdue(t: Todo) {
   return !!t.dueAt && !t.done && t.dueAt <= now.value
 }
-
-const goalPercent = computed(() => {
-  const goal = store.settings.dailyGoalMinutes
-  return goal > 0 ? Math.min(100, (store.todayMinutes / goal) * 100) : 0
-})
 
 // ---- 分享打卡到社区广场 ----
 const showComposer = ref(false)
@@ -154,14 +168,14 @@ const heatDate = ref('')
 const heatRecords = computed(() => store.records.filter((r) => r.date === heatDate.value))
 const heatTotal = computed(() => heatRecords.value.reduce((s, r) => s + r.minutes, 0))
 
-/** 待办完成时间格式化（HH:mm） */
+/** 任务完成时间格式化（HH:mm） */
 function fmtCompletedAt(ts?: number | null) {
   return ts ? dayjs(ts).format('HH:mm') : ''
 }
 
-// ===== 待办拖拽排序（Pointer 事件，统一支持桌面鼠标与移动端触摸）=====
+// ===== 任务拖拽排序（Pointer 事件，统一支持桌面鼠标与移动端触摸）=====
 const listRef = ref<HTMLElement | null>(null)
-/** 拖拽中的待办 id；null 表示当前未拖拽 */
+/** 拖拽中的任务 id；null 表示当前未拖拽 */
 const draggingId = ref<string | null>(null)
 /** 插入边界处的卡片 id（松手后拖到它前面），用于高亮提示 */
 const overId = ref<string | null>(null)
@@ -246,313 +260,223 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
-    <!-- 头部 -->
-    <div class="flex items-center justify-between">
+  <div class="study-page dashboard-page">
+    <header class="study-page-heading">
       <div>
-        <h1 class="page-title">你好，{{ store.settings.userName }}</h1>
-        <p class="text-xs text-slate-400 mt-0.5">{{ store.todayKey }} · 连续学习 {{ store.gamification.streak }} 天</p>
+        <h1 class="page-title">今天的任务</h1>
+        <p class="dashboard-date">{{ store.todayKey.replace(/-/g, '/') }} · {{ store.settings.userName }}的学习日</p>
       </div>
-      <div class="text-right">
-        <div class="text-xs text-slate-400">{{ store.level.name }}学者</div>
-        <div class="text-sm font-bold text-primary-500">{{ store.gamification.points }} 积分</div>
-        <button class="btn-ghost !text-xs !px-2 !py-1 mt-1" @click="openCheckinShare">分享打卡</button>
-      </div>
-    </div>
+      <button class="btn-ghost" @click="openCheckinShare">分享打卡</button>
+    </header>
 
-    <!-- 倒计时 + 名言 -->
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <div class="card bg-gradient-to-br from-primary-500 to-indigo-600 !text-white border-0">
-        <div class="text-xs opacity-80">距离专升本考试</div>
-        <div v-if="store.examCountdown !== null" class="mt-1">
-          <template v-if="store.examCountdown > 0">
-            <span class="text-4xl font-black">{{ store.examCountdown }}</span
-            ><span class="ml-1">天</span>
-          </template>
-          <div v-else class="text-2xl font-black">就是今天，加油！</div>
-        </div>
-        <RouterLink v-else to="/settings" class="text-sm underline opacity-90 mt-2 inline-block"
-          >去设置考试日期 →</RouterLink
-        >
-        <div class="text-xs opacity-80 mt-2">
-          {{ store.examCountdown === 0 ? '沉着应考，你付出的每一分努力都算数！' : '坚持到底，就是胜利！' }}
-        </div>
+    <section class="dashboard-next" aria-labelledby="next-task-title">
+      <div class="min-w-0">
+        <h2 id="next-task-title" class="dashboard-next-title">
+          {{
+            nextTodo ? `接下来：${nextTodo.text}` : store.todayTodos.length ? '今天的任务已完成' : '从一件具体的事开始'
+          }}
+        </h2>
+        <p v-if="!nextTodo" class="dashboard-next-description">
+          {{
+            store.todayTodos.length
+              ? '回看今天的错题，或为自己留一点休息时间。'
+              : '在下方写下这次要学什么，再开始专注计时。'
+          }}
+        </p>
+        <p class="dashboard-next-progress">
+          任务已完成 {{ todayDoneTodos }}/{{ store.todayTodos.length }} 项 · 今天
+          {{ store.todayPomodoro.count }} 个番茄钟<span v-if="store.todayPomodoro.count"
+            >，平均 {{ (store.todayPomodoro.minutes / store.todayPomodoro.count).toFixed(1) }} 分钟</span
+          >
+        </p>
       </div>
-      <div class="card flex flex-col justify-center">
-        <div class="text-xs text-slate-400 mb-1">今日名言</div>
-        <p class="text-sm font-medium leading-relaxed">{{ quote }}</p>
-      </div>
-    </div>
+      <RouterLink
+        :to="{ path: '/pomodoro', query: nextTodo ? { task: nextTodo.text.slice(0, 50) } : {} }"
+        class="btn-primary shrink-0"
+        ><Play :size="16" aria-hidden="true" />开始番茄钟</RouterLink
+      >
+    </section>
 
-    <!-- 周学习计划（学习路径推荐） -->
-    <LearningPathCard />
-
-    <!-- 今日概览 -->
-    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      <div class="card !p-3 text-center">
-        <div class="text-2xl font-black text-primary-500">{{ formatMinutes(store.todayMinutes) }}</div>
-        <div class="text-[11px] text-slate-400 mt-0.5">今日学习时长</div>
-        <div class="w-full h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full mt-2 overflow-hidden">
-          <div class="h-full bg-primary-400 rounded-full progress-motion" :style="{ width: goalPercent + '%' }"></div>
+    <div class="dashboard-workspace">
+      <section class="card dashboard-tasks" aria-labelledby="today-list-title">
+        <div class="study-section-heading">
+          <h2 id="today-list-title" class="section-title !mb-0">任务清单</h2>
+          <span class="text-xs text-muted">按你的顺序</span>
         </div>
-        <div class="text-[10px] text-slate-400 mt-1">目标 {{ formatMinutes(store.settings.dailyGoalMinutes) }}</div>
-      </div>
-      <div class="card !p-3 text-center">
-        <div class="text-2xl font-black text-emerald-500">{{ todayDoneTodos }}/{{ store.todayTodos.length }}</div>
-        <div class="text-[11px] text-slate-400 mt-0.5">今日待办完成</div>
-      </div>
-      <div class="card !p-3 text-center">
-        <div class="text-2xl font-black text-orange-500">{{ store.todayPomodoro.count }}</div>
-        <div class="text-[11px] text-slate-400 mt-0.5">今日番茄钟</div>
-        <div class="text-[10px] text-slate-400">
-          平均
-          {{ store.todayPomodoro.count ? (store.todayPomodoro.minutes / store.todayPomodoro.count).toFixed(1) : '0.0' }}
-          分/个
-        </div>
-      </div>
-      <div class="card !p-3 text-center">
-        <div class="text-2xl font-black text-purple-500">{{ store.gamification.streak }}</div>
-        <div class="text-[11px] text-slate-400 mt-0.5">连续学习天数</div>
-      </div>
-    </div>
-
-    <!-- 待办 + 进度环 -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div class="card">
-        <div class="section-title">今日待办</div>
-        <div class="flex gap-2 mb-3">
-          <input
-            v-model="newTodo"
-            class="input"
-            placeholder="添加今日学习任务，回车确认"
-            @keyup.enter="openAddSchedule"
-          />
-          <button class="btn-primary shrink-0" @click="openAddSchedule">添加</button>
-        </div>
-        <EmptyState v-if="!store.todayTodos.length" title="暂无待办，添加一个吧～" />
-        <div ref="listRef" class="space-y-1.5">
+        <form class="dashboard-add-task" @submit.prevent="openAddSchedule">
+          <input v-model="newTodo" class="input" aria-label="今天要完成的任务" placeholder="例如：重做极限错题 5 道" />
+          <button class="btn-primary shrink-0" :disabled="!newTodo.trim()">添加</button>
+        </form>
+        <EmptyState
+          v-if="!store.todayTodos.length"
+          title="今天还没有任务"
+          description="写下一件能完成的事，再开始计时。"
+        />
+        <p v-if="store.todayTodos.length" id="todo-sort-hint" class="sr-only">
+          拖动排序按钮，或聚焦按钮后按上下方向键调整任务顺序。
+        </p>
+        <div ref="listRef" class="space-y-1">
           <div
             v-for="t in store.todayTodos"
             :key="t.id"
             :data-todo-item="t.id"
-            class="flex items-center gap-2 rounded-lg px-2 py-1.5 group hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors select-none"
-            :class="{
-              'opacity-40': draggingId === t.id,
-              'ring-2 ring-primary-400 bg-primary-50 dark:bg-primary-900/30':
-                overId === t.id && draggingId && draggingId !== t.id,
-              'shadow-lg scale-[1.02] cursor-grabbing bg-white dark:bg-slate-800 z-10': draggingId === t.id
-            }"
-            :style="draggingId === t.id ? { transform: `translateY(${dragShift}px)` } : {}"
+            class="today-task"
+            :class="{ 'is-done': t.done, 'is-over': overId === t.id && draggingId !== t.id }"
+            :style="draggingId === t.id ? { transform: `translateY(${dragShift}px)`, zIndex: 1 } : {}"
           >
-            <!-- 拖拽手柄：pointerdown 触发拖拽，桌面/移动端通用 -->
-            <span
+            <button
+              type="button"
               data-drag-handle
-              class="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 dark:hover:text-slate-300 touch-none shrink-0"
-              title="拖动排序"
+              class="icon-button touch-none cursor-grab shrink-0"
+              :aria-label="`调整任务顺序：${t.text}`"
+              aria-describedby="todo-sort-hint"
               @pointerdown="onPointerDown($event, t.id)"
+              @keydown.up.prevent="moveTodo(t.id, -1)"
+              @keydown.down.prevent="moveTodo(t.id, 1)"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <circle cx="9" cy="6" r="1" />
-                <circle cx="9" cy="12" r="1" />
-                <circle cx="9" cy="18" r="1" />
-                <circle cx="15" cy="6" r="1" />
-                <circle cx="15" cy="12" r="1" />
-                <circle cx="15" cy="18" r="1" />
-              </svg>
-            </span>
+              <GripVertical :size="16" aria-hidden="true" />
+            </button>
             <input
+              :id="`todo-${t.id}`"
               type="checkbox"
               :checked="t.done"
-              class="w-4 h-4 accent-primary-500"
-              @change="store.toggleTodo(t.id)"
+              class="w-5 h-5 shrink-0"
+              @change="toggleTodo(t)"
             />
             <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-1.5 flex-wrap">
-                <span
-                  class="text-sm leading-5 transition-colors duration-200"
-                  :class="
-                    t.done
-                      ? 'line-through text-slate-400 dark:text-slate-500 decoration-slate-300 dark:decoration-slate-600'
-                      : 'text-slate-700 dark:text-slate-200'
-                  "
-                >
-                  {{ t.text }}
-                </span>
-                <span
-                  v-if="t.done && t.completedAt"
-                  class="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-px rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300 tabular-nums"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M20 6 9 17l-5-5" />
-                  </svg>
-                  完成于 {{ fmtCompletedAt(t.completedAt) }}
-                </span>
-              </div>
-              <div v-if="t.startAt || t.dueAt" class="flex flex-wrap items-center gap-1.5 mt-1">
-                <button
-                  v-if="t.startAt"
-                  type="button"
-                  class="inline-flex items-center gap-1 text-[10px] font-medium pl-1.5 pr-2 py-0.5 rounded-full bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-300 tabular-nums transition-all duration-150 hover:bg-sky-100 hover:shadow-sm hover:shadow-sky-100 dark:hover:bg-sky-900/50 active:scale-95"
-                  title="点击修改时间"
-                  @click="openSchedule(t)"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <polygon points="6 3 20 12 6 21 6 3" />
-                  </svg>
-                  {{ fmtTodoTime(t.startAt) }} 开始
-                </button>
-                <button
-                  v-if="t.dueAt"
-                  type="button"
-                  class="inline-flex items-center gap-1 text-[10px] pl-1.5 pr-2 py-0.5 rounded-full tabular-nums transition-all duration-150 active:scale-95"
-                  :class="
-                    isOverdue(t)
-                      ? 'font-semibold bg-rose-50 text-rose-600 ring-1 ring-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:ring-rose-800 hover:bg-rose-100 hover:shadow-sm hover:shadow-rose-100 dark:hover:bg-rose-900/50'
-                      : 'font-medium bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300 hover:bg-amber-100 hover:shadow-sm hover:shadow-amber-100 dark:hover:bg-amber-900/50'
-                  "
-                  title="点击修改时间"
-                  @click="openSchedule(t)"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M5 22h14" />
-                    <path d="M5 2h14" />
-                    <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" />
-                    <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" />
-                  </svg>
-                  最晚 {{ fmtTodoTime(t.dueAt) }}
-                  <span v-if="isOverdue(t)" class="inline-flex items-center gap-1">
-                    <span class="w-1 h-1 rounded-full bg-rose-500 animate-pulse"></span>已逾期未完成
-                  </span>
-                </button>
-              </div>
+              <label :for="`todo-${t.id}`" class="today-task-label">{{ t.text }}</label>
+              <p v-if="t.done && t.completedAt" class="text-xs text-muted">
+                完成于 {{ fmtCompletedAt(t.completedAt) }}
+              </p>
+              <button class="study-link text-xs" :class="{ 'text-correction': isOverdue(t) }" @click="openSchedule(t)">
+                <template v-if="t.startAt">{{ fmtTodoTime(t.startAt) }} 开始 · </template>
+                {{ t.dueAt ? `${fmtTodoTime(t.dueAt)} 截止` : t.startAt ? '调整时间' : '设置提醒'
+                }}{{ isOverdue(t) ? ' · 已超时' : '' }}
+              </button>
             </div>
-            <button
-              class="icon-button text-red-400 hover:bg-red-50 dark:hover:bg-red-950 shrink-0"
-              title="删除"
-              @click="store.deleteTodo(t.id)"
-            >
-              ×
+            <button class="icon-button shrink-0" :aria-label="`删除任务：${t.text}`" @click="store.deleteTodo(t.id)">
+              <Trash2 :size="15" aria-hidden="true" />
             </button>
           </div>
         </div>
-      </div>
-
-      <div class="card">
-        <div class="section-title">⭕ 科目掌握进度</div>
-        <div class="flex flex-wrap gap-4 justify-center py-2">
-          <RouterLink
-            v-for="s in store.subjects"
-            :key="s.id"
-            :to="s.id === 'math' ? '/math' : s.id === 'english' ? '/english' : `/subject/${s.id}`"
-            class="flex flex-col items-center gap-1"
-          >
-            <ProgressRing :percent="subjectPercent(s.id)" :color="s.color" :size="76" :label="s.name" />
-            <span class="text-xs"><SubjectIcon v-if="s.icon" :icon="s.icon" class="mr-1" />{{ s.name }}</span>
-          </RouterLink>
+      </section>
+      <section class="card dashboard-subjects" aria-labelledby="review-subject-title">
+        <div class="study-section-heading">
+          <h2 id="review-subject-title" class="section-title !mb-0">各科复习</h2>
+          <RouterLink to="/error-book" class="text-xs arrow-link"
+            >我的错题 <ArrowRight class="arrow-inline" :size="16" aria-hidden="true"
+          /></RouterLink>
         </div>
-      </div>
+        <p class="text-xs text-muted mb-2">自评反映你的判断；真题成绩单独记录。</p>
+        <RouterLink
+          v-for="item in subjectOverviews"
+          :key="item.subject.id"
+          :to="subjectRoute(item.subject.id)"
+          class="subject-review-row"
+        >
+          <div class="dashboard-subject-line">
+            <span class="font-bold text-sm"
+              ><SubjectIcon :icon="item.subject.icon" class="mr-1" />{{ item.subject.name }}</span
+            ><span class="text-xs" :class="item.pendingErrors ? 'text-correction' : 'text-muted'">{{
+              item.pendingErrors ? `${item.pendingErrors} 道错题待复习` : '没有待复习错题'
+            }}</span>
+          </div>
+          <p class="text-xs text-muted mt-1">
+            {{
+              !item.total
+                ? '还没有知识点，添加后可自评'
+                : item.rated
+                  ? `已自评 ${item.rated}/${item.total} 个 · ${item.weak} 个低于 3 分`
+                  : `尚未自评 · 共 ${item.total} 个知识点`
+            }}
+          </p>
+          <p v-if="item.lastExam" class="text-xs mt-1">
+            最近真题 {{ item.lastExam.score }}/{{ item.lastExam.totalScore }} 分
+            <span class="text-muted">· {{ item.lastExam.date.slice(5) }}</span>
+          </p>
+        </RouterLink>
+        <RouterLink v-if="!subjectOverviews.length" to="/settings" class="text-sm arrow-link"
+          >先添加考试科目 <ArrowRight class="arrow-inline" :size="16" aria-hidden="true"
+        /></RouterLink>
+      </section>
     </div>
 
-    <!-- 热力图 -->
-    <div class="card">
-      <div class="section-title">学习热力图（近 {{ 20 }} 周）</div>
-      <Heatmap :data="store.minutesByDate" @select="(d) => (heatDate = d)" />
-      <p class="text-[10px] text-slate-400 mt-2">点击日期格子可查看当日学习总时长明细</p>
-    </div>
+    <section class="dashboard-support" aria-label="安排与协作">
+      <LearningPathCard />
+      <DashboardCompanions />
+    </section>
+
+    <section class="dashboard-records" aria-labelledby="dashboard-records-title">
+      <div class="dashboard-records-heading">
+        <h2 id="dashboard-records-title" class="section-title !mb-0">学习记录</h2>
+        <p class="text-sm text-muted">看见每天的积累，调整接下来的安排。</p>
+      </div>
+      <ExamAnswerStrip
+        :today="store.todayKey"
+        :exam-date="store.settings.examDate"
+        :minutes="store.minutesByDate"
+        :daily-goal="store.settings.dailyGoalMinutes"
+        @select="heatDate = $event"
+      />
+      <div class="card dashboard-heatmap">
+        <h3 class="section-title">近 20 周</h3>
+        <Heatmap :data="store.minutesByDate" :end-date="store.todayKey" @select="(d) => (heatDate = d)" />
+        <p class="dashboard-record-hint">点击日期查看学习明细；键盘方向键可切换日期。</p>
+      </div>
+    </section>
+
+    <aside class="dashboard-greeting">
+      <p class="text-sm">
+        你好，{{ store.settings.userName }}。<span class="text-muted"
+          >连续学习 {{ store.gamification.streak }} 天 · {{ store.level.name }}学者 ·
+          {{ store.gamification.points }} 积分</span
+        >
+      </p>
+      <p class="text-xs text-muted mt-1">今日名言 · {{ quote }}</p>
+    </aside>
 
     <!-- 快捷入口（默认折叠，点击展开） -->
     <div>
       <button
-        class="w-full flex items-center justify-center gap-1.5 py-2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+        type="button"
+        class="dashboard-quick-toggle"
         :aria-expanded="showQuickLinks"
+        aria-controls="dashboard-quick-links"
         @click="showQuickLinks = !showQuickLinks"
       >
         <span>快捷入口</span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          class="transition-transform duration-200"
-          :class="showQuickLinks ? 'rotate-180' : ''"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
+        <ChevronUp v-if="showQuickLinks" :size="16" aria-hidden="true" />
+        <ChevronDown v-else :size="16" aria-hidden="true" />
       </button>
-      <div v-if="showQuickLinks" class="panel-reveal grid grid-cols-4 sm:grid-cols-8 gap-2">
+      <div v-if="showQuickLinks" id="dashboard-quick-links" class="panel-reveal dashboard-quick-links">
         <RouterLink
           v-for="q in [
-            { to: '/pomodoro', icon: '🍅', label: '专注' },
-            { to: '/daily-summary', icon: '📝', label: '总结' },
-            { to: '/error-book', icon: '📕', label: '错题' },
-            { to: '/habits', icon: '✅', label: '习惯' },
-            { to: '/statistics', icon: '📊', label: '统计' },
-            { to: '/rewards', icon: '🏆', label: '成就' },
-            { to: '/materials', icon: '📚', label: '资料' },
-            { to: '/settings', icon: '⚙️', label: '设置' }
+            { to: '/pomodoro', icon: 'Timer', label: '专注' },
+            { to: '/daily-summary', icon: 'SquarePen', label: '总结' },
+            { to: '/error-book', icon: 'BookMarked', label: '错题' },
+            { to: '/habits', icon: 'ListChecks', label: '习惯' },
+            { to: '/statistics', icon: 'ChartNoAxesColumn', label: '统计' },
+            { to: '/rewards', icon: 'Award', label: '成就' },
+            { to: '/materials', icon: 'Library', label: '资料' },
+            { to: '/settings', icon: 'Settings', label: '设置' }
           ]"
           :key="q.to"
           :to="q.to"
-          class="card interactive-card !p-3 flex flex-col items-center gap-1"
+          class="dashboard-quick-link"
         >
-          <span class="text-xl">{{ q.icon }}</span>
-          <span class="text-[11px] text-slate-500 dark:text-slate-400">{{ q.label }}</span>
+          <NavIcon :icon="q.icon" class="text-action" />
+          <span>{{ q.label }}</span>
         </RouterLink>
       </div>
     </div>
 
     <!-- 热力图当日学习明细弹窗 -->
-    <!-- 新增待办：开始 / 最晚截止时间选择器（仅时:分，日期固定为当日）-->
-    <Modal title="设定待办时间" :show="showAddSchedule" @close="showAddSchedule = false">
+    <!-- 新增任务：开始 / 最晚截止时间选择器（仅时:分，日期固定为当日）-->
+    <Modal title="设定任务时间" :show="showAddSchedule" @close="showAddSchedule = false">
       <TodoTimeFields
         v-model:start="addStart"
         v-model:due="addDue"
-        hint="时间均为「当日」的时刻，待办须在今日完成；两项均为选填。"
+        hint="时间均为「当日」的时刻，任务须在今日完成；两项均为选填。"
       />
       <template #footer>
         <button class="btn-ghost" @click="showAddSchedule = false">取消</button>
@@ -560,8 +484,8 @@ onUnmounted(() => {
       </template>
     </Modal>
 
-    <!-- 修改既有待办的开始 / 最晚截止时间（同样仅限当日，不允许跨日）-->
-    <Modal title="待办时间设置" :show="!!scheduleEditId" @close="scheduleEditId = ''">
+    <!-- 修改既有任务的开始 / 最晚截止时间（同样仅限当日，不允许跨日）-->
+    <Modal title="任务时间设置" :show="!!scheduleEditId" @close="scheduleEditId = ''">
       <TodoTimeFields v-model:start="editStart" v-model:due="editDue" />
       <template #footer>
         <button class="btn-ghost" @click="scheduleEditId = ''">取消</button>
@@ -573,9 +497,11 @@ onUnmounted(() => {
       <div class="space-y-3">
         <div class="flex items-center justify-between bg-primary-50 dark:bg-primary-900/30 rounded-xl px-4 py-3">
           <span class="text-sm text-slate-500 dark:text-slate-400">当日学习总时长</span>
-          <span class="text-xl font-black text-primary-500">{{ formatMinutes(heatTotal) }}</span>
+          <span class="text-xl font-black text-action">{{ formatMinutes(heatTotal) }}</span>
         </div>
-        <div v-if="!heatRecords.length" class="text-xs text-slate-400 text-center py-4">当日暂无学习记录</div>
+        <div v-if="!heatRecords.length" class="text-xs text-slate-400 text-center py-4">
+          这天没有学习记录。之后完成学习，可在科目页记录。
+        </div>
         <div v-else class="space-y-2">
           <div
             v-for="r in heatRecords"
@@ -609,3 +535,181 @@ onUnmounted(() => {
     />
   </div>
 </template>
+
+<style scoped>
+.dashboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.dashboard-date {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.dashboard-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--action-soft);
+}
+.dashboard-next-title {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.dashboard-next-description,
+.dashboard-next-progress {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.dashboard-workspace,
+.dashboard-support {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+.dashboard-workspace > *,
+.dashboard-support > *,
+.dashboard-records > * {
+  min-width: 0;
+}
+.dashboard-add-task {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.dashboard-add-task .input {
+  min-width: 0;
+}
+.today-task {
+  min-height: 76px;
+}
+.today-task-label {
+  font-size: 15px;
+}
+.dashboard-subject-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.subject-review-row {
+  padding: 14px 0;
+}
+.dashboard-records {
+  display: grid;
+  gap: 16px;
+  margin-top: 4px;
+}
+.dashboard-records-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+}
+.dashboard-record-hint {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.dashboard-greeting {
+  padding: 0;
+}
+.dashboard-quick-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  font-size: 13px;
+}
+.dashboard-quick-toggle:hover,
+.dashboard-quick-link:hover {
+  color: var(--action);
+  background: var(--action-soft);
+}
+.dashboard-quick-links {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 8px;
+}
+.dashboard-quick-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 68px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  font-size: 13px;
+  background: var(--surface);
+}
+@media (min-width: 1280px) {
+  .dashboard-records {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+@media (max-width: 1023px) {
+  .dashboard-workspace,
+  .dashboard-support {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .dashboard-quick-links {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 639px) {
+  .dashboard-page {
+    gap: 16px;
+  }
+  .dashboard-page > .study-page-heading {
+    align-items: flex-start;
+    flex-wrap: nowrap;
+  }
+  .dashboard-page > .study-page-heading .btn-ghost {
+    flex-shrink: 0;
+  }
+  .dashboard-next {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    padding: 16px;
+  }
+  .dashboard-next .btn-primary {
+    width: 100%;
+  }
+  .dashboard-next-title {
+    font-size: 17px;
+  }
+  .dashboard-records-heading {
+    gap: 4px;
+  }
+  .dashboard-records-heading p {
+    font-size: 13px;
+  }
+  .today-task {
+    gap: 6px;
+  }
+  .today-task [data-drag-handle] {
+    width: 32px;
+    min-width: 32px;
+  }
+}
+</style>

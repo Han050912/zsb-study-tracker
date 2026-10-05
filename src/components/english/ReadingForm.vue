@@ -22,13 +22,13 @@ function addReading() {
   }
   store.addReadingRecord(readWpm.value, readAcc.value)
   lastSavedAt = Date.now()
-  toast('阅读记录已保存 +5 积分')
+  toast('阅读记录已保存')
 }
 </script>
 
 <template>
   <div class="card space-y-3">
-    <div class="section-title">阅读理解计时训练</div>
+    <div class="section-title">记录阅读练习</div>
     <div class="grid grid-cols-2 gap-3">
       <div>
         <label class="label" for="en-read-wpm">阅读速度（词/分钟）</label
@@ -43,13 +43,12 @@ function addReading() {
   </div>
   <div class="card">
     <div class="section-title">阅读历史</div>
+    <p v-if="!eng.reading.length" class="study-note">还没有阅读记录，做完一篇后记录速度和正确率。</p>
     <div class="space-y-1.5">
       <div v-for="(r, i) in eng.reading.slice().reverse()" :key="i" class="flex items-center gap-3 text-sm">
         <span class="text-xs text-slate-400 w-20">{{ r.date }}</span>
         <span class="flex-1">{{ r.wpm }} 词/分钟</span>
-        <span class="font-semibold" :class="r.accuracy >= 80 ? 'text-emerald-500' : 'text-amber-500'"
-          >{{ r.accuracy }}%</span
-        >
+        <span class="font-semibold" :class="r.accuracy >= 80 ? 'text-ink' : 'text-ink'">{{ r.accuracy }}%</span>
       </div>
     </div>
   </div>

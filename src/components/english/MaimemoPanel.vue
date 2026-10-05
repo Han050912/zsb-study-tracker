@@ -45,14 +45,12 @@ async function saveMaimemoToken() {
   <div class="card space-y-2">
     <div class="flex items-center gap-2">
       <div class="section-title !mb-0">墨墨背单词同步</div>
-      <span
-        class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400"
-        >云端同步</span
-      >
+      <span class="text-[10px] px-1.5 py-0.5 rounded bg-action-soft text-action">云端同步</span>
     </div>
     <div class="flex gap-2">
       <input
         v-model="maimemoToken"
+        aria-label="墨墨开放 API Token"
         type="password"
         class="input"
         :placeholder="

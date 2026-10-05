@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ChevronDown, Pencil, X } from '@lucide/vue'
+import IconAction from '../../shared/components/IconAction.vue'
+import { ChevronDown, ChevronUp, Pencil, X } from '@lucide/vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '../../composables/useToast'
@@ -95,8 +96,8 @@ function removeTopic(chapterId: string, topic: string) {
 // ---- 知识点重要程度 + 双击编辑 ----
 const IMPORTANCE_OPTIONS: { k: TopicImportance; l: string; cls: string }[] = [
   { k: 'normal', l: '普通', cls: 'text-slate-400 bg-slate-100 dark:bg-slate-700' },
-  { k: 'important', l: '重要', cls: 'text-amber-500 bg-amber-50 dark:bg-amber-900/30' },
-  { k: 'must', l: '必考', cls: 'text-red-500 bg-red-50 dark:bg-red-900/30' }
+  { k: 'important', l: '重要', cls: 'text-muted bg-surface-soft' },
+  { k: 'must', l: '必考', cls: 'text-correction bg-correction-soft' }
 ]
 function importanceOf(topic: string): TopicImportance {
   return subject.value?.topicImportance?.[topic] || 'normal'
@@ -148,15 +149,16 @@ const expanded = ref<Record<string, boolean>>({})
 <template>
   <!-- 章节树 + 掌握度 -->
   <div v-if="radarChapters.length" class="card">
-    <EnhancedRadarChart :chapters="radarChapters" :color="subject?.color" title="掌握度雷达（薄弱环节一目了然）" />
+    <EnhancedRadarChart :chapters="radarChapters" :color="subject?.color" title="知识点自评" />
   </div>
   <div class="card">
-    <div class="section-title">章节知识点（点击星星评估掌握度，双击知识点可编辑内容与重要程度）</div>
+    <div class="section-title">章节知识点</div>
+    <p class="study-note mb-3">展开章节后点击星星自评；编辑按钮可修改名称与重要程度。</p>
     <div class="space-y-1">
       <div
         v-for="ch in subject.chapters"
         :key="ch.id"
-        class="border border-slate-100 dark:border-slate-700 rounded-xl overflow-hidden"
+        class="border border-slate-100 dark:border-slate-700 rounded-lg overflow-hidden"
       >
         <div class="flex items-center gap-1 px-3 py-1">
           <input
@@ -169,28 +171,27 @@ const expanded = ref<Record<string, boolean>>({})
             @keyup.esc="cancelEditChapter"
             @blur="saveChapterName(ch.id)"
           />
-          <button
+          <span
             v-else
-            type="button"
-            class="flex-1 min-w-0 min-h-11 flex items-center gap-2 text-left text-sm font-medium"
-            :aria-expanded="!!expanded[ch.id]"
-            :aria-controls="`chapter-${subjectId}-${ch.id}`"
+            class="flex-1 min-w-0 min-h-11 flex items-center gap-2 text-left text-sm font-medium arrow-action"
             @click="expanded[ch.id] = !expanded[ch.id]"
           >
-            <ChevronDown
-              :size="16"
+            <IconAction
+              :icon="expanded[ch.id] ? ChevronUp : ChevronDown"
+              :label="`${ch.name} ${ch.topics.length} 个知识点`"
+              :aria-expanded="!!expanded[ch.id]"
+              :aria-controls="`chapter-${subjectId}-${ch.id}`"
               class="shrink-0 transition-transform duration-150"
-              :class="expanded[ch.id] ? 'rotate-180' : ''"
-              aria-hidden="true"
+              @click="expanded[ch.id] = !expanded[ch.id]"
             />
             <span class="break-words">{{ ch.name }}</span>
             <span class="hidden sm:inline text-xs text-slate-400 whitespace-nowrap"
               >{{ ch.topics.length }} 个知识点</span
             >
-          </button>
+          </span>
           <button
             type="button"
-            class="icon-button text-slate-400 hover:text-primary-500"
+            class="icon-button text-slate-400 hover:text-action"
             title="编辑章节标题"
             aria-label="编辑章节标题"
             @click="startEditChapter(ch)"
@@ -199,30 +200,38 @@ const expanded = ref<Record<string, boolean>>({})
           </button>
           <button
             type="button"
-            class="min-h-11 px-1 text-primary-500 text-xs hover:underline"
+            class="min-h-11 px-1 text-action text-xs hover:underline"
             @click="openTopicDiscussion(ch.name)"
           >
             讨论
           </button>
           <button
             type="button"
-            class="min-h-11 px-1 text-red-500 text-xs hover:underline"
+            class="min-h-11 px-1 text-correction text-xs hover:underline"
             @click="removeChapter(ch.id)"
           >
             删除
           </button>
         </div>
         <div v-if="expanded[ch.id]" :id="`chapter-${subjectId}-${ch.id}`" class="panel-reveal px-3 pb-2 space-y-1.5">
-          <div v-if="!ch.topics.length" class="text-xs text-slate-400 py-1">
-            暂无知识点，在下方添加小标题后可评估掌握度
-          </div>
-          <div v-for="topic in ch.topics" :key="topic" class="flex items-center justify-between text-sm py-0.5 group">
+          <div v-if="!ch.topics.length" class="text-xs text-slate-400 py-1">先在下方添加知识点，再记录自评。</div>
+          <div
+            v-for="topic in ch.topics"
+            :key="topic"
+            class="flex flex-wrap items-center justify-between gap-2 text-sm py-1 group"
+          >
             <span
-              class="text-slate-600 dark:text-slate-300 flex items-center gap-2 cursor-pointer select-none"
+              class="text-slate-600 dark:text-slate-300 flex items-center gap-2 min-w-0"
               title="双击编辑知识点内容与重要程度"
               @dblclick="openTopicEdit(ch.id, topic)"
             >
-              {{ topic }}
+              <button
+                class="study-link text-left text-sm"
+                :aria-label="`编辑知识点：${topic}`"
+                @click="openTopicEdit(ch.id, topic)"
+              >
+                {{ topic }}
+              </button>
               <span
                 v-if="importanceOf(topic) !== 'normal'"
                 class="text-[10px] px-1.5 py-0.5 rounded font-medium"
@@ -231,7 +240,7 @@ const expanded = ref<Record<string, boolean>>({})
                 {{ importanceMeta(topic).l }}
               </span>
               <button
-                class="icon-button text-red-400 text-xs"
+                class="icon-button text-correction text-xs"
                 title="删除知识点"
                 @click.stop="removeTopic(ch.id, topic)"
                 @dblclick.stop
@@ -240,6 +249,7 @@ const expanded = ref<Record<string, boolean>>({})
               </button>
             </span>
             <StarRating
+              :label="`${topic}自评`"
               :model-value="subject.mastery[topic] || 0"
               @update:model-value="(v) => store.setMastery(subject.id, topic, v)"
             />
@@ -277,7 +287,7 @@ const expanded = ref<Record<string, boolean>>({})
             v-for="o in IMPORTANCE_OPTIONS"
             :key="o.k"
             type="button"
-            class="flex-1 text-xs px-3 py-2 rounded-xl font-medium transition-all"
+            class="flex-1 text-xs px-3 py-2 rounded-lg font-medium transition-all"
             :class="[o.cls, editTopic.importance === o.k ? 'ring-2 ring-primary-400' : 'opacity-60 hover:opacity-100']"
             @click="editTopic.importance = o.k"
           >

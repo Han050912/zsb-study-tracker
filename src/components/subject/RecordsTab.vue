@@ -91,7 +91,7 @@ function addRecord() {
   saveFeedbackTimer = setTimeout(() => {
     justSaved.value = false
   }, 1200)
-  toast(`已记录 ${recMinutes.value} 分钟学习 +积分`)
+  toast(`学习记录已保存，共 ${recMinutes.value} 分钟`)
 }
 
 onMounted(() => {
@@ -109,7 +109,7 @@ onUnmounted(() => {
     <div class="section-title">记录本次学习</div>
     <!-- 计时器 -->
     <div class="flex items-center justify-center gap-3 py-2">
-      <span class="text-3xl font-mono font-bold tabular-nums" :class="timerRunning ? 'text-emerald-500' : ''">{{
+      <span class="text-3xl font-data font-bold tabular-nums" :class="timerRunning ? 'text-action' : ''">{{
         fmtTimer(timerSeconds)
       }}</span>
       <button v-if="!timerRunning" class="btn-primary" @click="startTimer">▶ 开始</button>
@@ -122,30 +122,34 @@ onUnmounted(() => {
         <input id="record-minutes" v-model.number="recMinutes" type="number" min="1" max="1440" class="input" />
       </div>
       <div>
-        <label class="label">章节</label>
-        <select v-model="recChapter" class="input">
+        <label class="label" for="record-chapter">章节</label>
+        <select id="record-chapter" v-model="recChapter" class="input">
           <option value="">不限</option>
           <option v-for="ch in subject.chapters" :key="ch.id" :value="ch.id">{{ ch.name }}</option>
         </select>
       </div>
     </div>
     <div>
-      <label class="label">知识点 / 备注</label>
-      <input v-model="recNote" class="input" placeholder="例如：洛必达法则错题整理" />
+      <label class="label" for="record-note">知识点 / 备注</label>
+      <input id="record-note" v-model="recNote" class="input" placeholder="例如：洛必达法则错题整理" />
     </div>
     <button class="btn-primary w-full" :disabled="justSaved" @click="addRecord">
-      {{ justSaved ? '已保存' : '保存记录（+积分）' }}
+      {{ justSaved ? '已保存学习记录' : '保存学习记录' }}
     </button>
   </div>
   <div class="card">
     <div class="section-title">历史记录</div>
-    <EmptyState v-if="!subjectRecords.length" title="暂无记录" />
+    <EmptyState
+      v-if="!subjectRecords.length"
+      title="还没有这科的学习记录"
+      description="完成一段学习后，在上方记录时长和内容。"
+    />
     <div class="space-y-1.5 max-h-72 overflow-y-auto">
       <div v-for="r in subjectRecords" :key="r.id" class="flex items-center gap-2 text-sm group">
         <span class="text-xs text-slate-400 w-20 shrink-0">{{ r.date }}</span>
         <span class="font-medium w-16 shrink-0" :style="{ color: subject.color }">{{ r.minutes }}分钟</span>
         <span class="flex-1 text-slate-500 truncate text-xs">{{ r.note || '—' }}</span>
-        <button class="record-action text-red-500 text-xs" @click="store.deleteRecord(r.id)">删除</button>
+        <button class="record-action text-correction text-xs" @click="store.deleteRecord(r.id)">删除</button>
       </div>
     </div>
   </div>

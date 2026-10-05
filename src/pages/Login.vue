@@ -2,7 +2,7 @@
 import { ref, defineAsyncComponent } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useRouter } from 'vue-router'
-import { Eye, EyeOff } from '@lucide/vue'
+import { Eye, EyeOff, ArrowRight, BookOpen, ListChecks, Timer, NotebookPen } from '@lucide/vue'
 import { login, register, enterGuestMode } from '../services/auth'
 import { retryBoot } from '../composables/useAppBoot'
 
@@ -93,7 +93,7 @@ async function submit() {
     // 登录/注册成功后从云端载入该用户的历史数据
     await retryBoot.value?.()
   } catch (e) {
-    const msg = getErrorMessage(e, '操作失败，请重试')
+    const msg = getErrorMessage(e, mode.value === 'login' ? '登录未完成，请重试' : '注册未完成，请重试')
     // 桌面端没有 Turnstile 组件，人机验证完全依赖 X-Desktop-Token：
     // 服务端仍报「缺少人机验证令牌/人机验证失败」时，说明构建期 Token 未注入或与服务端 Secret 不一致，
     // 按「完成验证」的原提示用户无法自救，映射为可操作的更新客户端提示
@@ -110,47 +110,67 @@ async function submit() {
 </script>
 
 <template>
-  <div
-    class="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 via-white to-indigo-50 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800 p-4"
-  >
-    <div class="w-full max-w-sm">
-      <!-- Logo -->
-      <div class="text-center mb-6">
-        <div class="text-4xl mb-2">🎓</div>
-        <h1 class="text-xl font-bold text-slate-800 dark:text-slate-100">专升本学习助手</h1>
-        <p class="text-xs text-slate-400 mt-1">数据云端同步 · 多设备随时访问</p>
-      </div>
+  <div class="login-page">
+    <div class="login-layout">
+      <section class="login-intro" aria-labelledby="login-intro-title">
+        <p class="login-brand"><BookOpen :size="24" aria-hidden="true" />专升本助手</p>
+        <h1 id="login-intro-title">把今天要学的事，安排清楚。</h1>
+        <p class="login-intro-description">从今天的任务开始，专注复习，再回看每天的学习记录。</p>
+        <ul class="login-workflow" aria-label="学习工作台功能">
+          <li>
+            <ListChecks :size="21" aria-hidden="true" />
+            <div>
+              <h2>写下今天的任务</h2>
+              <p>按顺序安排复习，为需要提醒的任务设置时间。</p>
+            </div>
+          </li>
+          <li>
+            <Timer :size="21" aria-hidden="true" />
+            <div>
+              <h2>开始一段专注</h2>
+              <p>用番茄钟计时，在各科页面记录学习时长。</p>
+            </div>
+          </li>
+          <li>
+            <NotebookPen :size="21" aria-hidden="true" />
+            <div>
+              <h2>回看复习进度</h2>
+              <p>整理错题与笔记，查看各科自评和学习记录。</p>
+            </div>
+          </li>
+        </ul>
+        <p class="login-account-note">不同账号的学习记录独立保存。</p>
+      </section>
 
-      <div class="card !p-6">
-        <!-- 选项卡 -->
-        <div class="flex rounded-xl bg-slate-100 dark:bg-slate-700 p-1 mb-5">
+      <section class="login-form-panel" aria-labelledby="login-form-title">
+        <header class="login-form-heading">
+          <h2 id="login-form-title">{{ mode === 'login' ? '继续今天的学习' : '创建学习账号' }}</h2>
+          <p>{{ mode === 'login' ? '登录后，接着完成你的复习计划。' : '使用用户名和密码，保存自己的学习记录。' }}</p>
+        </header>
+        <div class="login-tabs" aria-label="选择登录或注册">
           <button
-            class="flex-1 py-1.5 text-sm rounded-lg transition-colors"
-            :class="
-              mode === 'login'
-                ? 'bg-white dark:bg-slate-600 shadow font-semibold text-primary-600 dark:text-primary-400'
-                : 'text-slate-500 dark:text-slate-300'
-            "
+            type="button"
+            :class="{ 'is-selected': mode === 'login' }"
+            :aria-pressed="mode === 'login'"
+            :disabled="loading"
             @click="switchMode('login')"
           >
             登录
           </button>
           <button
-            class="flex-1 py-1.5 text-sm rounded-lg transition-colors"
-            :class="
-              mode === 'register'
-                ? 'bg-white dark:bg-slate-600 shadow font-semibold text-primary-600 dark:text-primary-400'
-                : 'text-slate-500 dark:text-slate-300'
-            "
+            type="button"
+            :class="{ 'is-selected': mode === 'register' }"
+            :aria-pressed="mode === 'register'"
+            :disabled="loading"
             @click="switchMode('register')"
           >
             注册
           </button>
         </div>
 
-        <form class="space-y-3" @submit.prevent="submit">
+        <form class="login-form" :aria-busy="loading" @submit.prevent="submit">
           <div>
-            <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block" for="username">用户名</label>
+            <label class="login-label" for="username">用户名</label>
             <input
               v-model="username"
               id="username"
@@ -162,26 +182,22 @@ async function submit() {
             />
           </div>
           <div>
-            <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block" for="password">密码</label>
+            <label class="login-label" for="password">密码</label>
             <div class="relative">
               <input
                 v-model="password"
                 id="password"
                 name="password"
                 :type="showPassword ? 'text' : 'password'"
-                class="input pr-10"
+                class="input pr-12"
                 :maxlength="mode === 'register' ? 14 : 128"
                 :placeholder="mode === 'register' ? '8-14 位' : '请输入密码'"
                 :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
               />
               <button
                 type="button"
-                class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                :class="
-                  showPassword
-                    ? 'text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300'
-                    : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'
-                "
+                class="icon-button login-password-toggle"
+                :class="{ 'is-visible': showPassword }"
                 :aria-label="showPassword ? '隐藏密码' : '显示密码'"
                 :aria-pressed="showPassword"
                 @click="showPassword = !showPassword"
@@ -190,31 +206,25 @@ async function submit() {
                 <EyeOff v-else :size="16" aria-hidden="true" />
               </button>
             </div>
-            <p v-if="mode === 'register'" class="text-xs text-slate-400 dark:text-slate-500 mt-1">
-              8-14 位，需包含字母和数字
-            </p>
+            <p v-if="mode === 'register'" class="login-field-hint">8-14 位，需包含字母和数字</p>
           </div>
           <div v-if="mode === 'register'">
-            <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block" for="confirm-password">确认密码</label>
+            <label class="login-label" for="confirm-password">确认密码</label>
             <div class="relative">
               <input
                 v-model="confirmPassword"
                 id="confirm-password"
                 name="confirm-password"
                 :type="showConfirmPassword ? 'text' : 'password'"
-                class="input pr-10"
+                class="input pr-12"
                 maxlength="14"
                 placeholder="再次输入密码"
                 autocomplete="new-password"
               />
               <button
                 type="button"
-                class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                :class="
-                  showConfirmPassword
-                    ? 'text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300'
-                    : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'
-                "
+                class="icon-button login-password-toggle"
+                :class="{ 'is-visible': showConfirmPassword }"
                 :aria-label="showConfirmPassword ? '隐藏密码' : '显示密码'"
                 :aria-pressed="showConfirmPassword"
                 @click="showConfirmPassword = !showConfirmPassword"
@@ -235,77 +245,319 @@ async function submit() {
           />
 
           <!-- Turnstile 加载失败（含手动重试） -->
-          <div
-            v-if="turnstileError"
-            class="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2 space-y-1.5"
-          >
-            <div class="flex items-center gap-2">
-              <span></span>人机验证组件加载失败（Cloudflare CDN
-              在国内可能不稳定），请尝试刷新页面或使用代理/加速器后重试
-            </div>
-            <button
-              type="button"
-              class="text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 underline cursor-pointer"
-              @click="retryTurnstile"
-            >
-              → 点击重试
+          <div v-if="turnstileError" class="login-error" role="alert">
+            <p>人机验证未能加载。请检查网络或刷新页面，再重试验证。</p>
+            <button type="button" class="login-retry" @click="retryTurnstile">
+              重新加载验证 <ArrowRight :size="16" aria-hidden="true" />
             </button>
           </div>
 
           <!-- 其他错误 -->
-          <div
-            v-if="errorMsg"
-            class="flex items-center gap-2 text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2"
-          >
-            <span></span>{{ errorMsg }}
-          </div>
+          <p v-if="errorMsg" class="login-error" role="alert">{{ errorMsg }}</p>
 
-          <button type="submit" class="btn-primary w-full !py-2.5" :disabled="loading">
-            {{ loading ? '请稍候…' : mode === 'login' ? '登 录' : '注册并登录' }}
+          <button type="submit" class="btn-primary login-submit" :disabled="loading">
+            {{
+              loading ? (mode === 'login' ? '正在登录…' : '正在创建账号…') : mode === 'login' ? '登录' : '注册并登录'
+            }}
           </button>
         </form>
 
         <!-- 忘记密码：账号未绑定邮箱/手机号，无自助找回渠道，此处给出可行的处理路径 -->
-        <div v-if="mode === 'login'" class="mt-4 text-center">
+        <div v-if="mode === 'login'" class="login-recovery">
           <button
             type="button"
-            class="text-xs text-slate-400 hover:text-primary-500 transition-colors"
+            class="login-forgot-button"
+            :aria-expanded="showForgotHint"
+            aria-controls="login-recovery-hint"
             @click="showForgotHint = !showForgotHint"
           >
             忘记密码？
           </button>
-          <div
-            v-if="showForgotHint"
-            class="mt-2 text-left space-y-1.5 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2.5 leading-relaxed"
-          >
+          <div v-if="showForgotHint" id="login-recovery-hint" class="login-recovery-hint">
             <p>账号仅使用「用户名 + 密码」，未绑定邮箱或手机号，因此无法自助找回密码。</p>
-            <p>1. 还有其它设备处于登录状态：在「个人中心 → 账号安全」中修改密码。</p>
+            <p>1. 还有其它设备处于登录状态：在「我的账号 → 账号安全」中修改密码。</p>
             <p>2. 所有设备都已无法登录：请提交 Issue 说明用户名与注册时间，由管理员核实后处理。</p>
             <a
               href="https://github.com/Han050912/zsb-study-tracker/issues/new"
               target="_blank"
               rel="noopener"
-              class="inline-block text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 underline underline-offset-2"
-              >提交 Issue →</a
-            >
+              class="study-link arrow-link"
+              >提交 Issue <ArrowRight class="arrow-inline" :size="16" aria-hidden="true"
+            /></a>
           </div>
         </div>
 
         <!-- 访客入口：唯一进入访客浏览模式的路径 -->
-        <div class="text-center mt-4">
-          <button
-            type="button"
-            class="text-xs text-slate-400 hover:text-primary-500 transition-colors"
-            @click="enterGuest"
-          >
-            先随便看看 →
+        <footer class="login-form-footer">
+          <button type="button" class="login-guest" :disabled="loading" @click="enterGuest">
+            先浏览升本讨论 <ArrowRight :size="16" aria-hidden="true" />
           </button>
-        </div>
-      </div>
-
-      <p class="text-center text-[11px] text-slate-400 mt-4 leading-relaxed">
-        密码经 bcrypt 哈希存储，无法被还原，忘记后无法自助找回<br />不同账号数据互相隔离
-      </p>
+          <p>请妥善保存密码，目前不支持自助找回。</p>
+        </footer>
+      </section>
     </div>
   </div>
 </template>
+
+<style scoped>
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 48px 32px;
+  background: var(--paper);
+}
+.login-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 72px;
+  width: 100%;
+  max-width: 1024px;
+}
+.login-intro {
+  min-width: 0;
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 32px;
+  color: var(--action);
+  font-size: 21px;
+  font-weight: 700;
+}
+.login-intro h1 {
+  max-width: 16em;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.5;
+  text-wrap: balance;
+}
+.login-intro-description {
+  max-width: 28em;
+  margin-top: 12px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.login-workflow {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-top: 36px;
+}
+.login-workflow li {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.login-workflow svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--action);
+}
+.login-workflow h2 {
+  font-size: 15px;
+  font-weight: 700;
+}
+.login-workflow p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.login-account-note {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+}
+.login-form-panel {
+  min-width: 0;
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.login-form-heading h2 {
+  font-size: 24px;
+  line-height: 1.45;
+  font-weight: 700;
+}
+.login-form-heading p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.login-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 24px 0 20px;
+  padding: 4px;
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
+}
+.login-tabs button {
+  flex: 1;
+  min-height: 40px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.login-tabs button.is-selected {
+  color: var(--action);
+  background: var(--surface);
+  font-weight: 700;
+}
+.login-tabs button:hover:not(.is-selected) {
+  color: var(--action);
+}
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.login-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.login-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  transform: translateY(-50%);
+  color: var(--muted);
+}
+.login-password-toggle.is-visible,
+.login-password-toggle:hover {
+  color: var(--action);
+}
+.login-field-hint {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.login-error {
+  padding: 12px;
+  border-radius: var(--radius-control);
+  color: var(--correction);
+  background: var(--correction-soft);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.login-retry,
+.login-guest {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border-radius: var(--radius-control);
+  color: var(--action);
+  font-size: 13px;
+}
+.login-retry {
+  margin-top: 4px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.login-submit {
+  width: 100%;
+  min-height: 46px;
+  margin-top: 4px;
+}
+.login-recovery {
+  margin-top: 8px;
+}
+.login-forgot-button {
+  min-height: 44px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.login-forgot-button:hover {
+  color: var(--action);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.login-recovery-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  background: var(--surface-soft);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.login-form-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+.login-guest {
+  width: 100%;
+}
+.login-guest:hover {
+  background: var(--action-soft);
+}
+.login-form-footer p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 900px) {
+  .login-layout {
+    gap: 32px;
+  }
+  .login-intro h1 {
+    font-size: 24px;
+  }
+  .login-form-panel {
+    padding: 24px;
+  }
+}
+@media (max-width: 767px) {
+  .login-page {
+    align-items: flex-start;
+    padding: 32px 16px;
+  }
+  .login-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    max-width: 440px;
+  }
+  .login-brand {
+    margin-bottom: 16px;
+    font-size: 20px;
+  }
+  .login-intro h1 {
+    font-size: 21px;
+  }
+  .login-intro-description {
+    margin-top: 8px;
+    font-size: 13px;
+  }
+  .login-workflow,
+  .login-account-note {
+    display: none;
+  }
+  .login-form-panel {
+    padding: 20px;
+  }
+  .login-form-heading h2 {
+    font-size: 21px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-tabs button {
+    transition: none;
+  }
+}
+</style>

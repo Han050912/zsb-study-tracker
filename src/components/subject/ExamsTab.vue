@@ -52,19 +52,18 @@ const {
         .map((e) => e.date),
       axisLabel: { color: chartTextColor(), fontSize: 10 }
     },
-    yAxis: { type: 'value', axisLabel: { color: chartTextColor() } },
+    yAxis: { type: 'value', min: 0, max: 100, axisLabel: { color: chartTextColor() } },
     series: [
       {
         type: 'line',
-        smooth: true,
+        smooth: false,
         data: subjectExams.value
           .slice()
           .reverse()
-          .map((e) => (e.totalScore > 0 ? Math.round((e.score / e.totalScore) * 100) : 0)),
+          .map((e) => (e.totalScore > 0 ? Math.round((e.score / e.totalScore) * 100) : null)),
         name: '得分率%',
         lineStyle: { color: subject.value?.color },
-        itemStyle: { color: subject.value?.color },
-        areaStyle: { opacity: 0.15 }
+        itemStyle: { color: subject.value?.color }
       }
     ],
     tooltip: { trigger: 'axis' }
@@ -76,19 +75,19 @@ const {
 <template>
   <div class="card">
     <div class="flex items-center justify-between mb-2">
-      <div class="section-title !mb-0">真题成绩趋势（得分率%）</div>
+      <div class="section-title !mb-0">真题得分率（得分 ÷ 满分）</div>
       <button class="btn-primary !py-1.5" @click="showExamModal = true">+ 记录真题</button>
     </div>
     <ChartFallback v-if="examTrendStatus === 'error'" class="h-52" @retry="retryExamTrend" />
     <div v-else-if="subjectExams.length" ref="examTrendEl" class="h-52"></div>
-    <EmptyState v-else title="暂无真题记录" />
+    <EmptyState v-else title="还没有真题成绩，做完一套后记录分数和用时。" />
     <div class="space-y-1.5 mt-2">
       <div v-for="e in subjectExams" :key="e.id" class="flex items-center gap-2 text-sm group">
         <span class="text-xs text-slate-400 w-20">{{ e.date }}</span>
         <span class="flex-1 truncate">{{ e.title }}</span>
         <span class="font-semibold">{{ e.score }}/{{ e.totalScore }}</span>
         <span class="text-xs text-slate-400">{{ e.minutes }}分钟</span>
-        <button class="record-action text-red-500 text-xs" @click="store.deleteExam(e.id)">删除</button>
+        <button class="record-action text-correction text-xs" @click="store.deleteExam(e.id)">删除</button>
       </div>
     </div>
   </div>

@@ -6,11 +6,14 @@ import { useRouter } from 'vue-router'
 import { useToast } from '../../composables/useToast'
 import { useAppStore } from '../../stores/app'
 import type { Note } from '../../types'
+import { sessionUser } from '../../services/auth'
 import { noteBodyExcerpt, noteBodyIncludes, noteBodyIndexVersion, pendingNoteBodyIds } from '../../services/noteBodies'
 
 const props = defineProps<{ subjectId: string }>()
 const store = useAppStore()
 const toast = useToast()
+const noteOwner = sessionUser.value?.id
+let disposed = false
 
 const subjectNotes = computed(() => store.notes.filter((n) => n.subjectId === props.subjectId))
 
@@ -44,6 +47,7 @@ const NOTE_FILE_EXTS = ['.md', '.markdown', '.txt']
 /** 读取本地文本文件并批量创建笔记（文件名作为标题）；全部读取完成后一次性持久化 */
 async function importNoteFiles(files: FileList | File[] | null) {
   if (!files || !files.length) return
+  const subjectId = props.subjectId
   const items: { title: string; content: string; tags: string[] }[] = []
   for (const file of Array.from(files)) {
     const dot = file.name.lastIndexOf('.')
@@ -58,6 +62,7 @@ async function importNoteFiles(files: FileList | File[] | null) {
     }
     try {
       const content = await file.text()
+      if (disposed || sessionUser.value?.id !== noteOwner) return
       if (!content.trim()) {
         toast(`「${file.name}」内容为空，已跳过`)
         continue
@@ -68,7 +73,8 @@ async function importNoteFiles(files: FileList | File[] | null) {
     }
   }
   if (!items.length) return
-  store.importNotes(props.subjectId, items)
+  if (disposed || sessionUser.value?.id !== noteOwner) return
+  store.importNotes(subjectId, items)
   toast(`已导入 ${items.length} 篇笔记`)
 }
 
@@ -107,6 +113,7 @@ onMounted(() => {
   window.addEventListener('dragleave', onWindowDragLeave)
 })
 onUnmounted(() => {
+  disposed = true
   window.removeEventListener('dragend', resetDragState)
   window.removeEventListener('drop', resetDragState)
   window.removeEventListener('dragleave', onWindowDragLeave)
@@ -140,20 +147,20 @@ onUnmounted(() => {
       <p class="text-[10px] text-slate-400 mb-2">
         支持 .md / .markdown / .txt 上传或拖拽导入；PDF 导入与预览请前往「笔记」页面 · 点击卡片进入全屏编辑
       </p>
-      <EmptyState v-if="!filteredNotes.length" title="暂无笔记" />
+      <EmptyState v-if="!filteredNotes.length" title="还没有这科的笔记，新建一篇记录解题思路。" />
       <div class="grid sm:grid-cols-2 gap-2">
         <div
           v-for="n in filteredNotes"
           :key="n.id"
-          class="border border-slate-100 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:shadow-sm"
+          class="border border-line rounded-lg p-3 cursor-pointer hover:bg-surface-soft"
           @click="openNote(n)"
         >
           <div class="flex items-center gap-1.5">
-            <span class="font-medium text-sm truncate">{{ n.title }}</span>
+            <button class="study-link font-medium text-sm truncate" @click.stop="openNote(n)">{{ n.title }}</button>
             <!-- 正文没上云的笔记在换设备后是空的：必须在列表上可见，不能只留在控制台日志里 -->
             <span
               v-if="pendingNoteBodyIds.has(n.id)"
-              class="shrink-0 inline-flex items-center gap-0.5 rounded bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+              class="shrink-0 inline-flex items-center gap-0.5 rounded bg-surface-soft px-1.5 py-0.5 text-[10px] text-muted"
               title="正文尚未同步到云端，其他设备看不到最新内容"
             >
               <CloudOff :size="10" />未同步
@@ -166,7 +173,7 @@ onUnmounted(() => {
             <span
               v-for="t in n.tags"
               :key="t"
-              class="text-[10px] px-1.5 py-0.5 rounded bg-primary-50 dark:bg-primary-900/30 text-primary-500"
+              class="text-[10px] px-1.5 py-0.5 rounded bg-primary-50 dark:bg-primary-900/30 text-action"
               >#{{ t }}</span
             >
           </div>

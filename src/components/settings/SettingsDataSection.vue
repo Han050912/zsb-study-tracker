@@ -6,6 +6,8 @@ import { useToast } from '../../composables/useToast'
 import { useAppStore } from '../../stores/app'
 import { parseBackup } from '../../stores/app/importExport'
 import { syncIssue } from '../../stores/app/sync'
+import { getErrorMessage } from '../../utils/error'
+import { today } from '../../utils/date'
 import Modal from '../Modal.vue'
 
 const store = useAppStore()
@@ -36,7 +38,7 @@ async function exportData() {
     const blob = new Blob([await store.exportJSON()], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `专升本学习数据_${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `专升本学习数据_${today()}.json`
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -50,33 +52,57 @@ async function exportData() {
 }
 
 const importFile = ref<HTMLInputElement>()
+const pendingImport = ref<{ raw: string; name: string; records: number; notes: number } | null>(null)
+const importing = ref(false)
+const readingImport = ref(false)
 async function onImport(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  const reader = new FileReader()
-  reader.onload = async () => {
-    const raw = reader.result as string
-    // 先校验备份结构再走成功分支：导入是「先删后写入」，错误文件一旦进流程会清空本地与云端数据
-    if (!parseBackup(raw)) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 同一文件失败或取消后仍可再次选择。
+  if (!file || readingImport.value || importing.value) return
+  readingImport.value = true
+  try {
+    const raw = await file.text()
+    const backup = parseBackup(raw)
+    if (!backup) {
       toast('导入失败：文件格式不正确')
       return
     }
-    if (!store.importJSON(raw)) {
+    pendingImport.value = { raw, name: file.name, records: backup.records.length, notes: backup.notes.length }
+  } catch (e) {
+    toast(getErrorMessage(e, '文件读取失败，请重新选择备份'))
+  } finally {
+    readingImport.value = false
+  }
+}
+
+async function confirmImport() {
+  if (!pendingImport.value || importing.value) return
+  importing.value = true
+  try {
+    if (!store.importJSON(pendingImport.value.raw)) {
       toast('导入失败：请稍后重试')
       return
     }
-    toast('导入成功！')
-    // 立即推送到云端，避免防抖 save() 与 location.reload() 竞态导致数据丢失
-    if (!(await store.saveAsync())) toast(syncIssue.value ?? '云端同步失败，变更将在下次同步时重试')
-    setTimeout(() => location.reload(), 300)
+    pendingImport.value = null
+    if (!(await store.saveAsync())) {
+      toast(syncIssue.value ?? '已导入本地，云端同步失败，请点击立即同步重试')
+      return
+    }
+    toast('备份已导入并同步')
+  } catch (e) {
+    toast(getErrorMessage(e, '备份导入未完成，请重试'))
+  } finally {
+    importing.value = false
   }
-  reader.readAsText(file)
 }
 
 const showClearConfirm = ref(false)
 const clearText = ref('')
+const clearing = ref(false)
 async function clearAll() {
-  if (clearText.value !== '确认清除') return
+  if (clearText.value !== '确认清除' || clearing.value) return
+  clearing.value = true
   store.clearAll()
   showClearConfirm.value = false
   toast('数据已清除')
@@ -89,6 +115,8 @@ async function clearAll() {
   } catch {
     toast('云端同步失败，请稍后重试')
     return
+  } finally {
+    clearing.value = false
   }
   setTimeout(() => location.reload(), 300)
 }
@@ -120,21 +148,24 @@ async function syncNow() {
     <!-- 推送失败（尤其 4xx 毒记录）会让云同步长期静默停止，必须常驻可见，直到下一次推送成功 -->
     <div
       v-if="syncIssue"
-      class="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-600 dark:text-amber-400"
+      class="flex items-start gap-2 rounded-lg bg-action-soft dark:bg-action-soft px-3 py-2 text-xs text-action dark:text-action"
     >
       <TriangleAlert class="w-4 h-4 shrink-0 mt-px" />
       <span>{{ syncIssue }}</span>
     </div>
     <div class="text-xs text-slate-400">云端数据大小：{{ storageUsage }}</div>
     <div class="flex gap-2 flex-wrap">
-      <button class="btn-primary" :disabled="syncing" @click="syncNow">
+      <button class="btn-primary" :disabled="syncing || importing || clearing" @click="syncNow">
         {{ syncing ? '同步中…' : '立即同步' }}
       </button>
       <button class="btn-ghost" @click="exportData">导出 JSON 备份</button>
-      <button class="btn-ghost" @click="importFile?.click()">导入数据</button>
+      <button class="btn-ghost" :disabled="readingImport || importing || clearing" @click="importFile?.click()">
+        {{ readingImport ? '正在读取…' : importing ? '正在导入…' : '导入数据' }}
+      </button>
       <input ref="importFile" type="file" accept=".json" class="hidden" @change="onImport" />
       <button
         class="btn-danger"
+        :disabled="importing || clearing"
         @click="
           () => {
             showClearConfirm = true
@@ -147,21 +178,47 @@ async function syncNow() {
       <button v-if="updater" class="btn-ghost" @click="checkUpdate">检查更新</button>
       <button v-else-if="desktopPlatform" class="btn-ghost" disabled title="当前平台暂不支持自动更新">检查更新</button>
     </div>
+    <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+      JSON 备份包含学习记录与文字笔记；上传的
+      PDF、云端错题图片仅保存引用，不包含文件本体。清除数据前请单独下载保留这些文件。
+    </p>
     <p v-if="!updater && desktopPlatform" class="mt-2 text-xs text-slate-400">
       当前平台暂不支持自动更新，请前往 GitHub Releases 手动下载新版本。
     </p>
   </div>
 
+  <Modal title="导入备份" :show="!!pendingImport" @close="!importing && (pendingImport = null)">
+    <p class="text-sm break-all">{{ pendingImport?.name }}</p>
+    <p class="text-sm text-slate-500 mt-3">
+      备份包含 {{ pendingImport?.records }} 条学习记录、{{ pendingImport?.notes }}
+      篇笔记。导入将替换当前学习数据并同步到云端，建议先导出当前备份。
+    </p>
+    <p class="text-xs text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+      JSON 中的上传文件引用仅在原账号文件仍存在时可用；已删除的 PDF、云端错题图片无法由此备份恢复。
+    </p>
+    <template #footer>
+      <button class="btn-ghost" :disabled="importing" @click="pendingImport = null">取消</button>
+      <button class="btn-primary" :disabled="importing" @click="confirmImport">
+        {{ importing ? '正在导入…' : '确认导入' }}
+      </button>
+    </template>
+  </Modal>
+
   <!-- 清除确认 -->
   <Modal title="危险操作" :show="showClearConfirm" @close="showClearConfirm = false">
     <p class="text-sm text-slate-500">
-      此操作将永久删除所有学习记录、笔记、错题、习惯数据，<b class="text-red-500">不可恢复</b>！建议先导出备份。
+      此操作将永久删除所有学习记录、笔记、错题、习惯数据，<b class="text-correction">不可恢复</b>！建议先导出备份。
+    </p>
+    <p class="text-sm text-correction mt-3 leading-relaxed">
+      上传的 PDF 与云端错题图片也会删除，JSON 备份无法恢复文件本体。请先单独下载保留。
     </p>
     <p class="text-sm mt-3">请输入「<b>确认清除</b>」以继续：</p>
-    <input v-model="clearText" class="input mt-2" placeholder="确认清除" />
+    <input v-model="clearText" class="input mt-2" aria-label="确认清除" placeholder="确认清除" />
     <template #footer>
       <button class="btn-ghost" @click="showClearConfirm = false">取消</button>
-      <button class="btn-danger" :disabled="clearText !== '确认清除'" @click="clearAll">永久清除</button>
+      <button class="btn-danger" :disabled="clearText !== '确认清除' || clearing" @click="clearAll">
+        {{ clearing ? '正在清除…' : '永久清除' }}
+      </button>
     </template>
   </Modal>
 </template>

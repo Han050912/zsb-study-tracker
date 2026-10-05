@@ -4,9 +4,9 @@ import { computed, ref } from 'vue'
 import { BookOpenCheck, Clock3, Flame, Pencil } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import { ACHIEVEMENTS, LEVELS, levelOf } from '../data/defaults'
-import { useChart, chartTextColor } from '../composables/useChart'
+import { useChart, chartTextColor, chartColor } from '../composables/useChart'
 import ChartFallback from '../components/ChartFallback.vue'
-import { businessDate, formatMinutes } from '../utils/date'
+import { formatMinutes } from '../utils/date'
 
 const store = useAppStore()
 
@@ -24,7 +24,11 @@ const levelIndex = computed(() => LEVELS.indexOf(levelOf(store.gamification.poin
 // ---- 积分走势（自我排行榜：周/月） ----
 const rankRange = ref<7 | 30>(7)
 const rankDays = computed(() =>
-  Array.from({ length: rankRange.value }, (_, i) => businessDate(Date.now() - (rankRange.value - 1 - i) * 86400_000))
+  Array.from({ length: rankRange.value }, (_, i) =>
+    new Date(Date.parse(`${store.todayKey}T00:00:00Z`) - (rankRange.value - 1 - i) * 86400_000)
+      .toISOString()
+      .slice(0, 10)
+  )
 )
 
 // 提取为响应式数据，供 useChart 依赖追踪（积分新增时自动重绘）
@@ -67,30 +71,17 @@ const {
         name: '每日获得',
         type: 'bar',
         data: daily,
-        itemStyle: { color: '#f59e0b', borderRadius: [4, 4, 0, 0] },
+        itemStyle: { color: chartColor('action'), borderRadius: [4, 4, 0, 0] },
         barMaxWidth: 16
       },
       {
         name: '累计积分',
         type: 'line',
         yAxisIndex: 1,
-        smooth: true,
+        smooth: false,
         data: cumulative,
-        lineStyle: { color: '#3b82f6', width: 2 },
-        itemStyle: { color: '#3b82f6' },
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0,
-            y: 0,
-            x2: 0,
-            y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(59,130,246,0.18)' },
-              { offset: 1, color: 'rgba(59,130,246,0)' }
-            ]
-          }
-        },
+        lineStyle: { color: chartColor('muted'), width: 2 },
+        itemStyle: { color: chartColor('muted') },
         symbol: 'circle',
         symbolSize: 6
       }
@@ -117,116 +108,112 @@ const stats = computed(() => [
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
-    <h1 class="page-title">成就激励</h1>
-
-    <!-- 等级卡 -->
-    <div
-      class="card bg-gradient-to-r from-slate-800 to-slate-900 dark:from-slate-700 dark:to-slate-800 !text-white border-0"
-    >
-      <div class="flex items-center gap-4">
-        <div
-          class="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl font-black"
-          :style="{
-            background: store.level.color + '33',
-            color: store.level.color,
-            border: `2px solid ${store.level.color}`
-          }"
-        >
-          {{ store.level.name[0] }}
-        </div>
-        <div class="flex-1">
-          <div class="flex items-baseline gap-2">
-            <span class="text-xl font-black">{{ store.level.name }}学者</span>
-            <span class="text-sm opacity-70">{{ store.gamification.points }} 积分</span>
-          </div>
-          <div class="w-full h-2 bg-white/10 rounded-full mt-2 overflow-hidden">
-            <div
-              class="h-full rounded-full progress-motion"
-              :style="{ width: levelProgress + '%', background: store.level.color }"
-            ></div>
-          </div>
-          <div class="text-[11px] opacity-60 mt-1">
-            {{
-              store.level.next
-                ? `距「${store.level.next.name}」还需 ${store.level.next.min - store.gamification.points} 积分`
-                : '已达最高等级，王者无敌！'
-            }}
-          </div>
-        </div>
+  <div class="study-page space-y-4">
+    <header class="study-page-heading">
+      <div>
+        <h1 class="page-title">积分与成就</h1>
+        <p class="page-description">每一次学习都有记录，在这里回看你的积累。</p>
       </div>
-      <div class="flex gap-1.5 mt-4 flex-wrap">
+    </header>
+
+    <section class="card space-y-4" aria-labelledby="earned-level">
+      <div class="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="earned-level" class="text-lg font-bold">{{ store.level.name }}学者</h2>
+        <p class="font-data text-2xl font-bold">
+          {{ store.gamification.points }} <span class="text-sm font-normal text-muted">积分</span>
+        </p>
+      </div>
+      <p class="text-sm text-muted">积分记录你的学习和互动，不代表考试分数或知识掌握程度。</p>
+      <p class="text-xs text-muted">
+        学习积分（含打卡与学习里程碑）每日最多 300 分，按 UTC+8 计算；社区互动另计，实际积分以同步结果为准。
+      </p>
+      <div
+        role="progressbar"
+        aria-label="当前等级进度"
+        :aria-valuenow="Math.round(levelProgress)"
+        :aria-valuemin="0"
+        :aria-valuemax="100"
+        class="h-2 bg-surface-soft rounded-full overflow-hidden"
+      >
+        <div class="h-full bg-action" :style="{ width: levelProgress + '%' }"></div>
+      </div>
+      <p class="text-sm">
+        {{
+          store.level.next
+            ? `距「${store.level.next.name}」还需 ${store.level.next.min - store.gamification.points} 积分`
+            : '已达到最高积分等级'
+        }}
+      </p>
+      <div class="flex gap-2 flex-wrap text-xs">
         <span
           v-for="(l, i) in LEVELS"
           :key="l.name"
-          class="text-[10px] px-2 py-1 rounded-full"
-          :class="i <= levelIndex ? 'text-white' : 'opacity-40 text-white'"
-          :style="{ background: l.color + (i <= levelIndex ? '' : '55') }"
+          class="px-2 py-1 rounded border border-line"
+          :class="i <= levelIndex ? 'text-action bg-action-soft' : 'text-muted'"
+          >{{ l.name }} {{ l.min }}+</span
         >
-          {{ l.name }} {{ l.min }}+
-        </span>
       </div>
-    </div>
+    </section>
 
     <!-- 数据一览 -->
-    <div class="grid grid-cols-4 gap-3">
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
       <div v-for="s in stats" :key="s.label" class="card !p-3 text-center">
         <div class="flex justify-center text-slate-400"><component :is="s.icon" class="w-5 h-5" /></div>
         <div class="text-lg font-black">{{ s.value }}</div>
-        <div class="text-[10px] text-slate-400">{{ s.label }}</div>
+        <div class="text-xs text-slate-400">{{ s.label }}</div>
       </div>
     </div>
 
     <!-- 徽章墙 -->
     <div class="card">
       <div class="section-title">成就徽章墙（{{ unlocked.size }}/{{ ACHIEVEMENTS.length }}）</div>
-      <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <div
           v-for="a in ACHIEVEMENTS"
           :key="a.id"
-          class="rounded-2xl p-3 text-center border transition-all"
+          class="rounded-lg p-4 border"
           :class="
-            unlocked.has(a.id)
-              ? 'border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800'
-              : 'border-slate-100 dark:border-slate-700 grayscale opacity-50'
+            unlocked.has(a.id) ? 'border-line bg-action-soft dark:bg-action-soft dark:border-line' : 'border-line'
           "
         >
-          <div class="text-3xl" :class="unlocked.has(a.id) ? 'animate-pop' : ''">{{ a.icon }}</div>
+          <p class="text-xs text-muted">{{ unlocked.has(a.id) ? '已完成' : '待完成' }}</p>
           <div class="text-xs font-bold mt-1">{{ a.name }}</div>
-          <div class="text-[10px] text-slate-400 mt-0.5">{{ a.desc }}</div>
+          <div class="text-xs text-slate-400 mt-0.5">{{ a.desc }}</div>
         </div>
       </div>
     </div>
 
     <!-- 积分走势 -->
     <div class="card">
-      <div class="flex items-center justify-between mb-2">
-        <div class="section-title !mb-0">📈 自我排行榜 · 积分走势</div>
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <div class="section-title !mb-0">积分从哪里来</div>
         <div class="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
           <button
             class="btn !py-1 !text-xs"
             :class="rankRange === 7 ? 'bg-white dark:bg-slate-700 shadow-sm' : ''"
+            :aria-pressed="rankRange === 7"
             @click="rankRange = 7"
           >
-            周
+            近 7 天
           </button>
           <button
             class="btn !py-1 !text-xs"
             :class="rankRange === 30 ? 'bg-white dark:bg-slate-700 shadow-sm' : ''"
+            :aria-pressed="rankRange === 30"
             @click="rankRange = 30"
           >
-            月
+            近 30 天
           </button>
         </div>
       </div>
       <ChartFallback v-if="pointsStatus === 'error'" class="h-56" @retry="retryPoints" />
       <div v-else ref="pointsEl" class="h-56"></div>
-      <p class="text-[10px] text-slate-400 mt-2">柱为每日新增积分，折线为当日累计积分（含区间前历史积分）</p>
+      <p class="text-xs text-slate-400 mt-2">柱为每日新增积分，折线为当日累计积分（含区间前历史积分）</p>
     </div>
 
     <!-- 积分日志 -->
     <div class="card">
-      <div class="section-title">📜 最近积分记录</div>
+      <div class="section-title">最近积分记录</div>
       <div class="space-y-1 max-h-56 overflow-y-auto">
         <div
           v-for="(l, i) in store.gamification.pointsLog.slice(-20).reverse()"
@@ -235,9 +222,12 @@ const stats = computed(() => [
         >
           <span class="text-slate-400 w-20">{{ l.date }}</span>
           <span class="flex-1">{{ l.reason }}</span>
-          <span class="font-bold text-amber-500">+{{ l.points }}</span>
+          <span class="font-bold text-action">+{{ l.points }}</span>
         </div>
-        <EmptyState v-if="!store.gamification.pointsLog.length" title="还没有积分记录，快去学习打卡吧！" />
+        <EmptyState
+          v-if="!store.gamification.pointsLog.length"
+          title="还没有积分记录。完成学习打卡后，可在这里查看积分来源。"
+        />
       </div>
     </div>
   </div>
