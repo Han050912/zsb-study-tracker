@@ -8,7 +8,8 @@ import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismi
 import { useAppStore } from '../stores/app'
 import { today } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
-import { problemTypesFor } from '../data/problemTypes'
+import { problemTypesFor, PROBLEM_TYPE_LABELS } from '../data/problemTypes'
+import type { ErrorQuestion } from '../types'
 import Modal from '../components/Modal.vue'
 import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 import RemoteImage from '../components/RemoteImage.vue'
@@ -35,6 +36,30 @@ const list = computed(() => {
 
 const hasFilter = computed(() => !!filterSubject.value || showOnlyUnmastered.value)
 
+function questionSubject(question: ErrorQuestion) {
+  return store.subjects.find((subject) => subject.id === question.subjectId)
+}
+
+function questionTypeLabel(question: ErrorQuestion): string {
+  const type = question.type?.trim()
+  if (!type) return '未知题型'
+  const definition = problemTypesFor(question.subjectId).find((item) => item.key === type || item.label === type)
+  return (
+    definition?.label ??
+    (Object.prototype.hasOwnProperty.call(PROBLEM_TYPE_LABELS, type) ? PROBLEM_TYPE_LABELS[type] : type)
+  )
+}
+
+function questionChapterLabel(question: ErrorQuestion): string {
+  const chapter = question.chapter?.trim()
+  if (!chapter) return '未标注章节'
+  const chapters = questionSubject(question)?.chapters ?? []
+  const match = chapters.find((item) => item.id === chapter || item.name === chapter)
+  if (match) return match.name
+  const parent = chapters.find((item) => item.topics.includes(chapter))
+  return parent ? `${parent.name} / ${chapter}` : chapter
+}
+
 function clearFilters() {
   filterSubject.value = ''
   showOnlyUnmastered.value = false
@@ -42,6 +67,8 @@ function clearFilters() {
 
 const showModal = ref(false)
 const form = ref({ subjectId: 'math', chapter: '', type: '选择', content: '', answer: '', image: '' })
+const contentInput = ref<HTMLTextAreaElement | null>(null)
+const contentError = ref('')
 
 // ---- 题型 / 章节：跟随科目动态联动 ----
 const currentTypes = computed(() => problemTypesFor(form.value.subjectId))
@@ -57,7 +84,7 @@ function onChapterNamePick() {
   form.value.chapter = chapterPick.value.chapterName
 }
 function onTopicPick() {
-  form.value.chapter = chapterPick.value.topicName
+  form.value.chapter = chapterPick.value.topicName || chapterPick.value.chapterName
 }
 
 // 科目切换：题型置为当前科目首个题型，清空章节与两栏选中残留
@@ -81,6 +108,10 @@ const JPEG_QUALITY = 0.85
 const pendingImage = ref<{ bytes: ArrayBuffer; preview: string } | null>(null)
 /** 保存中：上传 + 落库期间禁用保存按钮 */
 const saving = ref(false)
+
+watch([() => form.value.content, pendingImage], () => {
+  if (form.value.content.trim() || pendingImage.value) contentError.value = ''
+})
 
 function clearPendingImage() {
   if (pendingImage.value) URL.revokeObjectURL(pendingImage.value.preview)
@@ -137,17 +168,22 @@ function onImage(e: Event) {
 function closeModal() {
   if (saving.value) return
   showModal.value = false
+  contentError.value = ''
   form.value = { subjectId: 'math', chapter: '', type: '选择', content: '', answer: '', image: '' }
+  chapterPick.value = { chapterName: '', topicName: '' }
   zoomImage.value = ''
   clearPendingImage()
 }
 
 /** 保存：先上传图片（幂等，服务端按内容返回 id），成功后再落库；失败保留弹窗与预览供重试 */
 async function add() {
-  if (!form.value.content && !pendingImage.value) {
-    toast('请填写题目内容或上传图片')
+  if (saving.value) return
+  if (!form.value.content.trim() && !pendingImage.value) {
+    contentError.value = '请填写题目内容或上传图片'
+    contentInput.value?.focus()
     return
   }
+  contentError.value = ''
   saving.value = true
   try {
     let image = ''
@@ -247,10 +283,12 @@ async function removeError(id: string) {
 
     <div class="space-y-3">
       <div v-for="q in list" :key="q.id" class="card">
-        <div class="flex items-center gap-2 text-xs text-slate-400 mb-2 flex-wrap">
-          <span>{{ subjectLabel(store.subjectMap[q.subjectId]) }}</span>
-          <span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">{{ q.type }}</span>
-          <span v-if="q.chapter">{{ q.chapter }}</span>
+        <div class="flex items-center gap-2 text-xs text-muted mb-2 flex-wrap break-words">
+          <span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">
+            科目：{{ subjectLabel(questionSubject(q), '未知科目') }}
+          </span>
+          <span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">题型：{{ questionTypeLabel(q) }}</span>
+          <span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">章节：{{ questionChapterLabel(q) }}</span>
           <span>{{ q.date }}</span>
           <span v-if="q.mastered" class="text-action font-semibold">✓ 已掌握</span>
         </div>
@@ -332,8 +370,26 @@ async function removeError(id: string) {
           />
         </div>
         <div>
-          <label class="label" for="eb-content">题目内容</label
-          ><textarea id="eb-content" v-model="form.content" rows="3" class="input" placeholder="题干描述…"></textarea>
+          <label class="label" for="eb-content">题目内容</label>
+          <textarea
+            id="eb-content"
+            ref="contentInput"
+            v-model="form.content"
+            rows="3"
+            class="input"
+            placeholder="题干描述…"
+            :aria-invalid="!!contentError"
+            aria-describedby="eb-content-hint eb-content-error"
+          ></textarea>
+          <p id="eb-content-hint" class="mt-1 text-xs text-muted">题目内容与图片至少填写一项。</p>
+          <p
+            id="eb-content-error"
+            role="alert"
+            aria-atomic="true"
+            :class="contentError ? 'mt-1 text-sm text-correction' : 'sr-only'"
+          >
+            {{ contentError }}
+          </p>
         </div>
         <div>
           <label class="label" for="eb-answer">解析/正确答案</label
@@ -347,7 +403,15 @@ async function removeError(id: string) {
         </div>
         <div>
           <label class="label" for="eb-image">拍照上传（自动压缩，原图 ≤10MB）</label>
-          <input id="eb-image" type="file" accept="image/*" class="text-xs" :disabled="saving" @change="onImage" />
+          <input
+            id="eb-image"
+            type="file"
+            accept="image/*"
+            class="text-xs"
+            :disabled="saving"
+            aria-describedby="eb-content-hint eb-content-error"
+            @change="onImage"
+          />
           <img
             v-if="pendingImage"
             :src="pendingImage.preview"
