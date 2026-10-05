@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconAction from '../shared/components/IconAction.vue'
 import EmptyState from '../shared/components/EmptyState.vue'
 import LoadingState from '../shared/components/LoadingState.vue'
 import { usePartnerStore } from '../features/collaboration/stores/partners'
@@ -17,7 +18,7 @@ import { useConfirm } from '../composables/useConfirm'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
 import { partnersApi } from '../api/community/partners'
-import { RefreshCw, TriangleAlert } from '@lucide/vue'
+import { RefreshCw, TriangleAlert, ArrowLeft } from '@lucide/vue'
 import { useBack } from '../composables/useBack'
 import type { PartnerReview } from '../types'
 
@@ -44,10 +45,10 @@ const noteText = ref('')
 const STATUS: Record<PartnerReview['status'], { text: (r: PartnerReview) => string; cls: string }> = {
   pending: {
     text: (r) => (r.isFrom ? '待对方接受' : '待我接受'),
-    cls: 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+    cls: 'bg-action-soft dark:bg-action-soft text-action dark:text-action'
   },
-  accepted: { text: () => '待复盘', cls: 'bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400' },
-  done: { text: () => '已完成', cls: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' }
+  accepted: { text: () => '待复盘', cls: 'bg-action-soft dark:bg-action-soft text-action dark:text-action' },
+  done: { text: () => '已完成', cls: 'bg-action-soft dark:bg-action-soft text-action dark:text-action' }
 }
 
 function fmtTime(sec: number) {
@@ -120,7 +121,7 @@ async function accept(r: PartnerReview) {
     toast('已接受邀约')
     await reloadItems()
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '未能接受邀约，请重试'))
   } finally {
     acting.value[r.id] = false
   }
@@ -132,6 +133,8 @@ function openComplete(r: PartnerReview) {
 }
 
 async function complete(r: PartnerReview) {
+  if (acting.value[r.id]) return
+  acting.value[r.id] = true
   try {
     await partnersApi.updatePartnerReview(r.id, 'done', noteText.value.trim())
     completingId.value = ''
@@ -139,33 +142,42 @@ async function complete(r: PartnerReview) {
     toast('复盘已完成')
     await reloadItems()
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '复盘记录未能保存，请重试'))
+  } finally {
+    acting.value[r.id] = false
   }
 }
 
 async function cancel(r: PartnerReview) {
+  if (acting.value[r.id]) return
   if (!(await confirm('取消这条复盘邀约？'))) return
+  if (acting.value[r.id]) return
+  acting.value[r.id] = true
   try {
     await partnersApi.deletePartnerReview(r.id)
     if (completingId.value === r.id) completingId.value = ''
     toast('已取消')
     await reloadItems()
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '邀约未能取消，请重试'))
+  } finally {
+    acting.value[r.id] = false
   }
 }
 </script>
 
 <template>
-  <div class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
-    <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
+  <div class="collaboration-page study-page reading-page space-y-5">
+    <span class="!text-xs arrow-action" @click="goBack"
+      ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+    >
     <h1 class="page-title">复盘邀约</h1>
 
     <LoadingState v-if="loading" />
 
     <template v-else>
       <!-- 首屏加载失败：持久错误态 + 重试，不落「还没有复盘邀约」空态 -->
-      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-correction dark:text-correction">
         <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
         <span class="flex-1">{{ loadError }}</span>
         <button class="btn-ghost !text-xs shrink-0" @click="load">
@@ -178,14 +190,19 @@ async function cancel(r: PartnerReview) {
       <div v-else class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">新建复盘邀约</div>
         <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-2">
-          还没有搭子，先去<router-link to="/community/partners" class="text-primary-500">搭子页</router-link>添加一位吧
+          还没有搭子，先去<router-link to="/community/partners" class="text-action">搭子页</router-link>添加一位吧
         </div>
         <div v-else class="flex gap-2 flex-wrap">
-          <select v-model="newPartner" class="input !w-auto !text-xs">
+          <select v-model="newPartner" aria-label="选择搭子" class="input !w-auto !text-xs">
             <option value="" disabled>选择搭子</option>
             <option v-for="p in partners" :key="p.userId" :value="p.userId">{{ p.userName }}</option>
           </select>
-          <input v-model="newTime" type="datetime-local" class="input flex-1 min-w-40 !text-xs" />
+          <input
+            v-model="newTime"
+            aria-label="约定复盘时间"
+            type="datetime-local"
+            class="input flex-1 min-w-40 !text-xs"
+          />
           <button class="btn-primary !text-xs shrink-0" :disabled="creating" @click="create">
             {{ creating ? '发送中…' : '发起邀约' }}
           </button>
@@ -204,10 +221,10 @@ async function cancel(r: PartnerReview) {
           <div class="flex items-center gap-2 flex-wrap">
             <span class="font-medium">{{ r.partnerName }}</span>
             <span class="text-slate-400">{{ fmtTime(r.scheduledAt) }}</span>
-            <span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-full" :class="STATUS[r.status].cls">
+            <span class="inline-flex items-center text-xs px-1.5 py-0.5 rounded-full" :class="STATUS[r.status].cls">
               {{ STATUS[r.status].text(r) }}
             </span>
-            <span v-if="r.isFrom" class="text-[10px] text-slate-400">我发起的</span>
+            <span v-if="r.isFrom" class="text-xs text-slate-400">我发起的</span>
           </div>
           <div
             v-if="r.note && r.id !== completingId"
@@ -231,7 +248,7 @@ async function cancel(r: PartnerReview) {
             >
               完成复盘
             </button>
-            <button class="btn-ghost !text-xs" @click="cancel(r)">取消</button>
+            <button class="btn-ghost !text-xs" :disabled="acting[r.id]" @click="cancel(r)">取消</button>
           </div>
           <!-- 完成复盘：内联填写复盘记录 -->
           <div v-if="completingId === r.id" class="space-y-1.5">
@@ -240,11 +257,14 @@ async function cancel(r: PartnerReview) {
               rows="3"
               class="input !text-xs"
               maxlength="500"
+              aria-label="记录本次复盘的结论、问题与下一步计划…"
               placeholder="记录本次复盘的结论、问题与下一步计划…"
             ></textarea>
             <div class="flex gap-1 justify-end">
               <button class="btn-ghost !text-xs" @click="completingId = ''">取消</button>
-              <button class="btn-primary !text-xs" @click="complete(r)">提交复盘记录</button>
+              <button class="btn-primary !text-xs" :disabled="acting[r.id]" @click="complete(r)">
+                {{ acting[r.id] ? '保存中…' : '提交复盘记录' }}
+              </button>
             </div>
           </div>
         </div>

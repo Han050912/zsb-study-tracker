@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { onBeforeRouteLeave, useRouter } from 'vue-router'
-import { Ban } from '@lucide/vue'
+import { onBeforeRouteLeave, useRouter, useRoute } from 'vue-router'
+import { Ban, ArrowLeft } from '@lucide/vue'
 import { useClock } from '../composables/useClock'
 import { useToast } from '../composables/useToast'
 import { useWallpaperRotation } from '../composables/useWallpaperRotation'
@@ -18,11 +18,11 @@ const store = useAppStore()
 const toast = useToast()
 const router = useRouter()
 
-// ---- 与开黑自习室互斥 ----
+// ---- 与一起自习室互斥 ----
 const studyTimer = useStudyTimerStore()
 /** 服务端存在进行中的开黑会话：互斥判定的真实来源（studyTimer.session 是纯内存态，刷新 / 新标签页即丢失） */
 const serverPartyActive = ref(false)
-/** 开黑自习室存在进行中的会话：内存态（同标签页内跳转即时生效）或服务端态（刷新 / 新标签页）任一命中即占用。
+/** 一起自习室存在进行中的会话：内存态（同标签页内跳转即时生效）或服务端态（刷新 / 新标签页）任一命中即占用。
  *  与其同时计时会把同一时段重复计入专注时长，因此这里是全局唯一的互斥判定口径。 */
 const partyActive = computed(() => !!studyTimer.session || serverPartyActive.value)
 
@@ -48,7 +48,8 @@ let startTimestamp = 0
 /** 暂停前已累计的秒数，恢复计时后与新的时间差累加 */
 let pausedElapsed = 0
 /** 本次专注的任务描述（选填，maxlength 50）；开始番茄时捕获锁定 */
-const taskDescription = ref('')
+const initialTask = useRoute().query.task
+const taskDescription = ref(typeof initialTask === 'string' ? initialTask.slice(0, 50) : '')
 /** 当前番茄锁定后的描述快照（开始后修改输入框不影响本番茄） */
 let activeDescription = ''
 
@@ -250,9 +251,9 @@ function handleVisibilityChange() {
 
 function start() {
   if (running.value || disposed) return
-  // 与开黑自习室互斥（partyActive 单一口径：内存态或服务端态命中即拒绝）
+  // 与一起自习室互斥（partyActive 单一口径：内存态或服务端态命中即拒绝）
   if (partyActive.value) {
-    toast('开黑自习室计时进行中，请先结束开黑再开始单人番茄')
+    toast('搭子自习正在计时，请先结束自习再开始单人番茄钟')
     return
   }
   if (phase.value === 'idle') {
@@ -293,9 +294,9 @@ function pause() {
 function completePhase() {
   stopTimer()
   if (phase.value === 'focus') {
-    // P2-03：仅在实际记录成功后才提示 +5 积分，保证提示与实际一致
+    // 仅在实际记录成功后提示完成；积分由服务端按每日额度确认。
     const recorded = store.recordPomodoro(focusMinutes.value, activeDescription)
-    if (recorded) toast(`完成一个番茄钟！+5 积分`)
+    if (recorded) toast('番茄钟已完成')
     phase.value = 'break'
     seconds.value = 0
     pausedElapsed = 0
@@ -309,7 +310,7 @@ function completePhase() {
     seconds.value = 0
     pausedElapsed = 0
     stopBgRotation()
-    toast('休息结束，继续加油！')
+    toast('休息已结束，可以开始下一个番茄钟')
   }
   syncSoloState()
 }
@@ -326,9 +327,7 @@ function giveUp() {
     const recorded = store.recordPomodoro(minutes, activeDescription, 'solo', undefined, completed)
     if (recorded) {
       toast(
-        completed
-          ? '完成一个番茄钟！+5 积分'
-          : `已记录 ${minutes} 分钟专注（未满 ${focusMinutes.value} 分钟，不计入完成番茄）`
+        completed ? '番茄钟已完成' : `已记录 ${minutes} 分钟专注（未满 ${focusMinutes.value} 分钟，不计入完成番茄）`
       )
     }
   }
@@ -344,7 +343,11 @@ function giveUp() {
 const showInterrupt = ref(false)
 const interruptReason = ref('')
 function submitInterrupt() {
-  if (!interruptReason.value.trim()) return
+  if (!showInterrupt.value) return
+  if (!interruptReason.value.trim()) {
+    toast('请填写中断原因')
+    return
+  }
   store.recordInterruption(interruptReason.value.trim())
   interruptReason.value = ''
   showInterrupt.value = false
@@ -453,10 +456,16 @@ const recentInterruptions = computed(() =>
     .reverse()
 )
 
-// ---- 最近完成：今日番茄明细 ----
+// ---- 今日专注明细（含提前结束） ----
 const todayRecordsSorted = computed(() =>
   (store.pomodoro.records || []).filter((r) => r.date === todayKey.value).sort((a, b) => b.time - a.time)
 )
+const averageFocusMinutes = computed(() => {
+  const records = todayRecordsSorted.value
+  if (records.length) return records.reduce((sum, r) => sum + r.minutes, 0) / records.length
+  const daily = store.todayPomodoro
+  return daily.count ? daily.minutes / daily.count : 0
+})
 const editingId = ref('')
 const editingText = ref('')
 
@@ -495,49 +504,54 @@ function cancelEdit() {
 
 <template>
   <div
-    class="min-h-screen relative flex flex-col items-center justify-center p-6 transition-colors duration-200 overflow-hidden"
+    class="min-h-screen relative flex flex-col items-center justify-center px-4 py-24 md:px-6 transition-colors duration-200 overflow-hidden"
     :class="
       bgUrl
         ? 'text-white'
         : phase === 'focus'
-          ? 'bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white'
+          ? 'bg-action-soft text-ink'
           : phase === 'break'
-            ? 'bg-gradient-to-br from-emerald-50 to-teal-100 dark:from-emerald-950 dark:to-teal-900'
+            ? 'bg-surface text-ink'
             : ''
     "
   >
     <!-- 背景图 + 遮罩（图片加载失败时 bgUrl 为空，自动降级为上方渐变） -->
     <template v-if="bgUrl">
       <img :src="bgUrl" alt="" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-200" />
-      <div class="absolute inset-0 bg-gradient-to-b from-black/55 via-black/35 to-black/60"></div>
+      <div class="absolute inset-0 timer-wallpaper-shade"></div>
     </template>
 
     <!-- 返回入口仅在配置页展示；专注计时中隐藏，保持界面零导航干扰 -->
-    <RouterLink v-if="phase === 'idle'" to="/" class="absolute top-4 left-4 z-10 text-sm opacity-60 hover:opacity-100"
-      >← 返回首页</RouterLink
+    <RouterLink
+      v-if="phase === 'idle'"
+      to="/"
+      class="absolute top-4 left-4 z-10 text-sm opacity-60 hover:opacity-100 arrow-link"
+      :class="bgUrl ? '!text-inherit' : ''"
+      ><ArrowLeft class="arrow-inline" :class="bgUrl ? 'arrow-on-overlay' : ''" :size="16" aria-hidden="true" />
+      返回今天</RouterLink
     >
 
     <!-- 实时时钟（右上角，仅配置页展示） -->
     <div v-if="phase === 'idle'" class="absolute top-4 right-4 z-10 text-right">
-      <div class="text-2xl font-mono font-bold tabular-nums tracking-wider">{{ clockText }}</div>
+      <div class="text-2xl font-data font-bold tabular-nums tracking-wider">{{ clockText }}</div>
       <div class="text-[11px] opacity-70">{{ dateText }}</div>
     </div>
 
     <!-- 配置 -->
     <div v-if="phase === 'idle'" class="relative z-10 w-full max-w-md space-y-4">
-      <h1 class="text-2xl font-bold text-center">番茄专注</h1>
+      <h1 class="text-2xl font-bold text-center">番茄钟</h1>
       <div class="card space-y-3">
         <div class="flex gap-2">
           <button
             class="flex-1 btn"
-            :class="mode === 'countdown' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+            :class="mode === 'countdown' ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
             @click="mode = 'countdown'"
           >
             倒计时
           </button>
           <button
             class="flex-1 btn"
-            :class="mode === 'countup' ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+            :class="mode === 'countup' ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
             @click="mode = 'countup'"
           >
             正计时
@@ -582,46 +596,42 @@ function cancelEdit() {
           :disabled="partyActive"
           @click="start"
         >
-          开始专注
+          开始番茄钟
         </button>
-        <!-- 与开黑自习室互斥：有进行中的会话时禁止启动单人番茄 -->
-        <p v-if="partyActive" class="flex items-start gap-1.5 text-xs text-amber-500">
+        <!-- 与一起自习室互斥：有进行中的会话时禁止启动单人番茄 -->
+        <p v-if="partyActive" class="flex items-start gap-1.5 text-xs text-muted">
           <Ban :size="14" class="mt-px shrink-0" aria-hidden="true" />
-          <span>开黑自习室计时进行中，需先结束开黑会话才能开始单人番茄（避免同一时段重复计入专注）</span>
+          <span>搭子自习正在计时。结束自习后，可开始单人番茄钟。</span>
         </p>
       </div>
 
       <!-- 名言点缀 -->
-      <div class="text-center cursor-pointer select-none" title="点击换一句" @click="randomQuote">
+      <button class="w-full text-center study-link flex-col" title="点击换一句" @click="randomQuote">
         <p class="text-xs italic text-slate-400">「{{ quote.text }}」</p>
         <p v-if="quote.author" class="text-[10px] mt-0.5 text-slate-300 dark:text-slate-500">—— {{ quote.author }}</p>
-      </div>
+      </button>
 
       <!-- 统计 -->
       <div class="grid grid-cols-3 gap-3">
         <div class="card !p-3 text-center">
-          <div class="text-xl font-black text-primary-500">{{ store.todayPomodoro.count }}</div>
+          <div class="text-xl font-black text-action">{{ store.todayPomodoro.count }}</div>
           <div class="text-[11px] text-slate-400">今日番茄</div>
         </div>
         <div class="card !p-3 text-center">
-          <div class="text-xl font-black text-primary-500">{{ formatMinutes(store.todayPomodoro.minutes) }}</div>
+          <div class="text-xl font-black text-action">{{ formatMinutes(store.todayPomodoro.minutes) }}</div>
           <div class="text-[11px] text-slate-400">今日专注</div>
         </div>
         <div class="card !p-3 text-center">
-          <div class="text-xl font-black text-primary-500">
-            {{
-              store.todayPomodoro.count ? (store.todayPomodoro.minutes / store.todayPomodoro.count).toFixed(1) : '0.0'
-            }}分
-          </div>
-          <div class="text-[11px] text-slate-400">平均时长</div>
+          <div class="text-xl font-black text-action">{{ averageFocusMinutes.toFixed(1) }}分</div>
+          <div class="text-[11px] text-slate-400">平均每次专注</div>
         </div>
       </div>
 
-      <!-- 最近完成：今日番茄明细（独立板块，位于最近中断上方） -->
+      <!-- 今日明细包含完成与提前结束，真实时长均可回看。 -->
       <div class="card">
-        <div class="section-title">最近完成（{{ todayRecordsSorted.length }} 个/今日）</div>
+        <div class="section-title">今日专注记录（{{ todayRecordsSorted.length }} 次）</div>
         <div v-if="!todayRecordsSorted.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-3">
-          今日还没有完成的番茄
+          今日还没有专注记录
         </div>
         <div v-else class="max-h-48 overflow-y-auto">
           <div
@@ -649,10 +659,15 @@ function cancelEdit() {
               }}</span>
               <span
                 v-if="r.source === 'party'"
-                class="px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/40 text-primary-500 text-[10px] whitespace-nowrap"
-                >开黑·{{ r.partnerName }}</span
+                class="px-1.5 py-0.5 rounded-full bg-primary-50 dark:bg-primary-900/40 text-action text-[10px] whitespace-nowrap"
+                >与 {{ r.partnerName }} 自习</span
               >
               <span class="whitespace-nowrap">{{ r.minutes }} 分钟</span>
+              <span
+                v-if="r.completed === false"
+                class="shrink-0 rounded bg-surface-soft px-1.5 py-0.5 text-[10px] text-muted"
+                >提前结束</span
+              >
             </template>
           </div>
         </div>
@@ -668,33 +683,33 @@ function cancelEdit() {
     </div>
 
     <!-- 计时中（沉浸式全屏）：大时钟距顶 1/4，番茄钟弱化至右上角，名言紧随大时钟，控制按钮沉底 -->
-    <div
-      v-else
-      class="absolute inset-0 z-10"
-      :class="bgUrl || phase === 'focus' ? 'text-white' : 'text-slate-800 dark:text-slate-100'"
-    >
-      <!-- 番茄钟（右上角弱化展示，减少干扰） -->
+    <div v-else class="absolute inset-0 z-10" :class="bgUrl ? 'text-white' : 'text-slate-800 dark:text-slate-100'">
+      <!-- 当前时间（辅助信息） -->
       <div class="absolute top-4 right-4 text-right opacity-75">
-        <div class="text-[11px] tracking-widest">{{ phase === 'focus' ? '专注中' : '休息中' }}</div>
-        <div class="text-2xl font-mono font-bold tabular-nums">{{ display }}</div>
+        <div class="text-[11px]">{{ !running ? '已暂停' : phase === 'focus' ? '专注中' : '休息中' }}</div>
+        <div class="text-xl font-data tabular-nums">{{ clockText }}</div>
       </div>
 
-      <!-- 大号实时时钟：距页面顶部 1/4 -->
-      <div class="absolute inset-x-0 top-1/4 px-6 text-center">
-        <div class="text-6xl md:text-8xl font-mono font-black tabular-nums tracking-wider drop-shadow-lg">
-          {{ clockText }}
+      <!-- 本次番茄钟：专注/休息剩余时长优先 -->
+      <div class="absolute inset-x-0 top-1/4 px-6 text-center" aria-label="本次番茄钟">
+        <p class="text-xs mb-3 opacity-75">
+          {{ phase === 'break' ? '休息倒计时' : mode === 'countdown' ? '本次专注剩余' : '本次已专注' }}
+        </p>
+        <div class="text-6xl md:text-8xl font-data font-bold tabular-nums tracking-tight">
+          {{ display }}
         </div>
+        <p v-if="activeDescription" class="text-base mt-3 break-words">{{ activeDescription }}</p>
         <div class="mt-2 text-sm opacity-70">{{ dateText }}</div>
         <!-- 名言（点击换一句） -->
-        <div class="mt-8 max-w-md mx-auto cursor-pointer select-none" title="点击换一句" @click="randomQuote">
+        <button class="mt-8 max-w-md mx-auto block rounded" title="点击换一句" @click="randomQuote">
           <p class="text-sm italic leading-relaxed opacity-85">「{{ quote.text }}」</p>
-          <p v-if="quote.author" class="text-xs mt-1 opacity-50">—— {{ quote.author }}</p>
-        </div>
+          <p v-if="quote.author" class="text-xs mt-1 opacity-80">—— {{ quote.author }}</p>
+        </button>
       </div>
 
       <!-- 控制按钮（底部，低干扰，鼠标滑至底部自动唤起） -->
       <div
-        class="absolute bottom-8 inset-x-0 flex gap-3 justify-center px-6 transition-[opacity,transform] duration-200 ease-out"
+        class="timer-controls absolute bottom-8 inset-x-0 flex flex-wrap gap-3 justify-center px-4 transition-opacity duration-200"
         :class="
           controlsVisible
             ? 'opacity-100 translate-y-0 pointer-events-auto'
@@ -704,7 +719,7 @@ function cancelEdit() {
         <button
           v-if="running"
           class="btn backdrop-blur px-6"
-          :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'"
+          :class="bgUrl ? 'timer-wallpaper-control' : 'bg-black/5 text-inherit'"
           @click="pause"
         >
           ⏸ 暂停
@@ -712,7 +727,7 @@ function cancelEdit() {
         <button
           v-else
           class="btn backdrop-blur px-6"
-          :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'"
+          :class="bgUrl ? 'timer-wallpaper-control' : 'bg-black/5 text-inherit'"
           @click="start"
         >
           ▶ 继续
@@ -720,33 +735,30 @@ function cancelEdit() {
         <button
           v-if="phase === 'focus'"
           class="btn backdrop-blur px-6"
-          :class="bgUrl || phase === 'focus' ? 'bg-white/20 text-white' : 'bg-black/5 text-inherit'"
+          :class="bgUrl ? 'timer-wallpaper-control' : 'bg-black/5 text-inherit'"
           @click="showInterrupt = true"
         >
           被打断
         </button>
-        <button class="btn bg-red-500/80 text-white px-6" @click="giveUp">结束</button>
+        <button class="btn-danger px-6" @click="giveUp">结束</button>
       </div>
     </div>
 
     <!-- 中断原因弹窗 -->
-    <Teleport to="body">
-      <div v-if="showInterrupt" class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-6">
-        <div class="card max-w-xs w-full text-slate-800 dark:text-slate-100">
-          <h3 class="font-bold mb-3">记录中断原因</h3>
-          <input
-            v-model="interruptReason"
-            class="input"
-            placeholder="如：看手机、有人打扰…"
-            @keyup.enter="submitInterrupt"
-          />
-          <div class="flex gap-2 mt-4 justify-end">
-            <button class="btn-ghost" @click="showInterrupt = false">取消</button>
-            <button class="btn-primary" @click="submitInterrupt">保存</button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <Modal :show="showInterrupt" title="记录中断原因" @close="showInterrupt = false">
+      <input
+        v-model="interruptReason"
+        class="input"
+        aria-label="如：看手机、有人打扰…"
+        placeholder="如：看手机、有人打扰…"
+        data-autofocus
+        @keyup.enter="submitInterrupt"
+      />
+      <template #footer>
+        <button class="btn-ghost" @click="showInterrupt = false">取消</button>
+        <button class="btn-primary" @click="submitInterrupt">保存</button>
+      </template>
+    </Modal>
 
     <!-- 离开拦截：计时中离开需确认（状态已落盘，返回可恢复） -->
     <Modal :show="showLeaveDialog" title="离开番茄钟？" @close="cancelLeave">
@@ -760,3 +772,13 @@ function cancelEdit() {
     </Modal>
   </div>
 </template>
+
+<style scoped>
+@media (hover: none), (pointer: coarse) {
+  .timer-controls {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
+}
+</style>

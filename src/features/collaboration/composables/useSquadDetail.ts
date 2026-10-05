@@ -121,7 +121,7 @@ export function useSquadDetail() {
       }
       router.replace({ name: 'teams' })
     } catch (e) {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '小队变更未能保存，请重试'))
     } finally {
       leaderLeaveSubmitting.value = false
     }

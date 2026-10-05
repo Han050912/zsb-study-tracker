@@ -117,23 +117,23 @@ function menuAction(action: 'edit' | 'leave' | 'leader-leave', event: Event) {
     <div class="flex items-center gap-2 flex-wrap">
       <h2 class="text-lg font-bold flex-1 min-w-0 truncate">{{ team.name }}</h2>
       <span
-        class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+        class="text-xs px-1.5 py-0.5 rounded-full shrink-0"
         :class="
           team.isPublic
-            ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
-            : 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+            ? 'bg-action-soft dark:bg-action-soft text-action dark:text-action'
+            : 'bg-action-soft dark:bg-action-soft text-action dark:text-action'
         "
       >
         {{ team.isPublic ? '公开' : '私密' }}
       </span>
       <span
         v-if="team.myRole === 'leader'"
-        class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0 bg-yellow-50 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400"
+        class="text-xs px-1.5 py-0.5 rounded-full shrink-0 bg-action-soft dark:bg-action-soft text-action dark:text-action"
         >队长</span
       >
       <span
         v-else-if="team.myRole === 'member'"
-        class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
+        class="text-xs px-1.5 py-0.5 rounded-full shrink-0 bg-action-soft dark:bg-action-soft text-action dark:text-action"
         >成员</span
       >
     </div>
@@ -147,7 +147,7 @@ function menuAction(action: 'edit' | 'leave' | 'leader-leave', event: Event) {
       <template v-if="!team.myRole">
         <template v-if="!team.isPublic">
           <template v-if="myJoinRequest">
-            <span class="text-xs text-amber-500">申请待审核</span>
+            <span class="text-xs text-action">申请待审核</span>
             <button class="btn-ghost !text-xs" :disabled="withdrawing" @click="handleWithdraw">
               {{ withdrawing ? '撤回中…' : '撤回申请' }}
             </button>
@@ -156,6 +156,7 @@ function menuAction(action: 'edit' | 'leave' | 'leader-leave', event: Event) {
             <input
               v-model="inviteInput"
               type="text"
+              aria-label="邀请码"
               placeholder="邀请码"
               maxlength="8"
               class="input !w-28 !text-xs !py-1"
@@ -174,7 +175,7 @@ function menuAction(action: 'edit' | 'leave' | 'leader-leave', event: Event) {
         <div class="absolute right-0 z-20 card !p-2 min-w-36 shadow-lg">
           <button
             v-if="team.myRole === 'member'"
-            class="btn-ghost !text-xs !text-red-500"
+            class="btn-ghost !text-xs !text-correction"
             :disabled="leaveSubmitting"
             @click="menuAction('leave', $event)"
           >
@@ -182,26 +183,26 @@ function menuAction(action: 'edit' | 'leave' | 'leader-leave', event: Event) {
           </button>
           <template v-else-if="team.myRole === 'leader'">
             <button class="btn-ghost !text-xs w-full" @click="menuAction('edit', $event)">编辑小队</button>
-            <button class="btn-ghost !text-xs !text-red-500" @click="menuAction('leader-leave', $event)">
+            <button class="btn-ghost !text-xs !text-correction" @click="menuAction('leader-leave', $event)">
               退出小组
             </button>
           </template>
         </div>
       </details>
     </div>
-    <p v-if="commandError" role="status" class="text-sm text-red-500">{{ commandError }}</p>
+    <p v-if="commandError" role="status" class="text-sm text-correction">{{ commandError }}</p>
     <div
       v-if="team.myRole === 'leader' && !team.isPublic && inviteCode"
       class="mt-3 pt-3 border-t border-slate-100 dark:border-slate-700"
     >
       <div class="label !mb-1">邀请码</div>
       <div class="flex items-center gap-2 flex-wrap">
-        <code class="text-sm font-mono tracking-widest">{{ inviteCode }}</code>
+        <code class="text-sm font-data tracking-widest">{{ inviteCode }}</code>
         <button class="btn-ghost !text-xs" @click="copyInvite">复制</button>
         <button class="btn-ghost !text-xs" :disabled="resettingCode" @click="handleResetCode">
           {{ resettingCode ? '重置中…' : '重置' }}
         </button>
-        <span v-if="inviteCodeExpiresAt" class="text-[10px] text-slate-400"
+        <span v-if="inviteCodeExpiresAt" class="text-xs text-slate-400"
           >有效期至 {{ formatDate(inviteCodeExpiresAt) }}</span
         >
       </div>

@@ -14,7 +14,7 @@ const teamProgress = computed(() =>
   <section class="space-y-3" :aria-label="`${TYPE_LABEL[challenge.type]}同行进度`">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <h3 class="font-semibold">
-        {{ TYPE_LABEL[challenge.type] }} <span class="training-number">{{ challenge.target }}</span>
+        {{ TYPE_LABEL[challenge.type] }} <span class="font-data">{{ challenge.target }}</span>
         {{ TYPE_UNIT[challenge.type] }}
       </h3>
       <span class="text-xs text-slate-500">{{ STATUS_LABEL[challengeStatus(challenge)] }}</span>
@@ -23,7 +23,7 @@ const teamProgress = computed(() =>
       <div v-if="showMine">
         <div class="flex justify-between text-xs mb-2">
           <span>{{ challenge.myCompleted ? '我已达标' : '我的进度' }}</span
-          ><span class="training-number">{{ challenge.myProgress }} / {{ challenge.target }}</span>
+          ><span class="font-data">{{ challenge.myProgress }} / {{ challenge.target }}</span>
         </div>
         <div
           role="progressbar"
@@ -33,13 +33,12 @@ const teamProgress = computed(() =>
           :aria-valuemax="100"
           class="h-2 rounded-full bg-slate-100 dark:bg-slate-700"
         >
-          <div class="h-full rounded-full bg-[#2457E6]" :style="{ width: progress + '%' }"></div>
+          <div class="h-full rounded-full bg-action" :style="{ width: progress + '%' }"></div>
         </div>
       </div>
       <div>
         <div class="flex justify-between text-xs mb-2">
-          <span>一起达标</span
-          ><span class="training-number">{{ challenge.completedCount }} / {{ memberCount }} 人</span>
+          <span>一起达标</span><span class="font-data">{{ challenge.completedCount }} / {{ memberCount }} 人</span>
         </div>
         <div
           role="progressbar"
@@ -49,11 +48,11 @@ const teamProgress = computed(() =>
           :aria-valuemax="100"
           class="h-2 rounded-full bg-slate-100 dark:bg-slate-700"
         >
-          <div class="h-full rounded-full bg-[#2FBF9B]" :style="{ width: teamProgress + '%' }"></div>
+          <div class="h-full rounded-full bg-action" :style="{ width: teamProgress + '%' }"></div>
         </div>
       </div>
     </div>
-    <p class="text-xs text-slate-500 dark:text-slate-400 training-number">
+    <p class="text-xs text-slate-500 dark:text-slate-400 font-data">
       {{ challenge.startDate }} — {{ challenge.endDate }} · 截止
     </p>
   </section>

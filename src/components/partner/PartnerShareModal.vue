@@ -47,6 +47,10 @@ async function share(userId: string) {
   if (sending.value) return
   sending.value = userId
   try {
+    if (!(await store.saveAsync())) {
+      toast('学习数据尚未同步，请检查网络后重试分享')
+      return
+    }
     const res = await partnersApi.createPartnerShare(userId, props.itemType, props.itemId)
     if (res.duplicate) {
       // 重复分享：弹出二次确认
@@ -58,7 +62,7 @@ async function share(userId: string) {
     emit('done')
     emit('close')
   } catch (e) {
-    if ((e as { status?: number } | null)?.status === 403) {
+    if ((e as { status?: number } | null)?.status === 403 && getErrorMessage(e, '').includes('允许搭子查看')) {
       // 403 = 未开启数据共享：持久展示弹窗内引导（替代一次性 toast）
       shareRejected.value = true
     } else {
@@ -73,12 +77,16 @@ async function confirmShare() {
   if (sending.value) return
   sending.value = pendingPartnerId.value
   try {
+    if (!(await store.saveAsync())) {
+      toast('学习数据尚未同步，请检查网络后重试分享')
+      return
+    }
     await partnersApi.createPartnerShare(pendingPartnerId.value, props.itemType, props.itemId, true)
     toast('已分享给搭子')
     emit('done')
     emit('close')
   } catch (e) {
-    if ((e as { status?: number } | null)?.status === 403) {
+    if ((e as { status?: number } | null)?.status === 403 && getErrorMessage(e, '').includes('允许搭子查看')) {
       shareRejected.value = true
       confirmOpen.value = false
     } else {
@@ -115,7 +123,7 @@ function cancelShare() {
       <!-- 分享前置引导：未开启「允许搭子查看我的学习数据」时提示去设置开启（可跳转设置） -->
       <div
         v-if="needShareGuide"
-        class="flex items-start gap-2 rounded-lg bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 text-xs p-2.5 mb-1"
+        class="flex items-start gap-2 rounded-lg bg-action-soft dark:bg-action-soft text-action dark:text-action text-xs p-2.5 mb-1"
       >
         <TriangleAlert :size="14" aria-hidden="true" class="shrink-0 mt-0.5" />
         <span class="flex-1">你尚未开启「允许搭子查看我的学习数据」，分享的内容搭子将无法查看。</span>
@@ -123,7 +131,7 @@ function cancelShare() {
           去设置开启
         </router-link>
       </div>
-      <div class="text-[10px] text-slate-400 pb-1">
+      <div class="text-xs text-slate-400 pb-1">
         选择一位搭子，TA 将收到这条{{ itemType === 'error' ? '错题' : '笔记' }}分享
       </div>
       <button
@@ -135,7 +143,7 @@ function cancelShare() {
       >
         <UserAvatar :name="p.userName" :avatar="p.userAvatar" size="sm" />
         <span class="font-medium">{{ p.userName }}</span>
-        <span class="ml-auto text-primary-500">{{ sending === p.userId ? '分享中…' : '分享' }}</span>
+        <span class="ml-auto text-action">{{ sending === p.userId ? '分享中…' : '分享' }}</span>
       </button>
     </div>
   </Modal>

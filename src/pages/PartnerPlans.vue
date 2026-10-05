@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import IconAction from '../shared/components/IconAction.vue'
 import EmptyState from '../shared/components/EmptyState.vue'
 import LoadingState from '../shared/components/LoadingState.vue'
 import { usePartnerStore } from '../features/collaboration/stores/partners'
 import { storeToRefs } from 'pinia'
 const partnerStore = usePartnerStore()
 /**
- * 协作备考计划：
+ * 共同备考计划：
  * - 列表视图：我的计划（标题/搭子/我的进度 myDone-taskTotal），点进详情
  * - 新建计划：选择搭子（?partner= 可预选）+ 标题 → createPartnerPlan
  * - 详情视图：任务列表（标题/阶段/「我完成」可勾选 /「搭子完成」只读）、添加任务、删除任务、删除计划
@@ -17,7 +18,7 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { partnersApi } from '../api/community/partners'
-import { RefreshCw, TriangleAlert } from '@lucide/vue'
+import { RefreshCw, TriangleAlert, ArrowLeft } from '@lucide/vue'
 import { useBack } from '../composables/useBack'
 import type { PartnerPlan, PartnerPlanDetail, PartnerPlanTask } from '../types'
 
@@ -46,6 +47,7 @@ let detailTicket = 0
 onBeforeUnmount(() => detailTicket++)
 const newTaskTitle = ref('')
 const newTaskPhase = ref('')
+const taskPending = ref<Record<string, boolean>>({})
 
 onMounted(load)
 
@@ -132,21 +134,30 @@ function backToList() {
 
 async function refreshDetail() {
   if (!detail.value) return
+  const id = detail.value.id,
+    ticket = ++detailTicket
   try {
-    detail.value = await partnersApi.partnerPlan(detail.value.id)
+    const result = await partnersApi.partnerPlan(id)
+    if (ticket === detailTicket && detail.value?.id === id) detail.value = result
   } catch (e) {
-    toast(getErrorMessage(e, '刷新失败'))
+    if (ticket === detailTicket) toast(getErrorMessage(e, '刷新失败'))
   }
 }
 
 async function toggleTask(t: PartnerPlanTask, done: boolean) {
-  if (!detail.value) return
+  if (!detail.value || taskPending.value[t.id]) return
+  const id = detail.value.id
+  taskPending.value[t.id] = true
   try {
-    await partnersApi.updatePlanTask(detail.value.id, t.id, done)
+    await partnersApi.updatePlanTask(id, t.id, done)
     t.myDone = done
+    const plan = plans.value.find((p) => p.id === id)
+    if (plan && detail.value?.id === id) plan.myDone = detail.value.tasks.filter((task) => task.myDone).length
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '任务状态未能更新，请重试'))
     await refreshDetail()
+  } finally {
+    taskPending.value[t.id] = false
   }
 }
 
@@ -199,9 +210,11 @@ async function removePlan() {
 </script>
 
 <template>
-  <div class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
-    <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
-    <h1 class="page-title">协作备考计划</h1>
+  <div class="collaboration-page study-page reading-page space-y-5">
+    <span class="!text-xs arrow-action" @click="goBack"
+      ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+    >
+    <h1 class="page-title">共同备考计划</h1>
 
     <LoadingState v-if="loading" />
 
@@ -216,10 +229,12 @@ async function removePlan() {
         />
         <template v-else-if="detail">
           <div class="flex items-center gap-2">
-            <button class="btn-ghost !text-xs !px-2" @click="backToList">← 列表</button>
+            <span class="!text-xs arrow-action" @click="backToList"
+              ><IconAction :icon="ArrowLeft" label="列表" @click="backToList" /> 列表</span
+            >
             <div class="min-w-0">
               <div class="text-sm font-semibold truncate">{{ detail.title }}</div>
-              <div class="text-[10px] text-slate-400">与「{{ detail.partnerName }}」协作</div>
+              <div class="text-xs text-slate-400">与「{{ detail.partnerName }}」协作</div>
             </div>
             <button class="ml-auto btn-danger !text-xs shrink-0" @click="removePlan">删除计划</button>
           </div>
@@ -232,21 +247,22 @@ async function removePlan() {
           >
             <div class="min-w-0">
               <div class="font-medium" :class="t.myDone ? 'line-through text-slate-400' : ''">{{ t.title }}</div>
-              <div v-if="t.phase" class="text-[10px] text-slate-400">{{ t.phase }}</div>
+              <div v-if="t.phase" class="text-xs text-slate-400">{{ t.phase }}</div>
             </div>
             <label class="ml-auto flex items-center gap-1 cursor-pointer shrink-0">
               <input
                 type="checkbox"
                 :checked="t.myDone"
+                :disabled="taskPending[t.id]"
                 class="accent-primary-500"
                 @change="toggleTask(t, ($event.target as HTMLInputElement).checked)"
               />
-              我完成
+              {{ taskPending[t.id] ? '保存中…' : '我完成' }}
             </label>
             <label class="flex items-center gap-1 text-slate-400 shrink-0" title="仅搭子本人可勾选">
               <input type="checkbox" :checked="t.partnerDone" disabled class="accent-primary-500" /> 搭子完成
             </label>
-            <button class="text-red-400 shrink-0" @click="removeTask(t)">删除</button>
+            <button class="text-correction shrink-0" @click="removeTask(t)">删除</button>
           </div>
 
           <!-- 添加任务 -->
@@ -254,6 +270,7 @@ async function removePlan() {
             <input
               v-model="newTaskTitle"
               class="input flex-1 min-w-32 !text-xs"
+              aria-label="任务标题，如：刷完第三章习题"
               placeholder="任务标题，如：刷完第三章习题"
               maxlength="50"
               @keydown.enter="addTask"
@@ -261,6 +278,7 @@ async function removePlan() {
             <input
               v-model="newTaskPhase"
               class="input !w-28 !text-xs"
+              aria-label="阶段（选填）"
               placeholder="阶段（选填）"
               maxlength="20"
               @keydown.enter="addTask"
@@ -276,7 +294,7 @@ async function removePlan() {
     <!-- 列表视图 -->
     <template v-else>
       <!-- 首屏加载失败：持久错误态 + 重试，不落「还没有协作计划」空态 -->
-      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+      <div v-if="loadError" class="card flex items-center gap-2 text-xs text-correction dark:text-correction">
         <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
         <span class="flex-1">{{ loadError }}</span>
         <button class="btn-ghost !text-xs shrink-0" @click="load">
@@ -289,16 +307,17 @@ async function removePlan() {
       <div v-else class="card space-y-2">
         <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">新建计划</div>
         <div v-if="!partners.length" class="text-xs text-slate-400 dark:text-slate-500 text-center py-2">
-          还没有搭子，先去<router-link to="/community/partners" class="text-primary-500">搭子页</router-link>添加一位吧
+          还没有搭子，先去<router-link to="/community/partners" class="text-action">搭子页</router-link>添加一位吧
         </div>
         <div v-else class="flex gap-2 flex-wrap">
-          <select v-model="newPartner" class="input !w-auto !text-xs">
+          <select v-model="newPartner" aria-label="选择搭子" class="input !w-auto !text-xs">
             <option value="" disabled>选择搭子</option>
             <option v-for="p in partners" :key="p.userId" :value="p.userId">{{ p.userName }}</option>
           </select>
           <input
             v-model="newTitle"
             class="input flex-1 min-w-32 !text-xs"
+            aria-label="计划标题，如：高数一轮复习"
             placeholder="计划标题，如：高数一轮复习"
             maxlength="30"
             @keydown.enter="createPlan"
@@ -321,7 +340,7 @@ async function removePlan() {
         >
           <div class="min-w-0 text-left">
             <div class="font-medium truncate">{{ p.title }}</div>
-            <div class="text-[10px] text-slate-400">与「{{ p.partnerName }}」协作</div>
+            <div class="text-xs text-slate-400">与「{{ p.partnerName }}」协作</div>
           </div>
           <span class="ml-auto shrink-0 text-slate-400">我的进度 {{ p.myDone }}/{{ p.taskTotal }}</span>
         </button>

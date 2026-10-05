@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import EmptyState from '../../shared/components/EmptyState.vue'
 import LoadingState from '../../shared/components/LoadingState.vue'
-/** 历史开黑记录卡片：纯展示（时间/双方在线时长），数据由页面层加载后传入 */
+/** 自习记录卡片：纯展示（时间/双方在线时长），数据由页面层加载后传入 */
 import dayjs from 'dayjs'
 import UserAvatar from '../community/UserAvatar.vue'
 import { formatMinutes } from '../../utils/date'
@@ -20,9 +20,9 @@ function fmtDateTime(sec: number): string {
 
 <template>
   <div class="card space-y-3">
-    <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">历史开黑记录</div>
+    <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">自习记录</div>
     <LoadingState v-if="loading" />
-    <EmptyState v-else-if="!records.length" title="还没有开黑记录" />
+    <EmptyState v-else-if="!records.length" title="还没有一起自习的记录" />
     <template v-else>
       <div
         v-for="r in records"
@@ -31,10 +31,10 @@ function fmtDateTime(sec: number): string {
       >
         <UserAvatar :name="r.partnerName" :avatar="r.partnerAvatar" size="sm" />
         <div class="flex-1 min-w-0">
-          <div class="text-xs font-medium truncate">与「{{ r.partnerName }}」开黑</div>
-          <div class="text-[11px] text-slate-400">{{ fmtDateTime(r.startedAt) }} ~ {{ fmtDateTime(r.endedAt) }}</div>
+          <div class="text-xs font-medium truncate">与「{{ r.partnerName }}」一起自习</div>
+          <div class="text-xs text-slate-400">{{ fmtDateTime(r.startedAt) }} ~ {{ fmtDateTime(r.endedAt) }}</div>
         </div>
-        <div class="text-right text-[11px] text-slate-500 whitespace-nowrap">
+        <div class="text-right text-xs text-slate-500 whitespace-nowrap">
           <div>我 {{ formatMinutes(Math.floor(r.myOnlineSeconds / 60)) }}</div>
           <div>对方 {{ formatMinutes(Math.floor(r.partnerOnlineSeconds / 60)) }}</div>
         </div>

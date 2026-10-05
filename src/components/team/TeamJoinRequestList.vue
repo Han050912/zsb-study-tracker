@@ -34,7 +34,7 @@ async function handleApprove(r: TeamJoinRequest) {
     toast('已同意')
     emit('reviewed', r.userId, true)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '申请未能通过，请重试'))
   } finally {
     reviewing.value[r.userId] = false
   }
@@ -54,7 +54,7 @@ async function handleReject() {
     emit('reviewed', rejectTarget.value.userId, false)
     rejectTarget.value = null
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '申请未能拒绝，请重试'))
   } finally {
     rejectSubmitting.value = false
   }
@@ -68,13 +68,13 @@ async function handleReject() {
       <div v-for="r in requests" :key="r.userId" class="flex items-center gap-3 py-2">
         <UserAvatar :name="r.userName" :avatar="r.userAvatar" size="sm" />
         <button
-          class="text-sm flex-1 min-w-0 truncate text-left hover:text-primary-500"
+          class="text-sm flex-1 min-w-0 truncate text-left hover:text-action"
           @click="emit('open-profile', r.userId)"
         >
           {{ r.userName }}
         </button>
         <button class="btn-primary !text-xs" :disabled="reviewing[r.userId]" @click="handleApprove(r)">同意</button>
-        <button class="btn-ghost !text-xs !text-red-500" :disabled="reviewing[r.userId]" @click="openReject(r)">
+        <button class="btn-ghost !text-xs !text-correction" :disabled="reviewing[r.userId]" @click="openReject(r)">
           拒绝
         </button>
       </div>
@@ -84,7 +84,14 @@ async function handleReject() {
   <Modal :show="!!rejectTarget" title="拒绝申请" @close="rejectTarget = null">
     <div class="space-y-3">
       <p class="text-sm text-slate-500 dark:text-slate-400">拒绝「{{ rejectTarget?.userName }}」的加入申请？</p>
-      <input v-model="rejectReason" type="text" maxlength="200" placeholder="拒绝原因（可选）" class="input" />
+      <input
+        v-model="rejectReason"
+        type="text"
+        maxlength="200"
+        aria-label="拒绝原因（可选）"
+        placeholder="拒绝原因（可选）"
+        class="input"
+      />
     </div>
     <template #footer>
       <button class="btn-ghost" @click="rejectTarget = null">取消</button>

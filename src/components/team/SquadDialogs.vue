@@ -51,7 +51,7 @@ async function submit() {
     }
     emit('close')
   } catch (e) {
-    error.value = getErrorMessage(e, '操作失败，请重试')
+    error.value = getErrorMessage(e, props.mode === 'create' ? '小队未能创建，请重试' : '加入申请未能发送，请重试')
   } finally {
     pending.value = false
   }
@@ -66,7 +66,7 @@ async function submit() {
         ><input
           id="squad-invite"
           v-model="invite"
-          class="input training-number uppercase"
+          class="input font-data uppercase"
           maxlength="8"
           autocomplete="off"
           aria-describedby="squad-form-error"
@@ -121,7 +121,7 @@ async function submit() {
           <dd>{{ form.isPublic ? '公开' : '私密' }} · 最多 {{ form.maxMembers }} 人</dd>
         </dl></template
       >
-      <p v-if="error" id="squad-form-error" class="text-sm text-red-500" role="alert">{{ error }}</p>
+      <p v-if="error" id="squad-form-error" class="text-sm text-correction" role="alert">{{ error }}</p>
     </div>
     <template #footer
       ><button v-if="mode === 'create' && step > 0" class="btn-ghost" :disabled="pending" @click="step--">上一步</button

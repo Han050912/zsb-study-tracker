@@ -39,12 +39,12 @@ watch(
         class="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 p-3 transition-colors"
         :class="
           leaveMode === 'disband'
-            ? 'border-red-300 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10'
+            ? 'border-correction dark:border-correction bg-correction-soft dark:bg-correction-soft'
             : 'hover:border-slate-300'
         "
         @click="leaveMode = 'disband'"
       >
-        <div class="text-sm font-semibold text-red-500">解散小队</div>
+        <div class="text-sm font-semibold text-correction">解散小队</div>
         <div class="text-xs text-slate-400 mt-0.5">解散后小组与全部挑战将被删除，不可撤销</div>
       </button>
 

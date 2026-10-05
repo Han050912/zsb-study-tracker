@@ -75,7 +75,7 @@ async function handleTeamEdit() {
       <div>
         <div class="label">人数上限</div>
         <input v-model.number="teamEditForm.maxMembers" type="number" :min="editMinMembers" max="50" class="input" />
-        <p v-if="editInvalid" class="text-xs text-red-500 mt-1">不能低于当前成员数（{{ memberCount }} 人）</p>
+        <p v-if="editInvalid" class="text-xs text-correction mt-1">不能低于当前成员数（{{ memberCount }} 人）</p>
       </div>
     </div>
     <template #footer>

@@ -12,7 +12,7 @@ import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { partnersApi } from '../api/community/partners'
 import { usersApi } from '../api/community/users'
-import { RefreshCw, TriangleAlert } from '@lucide/vue'
+import { RefreshCw, TriangleAlert, ArrowRight, Check } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import PartnerWeeklyModal from '../components/partner/PartnerWeeklyModal.vue'
 import type { PartnerItem, UserLookupResult } from '../types'
@@ -58,7 +58,7 @@ async function send(userId: string) {
     toast(res.accepted ? '你们已成为搭子！' : '已发送请求')
     await load(true)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '搭子邀请未能发送，请重试'))
   } finally {
     acting.value[userId] = false
   }
@@ -72,7 +72,7 @@ async function respond(reqId: string, action: 'accept' | 'reject') {
     toast(action === 'accept' ? '已接受' : '已拒绝')
     await load(true)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '邀请未能处理，请重试'))
   } finally {
     acting.value[reqId] = false
   }
@@ -92,7 +92,7 @@ async function remind(p: PartnerItem) {
     await partnersApi.partnerRemind(p.userId)
     toast('已发送学习提醒')
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '学习提醒未能发送，请重试'))
   } finally {
     acting.value[p.userId] = false
   }
@@ -105,7 +105,7 @@ async function unbind(p: PartnerItem) {
     toast('已解除搭子关系')
     await load(true)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '搭子关系未能解除，请重试'))
   }
 }
 
@@ -142,7 +142,7 @@ async function addPartner(userId: string) {
     if (searchResult.value) searchResult.value.partnerStatus = res.accepted ? 'accepted' : 'pending_sent'
     await load(true)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '搭子邀请未能发送，请重试'))
   } finally {
     acting.value[userId] = false
   }
@@ -150,18 +150,108 @@ async function addPartner(userId: string) {
 </script>
 
 <template>
-  <div class="collaboration-page space-y-5">
+  <div class="collaboration-page partners-layout">
     <LoadingState v-if="loading" />
 
     <template v-else>
+      <!-- 收到的请求 -->
+      <div v-if="incoming.length" class="partner-requests">
+        <div class="partner-section-heading">
+          <h2>收到的邀请</h2>
+          <span class="social-count">{{ incoming.length }}</span>
+        </div>
+        <div v-for="u in incoming" :key="u.reqId" class="partner-request-row">
+          <button
+            type="button"
+            class="flex items-center gap-2 cursor-pointer group"
+            @click="router.push(`/profile/${u.userId}`)"
+          >
+            <UserAvatar :name="u.userName" :avatar="u.userAvatar" size="sm" />
+            <span class="font-medium group-hover:text-action">{{ u.userName }}</span>
+          </button>
+          <button class="ml-auto btn-primary !text-xs" :disabled="acting[u.reqId]" @click="respond(u.reqId, 'accept')">
+            {{ acting[u.reqId] ? '处理中…' : '接受' }}
+          </button>
+          <button class="btn-ghost !text-xs" :disabled="acting[u.reqId]" @click="respond(u.reqId, 'reject')">
+            拒绝
+          </button>
+        </div>
+      </div>
+
+      <!-- 我的搭子 -->
+      <div class="partner-roster">
+        <div class="partner-section-heading">
+          <h2>
+            我的搭子 <span class="social-count">{{ partners.length }} / 3</span>
+          </h2>
+          <button type="button" class="partner-share-link" @click="router.push({ name: 'partner-shares' })">
+            搭子分享
+            <ArrowRight :size="14" aria-hidden="true" />
+          </button>
+        </div>
+        <p class="partner-section-description">找到彼此的节奏，从下一次自习开始。</p>
+        <!-- 加载失败：持久错误态 + 重试，不落「还没有搭子」空态 -->
+        <div v-if="loadError" class="flex items-center gap-2 text-xs text-correction dark:text-correction">
+          <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
+          <span class="flex-1">{{ loadError }}</span>
+          <button class="btn-ghost !text-xs shrink-0" @click="load(true)">
+            <RefreshCw :size="14" aria-hidden="true" />
+            重试
+          </button>
+        </div>
+        <EmptyState v-else-if="!partners.length" title="还没有搭子。可以按用户 ID 查找同学，或查看下方推荐。" />
+        <div v-for="p in partners" :key="p.reqId" class="partner-person">
+          <button type="button" class="partner-person-identity group" @click="router.push(`/profile/${p.userId}`)">
+            <UserAvatar :name="p.userName" :avatar="p.userAvatar" />
+            <span
+              ><strong class="group-hover:text-action">{{ p.userName }}</strong
+              ><span class="partner-person-caption">我的学习搭子</span></span
+            >
+          </button>
+          <div class="partner-person-actions">
+            <button class="btn-primary" @click="router.push({ name: 'partner-study', query: { partner: p.userId } })">
+              开始自习
+            </button>
+            <button class="btn-ghost" @click="router.push({ name: 'partner-plans', query: { partner: p.userId } })">
+              共同计划
+            </button>
+            <details class="partner-more">
+              <summary class="cursor-pointer px-3 flex items-center text-sm" aria-label="更多搭子操作">
+                更多 ···
+              </summary>
+              <div class="partner-more-menu">
+                <button
+                  class="text-left px-3"
+                  @click="router.push({ name: 'partner-reviews', query: { partner: p.userId } })"
+                >
+                  复盘
+                </button>
+                <button class="text-left px-3" @click="openWeekly(p)">查看周报</button>
+                <button class="text-left px-3" :disabled="acting[p.userId]" @click="remind(p)">学习提醒</button>
+                <button class="text-left px-3" @click="router.push({ name: 'partner-shares' })">搭子分享</button>
+                <button
+                  class="text-left px-3"
+                  @click="router.push({ name: 'message-chat', params: { peerId: p.userId } })"
+                >
+                  私信
+                </button>
+                <button class="text-left px-3 text-correction" @click="unbind(p)">解除搭子</button>
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
+
       <!-- 查找搭子 -->
-      <div class="card space-y-2">
-        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">查找搭子</div>
-        <div class="flex gap-2">
+      <div class="partner-search">
+        <div class="partner-section-heading"><h2>找到你的同学</h2></div>
+        <p class="partner-section-description">输入对方的用户 ID，发出一份备考邀请。</p>
+        <div class="partner-search-controls">
           <input
             v-model="searchKey"
             class="input flex-1"
-            placeholder="输入用户ID查找搭子"
+            aria-label="搭子的用户 ID"
+            placeholder="输入搭子的用户 ID"
             maxlength="32"
             @keydown.enter="searchPartner"
           />
@@ -169,25 +259,27 @@ async function addPartner(userId: string) {
             {{ searching ? '搜索中' : '搜索' }}
           </button>
         </div>
-        <div v-if="searchResult" class="flex items-center gap-3 pt-2">
-          <div
-            class="flex items-center gap-2 min-w-0 cursor-pointer group"
+        <div v-if="searchResult" class="partner-search-result">
+          <button
+            type="button"
+            class="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer group"
+            :aria-label="`查看${searchResult.userName}的主页`"
             @click="router.push(`/profile/${searchResult.userId}`)"
           >
             <UserAvatar :name="searchResult.userName" :avatar="searchResult.avatar" size="sm" />
             <div class="min-w-0">
               <div class="flex items-center gap-1.5">
-                <span class="font-medium truncate group-hover:text-primary-500">{{ searchResult.userName }}</span>
+                <span class="font-medium truncate group-hover:text-action">{{ searchResult.userName }}</span>
                 <span
                   v-if="searchResult.verified"
-                  class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+                  class="w-3.5 h-3.5 rounded-full bg-action text-on-action text-[9px] flex items-center justify-center shrink-0"
                   title="认证专家"
-                  >✓</span
-                >
+                  ><Check :size="10" aria-hidden="true"
+                /></span>
               </div>
-              <div class="text-[10px] text-slate-400 dark:text-slate-500">用户ID：{{ searchResult.userCode }}</div>
+              <div class="text-xs text-slate-400 dark:text-slate-500">用户ID：{{ searchResult.userCode }}</div>
             </div>
-          </div>
+          </button>
           <span v-if="searchResult.partnerStatus === 'accepted'" class="ml-auto text-xs text-slate-400 shrink-0"
             >已是搭子</span
           >
@@ -223,91 +315,12 @@ async function addPartner(userId: string) {
         <div v-else class="text-xs text-slate-400 dark:text-slate-500 text-center py-2">输入用户ID查找学习搭子</div>
       </div>
 
-      <!-- 收到的请求 -->
-      <div v-if="incoming.length" class="card space-y-2">
-        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">收到的请求</div>
-        <div v-for="u in incoming" :key="u.reqId" class="flex items-center gap-2 text-xs">
-          <div class="flex items-center gap-2 cursor-pointer group" @click="router.push(`/profile/${u.userId}`)">
-            <UserAvatar :name="u.userName" :avatar="u.userAvatar" size="sm" />
-            <span class="font-medium group-hover:text-primary-500">{{ u.userName }}</span>
-          </div>
-          <button class="ml-auto btn-primary !text-xs" :disabled="acting[u.reqId]" @click="respond(u.reqId, 'accept')">
-            {{ acting[u.reqId] ? '处理中…' : '接受' }}
-          </button>
-          <button class="btn-ghost !text-xs" :disabled="acting[u.reqId]" @click="respond(u.reqId, 'reject')">
-            拒绝
-          </button>
-        </div>
-      </div>
-
-      <!-- 我的搭子 -->
-      <div class="card space-y-2">
-        <div class="flex items-center">
-          <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">
-            我的搭子（{{ partners.length }}/3）
-          </div>
-          <button class="ml-auto btn-ghost !text-xs" @click="router.push({ name: 'partner-shares' })">
-            搭子分享 →
-          </button>
-        </div>
-        <!-- 加载失败：持久错误态 + 重试，不落「还没有搭子」空态 -->
-        <div v-if="loadError" class="flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
-          <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
-          <span class="flex-1">{{ loadError }}</span>
-          <button class="btn-ghost !text-xs shrink-0" @click="load(true)">
-            <RefreshCw :size="14" aria-hidden="true" />
-            重试
-          </button>
-        </div>
-        <EmptyState v-else-if="!partners.length" title="还没有搭子，去下方推荐里找一个吧" />
-        <div
-          v-for="p in partners"
-          :key="p.reqId"
-          class="text-xs border-b border-slate-50 dark:border-slate-700 last:border-0 py-1.5 space-y-1.5"
-        >
-          <div class="flex items-center gap-2 cursor-pointer group" @click="router.push(`/profile/${p.userId}`)">
-            <UserAvatar :name="p.userName" :avatar="p.userAvatar" size="sm" />
-            <span class="font-medium group-hover:text-primary-500">{{ p.userName }}</span>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <button class="btn-primary" @click="router.push({ name: 'partner-study', query: { partner: p.userId } })">
-              开始自习
-            </button>
-            <button class="btn-ghost" @click="router.push({ name: 'partner-plans', query: { partner: p.userId } })">
-              计划
-            </button>
-            <details class="relative">
-              <summary class="cursor-pointer px-3 flex items-center text-sm" aria-label="更多搭子操作">
-                更多 ···
-              </summary>
-              <div class="absolute right-0 top-full z-10 w-40 card !p-2 shadow-lg flex flex-col">
-                <button
-                  class="text-left px-3"
-                  @click="router.push({ name: 'partner-reviews', query: { partner: p.userId } })"
-                >
-                  复盘
-                </button>
-                <button class="text-left px-3" @click="openWeekly(p)">查看周报</button>
-                <button class="text-left px-3" :disabled="acting[p.userId]" @click="remind(p)">学习提醒</button>
-                <button class="text-left px-3" @click="router.push({ name: 'partner-shares' })">搭子分享</button>
-                <button
-                  class="text-left px-3"
-                  @click="router.push({ name: 'message-chat', params: { peerId: p.userId } })"
-                >
-                  私信
-                </button>
-                <button class="text-left px-3 text-red-500" @click="unbind(p)">解除搭子</button>
-              </div>
-            </details>
-          </div>
-        </div>
-      </div>
-
       <!-- 推荐 -->
-      <div class="card space-y-2">
-        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">为你推荐</div>
-        <!-- 加载失败：持久错误态 + 重试，不落「暂无可推荐的搭子」空态 -->
-        <div v-if="loadError" class="flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+      <div class="partner-recommendations">
+        <div class="partner-section-heading"><h2>也在备考的同学</h2></div>
+        <p class="partner-section-description">从相同的学习目标开始认识。</p>
+        <!-- 加载失败：持久错误态 + 重试，不落「暂时没有合适的推荐，可以用用户 ID 查找认识的同学。」空态 -->
+        <div v-if="loadError" class="flex items-center gap-2 text-xs text-correction dark:text-correction">
           <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
           <span class="flex-1">{{ loadError }}</span>
           <button class="btn-ghost !text-xs shrink-0" @click="load(true)">
@@ -315,24 +328,22 @@ async function addPartner(userId: string) {
             重试
           </button>
         </div>
-        <EmptyState v-else-if="!suggestions.length" title="暂无可推荐的搭子" />
-        <div
-          v-for="s in suggestions"
-          :key="s.userId"
-          class="flex items-center gap-2 text-xs border-b border-slate-50 dark:border-slate-700 last:border-0 py-1.5"
-        >
-          <div
-            class="flex items-center gap-2 min-w-0 cursor-pointer group"
+        <EmptyState v-else-if="!suggestions.length" title="暂时没有合适的推荐，可以用用户 ID 查找认识的同学。" />
+        <div v-for="s in suggestions" :key="s.userId" class="partner-recommendation-row">
+          <button
+            type="button"
+            class="flex flex-1 items-center gap-2 min-w-0 text-left cursor-pointer group"
+            :aria-label="`查看${s.userName}的主页`"
             @click="router.push(`/profile/${s.userId}`)"
           >
             <UserAvatar :name="s.userName" :avatar="s.userAvatar" size="sm" />
             <div class="min-w-0">
-              <div class="font-medium truncate group-hover:text-primary-500">{{ s.userName }}</div>
-              <div class="text-[10px] text-slate-400 dark:text-slate-500 truncate">
-                {{ s.reasons.join(' · ') || '缘分推荐' }}
+              <div class="font-medium truncate group-hover:text-action">{{ s.userName }}</div>
+              <div class="text-xs text-slate-400 dark:text-slate-500 truncate">
+                {{ s.reasons.join(' · ') || '也在准备专升本' }}
               </div>
             </div>
-          </div>
+          </button>
           <button class="ml-auto btn-primary !text-xs shrink-0" :disabled="acting[s.userId]" @click="send(s.userId)">
             {{ acting[s.userId] ? '提交中…' : '加搭子' }}
           </button>
