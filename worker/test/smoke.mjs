@@ -2,35 +2,39 @@
  * zsb-study-api 冒烟测试（Node 18+ 原生 fetch，无测试框架）。
  * 前置：npx wrangler d1 execute zsb-study-db --local --file=./schema.sql && npx wrangler dev
  * 运行：node test/smoke.mjs [baseURL]（默认 http://localhost:8787）
+ * 可经 SMOKE_D1_PERSIST_TO 使用隔离数据库；Node 22.13+ 可设置 SMOKE_D1_SQLITE 直接访问其现有 SQLite 文件。
+ * 本地配置确实没有 RL_* 绑定时可设 SMOKE_NO_RATE_LIMIT_BINDINGS=1，省略无意义的限流窗口等待。
  *
  * 所有请求统一走 ./fetch-retry.mjs 的 fetchRetry：只对连接层瞬时故障（ECONNRESET/EPIPE 等）做有界重试，
  * 因为 wrangler dev 会关闭空闲的 keep-alive 连接、导致 undici 复用时随机 read ECONNRESET；而 HTTP 状态码一律
  * 不重试——401/404/429/500 正是断言要验证的真实结果，重试会掩盖回归。
  */
 
-import { execSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-
 import { fetchRetry } from './fetch-retry.mjs'
+import { localD1 as d1 } from './local-d1.mjs'
 
 const BASE = process.argv[2] || 'http://localhost:8787'
 const ORIGIN = 'http://localhost:5173'
-const WORKER_DIR = fileURLToPath(new URL('..', import.meta.url))
 // 桌面端共享令牌：默认仅适配历史 .dev.vars，实际值可经 SMOKE_DESKTOP_TOKEN 注入，全文件统一引用
 // SMOKE_DESKTOP_TOKEN 必须与 worker/.dev.vars 的 DESKTOP_TOKEN 一致，否则注册/登录用例将因 Turnstile 校验全量失败
 const DESKTOP_TOKEN = process.env.SMOKE_DESKTOP_TOKEN || 'zsb-desktop-v2'
+const noRateLimitBindings = process.env.SMOKE_NO_RATE_LIMIT_BINDINGS === '1'
+if (noRateLimitBindings && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(BASE).hostname)) {
+  throw new Error('SMOKE_NO_RATE_LIMIT_BINDINGS 仅允许用于本地隔离 Worker')
+}
 
-/** 直接操作本地 D1（管理员提升/留痕校验），与线上运营方式一致 */
-function d1(sql) {
-  return execSync(`npx wrangler d1 execute zsb-study-db --local --json --command "${sql}"`, {
-    cwd: WORKER_DIR
-  }).toString()
+async function waitForRateLimitWindow() {
+  if (noRateLimitBindings) {
+    console.log('  … 本地配置无 RL 绑定，跳过限流窗口等待（未验证限流行为）')
+    return
+  }
+  await new Promise((resolve) => setTimeout(resolve, 61_000))
 }
 
 /**
  * 直接向本地 D1 种入积分基线流水（黄金档 ≥1500 → 无发帖冷却），并同步权威投影。
- * 不能用 /api/data/push 的 points award 事件伪造该基线：服务端白名单只接受真实行为 reason（issue #11），
- * 「冒烟积分基线」不在册、该事件会被忽略（不落账）；直接种入的历史流水不参与撤销、也不依赖白名单。
+ * 不能用 /api/data/push 的 points award 事件伪造该基线：服务端按保存的业务记录核算学习奖励，
+ * 客户端不能指定奖励金额；直接种入的历史流水不参与学习记录的奖励重算。
  * gamification.points 是 points_log 的投影（SUM(points)），故同时对齐，供 pull 快照与冷却分档读取。
  */
 function seedPointsBaseline(userId, points = POINTS_BASE, refId = 'smoke:baseline') {
@@ -126,20 +130,12 @@ function countSnapshotUpserts(snapshot, updatedAt) {
 
 /**
  * 记录级推送整份快照。gamification 域已不可由客户端推送（服务端权威，设计 §5.3）：
- * - 快照里的本地积分流水改以 points award 事件推入（refId 沿用原值，服务端按 refId 幂等落账）
+ * - 备份只恢复业务数据，不把本地积分流水当成发奖指令
  * - points/streak/lastCheckin 由服务端派生，快照里的同名本地值不再传输
  * - achievements 以可选字段上报（服务端做只增不减的集合并集）
  */
 async function pushDomains(token, snapshot, updatedAt = Date.now()) {
   const body = { domains: snapshotToDomains(snapshot, updatedAt) }
-  const events = (snapshot.gamification?.pointsLog ?? []).map((l) => ({
-    op: 'award',
-    refId: l.refId,
-    points: l.points,
-    reason: l.reason,
-    date: l.date
-  }))
-  if (events.length) body.points = events
   if (snapshot.gamification?.achievements?.length) body.achievements = snapshot.gamification.achievements
   return api('/api/data/push', { method: 'POST', token, body })
 }
@@ -393,7 +389,7 @@ async function main() {
   // ---- 密码策略（8-64 位 + 字母和数字）----
   // 注册限流 3 次/分，regA/regDup/regB 已用满窗口：先等窗口滑动，3 个非法密码打满本窗口额度
   console.log('  … 等待 61s 让注册限流窗口滑动')
-  await new Promise((r) => setTimeout(r, 61_000))
+  await waitForRateLimitWindow()
   const pwdDigits = await api('/api/auth/register', {
     method: 'POST',
     body: { username: `studyp1_${uniq}`, password: '12345678' }
@@ -419,7 +415,7 @@ async function main() {
   )
   // 等待后进入新限流窗口，合法密码用例是新窗口第 1 次注册
   console.log('  … 等待 61s 让注册限流窗口滑动')
-  await new Promise((r) => setTimeout(r, 61_000))
+  await waitForRateLimitWindow()
   const pwdValid = await api('/api/auth/register', {
     method: 'POST',
     body: { username: `studyp4_${uniq}`, password: 'abcd1234' }
@@ -428,6 +424,64 @@ async function main() {
     '注册密码 8 位字母数字成功（201）',
     pwdValid.status === 201 && !!pwdValid.data?.token,
     JSON.stringify(pwdValid.data)
+  )
+
+  // R08：使用独立合法注册账号，验证持久完成状态而不是客户端完成事件决定积分。
+  const completionToken = pwdValid.data?.token
+  const completionTs = Date.now()
+  const completionRecord = {
+    id: 'completion-smoke',
+    date: new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10),
+    time: completionTs,
+    minutes: 2,
+    description: '提前结束',
+    source: 'solo',
+    completed: false
+  }
+  const earlyPush = await api('/api/data/push', {
+    method: 'POST',
+    token: completionToken,
+    body: {
+      domains: {
+        pomodoro: {
+          upserts: [{ key: `rec:${completionRecord.id}`, value: completionRecord, updatedAt: completionTs }],
+          deletes: []
+        }
+      },
+      points: [
+        { op: 'award', refId: completionRecord.id, points: 5, reason: '完成番茄钟', date: completionRecord.date }
+      ]
+    }
+  })
+  check(
+    '提前结束即使携带完成事件也不发奖',
+    earlyPush.status === 200 && earlyPush.data?.gamification?.points === 0,
+    JSON.stringify(earlyPush.data)
+  )
+  const earlyData = snapshotFromPull((await pullFull(completionToken)).data)
+  check('提前结束完成标记经真实数据库往返保持false', earlyData.pomodoro?.records?.[0]?.completed === false)
+  const completePush = await api('/api/data/push', {
+    method: 'POST',
+    token: completionToken,
+    body: {
+      domains: {
+        pomodoro: {
+          upserts: [
+            {
+              key: `rec:${completionRecord.id}`,
+              value: { ...completionRecord, minutes: 25, completed: true },
+              updatedAt: completionTs + 1
+            }
+          ],
+          deletes: []
+        }
+      }
+    }
+  })
+  check(
+    '完成标记生效后据持久事实发放5分',
+    completePush.status === 200 && completePush.data?.gamification?.points === 5,
+    JSON.stringify(completePush.data)
   )
 
   // ---- 未认证拦截 ----
@@ -572,7 +626,7 @@ async function main() {
   // ---- 记录级同步 push/pull ----
   console.log('[记录级同步 /api/data/push + /api/data/pull]')
   // gamification 域已不可推（服务端权威）：A 的积分基线（黄金档 ≥1500 无发帖冷却）直接种入本地 D1 流水，
-  // 不走 points award 事件（该 reason 不在服务端白名单内，会被忽略，见 seedPointsBaseline）
+  // 不走 points award 事件（客户端不能指定积分基线，见 seedPointsBaseline）
   seedPointsBaseline(uidA)
   const baseA = await pullFull(tokenA)
   check(
@@ -630,9 +684,11 @@ async function main() {
   )
   check('materials 可选字段还原', d.materials?.[0]?.fileName === undefined && d.materials[0].totalPages === 300)
   check(
-    'gamification = 流水投影（points = SUM(points_log)，award 事件 refId 对得上）',
-    d.gamification?.points === POINTS_BASE + 10 &&
+    'gamification = 流水投影（points = SUM(points_log)，业务记录 refId 对得上）',
+    // 旧记录没有completed时按迁移兼容规则视为完成，服务端据持久事实发放5分。
+    d.gamification?.points === POINTS_BASE + 51 &&
       d.gamification?.pointsLog?.some((l) => l.refId === 'r1') &&
+      d.gamification?.pointsLog?.some((l) => l.refId === 'rec_test_1' && l.points === 5) &&
       d.gamification?.pointsLog?.some((l) => l.refId === 'smoke:baseline') &&
       d.gamification?.achievements?.[0] === 'first_checkin',
     JSON.stringify(d.gamification?.pointsLog)
@@ -649,6 +705,7 @@ async function main() {
       d.pomodoro.records[0].source === 'party' &&
       d.pomodoro.records[0].partnerName === 'Blane' &&
       d.pomodoro.records[0].minutes === 25 &&
+      d.pomodoro.records[0].completed === true &&
       // date 用于当日列表过滤、time 用于列表排序，两者必须与快照一致
       d.pomodoro.records[0].date === '2026-08-04' &&
       d.pomodoro.records[0].time === 1700000000000,
@@ -708,8 +765,8 @@ async function main() {
     JSON.stringify(delPush.data?.deletes)
   )
   check(
-    '删除驱动撤销关联流水（r1 的 10 分被回收，points 回到基线 POINTS_BASE）',
-    delPush.data?.gamification?.points === POINTS_BASE,
+    '删除只回收r1实际6分，保留其他业务积分',
+    delPush.data?.gamification?.points === d.gamification.points - 6,
     JSON.stringify(delPush.data?.gamification)
   )
   const delPullData = (await pullFull(tokenA)).data
@@ -752,8 +809,8 @@ async function main() {
     body: { domains: { records: { upserts: [], deletes: [{ key: 'r1', deletedAt: Date.now() + 1_000 }] } } }
   })
   check(
-    'B 删除 r1 生效且积分回到基线（关联流水被撤销）',
-    delB.data?.deletes?.records === 1 && delB.data?.gamification?.points === POINTS_BASE,
+    'B删除r1只回收实际6分，保留其他业务积分',
+    delB.data?.deletes?.records === 1 && delB.data?.gamification?.points === pushB.data?.gamification?.points - 6,
     JSON.stringify(delB.data?.gamification)
   )
   const dIsoB2 = snapshotFromPull((await pullFull(tokenB)).data)
@@ -820,6 +877,10 @@ async function main() {
   // ---- 社区广场 ----
   // 前置：A/B 均已推送 sampleState（gamification.points 各为 POINTS_BASE 黄金档，绕过发帖冷却）
   console.log('[社区广场]')
+  const pointsOf = async (token) =>
+    (await api('/api/data/pull', { method: 'POST', token, body: { full: true } })).data?.gamification?.points
+  const communityBaseA = await pointsOf(tokenA)
+  const communityBaseB = await pointsOf(tokenB)
   check('未认证可访问公开帖子流（200）', (await api('/api/community/posts')).status === 200)
 
   const post1 = await api('/api/community/posts', {
@@ -839,17 +900,14 @@ async function main() {
     JSON.stringify(post1.data)
   )
   const postId = post1.data?.id
-  // 积分经记录级 full pull 验证（gamification 权威快照随 pull 回传；/api/gamification 有 60s 边缘缓存，
-  // 写入后短时间会读到旧值，故不使用）
-  const pointsOf = async (token) =>
-    (await api('/api/data/pull', { method: 'POST', token, body: { full: true } })).data?.gamification?.points
-  check('每日首帖 +5 积分', (await pointsOf(tokenA)) === POINTS_BASE + 5)
+  // 积分经记录级 full pull 验证，与同步客户端读取权威快照的路径一致。
+  check('每日首帖 +5 积分', (await pointsOf(tokenA)) === communityBaseA + 5)
   await api('/api/community/posts', {
     method: 'POST',
     token: tokenA,
     body: { type: 'share', content: '当日第二帖', tags: [] }
   })
-  check('当日第二帖不重复加分', (await pointsOf(tokenA)) === POINTS_BASE + 5)
+  check('当日第二帖不重复加分', (await pointsOf(tokenA)) === communityBaseA + 5)
   const emptyPost = await api('/api/community/posts', {
     method: 'POST',
     token: tokenA,
@@ -880,14 +938,14 @@ async function main() {
     body: { targetType: 'post', targetId: postId }
   })
   check('B 点赞 A 的帖子', like.data?.liked === true)
-  check('被赞 +1 积分', (await pointsOf(tokenA)) === POINTS_BASE + 6)
+  check('被赞 +1 积分', (await pointsOf(tokenA)) === communityBaseA + 6)
   const unlike = await api('/api/community/likes', {
     method: 'POST',
     token: tokenB,
     body: { targetType: 'post', targetId: postId }
   })
   check('再次点赞为取消（toggle）', unlike.data?.liked === false)
-  check('取消点赞回收被赞积分', (await pointsOf(tokenA)) === POINTS_BASE + 5)
+  check('取消点赞回收被赞积分', (await pointsOf(tokenA)) === communityBaseA + 5)
   await api('/api/community/likes', { method: 'POST', token: tokenB, body: { targetType: 'post', targetId: postId } })
 
   const c1 = await api(`/api/community/posts/${postId}/comments`, {
@@ -898,7 +956,7 @@ async function main() {
   check('B 评论成功返回 201', c1.status === 201 && !!c1.data?.id, JSON.stringify(c1.data))
   check(
     '评论者 +1 / 作者 +2 积分',
-    (await pointsOf(tokenB)) === POINTS_BASE + 1 && (await pointsOf(tokenA)) === POINTS_BASE + 8
+    (await pointsOf(tokenB)) === communityBaseB + 1 && (await pointsOf(tokenA)) === communityBaseA + 8
   )
   const c2 = await api(`/api/community/posts/${postId}/comments`, {
     method: 'POST',
@@ -945,7 +1003,7 @@ async function main() {
   const [ptsB, ptsA] = [await pointsOf(tokenB), await pointsOf(tokenA)]
   check(
     '删除评论回收双方积分（B -1 评论 / A -2 收到评论 -1 回复）',
-    ptsB === POINTS_BASE && ptsA === POINTS_BASE + 6,
+    ptsB === communityBaseB && ptsA === communityBaseA + 6,
     `实际 B=${ptsB} A=${ptsA}`
   )
   const delPost = await api(`/api/community/posts/${postId}`, { method: 'DELETE', token: tokenA })
@@ -1036,7 +1094,7 @@ async function main() {
 
   // 发帖限流按 key+IP 计数（community:post 5 次/分），到这里已用满，等待一个限流窗口再发提问帖
   console.log('  … 等待 61s 让发帖限流窗口滑动')
-  await new Promise((r) => setTimeout(r, 61_000))
+  await waitForRateLimitWindow()
 
   // ---- 提问帖（用 B 发帖，便于验证 A 非楼主 403）----
   console.log('[提问帖]')
@@ -1103,7 +1161,7 @@ async function main() {
   // 积分轨迹：A 基线+5 → 评论+1 → 被采纳+10 = POINTS_BASE+16；B qPost首帖+5 → 收到评论+2 → 提问被解答+3 = POINTS_BASE+10
   check(
     '采纳积分：回答者 +10 / 提问者 +3',
-    (await pointsOf(tokenA)) === POINTS_BASE + 16 && (await pointsOf(tokenB)) === POINTS_BASE + 10,
+    (await pointsOf(tokenA)) === communityBaseA + 16 && (await pointsOf(tokenB)) === communityBaseB + 10,
     `实际 A=${await pointsOf(tokenA)} B=${await pointsOf(tokenB)}`
   )
   check(
@@ -1133,7 +1191,7 @@ async function main() {
   )
   check(
     '取消采纳回收双方积分',
-    (await pointsOf(tokenA)) === POINTS_BASE + 6 && (await pointsOf(tokenB)) === POINTS_BASE + 7
+    (await pointsOf(tokenA)) === communityBaseA + 6 && (await pointsOf(tokenB)) === communityBaseB + 7
   )
   check(
     '取消采纳撤回 achievement 通知',
@@ -1144,7 +1202,7 @@ async function main() {
   await api(`/api/community/posts/${qId}/accept`, { method: 'PUT', token: tokenB, body: { commentId: ansCId } })
   check(
     '重新采纳积分恢复',
-    (await pointsOf(tokenA)) === POINTS_BASE + 16 && (await pointsOf(tokenB)) === POINTS_BASE + 10
+    (await pointsOf(tokenA)) === communityBaseA + 16 && (await pointsOf(tokenB)) === communityBaseB + 10
   )
   const selfC = await api(`/api/community/posts/${qId}/comments`, {
     method: 'POST',
@@ -1364,7 +1422,7 @@ async function main() {
   // 等待一个限流窗口再开始
   console.log('[敏感词过滤]')
   console.log('  … 等待 61s 让发帖限流窗口滑动')
-  await new Promise((r) => setTimeout(r, 61_000))
+  await waitForRateLimitWindow()
   check(
     '命中敏感词发帖被拒绝（400）',
     (
@@ -1462,14 +1520,14 @@ async function main() {
   // 记录级协议下 gamification 域不可推、无法像旧用例那样重置积分基线：
   // A 携带社区段的累计积分进入本段，本段断言全部改为「相对增量」口径（基线 = 进入时快照）
   const ptsBeforeRules = await pointsOf(tokenA)
-  // 客户端本地规则改以事件传输：award 按 refId 幂等落账（此处补「每日打卡 10 分」，date=今日供榜单聚合）
+  // 客户端只表达打卡意图；服务端决定自然日、唯一键和固定分值。
   const awardRt = await api('/api/data/push', {
     method: 'POST',
     token: tokenA,
     body: { points: [{ op: 'award', refId: 'rt', points: 10, reason: '每日打卡', date: todayUtc8 }] }
   })
   check(
-    'award 事件按 refId 落账（rt 10 分，points = SUM(points_log)）',
+    '打卡意图固定当天10分，忽略任意refId和客户端分值',
     awardRt.data?.gamification?.points === ptsBeforeRules + 10,
     JSON.stringify(awardRt.data?.gamification)
   )
@@ -1480,9 +1538,9 @@ async function main() {
     body: { domains: { records: { upserts: [recRt], deletes: [] } } }
   })
   check(
-    '学习时长达标发放 +3（服务端派生 srv:study-minutes）并回传 gamification',
+    '70分钟记录按事实计7分、今日满60分钟再计3分',
     syncAward.data?.awarded?.some((a) => a.points === 3) &&
-      syncAward.data?.gamification?.points === ptsBeforeRules + 13,
+      syncAward.data?.gamification?.points === ptsBeforeRules + 20,
     JSON.stringify(syncAward.data?.awarded)
   )
   check(
@@ -1500,7 +1558,7 @@ async function main() {
     '重复推送不重复发放（同 updatedAt 重放判负、awarded 为空、积分不变）',
     replayRt.data?.awarded?.length === 0 &&
       (replayRt.data?.rejected ?? []).some((r) => r.key === 'rt') &&
-      replayRt.data?.gamification?.points === ptsBeforeRules + 13,
+      replayRt.data?.gamification?.points === ptsBeforeRules + 20,
     JSON.stringify({ awarded: replayRt.data?.awarded, rejected: replayRt.data?.rejected })
   )
   const editRt = await api('/api/data/push', {
@@ -1512,14 +1570,14 @@ async function main() {
     '记录被再次编辑（新 updatedAt 生效）仍不重复发放（srv: 按 date 幂等）',
     editRt.data?.applied?.records === 1 &&
       editRt.data?.awarded?.length === 0 &&
-      editRt.data?.gamification?.points === ptsBeforeRules + 13,
+      editRt.data?.gamification?.points === ptsBeforeRules + 20,
     JSON.stringify({ applied: editRt.data?.applied, awarded: editRt.data?.awarded })
   )
   const pullAward = await pullFull(tokenA)
   check(
     '服务端流水（srv:）在 full pull 中保留且 points 为投影值',
     pullAward.data?.gamification?.pointsLog?.some((l) => l.refId?.startsWith('srv:study-minutes:')) &&
-      pullAward.data.gamification.points === ptsBeforeRules + 13
+      pullAward.data.gamification.points === ptsBeforeRules + 20
   )
   // streak 改为服务端按学习日期集合权威派生：B 补齐 today-6…today 共 7 天 → streak=7 并发放里程碑 +5
   const dayShift = (date, n) => {
@@ -1559,24 +1617,24 @@ async function main() {
   console.log('[每日打卡榜]')
   const lb = await api('/api/community/leaderboard', { token: tokenA })
   check('榜单返回结构完整', lb.status === 200 && Array.isArray(lb.data?.today) && Array.isArray(lb.data?.streak))
-  // A 当日积分 = 每日打卡 10 + 学习时长 3 + 社区打卡 5（均落在今日）
+  const boardA = lb.data.today?.find((entry) => entry.userId === uidA)
   check(
     '今日打卡榜：A 以当日积分上榜并携带科目',
-    lb.data.today?.[0]?.todayPoints >= 13 && lb.data.today[0].subjects?.includes('高等数学'),
+    boardA?.todayPoints >= 13 && boardA.subjects?.includes('高等数学'),
     JSON.stringify(lb.data?.today)
   )
-  // 残留库可能有历史 streak=100 数据（LIMIT 5 会挤掉 B），干净库下验证完整降序语义。
-  // streak 已改由服务端按学习日期集合派生：B=7（连续 7 天）、A=1（仅今日 rt，2026-08-04 的 r1 已墓碑删除）
-  if (lb.data.streak?.length && lb.data.streak.length <= 5 && lb.data.streak[0].streak === 7) {
+  // 同一隔离库可能先运行 record-sync 并留下其他 7 天用户。验证全榜排序；本轮 A/B 都上榜时再比较其位置。
+  check(
+    '连续打卡王按 streak 降序',
+    lb.data.streak?.length > 0 && lb.data.streak.every((entry, i, all) => i === 0 || all[i - 1].streak >= entry.streak),
+    JSON.stringify(lb.data?.streak)
+  )
+  const streakA = lb.data.streak?.findIndex((entry) => entry.userId === uidA)
+  const streakB = lb.data.streak?.findIndex((entry) => entry.userId === uidB)
+  if (streakA >= 0 && streakB >= 0) {
     check(
-      '连续打卡王按 streak 降序（B=7 在 A=1 前）',
-      lb.data.streak[0].streak === 7 && lb.data.streak[1].streak === 1,
-      JSON.stringify(lb.data?.streak)
-    )
-  } else {
-    check(
-      '连续打卡王按 streak 降序（残留库容忍）',
-      lb.data.streak?.every((e, i, a) => i === 0 || a[i - 1].streak >= e.streak),
+      '本轮 B 连续7天，在 A 连续1天之前',
+      streakB < streakA && lb.data.streak[streakB].streak === 7 && lb.data.streak[streakA].streak === 1,
       JSON.stringify(lb.data?.streak)
     )
   }
@@ -1585,7 +1643,7 @@ async function main() {
   // 放在最后：streak 推送会覆盖 B 的 gamification（避免干扰榜单断言）；发帖额度需要新窗口
   console.log('[徽章与专家认证]')
   console.log('  … 等待 61s 让发帖限流窗口滑动')
-  await new Promise((r) => setTimeout(r, 61_000))
+  await waitForRateLimitWindow()
 
   const newPostA = await api('/api/community/posts', {
     method: 'POST',
@@ -1894,7 +1952,7 @@ async function main() {
     (await api(`/api/community/circles/${pubId}`, { token: tokenB })).data?.circle?.memberCount === 2
   )
   console.log('  … 等待 61s 让发帖限流窗口滑动')
-  await new Promise((r) => setTimeout(r, 61_000))
+  await waitForRateLimitWindow()
   const circlePost = await api('/api/community/posts', {
     method: 'POST',
     token: tokenB,
@@ -2174,7 +2232,7 @@ async function main() {
   // ---- 知识点讨论区（P2-6）----
   console.log('[知识点讨论区]')
   console.log('  … 等待 61s 让发帖限流窗口滑动')
-  await new Promise((r) => setTimeout(r, 61000))
+  await waitForRateLimitWindow()
   check(
     '无效 topicRef 发帖被拒（400）',
     (
@@ -2884,7 +2942,7 @@ async function main() {
   // 进步榜按本月/本周聚合：补推一条今日日期的刷题记录，避免固定日期跨月后聚合为 0。
   // 记录级协议不做整域替换：sampleState 的固定日期条目 p1 需以墓碑显式删除，
   // 只留今日这一条使 monthProblems 恒为 20，与日历彻底无关（此断言之后的用例不再校验刷题聚合值）。
-  // 注：发放只挂 records 域的 60 分钟判定与 points 事件——problemSessions 域推送不触发任何积分发放（awarded 恒为空）。
+  // 刷题按真实题量核算：删除原20题记录回收4分，新20题记录计4分；仍受每日300额度约束。
   const pbPush = await api('/api/data/push', {
     method: 'POST',
     token: tokenA,
@@ -2908,11 +2966,11 @@ async function main() {
     }
   })
   check(
-    '进步榜前置：补推今日刷题记录成功（p1 墓碑删除生效）且不触发任何积分发放',
+    '进步榜前置：新20题记录计4分，原记录墓碑生效',
     pbPush.status === 200 &&
       pbPush.data?.ok === true &&
       pbPush.data?.deletes?.problemSessions === 1 &&
-      (pbPush.data?.awarded ?? []).length === 0,
+      (pbPush.data?.awarded ?? []).some((a) => a.reason === '刷题 20 道' && a.points === 4),
     JSON.stringify(pbPush.data)
   )
   const pb = await api('/api/community/progress-board', { token: tokenA })

@@ -8,7 +8,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url))
 export async function loadFrontend() {
   const result = await build({
     stdin: {
-      contents: `export * from './src/stores/community/entities'; export * from './src/stores/community/feed-store'; export * from './src/features/collaboration/stores/partners'; export * from './src/features/collaboration/stores/squads'; export * from './src/stores/studyTimer'; export * from './src/features/collaboration/connection'`,
+      contents: `export * from './src/stores/community/entities'; export * from './src/stores/community/feed-store'; export * from './src/stores/community/notifications-store'; export * from './src/features/collaboration/stores/partners'; export * from './src/features/collaboration/stores/squads'; export * from './src/stores/studyTimer'; export * from './src/features/collaboration/connection'`,
       resolveDir: root
     },
     bundle: true,
@@ -29,7 +29,7 @@ export async function loadFrontend() {
             if (part === 'auth') return { contents: `export const sessionUser = { value: { id: 'me' } };` }
             if (part === 'app')
               return {
-                contents: `export function useAppStore() { return { settings: { avatar: '', dndMutedTypes: [] }, $patch() {}, recordPomodoro() {} } }`
+                contents: `export function useAppStore() { return { settings: { avatar: '', dndMutedTypes: [] }, $patch() {}, recordPomodoro(...args) { globalThis.__refactorApi.recordPomodoro?.(...args) } } }`
               }
             if (part === 'teams')
               return {

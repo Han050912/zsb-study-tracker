@@ -9,7 +9,7 @@ import path from 'node:path'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const code = await build({
   stdin: {
-    contents: `import { registerTeamsRoutes } from './worker/src/api/teams/teams'; import { registerChallengeRoutes } from './worker/src/api/teams/challenges'; import { registerPostsRoutes } from './worker/src/api/community/posts'; import { registerMessagesRoutes } from './worker/src/api/community/messages'; import { registerPartnerStudy } from './worker/src/api/partnerCollab'; export { route } from './worker/src/router'; registerTeamsRoutes(); registerChallengeRoutes(); registerPostsRoutes(); registerMessagesRoutes(); registerPartnerStudy();`,
+    contents: `import { registerTeamsRoutes } from './worker/src/api/teams/teams'; import { registerChallengeRoutes } from './worker/src/api/teams/challenges'; import { registerPostsRoutes } from './worker/src/api/community/posts'; import { registerMessagesRoutes } from './worker/src/api/community/messages'; import { registerCirclesRoutes } from './worker/src/api/community/circles'; import { registerPartnerShareRoutes } from './worker/src/api/partnerShares'; import { registerPartnerStudy } from './worker/src/api/partnerCollab'; export { route } from './worker/src/router'; registerTeamsRoutes(); registerChallengeRoutes(); registerPostsRoutes(); registerMessagesRoutes(); registerCirclesRoutes(); registerPartnerShareRoutes(); registerPartnerStudy();`,
     resolveDir: root
   },
   bundle: true,
@@ -40,11 +40,16 @@ await writeFile(filename, code.outputFiles[0].text)
 const { route } = await import(pathToFileURL(filename).href)
 await unlink(filename)
 const schema = await readFile(new URL('../schema.sql', import.meta.url), 'utf8')
-let db, env, beforeBatch
+let db, env, beforeBatch, afterAll, batchQueue
 function statement(sql, args = []) {
   return {
     bind: (...values) => statement(sql, values),
-    all: async () => ({ results: db.prepare(sql).all(...args) }),
+    all: async () => {
+      const results = db.prepare(sql).all(...args)
+      afterAll?.()
+      afterAll = null
+      return { results }
+    },
     first: async () => db.prepare(sql).get(...args) ?? null,
     run: async () => ({ meta: { changes: Number(db.prepare(sql).run(...args).changes) } })
   }
@@ -53,22 +58,28 @@ beforeEach(() => {
   db = new DatabaseSync(':memory:')
   db.exec(schema)
   beforeBatch = null
+  afterAll = null
+  batchQueue = Promise.resolve()
   env = {
     DB: {
       prepare: (sql) => statement(sql),
       batch: async (statements) => {
-        beforeBatch?.()
-        beforeBatch = null
-        db.exec('BEGIN')
-        try {
-          const result = []
-          for (const sql of statements) result.push(await sql.run())
-          db.exec('COMMIT')
-          return result
-        } catch (error) {
-          db.exec('ROLLBACK')
-          throw error
-        }
+        const job = batchQueue.then(async () => {
+          beforeBatch?.()
+          beforeBatch = null
+          db.exec('BEGIN')
+          try {
+            const result = []
+            for (const sql of statements) result.push(await sql.run())
+            db.exec('COMMIT')
+            return result
+          } catch (error) {
+            db.exec('ROLLBACK')
+            throw error
+          }
+        })
+        batchQueue = job.catch(() => {})
+        return job
       }
     },
     IMAGES: { delete: async () => {} }
@@ -103,6 +114,154 @@ test('私信会话摘要不会混入搭子同秒发给第三人的消息', async
   assert.equal(response.conversations[0].lastContent, '发给我的内容')
 })
 
+test('私信已读仅覆盖本次返回的消息，历史页和读取间隙的新消息保持未读', async () => {
+  for (let i = 0; i < 40; i++)
+    db.prepare('INSERT INTO community_messages(id,from_id,to_id,content,created_at) VALUES(?,?,?,?,?)').run(
+      'm' + String(i).padStart(2, '0'),
+      'member',
+      'leader',
+      '私信',
+      100
+    )
+  afterAll = () =>
+    db.exec(
+      "INSERT INTO community_messages(id,from_id,to_id,content,created_at) VALUES('new','member','leader','新到达',101)"
+    )
+  const page = await (await api('/api/community/messages/with/member')).json()
+  assert.equal(page.messages.length, 30)
+  assert.equal(page.markedRead, 30)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM community_messages WHERE is_read=0').get().n, 11)
+  const older = await (
+    await api('/api/community/messages/with/member?cursor=' + encodeURIComponent(page.nextCursor))
+  ).json()
+  assert.equal(older.markedRead, 10)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM community_messages WHERE is_read=0').get().n, 1)
+})
+
+test('私信正向补拉：断网积累多页与同秒随机id不漏，保持历史分页独立', async () => {
+  for (let i = 0; i < 75; i++)
+    db.prepare('INSERT INTO community_messages(id,from_id,to_id,content,created_at) VALUES(?,?,?,?,?)').run(
+      'm' + String(i).padStart(2, '0'),
+      'member',
+      'leader',
+      '私信',
+      100 + Math.floor(i / 10)
+    )
+  let cursor = '99_~'
+  const seen = []
+  do {
+    const page = await (await api('/api/community/messages/with/member?after=' + encodeURIComponent(cursor))).json()
+    seen.push(...page.messages.map((m) => m.id))
+    cursor = page.nextCursor
+  } while (cursor)
+  assert.equal(seen.length, 75)
+  assert.equal(new Set(seen).size, 75)
+  db.exec(
+    "INSERT INTO community_messages(id,from_id,to_id,content,created_at) VALUES('a-late','member','leader','同秒晚到',107)"
+  )
+  const overlap = await (await api('/api/community/messages/with/member?after=106_~')).json()
+  assert.ok(overlap.messages.some((m) => m.id === 'a-late'))
+  assert.equal(overlap.markedRead, 1)
+  await assert.rejects(api('/api/community/messages/with/member?after=bad'), (e) => e.status === 400)
+})
+
+test('分享分页：双方记录严格限量且不重复，解绑记录不挤占当前搭子的页', async () => {
+  db.exec(
+    "INSERT INTO study_partners (id,from_id,to_id,pair_key,status,created_at,updated_at) VALUES ('pair','leader','member','leader:member','accepted',1,1)"
+  )
+  for (let i = 0; i < 5; i++)
+    db.prepare(
+      'INSERT INTO partner_shares(id,owner_id,partner_id,item_type,item_id,created_at) VALUES(?,?,?,?,?,?)'
+    ).run('share' + i, i % 2 ? 'member' : 'leader', i % 2 ? 'leader' : 'member', 'note', 'note', 100)
+  for (let i = 0; i < 5; i++)
+    db.prepare(
+      'INSERT INTO partner_shares(id,owner_id,partner_id,item_type,item_id,created_at) VALUES(?,?,?,?,?,?)'
+    ).run('unbound' + i, 'leader', 'other', 'note', 'note', 200)
+  const seen = []
+  let cursor = null
+  do {
+    const page = await (
+      await api('/api/partner-shares?limit=2' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''))
+    ).json()
+    const ids = [...page.received, ...page.sent].map((s) => s.id)
+    assert.ok(ids.length <= 2)
+    assert.ok(ids.every((id) => id.startsWith('share')))
+    seen.push(...ids)
+    cursor = page.nextCursor
+  } while (cursor)
+  assert.equal(seen.length, 5)
+  assert.equal(new Set(seen).size, 5)
+})
+
+test('圈审批：不存在和重复请求不产生幽灵通过通知，成功仅通知一次', async () => {
+  db.exec(
+    "INSERT INTO community_circles(id,name,creator_id,is_public,member_count,created_at) VALUES('circle','高数','leader',0,1,1);INSERT INTO circle_members(circle_id,user_id,role,status,created_at) VALUES('circle','leader','owner','active',1)"
+  )
+  await assert.rejects(
+    api('/api/community/circles/circle/members/member/approve', 'leader', 'PUT'),
+    (e) => e.status === 404
+  )
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM community_notifications WHERE target_id='circle'").get().n, 0)
+  db.exec(
+    "INSERT INTO circle_members(circle_id,user_id,role,status,created_at) VALUES('circle','member','member','pending',1)"
+  )
+  assert.equal((await api('/api/community/circles/circle/members/member/approve', 'leader', 'PUT')).status, 200)
+  await assert.rejects(
+    api('/api/community/circles/circle/members/member/approve', 'leader', 'PUT'),
+    (e) => e.status === 404
+  )
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM community_notifications WHERE target_id='circle'").get().n, 1)
+  assert.equal(db.prepare("SELECT member_count FROM community_circles WHERE id='circle'").get().member_count, 2)
+})
+
+test('圈申请并发去重通知，审批与取消/拒绝交错时成员计数正确', async () => {
+  db.exec(
+    "INSERT INTO community_circles(id,name,creator_id,is_public,member_count,created_at) VALUES('circle','高数','leader',0,1,1);INSERT INTO circle_members(circle_id,user_id,role,status,created_at) VALUES('circle','leader','owner','active',1)"
+  )
+  await Promise.all([
+    api('/api/community/circles/circle/join', 'member', 'PUT'),
+    api('/api/community/circles/circle/join', 'member', 'PUT')
+  ])
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM community_notifications WHERE target_id='circle'").get().n, 1)
+  beforeBatch = () =>
+    db.exec(
+      "UPDATE circle_members SET status='active' WHERE circle_id='circle' AND user_id='member';UPDATE community_circles SET member_count=2 WHERE id='circle'"
+    )
+  await api('/api/community/circles/circle/join', 'member', 'PUT')
+  assert.equal(db.prepare("SELECT member_count FROM community_circles WHERE id='circle'").get().member_count, 1)
+  db.exec(
+    "INSERT INTO circle_members(circle_id,user_id,role,status,created_at) VALUES('circle','member','member','pending',1)"
+  )
+  beforeBatch = () =>
+    db.exec(
+      "UPDATE circle_members SET status='active' WHERE circle_id='circle' AND user_id='member';UPDATE community_circles SET member_count=2 WHERE id='circle'"
+    )
+  await api('/api/community/circles/circle/members/member', 'leader', 'DELETE')
+  assert.equal(db.prepare("SELECT member_count FROM community_circles WHERE id='circle'").get().member_count, 1)
+})
+
+test('双人倒计时：空值、零、负数和越界时长不能创建会话', async () => {
+  db.exec(
+    "INSERT INTO study_partners (id,from_id,to_id,pair_key,status,created_at,updated_at) VALUES ('pair','leader','member','leader:member','accepted',1,1)"
+  )
+  for (const focusMinutes of ['', 0, -1, 121, 'bad'])
+    await assert.rejects(
+      api('/api/partner-study/sessions', 'leader', 'POST', { partnerId: 'member', mode: 'countdown', focusMinutes }),
+      (e) => e.status === 400
+    )
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM partner_study_sessions').get().n, 0)
+  assert.equal(
+    (
+      await api('/api/partner-study/sessions', 'leader', 'POST', {
+        partnerId: 'member',
+        mode: 'countdown',
+        focusMinutes: 1
+      })
+    ).status,
+    201
+  )
+})
+
 test('双方并发邀请仅保留一个自习房间和一条邀请通知', async () => {
   db.exec(
     "INSERT INTO study_partners (id,from_id,to_id,pair_key,status,created_at,updated_at) VALUES ('pair','leader','member','leader:member','accepted',1,1)"
@@ -117,6 +276,29 @@ test('双方并发邀请仅保留一个自习房间和一条邀请通知', async
     db.prepare("SELECT COUNT(*) AS n FROM community_notifications WHERE target_type='partner_study'").get().n,
     1
   )
+})
+
+test('双人结束状态：另一方心跳立即拿到done且无权用户不能读取，迟到focus不能倒退done侧', async () => {
+  db.exec(
+    "INSERT INTO study_partners (id,from_id,to_id,pair_key,status,created_at,updated_at) VALUES ('pair','leader','member','leader:member','accepted',1,1)"
+  )
+  const created = await (await api('/api/partner-study/sessions', 'leader', 'POST', { partnerId: 'member' })).json()
+  await api('/api/partner-study/sessions/' + created.id, 'leader', 'PUT', { state: 'done', minutes: 25 })
+  await api('/api/partner-study/sessions/' + created.id, 'leader', 'PUT', { state: 'focus', minutes: 1 })
+  assert.equal(
+    db.prepare('SELECT from_state FROM partner_study_sessions WHERE id=?').get(created.id).from_state,
+    'done'
+  )
+  await api('/api/partner-study/sessions/' + created.id, 'leader', 'DELETE')
+  const heartbeat = await (
+    await api('/api/partner-study/sessions/' + created.id, 'member', 'PUT', { state: 'focus' })
+  ).json()
+  assert.equal(heartbeat.session.status, 'done')
+  await assert.rejects(
+    api('/api/partner-study/sessions/' + created.id, 'other', 'PUT', { state: 'focus' }),
+    (e) => e.status === 403
+  )
+  assert.equal(db.prepare('SELECT to_state FROM partner_study_sessions WHERE id=?').get(created.id).to_state, 'idle')
 })
 
 test('自习创建：busy 检查后出现的新房间仍能阻止本次写入和幽灵通知', async () => {

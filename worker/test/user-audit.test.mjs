@@ -7,6 +7,10 @@ import { deferred, settle } from './refactor-harness.mjs'
 
 const storage = new Map()
 globalThis.localStorage = {
+  get length() {
+    return storage.size
+  },
+  key: (index) => [...storage.keys()][index] ?? null,
   getItem: (key) => storage.get(key) ?? null,
   setItem: (key, value) => storage.set(key, value),
   removeItem: (key) => storage.delete(key)
@@ -20,7 +24,9 @@ const result = await build({
       export * from './src/api/client'; export * from './src/utils/session';
       export * from './src/stores/app/sync'; export * from './src/services/syncOutbox';
       export * from './src/data/defaults';
-      export { isValidBackup } from './src/stores/app/importExport';
+      export { isValidBackup, parseBackup, importExportActions } from './src/stores/app/importExport';
+      export { settingsActions } from './src/stores/app/settings';
+      export { settingsBodySchema } from './worker/src/api/settings';
       export * from './src/stores/app/english';
       export { readingMapping, listeningMapping } from './worker/src/api/english';
       export { vocabMapping } from './worker/src/api/vocab';
@@ -110,6 +116,74 @@ test('导入：合法备份可用，损坏的数值/正文/积分数组在覆盖
     { gamification: { ...valid.gamification, pointsLog: [null] } }
   ])
     assert.equal(app.isValidBackup({ ...valid, ...change }), false)
+})
+
+test('设置：非法目标或超长引言在本地写入和暂存前被拒绝，合法目标同步习惯', () => {
+  app.setOutboxUser('a')
+  const store = { ...app.createDefaultState(), save() {} }
+  for (const key of ['dailyGoalMinutes', 'wordGoal', 'problemGoal']) {
+    const previous = store.settings[key]
+    for (const value of [NaN, Infinity, -1, 0, 1.5, '']) {
+      assert.throws(() => app.settingsActions.updateSettings.call(store, { [key]: value }))
+      assert.equal(store.settings[key], previous)
+      assert.equal(app.takeForFlush(), null)
+      if (value !== 0 && value !== 1.5) assert.equal(app.settingsBodySchema.safeParse({ [key]: value }).success, false)
+    }
+  }
+  assert.equal(app.settingsBodySchema.safeParse({ dailyGoalMinutes: 0, wordGoal: 1.5 }).success, true)
+  assert.throws(() => app.settingsActions.updateSettings.call(store, { dailyGoalMinutes: 1441 }))
+  assert.throws(() => app.settingsActions.updateQuotes.call(store, ['引'.repeat(201)]))
+  assert.equal(app.takeForFlush(), null)
+  app.settingsActions.updateSettings.call(store, { dailyGoalMinutes: 1440, wordGoal: 60, problemGoal: 40 })
+  assert.equal(store.settings.dailyGoalMinutes, 1440)
+  assert.equal(store.habits.find((h) => h.id === 'h2').target, 60)
+  assert.equal(store.habits.find((h) => h.id === 'h3').target, 40)
+  assert.ok(app.takeForFlush().upserts.settings.self)
+})
+
+test('备份：嵌套结构、重复id、日期与设置异常在任何旧数据删除前被拒绝', () => {
+  const valid = app.createDefaultState()
+  const cases = [
+    { subjects: [{ ...valid.subjects[0], chapters: {} }] },
+    { subjects: [{ ...valid.subjects[0], chapters: [{ id: 'c', name: '章', topics: [null] }] }] },
+    { subjects: [{ ...valid.subjects[0], mastery: { topic: 6 } }] },
+    { habits: [{ ...valid.habits[0], records: [] }] },
+    { habits: [{ ...valid.habits[0], records: { '2026-02-30': 1 } }] },
+    { habits: [valid.habits[0], valid.habits[0]] },
+    { todos: [{ id: 't', date: 'not-a-date', text: '任务', done: false, order: 0 }] },
+    { records: [{ subjectId: 'math', date: '2026-10-02', minutes: 20 }] },
+    { settings: { ...valid.settings, dailyGoalMinutes: -10 } },
+    { settings: { ...valid.settings, dndMutedTypes: {} } },
+    { settings: { ...valid.settings, quotes: [null] } },
+    { summaries: { '2026-10-02': { date: '2026-10-01', mood: '', harvest: '', improve: '', plan: '' } } },
+    { pomodoro: { ...valid.pomodoro, daily: { '2026-10-02': null } } },
+    { notes: [{ id: 'n', title: '笔记', subjectId: 'math', updatedAt: 1, tags: [null] }] }
+  ]
+  for (const change of cases) {
+    const backup = { ...valid, ...change }
+    assert.equal(app.isValidBackup(backup), false, JSON.stringify(change))
+    const store = {
+      ...app.createDefaultState(),
+      $patch() {
+        throw new Error('must not mutate')
+      }
+    }
+    assert.equal(app.importExportActions.importJSON.call(store, JSON.stringify(backup)), false)
+    assert.equal(app.takeForFlush(), null)
+  }
+})
+
+test('备份：保留旧版科目id迁移、英文记录id迁移及缺失偏好的默认值', () => {
+  const backup = app.createDefaultState()
+  delete backup.subjects[0].id
+  delete backup.subjects[0].topicImportance
+  delete backup.settings.dndMutedTypes
+  backup.settings.dailyGoalMinutes = 0
+  backup.settings.wordGoal = 1.5
+  backup.english.reading.push({ date: '2026-10-02', wpm: 80, accuracy: 0 })
+  backup.habits.push({ id: 'minutes', name: '专注', type: 'minutes', target: 10, records: { '2026-10-02': 1.5 } })
+  assert.equal(app.isValidBackup(backup), true)
+  assert.deepEqual(app.parseBackup(JSON.stringify(backup)).settings.dndMutedTypes, [])
 })
 
 test('真题/时长：空白、空数值、负值、无穷、超过总分被前后端同时拒绝', () => {
