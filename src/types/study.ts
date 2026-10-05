@@ -111,6 +111,8 @@ export interface Material {
   totalPages?: number
   readPages?: number
   notes?: string
+  /** 收藏到个人资料收藏夹；旧记录缺省视为未收藏。 */
+  favorite?: boolean
   createdAt: number
   /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
   updatedAt?: number
