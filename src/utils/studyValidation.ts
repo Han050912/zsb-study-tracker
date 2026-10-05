@@ -20,6 +20,28 @@ export function vocabError(newWords: unknown, reviewWords: unknown): string | nu
   return null
 }
 
+export function materialPagesError(totalPages: unknown, readPages: unknown): string | null {
+  for (const [label, value] of [
+    ['总页数', totalPages],
+    ['已读页数', readPages]
+  ] as const) {
+    if (value !== undefined && (!validNumber(value) || !Number.isSafeInteger(value) || value < 0))
+      return `${label}需为非负整数，可留空`
+  }
+  if (typeof totalPages === 'number' && typeof readPages === 'number' && readPages > totalPages)
+    return '已读页数不能超过总页数'
+  return null
+}
+
+export function habitValueError(type: string, value: unknown): string | null {
+  if (type === 'time')
+    return typeof value === 'string' && (!value || /^([01]\d|2[0-3]):[0-5]\d$/.test(value)) ? null : '请选择有效时间'
+  if (!validNumber(value) || value < 0) return '请填写有效的非负数量；填写 0 可清零'
+  if (type === 'checkbox' && value !== 0 && value !== 1) return '打卡状态无效'
+  if (type === 'count' && !Number.isSafeInteger(value)) return '次数需为非负整数'
+  return null
+}
+
 export function examError(exam: {
   title: string
   score: unknown

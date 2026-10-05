@@ -42,9 +42,9 @@ export const partnersApi = {
       method: 'POST',
       body: JSON.stringify({ partnerId, itemType, itemId, force })
     }),
-  partnerShares: () =>
+  partnerShares: (cursor?: string | null) =>
     request<{ received: PartnerShareItem[]; sent: PartnerShareItem[]; hasMore?: boolean; nextCursor?: string | null }>(
-      '/api/partner-shares'
+      `/api/partner-shares${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`
     ),
   partnerShare: (id: string) => request<PartnerShareDetail>(`/api/partner-shares/${id}`),
   /** 分享 PDF 原文（受分享权限保护，供预览渲染）。大文件慢网下载，给 300s 长超时，与 pdfs.ts 下载同口径 */

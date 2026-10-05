@@ -8,9 +8,17 @@ import { createDefaultState } from '../../data/defaults'
 import { uid, today } from '../../utils/date'
 import { stageAchievements, stagePoints } from '../../services/syncOutbox'
 import { getNoteBody, queueNoteBody, clearAllNoteBodies } from '../../services/noteBodies'
-import { stageAllDeletes, stageAllUpserts, stageLogAwards, touchRecord } from './staging'
+import { stageAllDeletes, stageAllUpserts, touchRecord } from './staging'
 import type { AppState } from '../../types'
-import { examError, studyMinutesError, validNumber, vocabError, readingError } from '../../utils/studyValidation'
+import {
+  examError,
+  studyMinutesError,
+  validNumber,
+  vocabError,
+  readingError,
+  habitValueError
+} from '../../utils/studyValidation'
+import { isCalendarDate, type GoalKey } from '../../utils/settingsValidation'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type ImportExportActionsShape = {
@@ -49,6 +57,254 @@ function isRecordArray(value: unknown): boolean {
   return Array.isArray(value) && value.every(isPlainObject)
 }
 
+const text = (value: unknown): value is string => typeof value === 'string'
+const nonempty = (value: unknown): value is string => text(value) && !!value.trim()
+const count = (value: unknown): boolean => validNumber(value) && Number.isSafeInteger(value) && value >= 0
+const nonnegative = (value: unknown): boolean => validNumber(value) && value >= 0
+const strings = (value: unknown): boolean => Array.isArray(value) && value.every(text)
+const optional = (value: unknown, check: (v: unknown) => boolean): boolean => value === undefined || check(value)
+
+/** Validate keys and the nested fields consumed by pages before any existing record is deleted. */
+function validBackupFields(data: Record<string, unknown>): boolean {
+  const rows = (key: string) => data[key] as Record<string, unknown>[]
+  for (const key of BACKUP_ARRAY_FIELDS) {
+    const collection = rows(key)
+    const ids = collection.map((r) => r.id).filter((id) => id !== undefined)
+    if (new Set(ids).size !== ids.length) return false
+    // Only legacy subjects have missing ids repaired by migrateLegacyData.
+    if (!collection.every((r) => (key === 'subjects' && r.id === undefined) || nonempty(r.id))) return false
+    if (!collection.every((r) => ['createdAt', 'updatedAt'].every((k) => optional(r[k], nonnegative)))) return false
+  }
+  if (
+    !rows('subjects').every(
+      (s) =>
+        nonempty(s.name) &&
+        text(s.icon) &&
+        text(s.color) &&
+        nonnegative(s.weight) &&
+        Number(s.weight) <= 100 &&
+        typeof s.builtin === 'boolean' &&
+        isRecordArray(s.chapters) &&
+        (s.chapters as Record<string, unknown>[]).every(
+          (c) => nonempty(c.id) && nonempty(c.name) && strings(c.topics)
+        ) &&
+        isPlainObject(s.mastery) &&
+        Object.values(s.mastery).every((v) => count(v) && Number(v) <= 5) &&
+        optional(
+          s.topicImportance,
+          (v) => isPlainObject(v) && Object.values(v).every((i) => ['normal', 'important', 'must'].includes(String(i)))
+        )
+    )
+  )
+    return false
+  for (const key of ['records', 'problemSessions', 'errorQuestions', 'exams']) {
+    if (!rows(key).every((r) => isCalendarDate(r.date) && nonempty(r.subjectId))) return false
+  }
+  if (!rows('records').every((r) => ['note', 'chapterId', 'topic'].every((k) => optional(r[k], text)))) return false
+  if (
+    !rows('errorQuestions').every(
+      (q) =>
+        text(q.type) &&
+        text(q.content) &&
+        count(q.reviewCount) &&
+        typeof q.mastered === 'boolean' &&
+        ['image', 'answer', 'chapter'].every((k) => optional(q[k], text))
+    )
+  )
+    return false
+  if (
+    !rows('exams').every((e) =>
+      optional(
+        e.parts,
+        (v) => isRecordArray(v) && (v as Record<string, unknown>[]).every((p) => text(p.name) && nonnegative(p.score))
+      )
+    )
+  )
+    return false
+  if (
+    !rows('notes').every(
+      (n) =>
+        text(n.title) &&
+        text(n.subjectId) &&
+        strings(n.tags) &&
+        count(n.updatedAt) &&
+        optional(n.bodyUpdatedAt, count) &&
+        optional(n.type, (v) => v === 'pdf')
+    )
+  )
+    return false
+  if (
+    !rows('materials').every(
+      (m) =>
+        nonempty(m.title) &&
+        ['book', 'video', 'link', 'doc'].includes(String(m.type)) &&
+        optional(m.priority, (v) => ['高', '中', '低'].includes(String(v))) &&
+        optional(m.totalPages, count) &&
+        optional(m.readPages, count) &&
+        (m.totalPages === undefined || m.readPages === undefined || Number(m.readPages) <= Number(m.totalPages)) &&
+        ['url', 'fileName', 'author', 'notes', 'subjectId'].every((k) => optional(m[k], text))
+    )
+  )
+    return false
+  if (
+    !rows('todos').every(
+      (t) =>
+        isCalendarDate(t.date) &&
+        text(t.text) &&
+        typeof t.done === 'boolean' &&
+        validNumber(t.order) &&
+        ['startAt', 'dueAt', 'completedAt'].every((k) => optional(t[k], count))
+    )
+  )
+    return false
+  if (
+    !rows('habits').every(
+      (h) =>
+        nonempty(h.name) &&
+        ['checkbox', 'minutes', 'count', 'time'].includes(String(h.type)) &&
+        // Legacy numeric goals are restored unchanged; current goal entry stays a positive integer.
+        optional(h.target, (v) => validNumber(v) && (h.type === 'checkbox' || h.type === 'time' || v >= 0)) &&
+        isPlainObject(h.records) &&
+        Object.entries(h.records).every(
+          ([date, v]) =>
+            isCalendarDate(date) &&
+            (!habitValueError(String(h.type), v) ||
+              // Past count fractions came from old inputs and cannot be corrected in today's UI.
+              (h.type === 'count' && date < today() && nonnegative(v) && !Number.isInteger(v)))
+        ) &&
+        optional(
+          h.checkins,
+          (v) => isPlainObject(v) && Object.entries(v).every(([date, n]) => isCalendarDate(date) && n === 1)
+        )
+    )
+  )
+    return false
+  const settings = data.settings as Record<string, unknown>
+  for (const key of ['dailyGoalMinutes', 'wordGoal', 'problemGoal'] as GoalKey[]) {
+    // Legacy settings allowed zero/fractional goals; restoring them must match the server's compatibility rules.
+    if (!optional(settings[key], nonnegative)) return false
+  }
+  if (
+    !['userName', 'bio', 'avatar', 'maimemoToken'].every((k) => optional(settings[k], text)) ||
+    !optional(settings.examDate, (v) => v === '' || isCalendarDate(v)) ||
+    !optional(settings.theme, (v) => ['light', 'dark', 'auto'].includes(String(v))) ||
+    !optional(settings.profileVisibility, (v) => ['public', 'login', 'private'].includes(String(v))) ||
+    !optional(settings.userName, (v) => text(v) && v.length <= 30) ||
+    !optional(settings.bio, (v) => text(v) && v.length <= 100) ||
+    !optional(settings.quotes, (v) => strings(v) && (v as string[]).every((q) => q.length <= 200)) ||
+    !optional(
+      settings.dndMutedTypes,
+      (v) =>
+        strings(v) &&
+        (v as string[]).every((t) =>
+          ['like', 'comment', 'follow', 'achievement', 'message', 'system', 'partner'].includes(t)
+        )
+    ) ||
+    ![
+      'onboarded',
+      'reminderEnabled',
+      'joinProgressBoard',
+      'doNotDisturb',
+      'dndMuteMessage',
+      'partnerShareEnabled',
+      'partnerRemindEnabled'
+    ].every((k) => optional(settings[k], (v) => typeof v === 'boolean')) ||
+    !['reminderTime', 'dndStartTime', 'dndEndTime'].every((k) =>
+      optional(settings[k], (v) => v === '' || (text(v) && /^([01]\d|2[0-3]):[0-5]\d$/.test(v)))
+    )
+  )
+    return false
+  const summaries = data.summaries as Record<string, unknown>
+  if (
+    !Object.entries(summaries).every(
+      ([date, s]) =>
+        isCalendarDate(date) &&
+        isPlainObject(s) &&
+        s.date === date &&
+        ['mood', 'harvest', 'improve', 'plan'].every((k) => text(s[k]))
+    )
+  )
+    return false
+  const english = data.english as Record<string, unknown>
+  for (const key of ['vocab', 'reading', 'listening', 'templates']) {
+    const collection = english[key] as Record<string, unknown>[]
+    if (
+      !isRecordArray(collection) ||
+      !collection.every(
+        (r) =>
+          (key === 'templates' || isCalendarDate(r.date)) &&
+          optional(r.id, nonempty) &&
+          optional(r.updatedAt, nonnegative)
+      )
+    )
+      return false
+    const ids = collection.map((r) => r.id).filter((id) => id !== undefined)
+    if (new Set(ids).size !== ids.length) return false
+  }
+  if (
+    !isRecordArray(english.templates) ||
+    !(english.templates as Record<string, unknown>[]).every(
+      (t) => nonempty(t.id) && text(t.title) && text(t.content) && count(t.level)
+    )
+  )
+    return false
+  if (!(english.vocab as Record<string, unknown>[]).every((r) => optional(r.points, nonnegative))) return false
+  if (
+    !(english.listening as Record<string, unknown>[]).every(
+      (r) => text(r.material) && ['精听', '泛听'].includes(String(r.mode))
+    )
+  )
+    return false
+  const pomo = data.pomodoro as Record<string, unknown>
+  if (
+    !isPlainObject(pomo.daily) ||
+    !Object.entries(pomo.daily).every(
+      ([date, stat]) =>
+        isCalendarDate(date) &&
+        isPlainObject(stat) &&
+        count(stat.count) &&
+        nonnegative(stat.minutes) &&
+        count(stat.interruptions)
+    )
+  )
+    return false
+  if (
+    !isRecordArray(pomo.interruptions) ||
+    !(pomo.interruptions as Record<string, unknown>[]).every(
+      (r) => isCalendarDate(r.date) && text(r.reason) && count(r.time)
+    )
+  )
+    return false
+  if (
+    !isRecordArray(pomo.records) ||
+    !(pomo.records as Record<string, unknown>[]).every(
+      (r) =>
+        nonempty(r.id) &&
+        isCalendarDate(r.date) &&
+        count(r.time) &&
+        nonnegative(r.minutes) &&
+        text(r.description) &&
+        ['solo', 'party'].includes(String(r.source)) &&
+        optional(r.partnerName, text) &&
+        optional(r.completed, (v) => typeof v === 'boolean')
+    )
+  )
+    return false
+  if (new Set((pomo.records as Record<string, unknown>[]).map((r) => r.id)).size !== (pomo.records as unknown[]).length)
+    return false
+  const g = data.gamification as Record<string, unknown>
+  return (
+    count(g.points) &&
+    count(g.streak) &&
+    (g.lastCheckin === '' || isCalendarDate(g.lastCheckin)) &&
+    (g.pointsLog === undefined ||
+      (isRecordArray(g.pointsLog) &&
+        (g.pointsLog as Record<string, unknown>[]).every(
+          (r) => isCalendarDate(r.date) && validNumber(r.points) && text(r.reason) && optional(r.refId, text)
+        )))
+  )
+}
+
 /**
  * 备份结构校验：导入是「先给全部旧记录打删除墓碑、再写入新数据」且会即时推送到云端，
  * 误判的代价是**不可恢复的数据清空**，因此只有确认「是本系统的备份」才允许进入导入流程——
@@ -59,6 +315,7 @@ export function isValidBackup(data: unknown): data is Backup {
   if (!isPlainObject(data)) return false
   if (!BACKUP_ARRAY_FIELDS.every((field) => isRecordArray(data[field]))) return false
   if (!BACKUP_OBJECT_FIELDS.every((field) => isPlainObject(data[field]))) return false
+  if (!validBackupFields(data)) return false
   const english = data.english as Record<string, unknown>
   const pomodoro = data.pomodoro as Record<string, unknown>
   const gamification = data.gamification as Record<string, unknown>
@@ -116,7 +373,9 @@ export function isValidBackup(data: unknown): data is Backup {
 export function parseBackup(json: string): Backup | null {
   try {
     const parsed: unknown = JSON.parse(json)
-    return isValidBackup(parsed) ? parsed : null
+    if (!isValidBackup(parsed)) return null
+    // Older backups lack optional preferences; preserve usable defaults for those nested fields.
+    return { ...parsed, settings: { ...createDefaultState().settings, ...parsed.settings } }
   } catch {
     return null
   }
@@ -143,8 +402,7 @@ export const importExportActions: ImportExportActionsShape = {
       const now = Date.now()
       // 记录级协议没有整域替换：旧状态中被整批覆盖的记录逐条 stage 删除墓碑
       stageAllDeletes(this.$state, now)
-      // gamification 服务端权威、不可整域推送：先以 all 事件一次性清空服务端流水（无 ref_id 的旧流水不可撤销，保持），
-      // 导入的新流水随后由 stageLogAwards 以 award 事件补齐，服务端 points = SUM(log) 与导入结果一致
+      // 备份中的积分仅供本地暂时展示；服务端从恢复的业务记录重新计算，绝不重放备份奖励。
       stagePoints({ op: 'revoke', all: true })
       this.$patch({ ...createDefaultState(), ...data })
       this.migrateLegacyData()
@@ -165,7 +423,6 @@ export const importExportActions: ImportExportActionsShape = {
       stageAllUpserts(this.$state, now)
       // 导入的成就以只增不减并集上报（服务端成就不可移除，§5.2）
       stageAchievements([...this.gamification.achievements])
-      stageLogAwards(this.gamification.pointsLog)
       this.save()
       return true
     } catch (e) {
@@ -265,9 +522,7 @@ export const importExportActions: ImportExportActionsShape = {
       if (Array.isArray(this.english.listening)) {
         for (const l of this.english.listening) if (l) claim(l, Math.round((Number(l.minutes) || 0) / 10), '听力练习')
       }
-      // 迁移产生的本地流水（认领盖章 + 补写行）以 award 事件补齐服务端（设计 §5.1）：
-      // 服务端按 refId 幂等去重，重复推送安全；无 refId 的旧流水无法上报（保持本地）
-      if (changed) stageLogAwards(log)
+      // 迁移只调整本地展示与业务记录；奖励由服务端根据业务事实计算。
       if (changed) this.save()
     } catch (e) {
       console.error('迁移旧版数据失败', e)

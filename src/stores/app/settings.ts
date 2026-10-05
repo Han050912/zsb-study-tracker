@@ -10,6 +10,7 @@ import { today } from '../../utils/date'
 import { stageUpsert } from '../../services/syncOutbox'
 import { touchRecord, touchSettings } from './staging'
 import type { DailySummary } from '../../types'
+import { settingsGoalError, type GoalKey } from '../../utils/settingsValidation'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type SettingsActionsShape = {
@@ -32,9 +33,12 @@ export const settingsActions: SettingsActionsShape = {
   },
 
   updateSettings(this: AppStoreThis, patch: Partial<AppState['settings']>) {
-    // 每日目标统一钳制为 >=1 的整数，与 updateHabitTarget 口径一致
-    if (patch.wordGoal !== undefined) patch.wordGoal = Math.max(1, Math.round(patch.wordGoal) || 1)
-    if (patch.problemGoal !== undefined) patch.problemGoal = Math.max(1, Math.round(patch.problemGoal) || 1)
+    // 校验先于本地写入和 outbox 打点，避免一项非法目标阻塞所有学习数据的同步。
+    for (const key of ['dailyGoalMinutes', 'wordGoal', 'problemGoal'] as GoalKey[]) {
+      if (patch[key] === undefined) continue
+      const error = settingsGoalError(key, patch[key])
+      if (error) throw new Error(error)
+    }
     Object.assign(this.settings, patch)
     // 每日目标与习惯列表「每日背单词」「每日做题」按固定 id 实时双向同步
     if (patch.wordGoal !== undefined) {
@@ -58,12 +62,13 @@ export const settingsActions: SettingsActionsShape = {
 
   /** 替换自定义名言列表（settings 整行随 self 上行；maimemoToken 空值语义见 touchSettings 注释） */
   updateQuotes(this: AppStoreThis, quotes: string[]) {
+    if (quotes.some((q) => typeof q !== 'string' || q.length > 200)) throw new Error('单条自定义引言最多 200 字')
     this.settings.quotes = quotes
     touchSettings(this.settings)
     this.save()
   },
 
-  /** 设置头像（上传端点只存 R2 文件并返回 URL；settings 行由同步协议写入） */
+  /** 上传端点已保存头像；本地立即更新，并让后续设置同步携带同一 URL。 */
   setAvatar(this: AppStoreThis, url: string) {
     this.settings.avatar = url
     touchSettings(this.settings)

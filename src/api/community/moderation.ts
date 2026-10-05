@@ -8,8 +8,10 @@ export const moderationApi = {
     request<{ isFeatured: boolean }>(`/api/admin/posts/${id}/feature`, { method: 'PUT' }),
   adminHidePost: (id: string) => request<{ isHidden: boolean }>(`/api/admin/posts/${id}/hide`, { method: 'PUT' }),
   adminHideComment: (id: string) => request<{ isHidden: boolean }>(`/api/admin/comments/${id}/hide`, { method: 'PUT' }),
-  adminReports: () =>
-    request<{ reports: AdminReport[]; hasMore?: boolean; nextCursor?: string | null }>('/api/admin/reports'),
+  adminReports: (cursor?: string) =>
+    request<{ reports: AdminReport[]; hasMore?: boolean; nextCursor?: string | null }>(
+      `/api/admin/reports${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`
+    ),
   adminResolveReport: (id: string, action: 'hide' | 'delete' | 'reject', reason?: string) =>
     request<{ ok: boolean }>(`/api/admin/reports/${id}/resolve`, {
       method: 'PUT',

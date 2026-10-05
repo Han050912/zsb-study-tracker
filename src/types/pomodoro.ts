@@ -1,12 +1,14 @@
 /** 番茄钟域 */
 
-/** 单次番茄完成记录（最近完成板块明细） */
+/** 单次番茄专注记录（包含提前结束） */
 export interface PomodoroRecord {
   id: string
   date: string
-  /** 完成时刻时间戳 */
+  /** 本次专注结束时刻时间戳 */
   time: number
   minutes: number
+  /** 是否完成设定专注时长；旧记录缺字段时沿用已完成语义 */
+  completed?: boolean
   description: string
   /** 'solo' 单人 | 'party' 双人开黑 */
   source: 'solo' | 'party'

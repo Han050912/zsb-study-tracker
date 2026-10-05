@@ -5,9 +5,10 @@ export const messagesApi = {
   /** 私信会话列表（每 peer 最新一条 + 未读数） */
   conversations: () => request<{ conversations: MessageConversation[] }>('/api/community/messages/conversations'),
   /** 与某用户的消息记录（游标分页；打开即已读对方消息） */
-  messagesWith: (peerId: string, cursor?: string | null) => {
+  messagesWith: (peerId: string, cursor?: string | null, after?: string | null) => {
     const params = new URLSearchParams()
     if (cursor) params.set('cursor', cursor)
+    if (after) params.set('after', after)
     const qs = params.toString()
     return request<{ messages: CommunityMessage[]; nextCursor: string | null; markedRead: number }>(
       `/api/community/messages/with/${peerId}${qs ? `?${qs}` : ''}`

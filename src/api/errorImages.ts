@@ -46,6 +46,7 @@ async function fetchErrorImage(id: string): Promise<Blob> {
 
 /** 会话级 blob URL 缓存（同一 id 只拉一次，跨组件复用） */
 const urlCache = new Map<string, string>()
+let cacheGeneration = 0
 /** 进行中的请求（同一 id 并发挂载只发一次） */
 const inflight = new Map<string, Promise<string>>()
 
@@ -56,19 +57,25 @@ export async function resolveErrorImageUrl(image: string): Promise<string> {
   if (cached) return cached
   const pending = inflight.get(id)
   if (pending) return pending
+  const generation = cacheGeneration
   const task = fetchErrorImage(id)
     .then((blob) => {
+      // authFetch 已返回响应头后，blob 读取仍可能跨越切号；旧字节不得进入新会话缓存。
+      if (generation !== cacheGeneration) throw new Error('登录状态已改变，请重新加载图片')
       const url = URL.createObjectURL(blob)
       urlCache.set(id, url)
       return url
     })
-    .finally(() => inflight.delete(id))
+    .finally(() => {
+      if (inflight.get(id) === task) inflight.delete(id)
+    })
   inflight.set(id, task)
   return task
 }
 
 /** 换账号 / 会话结束时清空缓存：blob URL 一并 revoke，防止跨账号复用遗留的已授权图片 */
 export function clearErrorImageCache(): void {
+  cacheGeneration++
   for (const url of urlCache.values()) URL.revokeObjectURL(url)
   urlCache.clear()
   inflight.clear()

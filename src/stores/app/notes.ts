@@ -9,6 +9,7 @@ import { stageDelete } from '../../services/syncOutbox'
 import { touchRecord } from './staging'
 import { getNoteBody, queueNoteBody, removeNoteBody } from '../../services/noteBodies'
 import type { Material, Note } from '../../types'
+import { materialPagesError } from '../../utils/studyValidation'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type NotesActionsShape = {
@@ -95,6 +96,8 @@ export const notesActions: NotesActionsShape = {
   },
 
   addMaterial(this: AppStoreThis, m: Omit<Material, 'id' | 'createdAt'>) {
+    const error = materialPagesError(m.totalPages, m.readPages)
+    if (error) throw new Error(error)
     const material: Material = { ...m, id: uid(), createdAt: Date.now() }
     this.materials.push(material)
     touchRecord('materials', material)
@@ -104,6 +107,9 @@ export const notesActions: NotesActionsShape = {
   updateMaterial(this: AppStoreThis, id: string, patch: Partial<Material>) {
     const m = this.materials.find((x) => x.id === id)
     if (m) {
+      const next = { ...m, ...patch }
+      const error = materialPagesError(next.totalPages, next.readPages)
+      if (error) throw new Error(error)
       Object.assign(m, patch)
       touchRecord('materials', m)
       this.save()

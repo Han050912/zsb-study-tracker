@@ -2,48 +2,22 @@
  * app store 的 staging 纯函数层（leaf）：「mutation → outbox 暂存」与拉取游标的本地读写。
  * 不依赖 store 实例（不 import 其他 app 模块的 actions/state），可被各域模块单向 import。
  */
-import { stageDelete, stagePoints, stageUpsert } from '../../services/syncOutbox'
+import { stageDelete, stageUpsert } from '../../services/syncOutbox'
 import type { AppState, PomodoroRecord, PomodoroStat, Settings } from '../../types'
 
-/**
- * 拉取游标的 localStorage key 前缀（按用户分桶：`<前缀>:<userId>`）。
- * 语义严格按设计 §4.2：`cursor[domain] = 上次 pull 该域返回的 changes[domain].seq`（域未出现则不推进）；
- * **不得**用 `versions` 当游标（`allocateSeq` 先行提交会让 versions 高于实际可读序号）。
- */
-export const CURSOR_KEY_PREFIX = 'zsb_sync_cursors_v1'
+/** Cursors belong to this tab's in-memory state; cold startup always performs a full pull. */
+const cursorsByUser = new Map<string, Record<string, number>>()
 
-export function cursorKey(userId: string): string {
-  return `${CURSOR_KEY_PREFIX}:${userId}`
-}
-
-/** 读取该账号的拉取游标（无/损坏则视为空，服务端按 0 处理） */
 export function loadCursors(userId: string | null): Record<string, number> {
-  if (!userId) return {}
-  try {
-    const raw = localStorage.getItem(cursorKey(userId))
-    const parsed = raw ? JSON.parse(raw) : null
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, number>) : {}
-  } catch {
-    return {}
-  }
+  return userId ? { ...(cursorsByUser.get(userId) ?? {}) } : {}
 }
 
 export function saveCursors(userId: string | null, cursors: Record<string, number>): void {
-  if (!userId) return
-  try {
-    localStorage.setItem(cursorKey(userId), JSON.stringify(cursors))
-  } catch (e) {
-    console.error('写入同步游标失败', e)
-  }
+  if (userId) cursorsByUser.set(userId, { ...cursors })
 }
 
 export function clearCursors(userId: string | null): void {
-  if (!userId) return
-  try {
-    localStorage.removeItem(cursorKey(userId))
-  } catch (e) {
-    console.error('清除同步游标失败', e)
-  }
+  if (userId) cursorsByUser.delete(userId)
 }
 
 // ---------- 记录级打点辅助（T6：mutation → outbox 暂存） ----------
@@ -52,7 +26,7 @@ export function clearCursors(userId: string | null): void {
  * 新增/编辑打点：给记录打 LWW 时间戳（updatedAt）并暂存到 outbox。
  * 适用于键 = 记录 id 的域（records/problemSessions/errorQuestions/exams/notes/materials/todos/
  * subjects/habits；subjects/habits 为整棵聚合整体 stage，键仍是记录 id）。
- * stage 的是响应式对象引用：推送时序列化为当时最新值（期间的重编辑必然重新 stage 覆盖同 key）。
+ * stage 立即保存不可变副本；飞行期间的新编辑写入另一操作，旧请求的 ACK 无权删除它。
  */
 export function touchRecord(domain: string, record: { id: string; updatedAt?: number }, ts = Date.now()): void {
   record.updatedAt = ts
@@ -208,13 +182,4 @@ export function stageAllUpserts(state: AppState, ts: number): void {
   // settings 整行上行（maimemoToken 空值语义见 touchSettings 注释）
   state.settings.updatedAt = ts
   stageUpsert('settings', 'self', state.settings, ts)
-}
-
-/** 把某份积分流水中所有带 refId 的条目以 award 事件补齐服务端（按 refId 幂等去重；脏数据跳过避免整批 400） */
-export function stageLogAwards(log: { date: string; points: number; reason: string; refId?: string }[]): void {
-  for (const l of log) {
-    if (!l.refId) continue
-    if (!Number.isInteger(l.points) || l.points <= 0) continue
-    stagePoints({ op: 'award', refId: l.refId, points: l.points, reason: l.reason, date: l.date })
-  }
 }

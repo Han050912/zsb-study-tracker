@@ -1,207 +1,278 @@
+import { ref } from 'vue'
 import type { PointsEvent } from '../api/sync'
 
-/**
- * 待推送队列（持久化 outbox，设计 §6.1）。
- *
- * - localStorage 按**用户分桶**（`zsb_sync_outbox_v1:<userId>`）：换账号不会串数据。
- * - 每次 stage 立即同步落盘（单条 < 1KB，不防抖）：刷新/崩溃/断网后仍可续传。
- * - 刷新顺序固定「先 pull 后 flush」（见 stores/app.ts 的 hydrate）：
- *   成功推送后 `ack` 只清除**值/时间戳与已推送快照一致**的条目，飞行期间的新编辑保留。
- * - 登出/切号调用 `clear()` 清空当前账号队列。
- *
- * 除设计 §6.1 的 API（stageUpsert/stageDelete/takeForFlush/ack/size/clear）外，
- * 另需 `setOutboxUser`（分桶绑定）与 `stagePoints`/`stageAchievements`
- * （积分事件与成就随 push 同一 batch 上报，必须与记录变更一起持久化）。
- */
-
-const OUTBOX_KEY_PREFIX = 'zsb_sync_outbox_v1'
-
-/** 暂存的一条 upsert：值 + 客户端编辑时刻（LWW 比较键） */
+/** Independent operation keys prevent another tab from overwriting or ACKing a later edit. */
+const PREFIX = 'zsb_sync_outbox_v2:'
+const LEGACY_PREFIX = 'zsb_sync_outbox_v1:'
 export interface OutboxUpsert {
   value: unknown
   updatedAt: number
 }
-
-/** 落盘结构 */
-interface OutboxState {
-  upserts: Record<string, Record<string, OutboxUpsert>>
-  deletes: Record<string, Record<string, number>>
-  points: PointsEvent[]
-  achievements: string[]
-  savedAt: number
-}
-
-/** `takeForFlush()` 返回的快照（ack 时按其中记录的值/时间戳判定「是否仍是同一条」） */
 export interface OutboxSnapshot {
   upserts: Record<string, Record<string, OutboxUpsert>>
   deletes: Record<string, Record<string, number>>
   points: PointsEvent[]
   achievements: string[]
+  receipt?: { userId: string; keys: string[] }
 }
-
-/** 当前绑定账号（未绑定 = 尚未登录/hydrate，stage 全部为无操作） */
+type Change =
+  | { kind: 'upsert'; domain: string; key: string; value: unknown; updatedAt: number }
+  | { kind: 'delete'; domain: string; key: string; updatedAt: number }
+  | { kind: 'points'; event: PointsEvent }
+  | { kind: 'achievements'; ids: string[] }
+type Operation = Change & { order: number }
 let currentUserId: string | null = null
-/** 内存缓存：与落盘内容一致，避免每次 stage 都重新解析 JSON */
-let cache: OutboxState | null = null
+let lastOrder = 0
+// Only failed writes stay in memory; persisted operations are always read from shared storage.
+const volatile = new Map<string, Operation>()
+const readIssues = new Map<string, string>()
+export const outboxIssue = ref<string | null>(null)
+const prefixFor = (userId: string) => `${PREFIX}${encodeURIComponent(userId)}:`
+const emptySnapshot = (): OutboxSnapshot => ({ upserts: {}, deletes: {}, points: [], achievements: [] })
 
-function emptyState(): OutboxState {
-  return { upserts: {}, deletes: {}, points: [], achievements: [], savedAt: 0 }
+function updateIssue() {
+  outboxIssue.value = currentUserId
+    ? hasVolatileOutboxChanges()
+      ? '本地存储不可用，部分修改仅保留在当前页面。请保持页面打开并重试同步。'
+      : (readIssues.get(currentUserId) ?? null)
+    : null
 }
 
-function storageKey(userId: string): string {
-  return `${OUTBOX_KEY_PREFIX}:${userId}`
+export function hasVolatileOutboxChanges(allAccounts = false): boolean {
+  if (allAccounts) return volatile.size > 0
+  return !!currentUserId && [...volatile.keys()].some((key) => key.startsWith(prefixFor(currentUserId!)))
 }
 
-/** 绑定当前账号（登录/hydrate 时调用）；切换账号即丢弃内存缓存，改读新账号的落盘数据 */
-export function setOutboxUser(userId: string | null): void {
-  if (userId === currentUserId) return
-  currentUserId = userId
-  cache = null
-}
-
-function load(): OutboxState {
-  if (!currentUserId) return emptyState()
-  if (cache) return cache
+function persist(key: string, operation: Operation): boolean {
   try {
-    const raw = localStorage.getItem(storageKey(currentUserId))
-    cache = raw ? (JSON.parse(raw) as OutboxState) : emptyState()
-  } catch (e) {
-    console.error('读取本地待推送队列失败，已重置', e)
-    cache = emptyState()
+    localStorage.setItem(key, JSON.stringify(operation))
+    volatile.delete(key)
+    return true
+  } catch {
+    volatile.set(key, operation)
+    return false
   }
-  return cache
 }
 
-/** 每次 stage 立即同步落盘（不做防抖，避免丢数据） */
-function persist(state: OutboxState): void {
-  if (!currentUserId) return
-  state.savedAt = Date.now()
+/** Stable migration IDs make retries and migration by two tabs idempotent. */
+function fingerprint(text: string): string {
+  let a = 2166136261,
+    b = 5381
+  for (let i = 0; i < text.length; i++) {
+    a = Math.imul(a ^ text.charCodeAt(i), 16777619)
+    b = Math.imul(b, 33) ^ text.charCodeAt(i)
+  }
+  return `${(a >>> 0).toString(36)}-${(b >>> 0).toString(36)}-${text.length}`
+}
+
+function migrate(userId: string) {
+  const legacyKey = `${LEGACY_PREFIX}${userId}`
+  const raw = localStorage.getItem(legacyKey)
+  if (!raw) return
+  const old = JSON.parse(raw) as OutboxSnapshot & { savedAt?: number }
+  if (!old || !old.upserts || !old.deletes || !Array.isArray(old.points) || !Array.isArray(old.achievements))
+    throw new Error('Invalid legacy outbox')
+  const changes: Change[] = []
+  for (const [domain, bucket] of Object.entries(old.upserts))
+    for (const [key, entry] of Object.entries(bucket)) changes.push({ kind: 'upsert', domain, key, ...entry })
+  for (const [domain, bucket] of Object.entries(old.deletes))
+    for (const [key, updatedAt] of Object.entries(bucket)) changes.push({ kind: 'delete', domain, key, updatedAt })
+  for (const event of old.points) changes.push({ kind: 'points', event })
+  if (old.achievements.length) changes.push({ kind: 'achievements', ids: old.achievements })
+  const migration = `${prefixFor(userId)}legacy-${fingerprint(raw)}-`
+  let complete = true
+  changes.forEach((change, index) => {
+    const order = (Number(old.savedAt) || 0) * 1000 + index
+    if (!persist(`${migration}${index}`, { ...change, order })) complete = false
+  })
+  // Partial failure keeps the original bucket; retry uses exactly the same operation keys.
+  if (complete && localStorage.getItem(legacyKey) === raw) localStorage.removeItem(legacyKey)
+}
+
+function validOperation(value: unknown): value is Operation {
+  if (!value || typeof value !== 'object') return false
+  const op = value as Operation
+  if (!Number.isFinite(op.order)) return false
+  if (op.kind === 'points') return !!op.event && ['award', 'revoke'].includes(op.event.op)
+  if (op.kind === 'achievements') return Array.isArray(op.ids) && op.ids.every((id) => typeof id === 'string')
+  return (
+    (op.kind === 'upsert' || op.kind === 'delete') &&
+    typeof op.domain === 'string' &&
+    typeof op.key === 'string' &&
+    Number.isFinite(op.updatedAt)
+  )
+}
+
+function operations(userId: string): [string, Operation][] {
+  const found = new Map<string, Operation>()
+  const prefix = prefixFor(userId)
+  readIssues.delete(userId)
   try {
-    localStorage.setItem(storageKey(currentUserId), JSON.stringify(state))
-  } catch (e) {
-    console.error('写入本地待推送队列失败', e)
-  }
-}
-
-/**
- * 暂存一条 upsert。
- * 同 key 若存在待推送 delete 则一并清除：同一条记录不能同时被 upsert 与 delete（服务端会 400），
- * 以最后一次操作为准。
- */
-export function stageUpsert(domain: string, key: string, value: unknown, updatedAt: number): void {
-  if (!currentUserId) return
-  const state = load()
-  if (state.deletes[domain]) delete state.deletes[domain][key]
-  const bucket = (state.upserts[domain] ??= {})
-  bucket[key] = { value, updatedAt }
-  persist(state)
-}
-
-/** 暂存一条删除墓碑（同 key 的待推送 upsert 一并清除，理由同 stageUpsert） */
-export function stageDelete(domain: string, key: string, deletedAt: number): void {
-  if (!currentUserId) return
-  const state = load()
-  if (state.upserts[domain]) delete state.upserts[domain][key]
-  const bucket = (state.deletes[domain] ??= {})
-  bucket[key] = deletedAt
-  persist(state)
-}
-
-/** 暂存一条积分事件（award/revoke，revoke 含 `all` 全量撤销；发放按 refId 幂等、撤销重复执行安全） */
-export function stagePoints(event: PointsEvent): void {
-  if (!currentUserId) return
-  const state = load()
-  state.points.push(event)
-  persist(state)
-}
-
-/** 暂存成就解锁 id（服务端只做只增不减并集，重复推送无副作用） */
-export function stageAchievements(ids: string[]): void {
-  if (!currentUserId || !ids.length) return
-  const state = load()
-  for (const id of ids) if (!state.achievements.includes(id)) state.achievements.push(id)
-  persist(state)
-}
-
-/** 深拷贝当前队列（快照与内存对象解耦，ack 时才能据此判别「飞行期间的新编辑」） */
-function cloneSnapshot(state: OutboxState): OutboxSnapshot {
-  return JSON.parse(
-    JSON.stringify({
-      upserts: state.upserts,
-      deletes: state.deletes,
-      points: state.points,
-      achievements: state.achievements
-    })
-  ) as OutboxSnapshot
-}
-
-/** 取出待推送快照；队列为空返回 null（调用方据此跳过网络请求） */
-export function takeForFlush(): OutboxSnapshot | null {
-  const state = load()
-  if (!size()) return null
-  return cloneSnapshot(state)
-}
-
-/** 从当前积分事件里移除「已推送快照中」的同等条目（各移除一条，允许多次相同事件） */
-function removeSentEvents(current: PointsEvent[], sent: PointsEvent[]): PointsEvent[] {
-  const remaining = [...current]
-  for (const event of sent) {
-    const i = remaining.findIndex((c) => JSON.stringify(c) === JSON.stringify(event))
-    if (i >= 0) remaining.splice(i, 1)
-  }
-  return remaining
-}
-
-/**
- * 确认已推送的快照：**只清除「值/时间戳与快照一致」的条目**——
- * 若条目在飞行期间被重新编辑（updatedAt 或 value 变了），保留待下次推送，避免丢数据。
- */
-export function ack(snapshot: OutboxSnapshot): void {
-  if (!currentUserId) return
-  const state = load()
-
-  for (const [domain, bucket] of Object.entries(snapshot.upserts)) {
-    const current = state.upserts[domain]
-    if (!current) continue
-    for (const [key, sent] of Object.entries(bucket)) {
-      const entry = current[key]
-      if (entry && entry.updatedAt === sent.updatedAt && JSON.stringify(entry.value) === JSON.stringify(sent.value)) {
-        delete current[key]
+    migrate(userId)
+    // Read a key snapshot first: another tab may remove an ACKed value during the scan.
+    const keys: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key?.startsWith(prefix)) keys.push(key)
+    }
+    for (const key of keys) {
+      const raw = localStorage.getItem(key)
+      if (!raw) continue
+      try {
+        const operation: unknown = JSON.parse(raw)
+        if (!validOperation(operation)) throw new Error('Invalid outbox operation')
+        found.set(key, operation)
+      } catch {
+        readIssues.set(userId, '部分本地待同步记录无法读取，已保留原数据，请导出备份并联系管理员。')
       }
     }
-    if (!Object.keys(current).length) delete state.upserts[domain]
+  } catch {
+    readIssues.set(userId, '无法读取本地待同步记录，原数据未删除。请检查浏览器存储并重试。')
   }
-
-  for (const [domain, bucket] of Object.entries(snapshot.deletes)) {
-    const current = state.deletes[domain]
-    if (!current) continue
-    for (const [key, sent] of Object.entries(bucket)) if (current[key] === sent) delete current[key]
-    if (!Object.keys(current).length) delete state.deletes[domain]
+  for (const [key, operation] of volatile) {
+    if (!key.startsWith(prefix)) continue
+    persist(key, operation)
+    found.set(key, operation)
   }
-
-  state.points = removeSentEvents(state.points, snapshot.points)
-  state.achievements = state.achievements.filter((id) => !snapshot.achievements.includes(id))
-
-  persist(state)
+  updateIssue()
+  const result = [...found].sort(([ka, a], [kb, b]) => a.order - b.order || ka.localeCompare(kb))
+  for (const [, operation] of result) lastOrder = Math.max(lastOrder, operation.order)
+  return result
 }
 
-/** 待推送条目数（upserts + deletes + 积分事件 + 成就） */
-export function size(): number {
-  const state = load()
-  let n = state.points.length + state.achievements.length
-  for (const bucket of Object.values(state.upserts)) n += Object.keys(bucket).length
-  for (const bucket of Object.values(state.deletes)) n += Object.keys(bucket).length
-  return n
+export function setOutboxUser(userId: string | null): void {
+  currentUserId = userId
+  if (userId) operations(userId)
+  updateIssue()
 }
 
-/** 清空当前账号的待推送队列（登出/切号调用，避免串号） */
-export function clear(): void {
-  if (currentUserId) {
-    try {
-      localStorage.removeItem(storageKey(currentUserId))
-    } catch (e) {
-      console.error('清除本地待推送队列失败', e)
+function append(change: Change) {
+  if (!currentUserId) return
+  // This shared clock is only an ordering hint, never a queue or ACK source. Concurrent
+  // allocations may tie (the operation ID breaks ties); sequential writes observe the clock.
+  // Keeping it separate avoids re-reading the complete journal for every imported record.
+  const clockKey = `zsb_sync_outbox_order_v2:${encodeURIComponent(currentUserId)}`
+  try {
+    const sharedOrder = Number(localStorage.getItem(clockKey))
+    if (Number.isSafeInteger(sharedOrder)) lastOrder = Math.max(lastOrder, sharedOrder)
+  } catch {
+    // The operation's own durable write below reports any storage failure to the user.
+  }
+  lastOrder = Math.max(Date.now() * 1000, lastOrder + 1)
+  try {
+    localStorage.setItem(clockKey, String(lastOrder))
+  } catch {
+    /* Nonessential ordering hint. */
+  }
+  // Detach Vue proxies and mutable state before recording an immutable operation.
+  const operation = JSON.parse(JSON.stringify({ ...change, order: lastOrder })) as Operation
+  persist(`${prefixFor(currentUserId)}${crypto.randomUUID()}`, operation)
+  updateIssue()
+}
+
+export function stageUpsert(domain: string, key: string, value: unknown, updatedAt: number): void {
+  append({ kind: 'upsert', domain, key, value, updatedAt })
+}
+export function stageDelete(domain: string, key: string, updatedAt: number): void {
+  append({ kind: 'delete', domain, key, updatedAt })
+}
+export function stagePoints(event: PointsEvent): void {
+  append({ kind: 'points', event })
+}
+export function stageAchievements(ids: string[]): void {
+  if (ids.length) append({ kind: 'achievements', ids })
+}
+
+interface FlushBatchOptions {
+  /** Restrict a drain to operations present at its start; later edits belong to the next drain. */
+  keys: ReadonlySet<string>
+  maxChanges: number
+  maxBytes: number
+}
+
+export function takeForFlush(options?: FlushBatchOptions): OutboxSnapshot | null {
+  if (!currentUserId) return null
+  let entries = operations(currentUserId).filter(([key]) => !options || options.keys.has(key))
+  if (!entries.length) return null
+  if (options) {
+    // Keep all revisions of one business key together so ACK cannot expose an older queued edit.
+    const records = new Map<string, [string, Operation][]>()
+    const events: [string, Operation][][] = []
+    for (const entry of entries) {
+      const operation = entry[1]
+      if (operation.kind === 'upsert' || operation.kind === 'delete') {
+        const identity = JSON.stringify([operation.domain, operation.key])
+        const revisions = records.get(identity) ?? []
+        revisions.push(entry)
+        records.set(identity, revisions)
+      } else events.push([entry])
+    }
+    const selected: [string, Operation][] = []
+    const encoder = new TextEncoder()
+    let count = 0,
+      bytes = 0
+    // Points intents follow records. In particular, a pomodoro completion must never be ACKed
+    // before its record is persisted; when space permits, the final records and events share a batch.
+    for (const revisions of [...records.values(), ...events]) {
+      const operation = revisions[revisions.length - 1][1]
+      const cost = encoder.encode(JSON.stringify(operation)).byteLength + 256
+      if (count && (count >= options.maxChanges || bytes + cost > options.maxBytes)) break
+      // An individually large subject tree still gets one attempt; the server validates its limit.
+      selected.push(...revisions)
+      count++
+      bytes += cost
+    }
+    entries = selected
+  }
+  const snapshot = emptySnapshot()
+  const winners = new Map<string, Operation & { kind: 'upsert' | 'delete' }>()
+  const achievements = new Set<string>()
+  for (const [, operation] of entries) {
+    if (operation.kind === 'points') snapshot.points.push(operation.event)
+    else if (operation.kind === 'achievements') operation.ids.forEach((id) => achievements.add(id))
+    else {
+      const identity = JSON.stringify([operation.domain, operation.key])
+      // Match stage's last-operation semantics (including restore/import delete-then-upsert).
+      // Server LWW still decides whether the resulting version may replace cloud data.
+      winners.set(identity, operation)
     }
   }
-  cache = emptyState()
+  for (const op of winners.values()) {
+    if (op.kind === 'upsert') {
+      const bucket = (snapshot.upserts[op.domain] ??= Object.create(null))
+      bucket[op.key] = { value: op.value, updatedAt: op.updatedAt }
+    } else {
+      const bucket = (snapshot.deletes[op.domain] ??= Object.create(null))
+      bucket[op.key] = op.updatedAt
+    }
+  }
+  snapshot.achievements = [...achievements]
+  snapshot.receipt = { userId: currentUserId, keys: entries.map(([key]) => key) }
+  return snapshot
+}
+
+export function ack(snapshot: OutboxSnapshot): void {
+  const receipt = snapshot.receipt
+  if (!receipt || receipt.userId !== currentUserId) return
+  for (const key of receipt.keys) {
+    if (!key.startsWith(prefixFor(receipt.userId))) continue
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      readIssues.set(receipt.userId, '已同步，但本地队列清理失败，下次将安全重试。')
+    }
+    volatile.delete(key)
+  }
+  updateIssue()
+}
+
+export function size(): number {
+  const snapshot = takeForFlush()
+  if (!snapshot) return 0
+  return (
+    snapshot.points.length +
+    snapshot.achievements.length +
+    Object.values(snapshot.upserts).reduce((n, bucket) => n + Object.keys(bucket).length, 0) +
+    Object.values(snapshot.deletes).reduce((n, bucket) => n + Object.keys(bucket).length, 0)
+  )
 }
