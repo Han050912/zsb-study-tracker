@@ -5,7 +5,8 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
-import { createRenderer, markRaw, nextTick, reactive } from 'vue'
+import { createRenderer, markRaw, nextTick, reactive, ref } from 'vue'
+import { deferred } from './refactor-harness.mjs'
 
 const source = await readFile('src/pages/ErrorBook.vue', 'utf8')
 const descriptor = parse(source, { filename: 'ErrorBook.vue' }).descriptor
@@ -19,6 +20,7 @@ const template = compileTemplate({
 assert.deepEqual(template.errors, [])
 
 globalThis.Document = class Document {}
+globalThis.__errorbookUser = ref({ id: 'owner' })
 globalThis.document = Object.assign(new Document(), {
   activeElement: null,
   createElement: () => ({
@@ -43,7 +45,7 @@ globalThis.Image = class Image {
 const built = await build({
   stdin: {
     contents: `export { default as ErrorBookPage } from './src/pages/ErrorBook.vue';
-      export { errorsActions } from './src/stores/app/errors';`,
+      export { errorsActions } from './src/stores/app/errors'; export { today } from './src/utils/date';`,
     resolveDir: process.cwd()
   },
   bundle: true,
@@ -58,7 +60,7 @@ const built = await build({
         builder.onResolve(
           {
             filter:
-              /(?:stores\/app|services\/syncOutbox|api\/errorImages|composables\/use(?:Toast|Confirm|OverlayDismiss)|@lucide\/vue)$/
+              /(?:stores\/app|services\/(?:syncOutbox|auth)|api\/errorImages|composables\/use(?:Toast|Confirm|OverlayDismiss)|@lucide\/vue)$/
           },
           ({ path }) => ({ path, namespace: 'boundary' })
         )
@@ -87,13 +89,19 @@ const built = await build({
             return {
               contents: 'export const useToast = () => (message) => globalThis.__errorbook.toasts.push(message);'
             }
-          if (path.endsWith('useConfirm')) return { contents: 'export const useConfirm = () => async () => true;' }
+          if (path.endsWith('useConfirm'))
+            return {
+              contents:
+                'export const useConfirm = () => async (message) => { globalThis.__errorbook.confirmations.push(message); return globalThis.__errorbook.confirmDelete?.(message) ?? globalThis.__errorbook.acceptDelete; };'
+            }
+          if (path.endsWith('services/auth'))
+            return { contents: 'export const sessionUser = globalThis.__errorbookUser;' }
           if (path.endsWith('useOverlayDismiss'))
             return { contents: 'export const OVERLAY_LAYER = {}, useOverlayDismiss = () => {};' }
           if (path.endsWith('syncOutbox'))
             return {
-              contents: `export const stageUpsert = (...args) => globalThis.__errorbook.staged.push(structuredClone(args));
-              export const stageDelete = () => {};`
+              contents: `export const stageUpsert = (...args) => globalThis.__errorbook.staged.push(JSON.parse(JSON.stringify(args)));
+              export const stageDelete = (...args) => globalThis.__errorbook.deletes.push(args);`
             }
           if (path.endsWith('errorImages'))
             return {
@@ -110,7 +118,7 @@ const built = await build({
 await mkdir('.cache/errorbook-feedback-tests', { recursive: true })
 const filename = `.cache/errorbook-feedback-tests/${crypto.randomUUID()}.mjs`
 await writeFile(filename, built.outputFiles[0].text)
-const { ErrorBookPage, errorsActions } = await import(pathToFileURL(resolve(filename)).href)
+const { ErrorBookPage, errorsActions, today } = await import(pathToFileURL(resolve(filename)).href)
 after(() => unlink(filename))
 
 // Drive the real compiled Vue template, v-model directives, and error store mutations.
@@ -216,12 +224,16 @@ async function click(element) {
   await nextTick()
 }
 beforeEach(() => {
+  globalThis.__errorbookUser.value = { id: 'owner' }
   const subjects = [
     { id: 'math', name: '高数', icon: 'book-open', chapters: [{ id: 'functions', name: '函数', topics: ['极限'] }] },
     { id: 'english', name: '英语', icon: 'book-open', chapters: [] }
   ]
   globalThis.__errorbook = {
     staged: [],
+    confirmations: [],
+    deletes: [],
+    acceptDelete: true,
     toasts: [],
     upload: async () => 'a'.repeat(64),
     store: reactive(
@@ -230,6 +242,12 @@ beforeEach(() => {
           subjects,
           subjectMap: Object.fromEntries(subjects.map((subject) => [subject.id, subject])),
           errorQuestions: [],
+          businessDayOverride: '',
+          get todayKey() {
+            return this.businessDayOverride || today()
+          },
+          addPoints() {},
+          revokePointsByRef() {},
           save() {}
         },
         errorsActions
@@ -401,4 +419,105 @@ test('cancelling resets required feedback before opening a new collection dialog
   assert.equal(text(page.error()).trim(), '')
   assert.equal(page.input('eb-content').props['aria-invalid'], false)
   assert.equal(__errorbook.staged.length, 0)
+})
+
+test('review schedule advances from the UTC+8 review date, persists with the record and remains visible after mastery', async (t) => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-10-05T16:30:00Z'))
+  const page = await mount()
+  await type(page.input('eb-content'), '排期题目')
+  await click(page.button('保存'))
+  const question = __errorbook.store.errorQuestions[0]
+  assert.equal(question.nextReviewDate, '2026-10-06')
+  assert.match(text(page.root), /下次复习：2026-10-06.*今天/s)
+  await click(page.button('复习一次 · 0'))
+  assert.equal(question.lastReviewedAt, Date.now())
+  assert.equal(question.nextReviewDate, '2026-10-07')
+  assert.equal(__errorbook.staged.at(-1)[2].nextReviewDate, '2026-10-07')
+  assert.match(text(page.root), /最近复习：2026-10-06.*下次复习：2026-10-07/s)
+  await click(page.button('复习一次 · 1'))
+  assert.equal(question.nextReviewDate, '2026-10-08')
+  await click(page.button('标记已掌握'))
+  assert.equal(question.nextReviewDate, '2026-10-13')
+  await click(page.button('改为待复习'))
+  assert.equal(question.nextReviewDate, '2026-10-06')
+})
+
+test('legacy reviews have an explicit unplanned state and deletion discloses lost review totals before mutation', async () => {
+  __errorbook.store.errorQuestions = [
+    {
+      id: 'old',
+      subjectId: 'math',
+      type: '选择',
+      content: '旧复习题',
+      date: '2026-10-05',
+      reviewCount: 1,
+      mastered: false
+    }
+  ]
+  const page = await mount()
+  await click(page.button('取消'))
+  assert.match(text(page.root), /尚未排期，复习一次后生成/)
+  __errorbook.acceptDelete = false
+  await click(page.button('删除'))
+  assert.match(__errorbook.confirmations[0], /同步删除该错题的 1 次复习记录.*累计复习次数.*积分也会撤销/)
+  assert.equal(__errorbook.store.errorQuestions.length, 1)
+  assert.equal(__errorbook.deletes.length, 0)
+  __errorbook.acceptDelete = true
+  await click(page.button('删除'))
+  assert.equal(__errorbook.store.errorQuestions.length, 0)
+  assert.equal(__errorbook.deletes[0][0], 'errorQuestions')
+  assert.equal(__errorbook.deletes[0][1], 'old')
+})
+
+test('review due label follows the reactive business date at midnight without a record change', async () => {
+  __errorbook.store.businessDayOverride = '2026-10-05'
+  __errorbook.store.errorQuestions = [
+    {
+      id: 'due',
+      subjectId: 'math',
+      type: '选择',
+      content: '跨日题',
+      date: '2026-10-05',
+      reviewCount: 1,
+      mastered: false,
+      nextReviewDate: '2026-10-05'
+    }
+  ]
+  const page = await mount()
+  await click(page.button('取消'))
+  assert.match(text(page.root), /下次复习：2026-10-05.*今天/s)
+  __errorbook.store.businessDayOverride = '2026-10-06'
+  await nextTick()
+  assert.match(text(page.root), /下次复习：2026-10-05.*已到期/s)
+})
+
+test('pending deletion confirmation cannot delete after an account switch, record replacement or page unmount', async () => {
+  for (const change of ['account', 'replacement', 'unmount']) {
+    __errorbookUser.value = { id: 'owner' }
+    __errorbook.store.errorQuestions = [
+      {
+        id: 'same-id',
+        subjectId: 'math',
+        type: '选择',
+        content: '原错题',
+        date: '2026-10-05',
+        reviewCount: 1,
+        mastered: false
+      }
+    ]
+    const page = await mount()
+    await click(page.button('取消'))
+    const confirmation = deferred()
+    __errorbook.confirmDelete = () => confirmation.promise
+    const pending = click(page.button('删除'))
+    await nextTick()
+    if (change === 'account') __errorbookUser.value = { id: 'new-owner' }
+    if (change === 'replacement')
+      __errorbook.store.errorQuestions = [{ ...__errorbook.store.errorQuestions[0], content: '替代错题' }]
+    if (change === 'unmount') apps.pop().unmount()
+    confirmation.resolve(true)
+    await pending
+    assert.equal(__errorbook.store.errorQuestions.length, 1, change)
+    assert.equal(__errorbook.deletes.length, 0, change)
+  }
 })

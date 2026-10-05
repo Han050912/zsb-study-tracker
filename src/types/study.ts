@@ -65,6 +65,8 @@ export interface ErrorQuestion {
   image?: string
   reviewCount: number
   mastered: boolean
+  lastReviewedAt?: number
+  nextReviewDate?: string // UTC+8 业务日期；旧数据未排期时为空
   createdAt: number
   /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
   updatedAt?: number

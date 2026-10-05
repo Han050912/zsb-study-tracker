@@ -6,7 +6,7 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 import { useAppStore } from '../stores/app'
-import { today } from '../utils/date'
+import { businessDate, today } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import { problemTypesFor, PROBLEM_TYPE_LABELS } from '../data/problemTypes'
 import type { ErrorQuestion } from '../types'
@@ -14,6 +14,7 @@ import Modal from '../components/Modal.vue'
 import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 import RemoteImage from '../components/RemoteImage.vue'
 import { ERROR_IMAGE_PREFIX, uploadErrorImage } from '../api/errorImages'
+import { sessionUser } from '../services/auth'
 
 const store = useAppStore()
 const toast = useToast()
@@ -224,10 +225,27 @@ function closeZoom() {
 // 不会多层同时响应）；点击任意处关闭保留原有交互，不使用遮罩自点击判定
 const zoomPanelRef = ref<HTMLElement | null>(null)
 useOverlayDismiss(closeZoom, { show: () => !!zoomImage.value, panel: () => zoomPanelRef.value })
-onUnmounted(clearPendingImage)
+let pageActive = true
+onUnmounted(() => {
+  pageActive = false
+  clearPendingImage()
+})
 
 async function removeError(id: string) {
-  if (!(await confirm('确认删除这道错题？', { danger: true }))) return
+  const question = store.errorQuestions.find((item) => item.id === id)
+  if (!question) return
+  const owner = sessionUser.value?.id
+  const effect =
+    question.reviewCount > 0
+      ? `将同步删除该错题的 ${question.reviewCount} 次复习记录，累计复习次数会相应减少，首次复习获得的积分也会撤销。`
+      : '删除后无法恢复。'
+  if (!(await confirm(`确认删除这道错题？${effect}`, { danger: true }))) return
+  if (
+    !pageActive ||
+    sessionUser.value?.id !== owner ||
+    store.errorQuestions.find((item) => item.id === id) !== question
+  )
+    return
   store.deleteError(id)
   toast('已删除')
 }
@@ -262,6 +280,9 @@ async function removeError(id: string) {
         <dd>{{ reviewCount }} <span class="text-xs font-normal">次</span></dd>
       </div>
     </dl>
+    <p class="text-xs text-muted">
+      累计复习统计当前保留的错题。间隔复习依次安排在复习后的 1、2、4、7、15、30 天，已掌握题目至少间隔 7 天。
+    </p>
 
     <div class="page-toolbar">
       <select aria-label="筛选错题科目" v-model="filterSubject" class="input !w-auto">
@@ -293,6 +314,16 @@ async function removeError(id: string) {
           <span v-if="q.mastered" class="text-action font-semibold">✓ 已掌握</span>
         </div>
         <p class="text-sm whitespace-pre-wrap">{{ q.content }}</p>
+        <p class="mt-2 text-xs text-muted">
+          <template v-if="q.lastReviewedAt">最近复习：{{ businessDate(q.lastReviewedAt) }} · </template>
+          <template v-if="q.nextReviewDate">
+            下次复习：<time :datetime="q.nextReviewDate">{{ q.nextReviewDate }}</time>
+            <span v-if="q.nextReviewDate <= store.todayKey" class="text-correction"
+              >（{{ q.nextReviewDate < store.todayKey ? '已到期' : '今天' }}）</span
+            >
+          </template>
+          <template v-else>尚未排期，复习一次后生成下次复习日期。</template>
+        </p>
         <RemoteImage
           v-if="q.image"
           :image="q.image"
