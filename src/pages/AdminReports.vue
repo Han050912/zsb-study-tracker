@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { Check, Undo2, ArrowLeft, ArrowRight } from '@lucide/vue'
+import IconAction from '../shared/components/IconAction.vue'
 import LoadingState from '../shared/components/LoadingState.vue'
-import { onMounted, ref } from 'vue'
+import AsyncState from '../shared/components/AsyncState.vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRouter } from 'vue-router'
@@ -20,8 +23,11 @@ const { goBack } = useBack()
 const toast = useToast()
 
 const reports = ref<AdminReport[]>([])
-/** 服务端还有更多数据未返回（本页一次性渲染，仅提示不翻页） */
 const reportsHasMore = ref(false)
+const reportsCursor = ref<string | null>(null)
+const reportsLoadingMore = ref(false)
+const reportsMoreError = ref('')
+let reportRequest = 0
 const loading = ref(true)
 /** 正在确认处理的举报：记录动作与说明 */
 const confirming = ref<{ id: string; action: 'hide' | 'delete' | 'reject' } | null>(null)
@@ -34,25 +40,50 @@ const activeTab = ref<'reports' | 'feedback' | 'topics'>('reports')
 // ---- 意见反馈管理 ----
 const FB_TYPE_LABEL: Record<Feedback['type'], string> = {
   feature: '功能建议',
-  bug: 'Bug报告',
+  bug: '问题反馈',
   experience: '体验评价',
   other: '其他'
 }
 const feedbacks = ref<Feedback[]>([])
 const feedbackLoading = ref(false)
 const feedbackHasMore = ref(false)
+const feedbackCursor = ref<string | null>(null)
+const feedbackLoadingMore = ref(false)
+const feedbackMoreError = ref('')
+let feedbackRequest = 0
 const feedbackFilter = ref<'all' | FeedbackStatus>('all')
 
-async function loadFeedback() {
-  feedbackLoading.value = true
+const feedbackError = ref('')
+async function loadFeedback(reset = true) {
+  if (!reset && (feedbackLoading.value || feedbackLoadingMore.value || !feedbackCursor.value)) return
+  const request = ++feedbackRequest
+  if (reset) {
+    feedbackError.value = ''
+    feedbackLoading.value = true
+    feedbackCursor.value = null
+    feedbackHasMore.value = false
+  } else feedbackLoadingMore.value = true
+  feedbackMoreError.value = ''
   try {
-    const res = await feedbackApi.adminList(feedbackFilter.value === 'all' ? undefined : feedbackFilter.value)
-    feedbacks.value = res.feedbacks
-    feedbackHasMore.value = !!res.hasMore
+    const res = await feedbackApi.adminList(
+      feedbackFilter.value === 'all' ? undefined : feedbackFilter.value,
+      reset ? undefined : (feedbackCursor.value ?? undefined)
+    )
+    if (request !== feedbackRequest) return
+    feedbacks.value = reset
+      ? res.feedbacks
+      : [...new Map([...feedbacks.value, ...res.feedbacks].map((f) => [f.id, f])).values()]
+    feedbackCursor.value = res.nextCursor ?? null
+    feedbackHasMore.value = !!res.hasMore && !!feedbackCursor.value
   } catch (e) {
-    toast(getErrorMessage(e, '加载反馈失败'))
+    if (request !== feedbackRequest) return
+    if (reset) feedbackError.value = getErrorMessage(e, '加载反馈失败，请重试')
+    else feedbackMoreError.value = getErrorMessage(e, '更多反馈未能加载，请重试')
   } finally {
-    feedbackLoading.value = false
+    if (request === feedbackRequest) {
+      feedbackLoading.value = false
+      feedbackLoadingMore.value = false
+    }
   }
 }
 
@@ -62,7 +93,7 @@ async function setFeedbackStatus(id: string, status: FeedbackStatus) {
     toast(status === 'resolved' ? '已标记处理' : '已恢复待处理')
     await loadFeedback()
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '反馈状态未能更新，请重试'))
   }
 }
 
@@ -71,17 +102,39 @@ onMounted(() => {
   loadHotTopics()
   loadFeedback()
 })
+onBeforeUnmount(() => {
+  reportRequest++
+  feedbackRequest++
+})
 
-async function load() {
-  loading.value = true
+const reportError = ref('')
+async function load(reset = true) {
+  if (!reset && (loading.value || reportsLoadingMore.value || !reportsCursor.value)) return
+  const request = ++reportRequest
+  if (reset) {
+    reportError.value = ''
+    loading.value = true
+    reportsCursor.value = null
+    reportsHasMore.value = false
+  } else reportsLoadingMore.value = true
+  reportsMoreError.value = ''
   try {
-    const res = await moderationApi.adminReports()
-    reports.value = res.reports
-    reportsHasMore.value = !!res.hasMore
+    const res = await moderationApi.adminReports(reset ? undefined : (reportsCursor.value ?? undefined))
+    if (request !== reportRequest) return
+    reports.value = reset
+      ? res.reports
+      : [...new Map([...reports.value, ...res.reports].map((r) => [r.id, r])).values()]
+    reportsCursor.value = res.nextCursor ?? null
+    reportsHasMore.value = !!res.hasMore && !!reportsCursor.value
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    if (request !== reportRequest) return
+    if (reset) reportError.value = getErrorMessage(e, '加载失败，请重试')
+    else reportsMoreError.value = getErrorMessage(e, '更多举报未能加载，请重试')
   } finally {
-    loading.value = false
+    if (request === reportRequest) {
+      loading.value = false
+      reportsLoadingMore.value = false
+    }
   }
 }
 
@@ -116,14 +169,16 @@ const hotOverrides = ref<HotTopicOverride[]>([])
 const hotLoading = ref(false)
 const hotForm = ref({ text: '', tag: '', action: 'pin' as 'pin' | 'block' })
 
+const hotError = ref('')
 async function loadHotTopics() {
+  hotError.value = ''
   hotLoading.value = true
   try {
     const res = await moderationApi.adminHotTopics()
     hotStats.value = res.stats
     hotOverrides.value = res.overrides
   } catch (e) {
-    toast(getErrorMessage(e, '加载热门话题失败'))
+    hotError.value = getErrorMessage(e, '加载热门话题失败，请重试')
   } finally {
     hotLoading.value = false
   }
@@ -135,14 +190,14 @@ async function pinOrBlockHot(tag: string, action: 'pin' | 'block') {
     toast(action === 'pin' ? '已置顶展示' : '已从自动统计屏蔽')
     await loadHotTopics()
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '热门话题未能更新，请重试'))
   }
 }
 
 async function addHotTopic() {
   const f = hotForm.value
   if (!f.text.trim() || !f.tag.trim()) {
-    toast('请填写文案与 tag')
+    toast('请填写展示文字和话题标签')
     return
   }
   try {
@@ -167,11 +222,16 @@ async function removeHotTopic(id: string) {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
-    <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2.5" @click="goBack">← 返回</button>
+  <div class="study-page reading-page space-y-4">
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
       <h1 class="page-title">审核中心</h1>
-      <span v-if="reports.length" class="text-xs px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-900/30 text-rose-500">
+      <span
+        v-if="reports.length"
+        class="text-xs px-2 py-0.5 rounded-full bg-correction-soft dark:bg-correction-soft text-correction"
+      >
         {{ reports.length }} 条待处理
       </span>
     </div>
@@ -183,9 +243,10 @@ async function removeHotTopic(id: string) {
         class="px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors"
         :class="
           activeTab === t
-            ? 'border-primary-500 text-primary-600 dark:text-primary-400 font-semibold'
+            ? 'border-primary-500 text-action dark:text-action font-semibold'
             : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
         "
+        :aria-pressed="activeTab === t"
         @click="activeTab = t"
       >
         {{ t === 'reports' ? '举报' : t === 'feedback' ? '反馈' : '热门话题' }}
@@ -194,15 +255,15 @@ async function removeHotTopic(id: string) {
 
     <div v-show="activeTab === 'reports'">
       <LoadingState v-if="loading" />
-      <div v-else-if="!reports.length" class="card text-center py-10 text-slate-400 text-sm">
-        <div class="text-3xl mb-2"></div>
-        <p>暂无待处理举报，社区一片祥和</p>
+      <AsyncState v-else-if="reportError" :error="reportError" @retry="load" />
+      <div v-else-if="!reports.length && !reportsHasMore" class="card text-center py-10 text-slate-400 text-sm">
+        <p>举报已处理完。新的举报会显示在这里。</p>
       </div>
 
       <div v-else class="space-y-3">
         <div v-for="r in reports" :key="r.id" class="card space-y-2">
           <div class="flex items-center gap-2 text-xs text-slate-400">
-            <span class="px-1.5 py-0.5 rounded bg-orange-50 dark:bg-orange-900/30 text-orange-500 font-medium">{{
+            <span class="px-1.5 py-0.5 rounded bg-action-soft dark:bg-action-soft text-action font-medium">{{
               r.reason
             }}</span>
             <span>{{ TYPE_TEXT[r.targetType] }}</span>
@@ -211,19 +272,24 @@ async function removeHotTopic(id: string) {
           </div>
 
           <div v-if="r.target" class="rounded-lg bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
-            <div class="text-[10px] text-slate-400 mb-0.5">
+            <div class="text-xs text-slate-400 mb-0.5">
               {{ r.target.authorName }} 的{{ TYPE_TEXT[r.targetType] }}
-              <span v-if="r.target.isHidden" class="text-red-400 ml-1">（已隐藏）</span>
+              <span v-if="r.target.isHidden" class="text-correction ml-1">（已隐藏）</span>
             </div>
             <p class="text-sm whitespace-pre-wrap break-words">{{ r.target.excerpt }}</p>
-            <button
+            <span
               v-if="r.target.postId"
-              class="text-[10px] text-primary-500 mt-1"
+              class="text-xs text-action mt-1 arrow-action"
               @click="router.push(`/community/post/${r.target.postId}`)"
             >
-              查看原帖 →
-            </button>
-            <div v-else-if="r.targetType === 'message'" class="text-[10px] text-slate-400 mt-1">
+              查看原帖
+              <IconAction
+                :icon="ArrowRight"
+                label="查看原帖"
+                @click="router.push(`/community/post/${r.target.postId}`)"
+              />
+            </span>
+            <div v-else-if="r.targetType === 'message'" class="text-xs text-slate-400 mt-1">
               私信仅会话双方可见，可按内容预览与举报说明判断
             </div>
           </div>
@@ -238,7 +304,7 @@ async function removeHotTopic(id: string) {
               <button v-if="r.targetType !== 'message'" class="btn-ghost !text-xs" @click="ask(r.id, 'hide')">
                 隐藏
               </button>
-              <button class="btn-ghost !text-xs !text-red-500" @click="ask(r.id, 'delete')">删除</button>
+              <button class="btn-ghost !text-xs !text-correction" @click="ask(r.id, 'delete')">删除</button>
             </template>
             <button v-else class="btn-ghost !text-xs" @click="ask(r.id, 'delete')">✅ 结案</button>
             <button class="btn-ghost !text-xs ml-auto" @click="ask(r.id, 'reject')">驳回举报</button>
@@ -258,8 +324,12 @@ async function removeHotTopic(id: string) {
             </div>
           </div>
         </div>
-        <div v-if="reportsHasMore" class="text-center text-[10px] text-slate-400 dark:text-slate-500">
-          还有更早的待处理举报未展示
+        <div v-if="reportsHasMore" class="text-center space-y-2">
+          <p v-if="!reports.length" class="text-xs text-muted">还有待处理举报，可加载下一页继续审核。</p>
+          <p v-if="reportsMoreError" role="alert" class="text-xs text-correction">{{ reportsMoreError }}</p>
+          <button class="btn-ghost !text-xs" :disabled="reportsLoadingMore" @click="load(false)">
+            {{ reportsLoadingMore ? '加载中…' : '加载更多举报' }}
+          </button>
         </div>
       </div>
     </div>
@@ -268,10 +338,11 @@ async function removeHotTopic(id: string) {
     <div v-show="activeTab === 'topics'" class="card space-y-3">
       <div class="section-title !mb-0">热门话题管理</div>
       <LoadingState v-if="hotLoading" />
+      <AsyncState v-else-if="hotError" :error="hotError" @retry="loadHotTopics" />
       <template v-else>
         <!-- 近 7 天自动统计 -->
         <div v-if="hotStats.length">
-          <div class="text-[11px] text-slate-400 mb-1.5">近 7 天话题频次（可一键置顶/屏蔽）</div>
+          <div class="text-xs text-slate-400 mb-1.5">近 7 天话题频次（可一键置顶/屏蔽）</div>
           <div class="flex flex-wrap gap-1.5">
             <div
               v-for="s in hotStats"
@@ -279,17 +350,15 @@ async function removeHotTopic(id: string) {
               class="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-50 dark:bg-slate-700/50 text-xs"
             >
               <span>{{ s.tag }}</span>
-              <span class="text-[10px] text-slate-400">{{ s.count }} 帖</span>
-              <button class="text-[10px] text-primary-500 hover:underline" @click="pinOrBlockHot(s.tag, 'pin')">
-                置顶
-              </button>
-              <button class="text-[10px] text-red-400 hover:underline" @click="pinOrBlockHot(s.tag, 'block')">
+              <span class="text-xs text-slate-400">{{ s.count }} 帖</span>
+              <button class="text-xs text-action hover:underline" @click="pinOrBlockHot(s.tag, 'pin')">置顶</button>
+              <button class="text-xs text-correction hover:underline" @click="pinOrBlockHot(s.tag, 'block')">
                 屏蔽
               </button>
             </div>
           </div>
         </div>
-        <div v-else class="text-xs text-slate-400">近 7 天暂无带话题的帖子</div>
+        <div v-else class="text-xs text-slate-400">近 7 天还没有带话题的讨论。</div>
 
         <!-- 手动添加 -->
         <div class="flex flex-wrap gap-2 items-center border-t border-slate-100 dark:border-slate-700 pt-3">
@@ -297,12 +366,14 @@ async function removeHotTopic(id: string) {
             v-model="hotForm.text"
             maxlength="20"
             class="input !py-1.5 !text-xs flex-1 min-w-[8rem]"
+            aria-label="展示文案（≤20 字）"
             placeholder="展示文案（≤20 字）"
           />
           <input
             v-model="hotForm.tag"
             maxlength="20"
             class="input !py-1.5 !text-xs flex-1 min-w-[8rem]"
+            aria-label="关联 tag（如 #高等数学）"
             placeholder="关联 tag（如 #高等数学）"
           />
           <select v-model="hotForm.action" class="input !py-1.5 !text-xs !w-auto">
@@ -314,22 +385,22 @@ async function removeHotTopic(id: string) {
 
         <!-- 现有干预名单 -->
         <div v-if="hotOverrides.length">
-          <div class="text-[11px] text-slate-400 mb-1.5">干预名单</div>
+          <div class="text-xs text-slate-400 mb-1.5">干预名单</div>
           <div class="space-y-1">
             <div v-for="o in hotOverrides" :key="o.id" class="flex items-center gap-2 text-xs">
               <span
                 class="px-1.5 py-0.5 rounded font-medium"
                 :class="
                   o.action === 'pin'
-                    ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600'
-                    : 'bg-red-50 dark:bg-red-900/30 text-red-500'
+                    ? 'bg-action-soft dark:bg-action-soft text-action'
+                    : 'bg-correction-soft dark:bg-correction-soft text-correction'
                 "
               >
                 {{ o.action === 'pin' ? '置顶' : '屏蔽' }}
               </span>
               <span class="font-medium">{{ o.text }}</span>
               <span class="text-slate-400">{{ o.tag }}</span>
-              <button class="ml-auto text-[10px] text-red-400 hover:underline" @click="removeHotTopic(o.id)">
+              <button class="ml-auto text-xs text-correction hover:underline" @click="removeHotTopic(o.id)">
                 删除
               </button>
             </div>
@@ -347,9 +418,10 @@ async function removeHotTopic(id: string) {
           class="px-2.5 py-1 rounded-full text-xs border"
           :class="
             feedbackFilter === f
-              ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border-primary-200 dark:border-primary-800'
+              ? 'bg-primary-50 dark:bg-primary-900/30 text-action dark:text-action border-primary-200 dark:border-primary-800'
               : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400'
           "
+          :aria-pressed="feedbackFilter === f"
           @click="
             () => {
               feedbackFilter = f
@@ -362,14 +434,14 @@ async function removeHotTopic(id: string) {
       </div>
 
       <LoadingState v-if="feedbackLoading" />
+      <AsyncState v-else-if="feedbackError" :error="feedbackError" @retry="loadFeedback" />
       <div v-else-if="!feedbacks.length" class="card text-center py-10 text-slate-400 text-sm">
-        <div class="text-3xl mb-2"></div>
-        <p>暂无反馈</p>
+        <p>还没有反馈。收到后可在这里查看和处理。</p>
       </div>
       <template v-else>
         <div v-for="fb in feedbacks" :key="fb.id" class="card space-y-2">
           <div class="flex items-center gap-2 text-xs text-slate-400">
-            <span class="px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-500 font-medium">{{
+            <span class="px-1.5 py-0.5 rounded bg-action-soft dark:bg-action-soft text-action font-medium">{{
               FB_TYPE_LABEL[fb.type]
             }}</span>
             <span>{{ fb.userName }}</span>
@@ -378,8 +450,8 @@ async function removeHotTopic(id: string) {
               class="ml-auto px-1.5 py-0.5 rounded"
               :class="
                 fb.status === 'pending'
-                  ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600'
-                  : 'bg-green-50 dark:bg-green-900/30 text-green-500'
+                  ? 'bg-action-soft dark:bg-action-soft text-action'
+                  : 'bg-action-soft dark:bg-action-soft text-action'
               "
             >
               {{ fb.status === 'pending' ? '待处理' : '已处理' }}
@@ -397,24 +469,32 @@ async function removeHotTopic(id: string) {
           </div>
           <div v-if="fb.contact" class="text-xs text-slate-500 dark:text-slate-400">联系方式：{{ fb.contact }}</div>
           <div class="flex gap-2 pt-1">
-            <button
-              class="btn-ghost !text-xs"
+            <span
+              class="!text-xs arrow-action"
               @click="setFeedbackStatus(fb.id, fb.status === 'pending' ? 'resolved' : 'pending')"
             >
-              {{ fb.status === 'pending' ? '✅ 标记已处理' : '↩️ 恢复待处理' }}
-            </button>
+              <IconAction
+                :icon="fb.status === 'pending' ? Check : Undo2"
+                :label="`${fb.status === 'pending' ? '标记已处理' : '恢复待处理'}`"
+                @click="setFeedbackStatus(fb.id, fb.status === 'pending' ? 'resolved' : 'pending')"
+              />
+              {{ fb.status === 'pending' ? '标记已处理' : '恢复待处理' }}
+            </span>
             <a
               v-if="fb.githubIssueUrl"
               :href="fb.githubIssueUrl"
               target="_blank"
               rel="noopener"
-              class="btn-ghost !text-xs ml-auto"
-              >查看 GitHub Issue →</a
-            >
+              class="!text-xs ml-auto arrow-link"
+              >查看 GitHub Issue <ArrowRight class="arrow-inline" :size="16" aria-hidden="true"
+            /></a>
           </div>
         </div>
-        <div v-if="feedbackHasMore" class="text-center text-[10px] text-slate-400 dark:text-slate-500">
-          还有更早的反馈未展示
+        <div v-if="feedbackHasMore" class="text-center space-y-2">
+          <p v-if="feedbackMoreError" role="alert" class="text-xs text-correction">{{ feedbackMoreError }}</p>
+          <button class="btn-ghost !text-xs" :disabled="feedbackLoadingMore" @click="loadFeedback(false)">
+            {{ feedbackLoadingMore ? '加载中…' : '加载更多反馈' }}
+          </button>
         </div>
       </template>
     </div>

@@ -71,7 +71,7 @@ const {
 <template>
   <Modal
     :show="show"
-    :title="isQuestion ? '提问' : '分享到广场'"
+    :title="isQuestion ? '发布问题' : '发布讨论'"
     panel-class="collaboration-page"
     @close="requestClose"
   >
@@ -82,6 +82,7 @@ const {
         :class="
           !isQuestion ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'
         "
+        :aria-pressed="!isQuestion"
         @click="switchType('share')"
       >
         分享
@@ -91,9 +92,10 @@ const {
         :class="
           isQuestion ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm' : 'text-slate-500 dark:text-slate-400'
         "
+        :aria-pressed="isQuestion"
         @click="switchType('question')"
       >
-        ❓ 提问
+        提问
       </button>
     </div>
 
@@ -110,7 +112,7 @@ const {
     <div class="mt-2">
       <div class="flex items-center gap-2">
         <button class="btn-ghost !text-xs" @click="pickImages">添加图片</button>
-        <span class="text-[10px] text-slate-400"
+        <span class="text-xs text-slate-400"
           >点击 / 拖拽 / Ctrl+V 粘贴，最多 {{ IMAGE_MAX_PER_POST }} 张，单张 ≤5MB</span
         >
       </div>
@@ -158,7 +160,7 @@ const {
           class="px-2.5 py-1 rounded-full text-xs transition-colors"
           :class="
             !selectedCircle
-              ? 'bg-primary-500 text-white'
+              ? 'bg-action text-on-action'
               : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
           "
           @click="selectedCircle = ''"
@@ -171,7 +173,7 @@ const {
           class="px-2.5 py-1 rounded-full text-xs transition-colors"
           :class="
             selectedCircle === c.id
-              ? 'bg-primary-500 text-white'
+              ? 'bg-action text-on-action'
               : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
           "
           @click="selectedCircle = c.id"
@@ -188,12 +190,12 @@ const {
       </button>
     </template>
   </Modal>
-  <Modal :show="closePrompt" title="保留这次的想法？" elevated @close="closePrompt = false">
+  <Modal :show="closePrompt" title="保留草稿？" elevated @close="closePrompt = false">
     <p class="text-sm text-slate-500">保留草稿后，下次发布时可以继续编辑。</p>
     <p v-if="uploading" class="text-sm mt-2">图片仍在上传，完成后可以保留。</p>
     <template #footer
       ><button class="btn-ghost" @click="closePrompt = false">继续编辑</button
-      ><button class="btn-danger" @click="closeWithDraft(false)">放弃</button
+      ><button class="btn-danger" @click="closeWithDraft(false)">放弃草稿</button
       ><button class="btn-primary" :disabled="uploading" @click="closeWithDraft(true)">保留草稿</button></template
     >
   </Modal>

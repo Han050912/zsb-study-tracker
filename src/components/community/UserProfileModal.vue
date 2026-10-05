@@ -44,31 +44,35 @@ const canVerify = computed(() => isAdmin.value && !isSelf.value && !!profile.val
 /** 请求序号守卫：快速切换用户时，慢的旧请求不得覆盖新请求的资料 */
 let loadTicket = 0
 
-watch(
-  () => props.show,
-  async (v) => {
-    if (!v) return
-    const ticket = ++loadTicket
-    profile.value = null
-    loadError.value = false
-    needLogin.value = false
-    notFound.value = false
-    loading.value = true
-    try {
-      const result = await usersApi.profile(props.userId)
-      if (ticket !== loadTicket) return
-      profile.value = result
-      expertiseInput.value = result.expertise
-    } catch (e) {
-      if (ticket !== loadTicket) return
-      // 401 = 访客遇 login 可见性用户 → 登录引导；404 = 用户不存在；其余 = 加载失败
-      needLogin.value = (e as { status?: number } | null)?.status === 401
-      notFound.value = (e as { status?: number } | null)?.status === 404
-      loadError.value = !needLogin.value && !notFound.value
-    } finally {
-      if (ticket === loadTicket) loading.value = false
-    }
+async function loadProfile() {
+  if (!props.show) return
+  const ticket = ++loadTicket
+  profile.value = null
+  loadError.value = false
+  needLogin.value = false
+  notFound.value = false
+  loading.value = true
+  try {
+    const result = await usersApi.profile(props.userId)
+    if (ticket !== loadTicket) return
+    profile.value = result
+    expertiseInput.value = result.expertise
+  } catch (e) {
+    if (ticket !== loadTicket) return
+    // 401 = 访客遇 login 可见性用户 → 登录引导；404 = 用户不存在；其余 = 加载失败
+    needLogin.value = (e as { status?: number } | null)?.status === 401
+    notFound.value = (e as { status?: number } | null)?.status === 404
+    loadError.value = !needLogin.value && !notFound.value
+  } finally {
+    if (ticket === loadTicket) loading.value = false
   }
+}
+watch(
+  () => [props.show, props.userId] as const,
+  () => {
+    void loadProfile()
+  },
+  { immediate: true }
 )
 
 // ---- 关注/取关（P3-02）：复用四态 FollowButton，弹窗只回写本地资料并透出 changed 供调用方刷新 ----
@@ -105,7 +109,7 @@ async function grantVerify() {
     profile.value.expertise = res.expertise
     toast('已授予专家认证')
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '认证信息未能保存，请重试'))
   } finally {
     verifySubmitting.value = false
   }
@@ -122,7 +126,7 @@ async function revokeVerify() {
     expertiseInput.value = ''
     toast('已撤销认证')
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '认证未能撤销，请重试'))
   } finally {
     verifySubmitting.value = false
   }
@@ -147,7 +151,10 @@ async function revokeVerify() {
       </button>
     </div>
     <div v-else-if="notFound" class="text-center text-xs text-slate-400 py-8">用户不存在</div>
-    <div v-else-if="loadError" class="text-center text-xs text-slate-400 py-8">加载失败</div>
+    <div v-else-if="loadError" class="text-center text-sm text-muted py-6" role="alert">
+      <p>资料未能加载，请检查网络后重试。</p>
+      <button class="btn-ghost mt-3" @click="loadProfile">重试</button>
+    </div>
 
     <template v-else-if="profile">
       <!-- 头部：头像 / 昵称 / 等级 / 蓝 V / 关注 -->
@@ -158,18 +165,18 @@ async function revokeVerify() {
             <span class="font-semibold truncate">{{ profile.userName }}</span>
             <span
               v-if="profile.verified"
-              class="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400 shrink-0"
+              class="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full bg-action-soft dark:bg-action-soft text-action dark:text-action shrink-0"
               :title="`认证专家：${profile.expertise}`"
             >
-              <span class="w-3 h-3 rounded-full bg-sky-500 text-white text-[8px] flex items-center justify-center"
+              <span class="w-3 h-3 rounded-full bg-action text-on-action text-[8px] flex items-center justify-center"
                 >✓</span
               >
               {{ profile.expertise }}专家
             </span>
             <span
               v-if="!profile.profilePrivate"
-              class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-              :style="{ background: level.color + '1a', color: level.color }"
+              class="text-xs px-1.5 py-0.5 rounded-full shrink-0"
+              :style="{ color: 'var(--muted)' }"
               >{{ level.name }}学者</span
             >
           </div>
@@ -178,7 +185,7 @@ async function revokeVerify() {
           <!-- 主页已隐私，私密降级视图下无需再跳转主页，仅保留私信/关注 -->
           <button
             v-if="!profile.profilePrivate"
-            class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
+            class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-action"
             @click="
               () => {
                 emit('update:show', false)
@@ -189,7 +196,7 @@ async function revokeVerify() {
             主页
           </button>
           <button
-            class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
+            class="text-xs px-2 py-1.5 rounded-full font-medium transition-colors bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-action"
             @click="goMessage"
           >
             消息
@@ -214,24 +221,24 @@ async function revokeVerify() {
       <!-- 荣誉统计 -->
       <div v-if="!profile.profilePrivate" class="grid grid-cols-5 gap-2 mt-4 text-center">
         <div class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
-          <div class="text-sm font-bold text-primary-500">{{ profile.points }}</div>
-          <div class="text-[10px] text-slate-400">积分</div>
+          <div class="text-sm font-bold text-action">{{ profile.points }}</div>
+          <div class="text-xs text-slate-400">积分</div>
         </div>
         <div class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
-          <div class="text-sm font-bold text-orange-500">{{ profile.streak }}</div>
-          <div class="text-[10px] text-slate-400">连续打卡</div>
+          <div class="text-sm font-bold text-action">{{ profile.streak }}</div>
+          <div class="text-xs text-slate-400">连续打卡</div>
         </div>
         <div class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
-          <div class="text-sm font-bold text-emerald-500">{{ profile.postCount }}</div>
-          <div class="text-[10px] text-slate-400">发帖评论</div>
+          <div class="text-sm font-bold text-action">{{ profile.postCount }}</div>
+          <div class="text-xs text-slate-400">发帖评论</div>
         </div>
         <div class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
-          <div class="text-sm font-bold text-rose-500">{{ profile.likesReceived }}</div>
-          <div class="text-[10px] text-slate-400">获赞</div>
+          <div class="text-sm font-bold text-correction">{{ profile.likesReceived }}</div>
+          <div class="text-xs text-slate-400">获赞</div>
         </div>
         <div class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
-          <div class="text-sm font-bold text-sky-500">{{ profile.followers }}</div>
-          <div class="text-[10px] text-slate-400">粉丝</div>
+          <div class="text-sm font-bold text-action">{{ profile.followers }}</div>
+          <div class="text-xs text-slate-400">粉丝</div>
         </div>
       </div>
 
@@ -239,39 +246,36 @@ async function revokeVerify() {
       <div v-if="!profile.profilePrivate" class="label mt-4">
         徽章墙（{{ profile.badges.length }}/{{ COMMUNITY_BADGES.length }}）
       </div>
-      <div v-if="!profile.profilePrivate" class="grid grid-cols-4 gap-2">
+      <div v-if="!profile.profilePrivate" class="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div
           v-for="b in COMMUNITY_BADGES"
           :key="b.key"
           class="rounded-lg py-2 px-1 text-center transition-opacity"
-          :class="
-            earnedMap.has(b.key)
-              ? 'bg-amber-50 dark:bg-amber-900/20'
-              : 'bg-slate-50 dark:bg-slate-700/40 opacity-40 grayscale'
-          "
+          :class="earnedMap.has(b.key) ? 'bg-action-soft dark:bg-action-soft' : 'bg-surface-soft text-muted'"
           :title="earnedMap.has(b.key) ? `${b.desc}（${fromNow(earnedMap.get(b.key)!)}获得）` : `${b.desc}（未获得）`"
         >
           <div class="text-lg leading-6">{{ b.icon }}</div>
-          <div class="text-[10px] font-medium truncate">{{ b.name }}</div>
+          <div class="text-xs font-medium">{{ b.name }}</div>
         </div>
       </div>
 
       <!-- 管理员：专家认证操作 -->
       <div
         v-if="canVerify && !profile.profilePrivate"
-        class="mt-4 rounded-lg border border-sky-100 dark:border-sky-900/50 p-3 space-y-2"
+        class="mt-4 rounded-lg border border-line dark:border-line p-3 space-y-2"
       >
-        <div class="text-xs font-semibold text-sky-600 dark:text-sky-400">管理员 · 专家认证</div>
+        <div class="text-xs font-semibold text-action dark:text-action">管理员 · 专家认证</div>
         <input
           v-model="expertiseInput"
           maxlength="50"
           class="input !py-1.5 text-xs"
+          aria-label="专长领域，如：高等数学 / 英语"
           placeholder="专长领域，如：高等数学 / 英语"
         />
         <div class="flex gap-2 justify-end">
           <button
             v-if="profile.verified"
-            class="btn-ghost !text-xs !text-red-500"
+            class="btn-ghost !text-xs !text-correction"
             :disabled="verifySubmitting"
             @click="revokeVerify"
           >

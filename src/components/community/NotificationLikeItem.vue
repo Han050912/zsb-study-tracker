@@ -30,7 +30,7 @@ function openPost() {
       <UserAvatar :name="n.actorName || '?'" :avatar="n.actorAvatar" />
       <span
         v-if="!n.isRead"
-        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white dark:border-slate-800"
+        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-correction border-2 border-white dark:border-slate-800"
       ></span>
     </button>
     <button class="flex-1 min-w-0 text-left" @click="openPost">

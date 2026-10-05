@@ -59,53 +59,50 @@ function onClickReply() {
       replying
         ? 'bg-primary-50/80 dark:bg-primary-900/20 -mx-2 px-2 py-2'
         : comment.isAccepted
-          ? 'bg-emerald-50/60 dark:bg-emerald-900/10 -mx-2 px-2 py-2 ring-1 ring-emerald-200 dark:ring-emerald-800'
+          ? 'bg-action-soft dark:bg-action-soft -mx-2 px-2 py-2 ring-1 ring-action'
           : '',
       flashing || highlight ? 'reply-flash' : ''
     ]"
     @click="onClickReply"
   >
-    <UserAvatar
-      :name="comment.userName"
-      :avatar="comment.userAvatar"
-      class="cursor-pointer"
-      @click.stop="emit('profile')"
-    />
+    <button class="self-start" :aria-label="`查看${comment.userName}的资料`" @click.stop="emit('profile')">
+      <UserAvatar :name="comment.userName" :avatar="comment.userAvatar" />
+    </button>
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2">
-        <span class="text-xs font-semibold cursor-pointer hover:text-primary-500" @click.stop="emit('profile')">{{
-          comment.userName
-        }}</span>
+        <button class="text-xs font-semibold hover:text-action" @click.stop="emit('profile')">
+          {{ comment.userName }}
+        </button>
         <span
           v-if="comment.userVerified"
-          class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+          class="w-3.5 h-3.5 rounded-full bg-action text-on-action text-[9px] flex items-center justify-center shrink-0"
           title="认证专家"
           >✓</span
         >
         <span
           v-if="isMine"
-          class="text-[10px] leading-none px-1 py-0.5 rounded border shrink-0 border-slate-300 text-slate-500 dark:border-slate-500 dark:text-slate-400 font-medium"
+          class="text-xs leading-none px-1 py-0.5 rounded border shrink-0 border-slate-300 text-slate-500 dark:border-slate-500 dark:text-slate-400 font-medium"
           >我</span
         >
         <span
           v-else-if="isOp"
-          class="text-[10px] leading-none px-1 py-0.5 rounded border shrink-0 border-primary-400 text-primary-500 dark:border-primary-400 dark:text-primary-400 font-medium"
+          class="text-xs leading-none px-1 py-0.5 rounded border shrink-0 border-primary-400 text-action dark:border-primary-400 dark:text-action font-medium"
           >楼主</span
         >
-        <span class="text-[10px] text-slate-400">{{ fromNow(comment.createdAt) }}</span>
+        <span class="text-xs text-slate-400">{{ fromNow(comment.createdAt) }}</span>
         <span
           v-if="comment.isAccepted"
-          class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 font-medium"
-          >✅ 最佳答案</span
+          class="text-xs px-1.5 py-0.5 rounded-full bg-action-soft dark:bg-action-soft text-action dark:text-action font-medium"
+          >最佳答案</span
         >
         <span
           v-if="comment.isHidden"
-          class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400"
+          class="text-xs px-1.5 py-0.5 rounded-full bg-correction-soft dark:bg-correction-soft text-correction dark:text-correction"
           >已隐藏</span
         >
         <span
           v-if="comment.isFlagged"
-          class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400"
+          class="text-xs px-1.5 py-0.5 rounded-full bg-action-soft dark:bg-action-soft text-action dark:text-action"
           >待审核</span
         >
       </div>
@@ -119,29 +116,32 @@ function onClickReply() {
           loading="lazy"
           class="w-20 h-20 rounded-lg object-cover cursor-zoom-in hover:opacity-90 transition-opacity bg-slate-100 dark:bg-slate-700"
           alt="评论配图"
+          role="button"
+          tabindex="0"
+          :aria-label="`放大第 ${i + 1} 张评论配图`"
           @click.stop="emit('image', i)"
+          @keydown.enter.stop="emit('image', i)"
+          @keydown.space.prevent.stop="emit('image', i)"
         />
       </div>
-      <div class="flex items-center gap-4 mt-1" @click.stop>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1" @click.stop>
         <DislikeButton :disliked="comment.dislikedByMe" :count="comment.dislikesCount" @toggle="emit('dislike')" />
-        <button class="text-xs text-slate-400 hover:text-primary-500" @click="onClickReply">回复</button>
+        <button class="text-xs text-slate-400 hover:text-action" @click="onClickReply">回复</button>
         <button
           v-if="showAccept"
           class="text-xs font-medium"
-          :class="
-            comment.isAccepted ? 'text-emerald-500 hover:text-orange-500' : 'text-slate-400 hover:text-emerald-500'
-          "
+          :class="comment.isAccepted ? 'text-action hover:text-action' : 'text-slate-400 hover:text-action'"
           @click="emit('accept')"
         >
           {{ comment.isAccepted ? '取消采纳' : '采纳' }}
         </button>
-        <button v-if="!isMine" class="text-xs text-slate-400 hover:text-orange-500" @click="emit('report')">
-          举报
-        </button>
-        <button v-if="canHide" class="text-xs text-slate-400 hover:text-red-500" @click="emit('hide')">
+        <button v-if="!isMine" class="text-xs text-slate-400 hover:text-action" @click="emit('report')">举报</button>
+        <button v-if="canHide" class="text-xs text-slate-400 hover:text-correction" @click="emit('hide')">
           {{ comment.isHidden ? '取消隐藏' : '隐藏' }}
         </button>
-        <button v-if="canDelete" class="text-xs text-slate-400 hover:text-red-500" @click="emit('remove')">删除</button>
+        <button v-if="canDelete" class="text-xs text-slate-400 hover:text-correction" @click="emit('remove')">
+          删除
+        </button>
       </div>
     </div>
     <!-- 抖音式：点赞垂直排列于内容右侧 -->
@@ -152,20 +152,9 @@ function onClickReply() {
 </template>
 
 <style scoped>
-/* 点击评论回复时的强调闪烁：蓝色光晕由强到弱扩散 */
+/* 从通知定位评论时显示稳定边界，避免光晕扩散干扰阅读。 */
 .reply-flash {
-  animation: reply-flash 1.2s ease;
-}
-@keyframes reply-flash {
-  0% {
-    box-shadow:
-      0 0 0 3px rgba(59, 130, 246, 0.4),
-      inset 0 0 0 3px rgba(59, 130, 246, 0.12);
-  }
-  100% {
-    box-shadow:
-      0 0 0 0 rgba(59, 130, 246, 0),
-      inset 0 0 0 0 rgba(59, 130, 246, 0);
-  }
+  outline: 1px solid var(--action);
+  outline-offset: 4px;
 }
 </style>

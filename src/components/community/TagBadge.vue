@@ -9,9 +9,10 @@ const emit = defineEmits<{ click: [] }>()
     class="text-xs px-2 py-1 rounded-full transition-colors whitespace-nowrap shrink-0"
     :class="
       active
-        ? 'bg-primary-500 text-white'
-        : 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 hover:bg-primary-100 dark:hover:bg-primary-900/50'
+        ? 'bg-action text-on-action'
+        : 'bg-primary-50 dark:bg-primary-900/30 text-action dark:text-action hover:bg-primary-100 dark:hover:bg-primary-900/50'
     "
+    :aria-pressed="active ?? false"
     @click.stop="emit('click')"
   >
     {{ tag }}

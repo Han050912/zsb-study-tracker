@@ -40,12 +40,17 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 space-y-4 max-w-2xl mx-auto">
-    <h1 class="page-title">消息</h1>
+  <div class="study-page reading-page space-y-4">
+    <header class="study-page-heading">
+      <div>
+        <h1 class="page-title">消息</h1>
+        <p class="page-description">与同学交流复习思路，继续上次的对话。</p>
+      </div>
+    </header>
 
     <LoadingState v-if="loading" />
     <!-- 加载失败：持久错误态 + 重试，不落「还没有消息」空态 -->
-    <div v-else-if="loadError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+    <div v-else-if="loadError" class="card flex items-center gap-2 text-xs text-correction dark:text-correction">
       <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
       <span class="flex-1">{{ loadError }}</span>
       <button class="btn-ghost !text-xs shrink-0" @click="load">
@@ -72,17 +77,17 @@ onMounted(() => {
             <span class="text-sm font-semibold truncate">{{ c.peerName }}</span>
             <span
               v-if="c.peerVerified"
-              class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+              class="w-3.5 h-3.5 rounded-full bg-action text-on-action text-[9px] flex items-center justify-center shrink-0"
               title="认证专家"
               >✓</span
             >
-            <span class="text-[10px] text-slate-400 ml-auto shrink-0">{{ fromNow(c.lastAt) }}</span>
+            <span class="text-xs text-slate-400 ml-auto shrink-0">{{ fromNow(c.lastAt) }}</span>
           </div>
           <div class="text-xs text-slate-400 truncate mt-0.5">{{ c.lastFromMe ? '我：' : '' }}{{ c.lastContent }}</div>
         </div>
         <span
           v-if="c.unread"
-          class="shrink-0 min-w-[1.25rem] h-5 px-1 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center"
+          class="shrink-0 min-w-[1.25rem] h-5 px-1 rounded-full bg-correction text-on-action text-xs flex items-center justify-center"
         >
           {{ c.unread > 99 ? '99+' : c.unread }}
         </span>

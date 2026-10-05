@@ -184,7 +184,7 @@ export function usePostDetail() {
     if (requireLogin(router)) return
     if (!post.value) return
     const liked = await store.likePost(postId).catch((e) => {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '点赞未能更新，请重试'))
       return null
     })
     if (liked === null) return
@@ -195,7 +195,7 @@ export function usePostDetail() {
     if (pendingComments.has(c.id)) return
     pendingComments.add(c.id)
     const liked = await store.likeComment(c.id).catch((e) => {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '不赞同状态未能更新，请重试'))
       return null
     })
     pendingComments.delete(c.id)
@@ -217,7 +217,7 @@ export function usePostDetail() {
     if (requireLogin(router)) return
     if (!post.value) return
     const res = await store.dislikePost(postId).catch((e) => {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '评论点赞未能更新，请重试'))
       return null
     })
     if (res === null) return
@@ -228,7 +228,7 @@ export function usePostDetail() {
     if (pendingComments.has(c.id)) return
     pendingComments.add(c.id)
     const res = await store.dislikeComment(c.id).catch((e) => {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '评论不赞同状态未能更新，请重试'))
       return null
     })
     pendingComments.delete(c.id)
@@ -348,7 +348,7 @@ export function usePostDetail() {
       post.value.isResolved = isResolved
       toast(isResolved ? '已标记为已解答' : '已重新开放为待解答')
     } catch (e) {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '解答状态未能更新，请重试'))
     }
   }
 
@@ -380,7 +380,7 @@ export function usePostDetail() {
       // 同步评论标记：旧采纳清除，新采纳置位（commentTree 为展开副本，必须改原始数组）
       toast(res.acceptedAnswerId ? '已采纳最佳答案' : '已取消采纳，帖子重新开放为待解答')
     } catch (e) {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '采纳状态未能更新，请重试'))
     } finally {
       accepting.value = false
     }
@@ -412,7 +412,7 @@ export function usePostDetail() {
       const pinned = await store.adminPinPost(postId)
       toast(pinned ? '已置顶' : '已取消置顶')
     } catch (e) {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '置顶状态未能更新，请重试'))
     }
   }
 
@@ -422,7 +422,7 @@ export function usePostDetail() {
       const featured = await store.adminFeaturePost(postId)
       toast(featured ? '已加精' : '已取消加精')
     } catch (e) {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '精华标记未能更新，请重试'))
     }
   }
 
@@ -432,7 +432,7 @@ export function usePostDetail() {
       const hidden = await store.adminHidePost(postId)
       toast(hidden ? '已隐藏' : '已取消隐藏')
     } catch (e) {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '帖子可见性未能更新，请重试'))
     }
   }
 
@@ -443,7 +443,7 @@ export function usePostDetail() {
       if (target) target.isHidden = hidden
       toast(hidden ? '评论已隐藏' : '评论已恢复')
     } catch (e) {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '评论可见性未能更新，请重试'))
     }
   }
 

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ArrowLeft } from '@lucide/vue'
+import IconAction from '../shared/components/IconAction.vue'
 import LoadingState from '../shared/components/LoadingState.vue'
 /** 粉丝/关注/互关关系列表页：路由 /follows/:id?tab=fans|following|mutual；游标分页 + 切 tab 令牌防竞态 */
 import { computed, onMounted, ref, watch } from 'vue'
@@ -115,10 +117,12 @@ function onFollowChange(uid: string, following: boolean) {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
+  <div class="study-page reading-page space-y-4">
     <!-- 顶部导航行 -->
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
+      <span class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
       <h1 class="page-title">{{ isSelf ? '我的' : ownerName || 'TA 的' }}{{ TITLES[tab] }}</h1>
     </div>
 
@@ -128,7 +132,8 @@ function onFollowChange(uid: string, following: boolean) {
         v-for="t in TABS"
         :key="t"
         class="pb-1.5 text-sm font-medium transition-colors"
-        :class="tab === t ? 'border-b-2 border-primary-500 text-primary-600 dark:text-primary-400' : 'text-slate-400'"
+        :class="tab === t ? 'border-b-2 border-primary-500 text-action dark:text-action' : 'text-slate-400'"
+        :aria-pressed="tab === t"
         @click="switchTab(t)"
       >
         {{ TITLES[t] }}
@@ -143,7 +148,7 @@ function onFollowChange(uid: string, following: boolean) {
       <LoadingState v-if="loading" />
       <!-- 错误态 -->
       <div v-else-if="loadError" class="text-center text-xs text-slate-400 py-10">
-        加载失败
+        同学列表未能加载，请重试。
         <button class="btn-ghost !text-xs ml-1" @click="loadMore">重试</button>
       </div>
       <!-- 空态（items 空且非 loading 且 cursor===null） -->
@@ -154,9 +159,7 @@ function onFollowChange(uid: string, following: boolean) {
       <!-- 加载更多 -->
       <button v-if="cursor && !loading" class="btn-ghost w-full !text-xs" @click="loadMore">加载更多</button>
       <!-- 到底提示 -->
-      <div v-else-if="cursor === null && items.length" class="text-center text-[10px] text-slate-300 py-2">
-        没有更多了
-      </div>
+      <div v-else-if="cursor === null && items.length" class="text-center text-xs text-slate-300 py-2">没有更多了</div>
     </div>
   </div>
 </template>

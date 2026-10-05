@@ -1,13 +1,16 @@
 <script setup lang="ts">
+import IconAction from '../shared/components/IconAction.vue'
 import LoadingState from '../shared/components/LoadingState.vue'
-import { computed, onMounted, ref } from 'vue'
+import AsyncState from '../shared/components/AsyncState.vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { requireLogin } from '../services/auth'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { circlesApi } from '../api/community/circles'
 import { postsApi } from '../api/community/posts'
-import { RefreshCw, TriangleAlert } from '@lucide/vue'
+import { RefreshCw, TriangleAlert, ArrowLeft } from '@lucide/vue'
 import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
@@ -32,39 +35,59 @@ const detail = ref<CircleDetail | null>(null)
 const { posts, entities } = usePostCollection()
 const feedCursor = ref<string | null>(null)
 const loading = ref(true)
+const detailError = ref('')
 const feedLoading = ref(false)
 const feedError = ref('')
+let disposed = false,
+  feedTicket = 0
+onBeforeUnmount(() => {
+  disposed = true
+  feedTicket++
+})
 
 const circle = computed(() => detail.value?.circle ?? null)
 const isActiveMember = computed(() => circle.value?.myStatus === 'owner' || circle.value?.myStatus === 'member')
 
-onMounted(async () => {
+async function loadDetail() {
+  loading.value = true
+  detailError.value = ''
   try {
     detail.value = await circlesApi.circleDetail(circleId)
   } catch (e) {
-    toast(getErrorMessage(e, '圈子不存在'))
-    router.replace('/community/circles')
+    detailError.value = getErrorMessage(e, '圈子未能加载，请重试或返回圈子列表')
     return
   } finally {
     loading.value = false
   }
   await loadFeed(true)
-})
+}
+onMounted(loadDetail)
 
 async function loadFeed(reset = false) {
-  if (feedLoading.value) return
+  if (!circle.value?.isPublic && !isActiveMember.value) {
+    feedTicket++
+    posts.value = []
+    feedCursor.value = null
+    feedError.value = ''
+    feedLoading.value = false
+    return
+  }
+  if (!reset && feedLoading.value) return
+  const ticket = ++feedTicket
   feedLoading.value = true
   feedError.value = ''
   try {
     const res = await postsApi.feed({ circle: circleId, cursor: reset ? null : feedCursor.value })
+    if (disposed || ticket !== feedTicket) return
     posts.value = reset ? res.posts : [...posts.value, ...res.posts]
     feedCursor.value = res.nextCursor
   } catch (e) {
+    if (disposed || ticket !== feedTicket) return
     // 首屏失败展示错误态；追加失败仅提示，保留已加载内容
     if (reset) feedError.value = getErrorMessage(e, '加载失败')
     else toast(getErrorMessage(e, '加载失败'))
   } finally {
-    feedLoading.value = false
+    if (ticket === feedTicket) feedLoading.value = false
   }
 }
 
@@ -87,12 +110,19 @@ async function toggleJoin() {
       if (c.myStatus === 'member') c.memberCount = Math.max(0, c.memberCount - 1)
       c.myStatus = null
       toast('已退出/取消')
-      if (!c.isPublic) posts.value = [] // 审核圈退出后不可再看内容
+      if (!c.isPublic) {
+        feedTicket++
+        posts.value = []
+        feedCursor.value = null
+        feedLoading.value = false
+        feedError.value = ''
+      }
     }
     // 成员列表刷新
     detail.value = await circlesApi.circleDetail(circleId)
+    await loadFeed(true)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '加入状态未能更新，请重试'))
   } finally {
     joinSubmitting.value = false
   }
@@ -109,7 +139,7 @@ async function approve(userId: string) {
     detail.value = await circlesApi.circleDetail(circleId)
     toast('已通过')
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '加入申请未能通过，请重试'))
   } finally {
     acting.value[userId] = false
   }
@@ -124,7 +154,7 @@ async function removeMember(userId: string, name: string) {
     detail.value = await circlesApi.circleDetail(circleId)
     toast('已移除')
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '成员未能移除，请重试'))
   } finally {
     acting.value[userId] = false
   }
@@ -138,12 +168,22 @@ function onPosted() {
 
 // ---- 帖子互动（局部状态） ----
 async function likePost(id: string) {
+  if (requireLogin(router)) return
   const p = posts.value.find((x) => x.id === id)
   if (!p) return
   try {
     await entities.likePost(id)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '点赞未能更新，请重试'))
+  }
+}
+
+async function dislikePost(id: string) {
+  if (requireLogin(router)) return
+  try {
+    await entities.dislikePost(id)
+  } catch (e) {
+    toast(getErrorMessage(e, '不赞同状态未能更新，请重试'))
   }
 }
 
@@ -163,22 +203,28 @@ function openReport(postId: string) {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto space-y-4">
+  <div class="collaboration-page study-page reading-page space-y-4">
     <LoadingState v-if="loading" />
+    <div v-else-if="detailError" class="space-y-4">
+      <RouterLink to="/community/circles" class="btn-ghost">返回圈子列表</RouterLink>
+      <AsyncState :error="detailError" @retry="loadDetail" />
+    </div>
 
     <template v-else-if="circle">
-      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
+      <span class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
 
       <!-- 圈子信息头 -->
       <div class="card space-y-3">
         <div class="flex items-center gap-2 flex-wrap">
           <h1 class="page-title flex-1 min-w-0 truncate">{{ circle.name }}</h1>
           <span
-            class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+            class="text-xs px-1.5 py-0.5 rounded-full shrink-0"
             :class="
               circle.isPublic
-                ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
-                : 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                ? 'bg-action-soft dark:bg-action-soft text-action dark:text-action'
+                : 'bg-action-soft dark:bg-action-soft text-action dark:text-action'
             "
           >
             {{ circle.isPublic ? '公开圈' : '审核圈' }}
@@ -216,8 +262,8 @@ function openReport(postId: string) {
         <div v-for="p in detail.pending" :key="p.userId" class="flex items-center gap-2">
           <UserAvatar :name="p.userName" :avatar="p.userAvatar" size="sm" />
           <span class="text-sm flex-1 truncate">{{ p.userName }}</span>
-          <button class="btn-ghost !text-xs !text-emerald-500" @click="approve(p.userId)">通过</button>
-          <button class="btn-ghost !text-xs !text-red-500" @click="removeMember(p.userId, p.userName)">拒绝</button>
+          <button class="btn-ghost !text-xs !text-action" @click="approve(p.userId)">通过</button>
+          <button class="btn-ghost !text-xs !text-correction" @click="removeMember(p.userId, p.userName)">拒绝</button>
         </div>
       </div>
 
@@ -225,18 +271,22 @@ function openReport(postId: string) {
       <div v-if="detail?.members.length" class="card">
         <div class="label !mb-2">成员（{{ detail.members.length }}）</div>
         <div class="flex flex-wrap gap-3">
-          <div
-            v-for="m in detail.members"
-            :key="m.userId"
-            class="flex items-center gap-1.5 cursor-pointer group"
-            @click="openProfile(m.userId)"
-          >
-            <UserAvatar :name="m.userName" :avatar="m.userAvatar" size="sm" />
-            <span class="text-xs group-hover:text-primary-500">{{ m.userName }}</span>
-            <span v-if="m.role === 'owner'" class="text-[10px] text-amber-500">圈主</span>
+          <div v-for="m in detail.members" :key="m.userId" class="flex items-center gap-1.5 min-w-0">
+            <button
+              type="button"
+              class="flex items-center gap-1.5 min-w-0 text-left group"
+              :aria-label="`查看${m.userName}的资料`"
+              @click="openProfile(m.userId)"
+            >
+              <UserAvatar :name="m.userName" :avatar="m.userAvatar" size="sm" />
+              <span class="text-xs break-words group-hover:text-action">{{ m.userName }}</span>
+              <span v-if="m.role === 'owner'" class="text-xs text-action shrink-0">圈主</span>
+            </button>
             <button
               v-if="circle.myStatus === 'owner' && m.role !== 'owner'"
-              class="text-[10px] text-slate-300 hover:text-red-500"
+              type="button"
+              class="text-xs text-muted hover:text-correction shrink-0"
+              :aria-label="`移除成员${m.userName}`"
               @click.stop="removeMember(m.userId, m.userName)"
             >
               ✕
@@ -251,7 +301,7 @@ function openReport(postId: string) {
       </button>
 
       <!-- 圈内帖子流：首屏失败提供重试（与广场推荐错误块口径一致） -->
-      <div v-if="feedError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+      <div v-if="feedError" class="card flex items-center gap-2 text-xs text-correction dark:text-correction">
         <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
         <span class="flex-1">{{ feedError }}</span>
         <button class="btn-ghost !text-xs shrink-0" @click="loadFeed(true)">
@@ -261,13 +311,14 @@ function openReport(postId: string) {
       </div>
       <template v-else>
         <div v-if="!posts.length && !feedLoading" class="card text-center text-sm text-slate-400 py-8">
-          {{ isActiveMember ? '圈内还没有帖子，来发第一帖吧～' : '加入圈子后查看圈内讨论' }}
+          {{ isActiveMember ? '圈内还没有讨论，可以发一道真题或介绍你的复习进度。' : '加入圈子后查看圈内讨论' }}
         </div>
         <PostCard
           v-for="p in posts"
           :key="p.id"
           :post="p"
           @like="likePost(p.id)"
+          @dislike="dislikePost(p.id)"
           @open="router.push(`/community/post/${p.id}`)"
           @profile="openProfile(p.userId)"
           @report="openReport(p.id)"

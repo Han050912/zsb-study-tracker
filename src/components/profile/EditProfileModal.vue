@@ -31,7 +31,8 @@ watch(
 )
 
 function onAvatarUploaded(url: string) {
-  store.setAvatar(url) // settings 行由同步协议写入（端点只存 R2 文件）
+  store.setAvatar(url)
+  emit('saved')
 }
 
 const saving = ref(false)
@@ -71,13 +72,13 @@ async function save() {
         />
         <div
           v-else
-          class="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-indigo-600 text-white flex items-center justify-center text-2xl font-bold select-none"
+          class="w-16 h-16 rounded-2xl bg-action-soft text-action flex items-center justify-center text-2xl font-bold select-none"
         >
           {{ (userName || '升').trim().slice(0, 1).toUpperCase() }}
         </div>
         <div>
           <button class="btn-ghost !text-xs" type="button" @click="showAvatarEditor = true">更换头像</button>
-          <p class="text-[11px] text-slate-400 mt-1.5">支持 JPG / PNG / WebP，将裁剪为正方形</p>
+          <p class="text-xs text-slate-400 mt-1.5">支持 JPG / PNG / WebP，将裁剪为正方形</p>
         </div>
       </div>
 
@@ -85,7 +86,7 @@ async function save() {
       <div>
         <label class="block text-sm font-medium mb-1.5" for="nickname">昵称</label>
         <input v-model="userName" id="nickname" maxlength="30" class="input" placeholder="输入昵称" />
-        <p class="text-[11px] text-slate-400 mt-1">
+        <p class="text-xs text-slate-400 mt-1">
           登录用户名：{{ user?.username }}（不可修改）· 密码请在「个人中心 → 账号安全」中修改
         </p>
       </div>
@@ -102,9 +103,7 @@ async function save() {
             class="input resize-none"
             placeholder="介绍一下自己吧"
           ></textarea>
-          <span class="absolute right-2 bottom-2 text-[11px] text-slate-400 pointer-events-none"
-            >{{ bio.length }}/100</span
-          >
+          <span class="absolute right-2 bottom-2 text-xs text-slate-400 pointer-events-none">{{ bio.length }}/100</span>
         </div>
       </div>
     </div>

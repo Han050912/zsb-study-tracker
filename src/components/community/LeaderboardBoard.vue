@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AsyncState from '../../shared/components/AsyncState.vue'
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { postsApi } from '../../api/community/posts'
@@ -9,17 +10,23 @@ import UserAvatar from './UserAvatar.vue'
 /** 每日打卡榜：今日打卡榜 TOP 10 + 连续打卡王 TOP 5（广场顶部正向 peer pressure） */
 const data = ref<CommunityLeaderboard | null>(null)
 
-onMounted(async () => {
+const loading = ref(true)
+const loadError = ref('')
+async function load() {
+  loading.value = true
+  loadError.value = ''
   try {
     data.value = await postsApi.leaderboard()
   } catch {
-    /* 榜单加载失败不阻塞广场 */
+    loadError.value = '榜单未能加载，请检查网络后重试'
+  } finally {
+    loading.value = false
   }
-})
+}
+onMounted(load)
 
 const router = useRouter()
-const MEDALS = ['🥇', '🥈', '🥉']
-const medal = (i: number) => MEDALS[i] ?? `${i + 1}.`
+const medal = (i: number) => i + 1
 /** 跳转用户成长主页 */
 function goProfile(userId: string) {
   router.push(`/profile/${userId}`)
@@ -27,31 +34,29 @@ function goProfile(userId: string) {
 </script>
 
 <template>
-  <div v-if="data && (data.today.length || data.streak.length)" class="space-y-3">
+  <AsyncState v-if="loading || loadError" :loading="loading" :error="loadError" @retry="load" />
+  <div v-else-if="data && (data.today.length || data.streak.length)" class="space-y-3">
     <!-- 今日打卡榜 -->
     <div v-if="data.today.length">
       <div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">今日打卡榜</div>
       <div class="space-y-1.5">
-        <div v-for="(e, i) in data.today" :key="i" class="flex items-center gap-2 text-xs">
+        <div v-for="(e, i) in data.today" :key="i" class="flex flex-wrap items-center gap-2 text-xs">
           <span class="w-6 text-center shrink-0">{{ medal(i) }}</span>
-          <div class="flex items-center gap-2 cursor-pointer group" @click="goProfile(e.userId)">
+          <button type="button" class="flex items-center gap-2 cursor-pointer group" @click="goProfile(e.userId)">
             <UserAvatar :name="e.userName" :avatar="e.userAvatar" size="sm" />
-            <span class="font-medium truncate max-w-[7rem] group-hover:text-primary-500">{{ e.userName }}</span>
-          </div>
+            <span class="font-medium truncate max-w-[7rem] group-hover:text-action">{{ e.userName }}</span>
+          </button>
           <span
             v-if="e.verified"
-            class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+            class="w-3.5 h-3.5 rounded-full bg-action text-on-action text-[9px] flex items-center justify-center shrink-0"
             title="认证专家"
             >✓</span
           >
-          <span
-            class="text-[10px] px-1 rounded-full shrink-0"
-            :style="{ background: levelOf(e.totalPoints).color + '1a', color: levelOf(e.totalPoints).color }"
-          >
+          <span class="text-xs px-1 rounded-full shrink-0" :style="{ color: 'var(--muted)' }">
             {{ levelOf(e.totalPoints).name }}
           </span>
           <span class="text-slate-400 truncate">{{ e.subjects.join('、') }}</span>
-          <span class="ml-auto text-primary-500 font-semibold shrink-0">+{{ e.todayPoints }}</span>
+          <span class="ml-auto text-action font-semibold shrink-0">+{{ e.todayPoints }}</span>
         </div>
       </div>
     </div>
@@ -69,13 +74,14 @@ function goProfile(userId: string) {
           <span class="font-medium max-w-[5rem] truncate">{{ e.userName }}</span>
           <span
             v-if="e.verified"
-            class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+            class="w-3.5 h-3.5 rounded-full bg-action text-on-action text-[9px] flex items-center justify-center shrink-0"
             title="认证专家"
             >✓</span
           >
-          <span class="text-orange-500 font-semibold shrink-0">{{ e.streak }}天</span>
+          <span class="text-action font-semibold shrink-0">{{ e.streak }}天</span>
         </div>
       </div>
     </div>
   </div>
+  <p v-else class="text-sm text-muted py-4">今天还没有打卡榜记录。完成打卡后，记录会显示在这里。</p>
 </template>

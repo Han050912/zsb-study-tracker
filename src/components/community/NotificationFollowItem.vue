@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconAction from '../../shared/components/IconAction.vue'
 /** 新关注通知 Item：头像 + 昵称/标签 / 「时间 关注了你」 / 打招呼按钮 + 右箭头 */
 import { useRouter } from 'vue-router'
 import { ChevronRight, MessageCircle } from '@lucide/vue'
@@ -32,7 +33,7 @@ function greet() {
       <UserAvatar :name="n.actorName || '?'" :avatar="n.actorAvatar" />
       <span
         v-if="!n.isRead"
-        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white dark:border-slate-800"
+        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-correction border-2 border-white dark:border-slate-800"
       ></span>
     </button>
     <div class="flex-1 min-w-0">
@@ -44,12 +45,12 @@ function greet() {
     </div>
     <div class="flex items-center gap-2 shrink-0">
       <button
-        class="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-full font-medium bg-primary-500 text-white hover:bg-primary-600 transition-colors"
+        class="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-full font-medium bg-action text-on-action hover:bg-primary-600 transition-colors"
         @click.stop="greet"
       >
         <MessageCircle :size="12" />打招呼
       </button>
-      <ChevronRight :size="16" class="text-slate-400" />
+      <IconAction :icon="ChevronRight" label="查看同学资料" class="text-slate-400" @click.stop="openProfile" />
     </div>
   </div>
 </template>

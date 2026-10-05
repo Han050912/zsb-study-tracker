@@ -25,6 +25,10 @@ function onFollowChange(following: boolean) {
   <div
     class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700/40 cursor-pointer transition-colors"
     @click="router.push(`/profile/${item.userId}`)"
+    role="link"
+    tabindex="0"
+    :aria-label="`查看${item.userName}的主页`"
+    @keydown.enter.self="router.push(`/profile/${item.userId}`)"
   >
     <UserAvatar :name="item.userName" :avatar="item.avatar" />
     <div class="flex-1 min-w-0">
@@ -32,18 +36,18 @@ function onFollowChange(following: boolean) {
         <span class="text-sm font-semibold truncate">{{ item.userName }}</span>
         <span
           v-if="item.verified"
-          class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+          class="w-3.5 h-3.5 rounded-full bg-action text-on-action text-[9px] flex items-center justify-center shrink-0"
           >✓</span
         >
         <span
           v-if="badge"
-          class="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+          class="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 rounded-full shrink-0"
           :class="badge.cls"
         >
           <component :is="badge.icon" :size="10" />{{ badge.label }}
         </span>
       </div>
-      <div class="text-xs text-slate-400 truncate mt-0.5">{{ item.bio || '这个人很懒，什么都没写' }}</div>
+      <div class="text-xs text-slate-400 truncate mt-0.5">{{ item.bio || '还没有填写备考介绍' }}</div>
     </div>
     <FollowButton
       v-if="!isSelf"

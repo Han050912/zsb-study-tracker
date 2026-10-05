@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 个人主页头部：柔和色带 + 悬浮资料卡（头像/昵称/蓝V/等级/简介/积分打卡 + 本人编辑或访客关注/私信操作） */
+/** 姓名与备考介绍优先，等级降为文字，保留编辑、关注和私信入口。 */
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { BadgeCheck, Camera } from '@lucide/vue'
@@ -7,21 +7,21 @@ import type { CommunityUserProfile } from '../../types'
 import { imageUrl } from '../../api/community'
 import { levelOf } from '../../data/defaults'
 import { requireLogin } from '../../services/auth'
+import { useAppStore } from '../../stores/app'
 import FollowButton from './FollowButton.vue'
 
 const props = defineProps<{ profile: CommunityUserProfile; isSelf: boolean }>()
 const emit = defineEmits<{ edit: []; 'follow-change': [following: boolean] }>()
 const router = useRouter()
+const store = useAppStore()
 const level = computed(() => levelOf(props.profile.points))
+const avatar = computed(() => (props.isSelf ? store.settings.avatar || props.profile.avatar : props.profile.avatar))
 
 // 头像加载失败回退首字母渐变（同 UserAvatar 口径）；换新头像后允许重新尝试加载
 const avatarFailed = ref(false)
-watch(
-  () => props.profile.avatar,
-  () => {
-    avatarFailed.value = false
-  }
-)
+watch(avatar, () => {
+  avatarFailed.value = false
+})
 
 function onAvatarClick() {
   if (props.isSelf) emit('edit')
@@ -36,21 +36,22 @@ function goMessage() {
 
 <template>
   <div>
-    <!-- 柔和色带 -->
-    <div class="profile-cover h-28 md:h-36"></div>
-
-    <!-- 悬浮资料卡 -->
-    <div class="-mt-10 mx-3 card relative flex flex-wrap sm:flex-nowrap items-center gap-4">
+    <div class="profile-summary">
       <!-- 头像区：本人态可点击编辑资料（悬停显示 Camera 遮罩，参考 Account.vue group-hover 模式） -->
       <div
         class="relative w-20 h-20 shrink-0"
         :class="isSelf ? 'cursor-pointer group' : ''"
         :title="isSelf ? '编辑资料' : undefined"
+        :role="isSelf ? 'button' : undefined"
+        :tabindex="isSelf ? 0 : undefined"
+        :aria-label="isSelf ? '编辑头像和资料' : undefined"
         @click="onAvatarClick"
+        @keydown.enter="onAvatarClick"
+        @keydown.space.prevent="onAvatarClick"
       >
         <img
-          v-if="profile.avatar && !avatarFailed"
-          :src="imageUrl(profile.avatar)"
+          v-if="avatar && !avatarFailed"
+          :src="imageUrl(avatar)"
           alt=""
           loading="lazy"
           class="w-20 h-20 rounded-full object-cover ring-4 ring-white dark:ring-slate-800 bg-slate-200 dark:bg-slate-700"
@@ -58,13 +59,13 @@ function goMessage() {
         />
         <div
           v-else
-          class="w-20 h-20 rounded-full ring-4 ring-white dark:ring-slate-800 bg-gradient-to-br from-primary-500 to-indigo-600 text-white text-2xl font-bold flex items-center justify-center select-none"
+          class="w-20 h-20 rounded-full ring-4 ring-white dark:ring-slate-800 bg-action-soft text-action text-2xl font-bold flex items-center justify-center select-none"
         >
           {{ (profile.userName || '升').trim().slice(0, 1).toUpperCase() }}
         </div>
         <span
           v-if="isSelf"
-          class="absolute inset-0 rounded-full bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+          class="absolute inset-0 rounded-full bg-black/40 text-white opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 flex items-center justify-center"
         >
           <Camera :size="22" aria-hidden="true" />
         </span>
@@ -74,17 +75,17 @@ function goMessage() {
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-1.5 flex-wrap">
           <span class="text-xl font-bold truncate">{{ profile.userName }}</span>
-          <BadgeCheck v-if="profile.verified" :size="14" class="text-sky-500 shrink-0" aria-hidden="true" />
+          <BadgeCheck v-if="profile.verified" :size="14" class="text-action shrink-0" aria-hidden="true" />
           <span
             v-if="!profile.profilePrivate"
-            class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
-            :style="{ background: level.color + '1a', color: level.color }"
+            class="text-xs px-1.5 py-0.5 rounded-full shrink-0"
+            :style="{ color: 'var(--muted)' }"
             >{{ level.name }}学者</span
           >
         </div>
         <div class="text-xs text-slate-400 mt-0.5">用户ID：{{ profile.userCode ?? '' }}</div>
         <p class="text-sm text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
-          {{ profile.bio || '这个人很懒，什么都没写' }}
+          {{ profile.bio || '还没有填写备考介绍' }}
         </p>
         <div class="text-xs text-slate-400 mt-1">
           <span v-if="!profile.profilePrivate"
@@ -107,7 +108,7 @@ function goMessage() {
             @change="(f) => emit('follow-change', f)"
           />
           <button
-            class="text-xs px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500 transition-colors"
+            class="text-xs px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-action transition-colors"
             @click="goMessage"
           >
             消息
@@ -117,11 +118,3 @@ function goMessage() {
     </div>
   </div>
 </template>
-
-<style scoped>
-.profile-cover {
-  border-radius: var(--radius-card);
-  border: 1px solid var(--line);
-  background: linear-gradient(120deg, var(--action-soft), var(--surface-soft));
-}
-</style>

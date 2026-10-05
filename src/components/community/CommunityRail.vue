@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ArrowUpRight, ArrowRight } from '@lucide/vue'
 import { defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { postsApi } from '../../api/community/posts'
@@ -32,25 +33,27 @@ onMounted(() => {
 onUnmounted(() => observer?.disconnect())
 </script>
 <template>
-  <div ref="root" class="space-y-4">
-    <div>
-      <h2 class="font-semibold">今日同行</h2>
-      <p class="text-xs text-slate-500 mt-1">看看同学们走到了哪里</p>
+  <div ref="root" class="community-rail space-y-4">
+    <div class="community-rail-heading">
+      <h2>今日同行</h2>
+      <p>学习路上，总有同行</p>
     </div>
     <template v-if="visible">
       <WeeklyReportCard v-if="isLoggedIn" />
-      <section v-if="hotTopics.length" class="card">
+      <section v-if="hotTopics.length" class="card community-rail-section">
         <h3 class="section-title">本周讨论</h3>
         <button
           v-for="topic in hotTopics"
           :key="topic.tag"
-          class="block text-sm text-left w-full"
+          type="button"
+          class="community-topic"
           @click="emit('tag', topic.tag)"
         >
-          {{ topic.text }} <span class="text-primary-500">↗</span>
+          <span class="community-topic-hash" aria-hidden="true">#</span><span>{{ topic.text }}</span>
+          <ArrowUpRight :size="16" class="text-action shrink-0 ml-auto" aria-hidden="true" />
         </button>
       </section>
-      <section v-if="extras?.circles.length" class="card">
+      <section v-if="extras?.circles.length" class="card community-rail-section">
         <h3 class="section-title">正在交流的圈子</h3>
         <RouterLink
           v-for="circle in extras.circles"
@@ -58,10 +61,10 @@ onUnmounted(() => observer?.disconnect())
           :to="{ name: 'circle-detail', params: { id: circle.id } }"
           class="flex items-center justify-between min-h-11 text-sm gap-3"
           ><span>{{ circle.name }}</span
-          ><span class="training-number text-xs text-slate-500">{{ circle.memberCount }} 人</span></RouterLink
+          ><span class="font-data text-xs text-slate-500">{{ circle.memberCount }} 人</span></RouterLink
         >
       </section>
-      <section v-if="extras?.users.length" class="card">
+      <section v-if="extras?.users.length" class="card community-rail-section">
         <h3 class="section-title">发现同学</h3>
         <RouterLink
           v-for="user in extras.users"
@@ -71,24 +74,34 @@ onUnmounted(() => observer?.disconnect())
           >{{ user.userName }}<span class="block text-xs text-slate-500 mt-1">{{ user.reason }}</span></RouterLink
         >
       </section>
-      <section v-if="isLoggedIn" class="card">
+      <section v-if="isLoggedIn" class="card community-rail-section">
         <h3 class="section-title">学习榜单</h3>
         <button
-          class="w-full text-left text-sm"
-          @click="board = board === 'checkin' ? '' : 'checkin'"
+          type="button"
+          class="community-board-toggle"
           :aria-expanded="board === 'checkin'"
+          @click="board = board === 'checkin' ? '' : 'checkin'"
         >
-          打卡榜 <span class="float-right">↗</span></button
-        ><LeaderboardBoard v-if="board === 'checkin'" /><button
-          class="w-full text-left text-sm"
-          @click="board = board === 'progress' ? '' : 'progress'"
+          打卡榜
+          <ArrowUpRight :size="16" aria-hidden="true" />
+        </button>
+        <LeaderboardBoard v-if="board === 'checkin'" />
+        <button
+          type="button"
+          class="community-board-toggle"
           :aria-expanded="board === 'progress'"
+          @click="board = board === 'progress' ? '' : 'progress'"
         >
-          进步榜 <span class="float-right">↗</span></button
-        ><ProgressBoard v-if="board === 'progress'" />
+          进步榜
+          <ArrowUpRight :size="16" aria-hidden="true" />
+        </button>
+        <ProgressBoard v-if="board === 'progress'" />
       </section>
-      <button class="card w-full text-left text-sm" @click="router.push({ name: 'teams' })">
-        把目标交给彼此 <span class="block mt-2 text-primary-500">去组队协作 →</span>
+      <button type="button" class="community-rail-invite" @click="router.push({ name: 'teams' })">
+        想找人一起备考？
+        <span class="inline-flex items-center text-action"
+          >查看搭子与小队 <ArrowRight :size="16" aria-hidden="true"
+        /></span>
       </button>
     </template>
   </div>

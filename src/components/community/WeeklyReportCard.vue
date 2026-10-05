@@ -57,33 +57,32 @@ function openShare() {
       <div class="section-title !mb-0">上周学习周报</div>
       <button class="btn-ghost !text-xs !px-2 !py-1" @click="openShare">分享</button>
     </div>
-    <div class="grid grid-cols-4 gap-2 text-center">
+    <div class="grid grid-cols-2 gap-4">
       <div>
-        <div class="text-sm font-bold text-primary-500">{{ formatMinutes(data.minutes) }}</div>
-        <div class="text-[10px] text-slate-400 mt-0.5">学习时长</div>
+        <div class="text-sm font-bold text-action">{{ formatMinutes(data.minutes) }}</div>
+        <div class="text-xs text-slate-400 mt-0.5">学习时长</div>
       </div>
       <div>
-        <div class="text-sm font-bold text-emerald-500">{{ data.studyDays }} 天</div>
-        <div class="text-[10px] text-slate-400 mt-0.5">学习天数</div>
+        <div class="text-sm font-bold text-action">{{ data.studyDays }} 天</div>
+        <div class="text-xs text-slate-400 mt-0.5">学习天数</div>
       </div>
       <div>
-        <div class="text-sm font-bold text-sky-500">
-          {{ data.problems }}<span v-if="data.problems" class="text-[10px] font-medium"> 题</span>
+        <div class="text-sm font-bold text-action">
+          {{ data.problems }}<span v-if="data.problems" class="text-xs font-medium"> 题</span>
         </div>
-        <div class="text-[10px] text-slate-400 mt-0.5">
+        <div class="text-xs text-slate-400 mt-0.5">
           刷题数<template v-if="data.problems">（{{ accuracy }}%）</template>
         </div>
       </div>
       <div>
-        <div class="text-sm font-bold text-amber-500">+{{ data.points }}</div>
-        <div class="text-[10px] text-slate-400 mt-0.5">积分变化</div>
+        <div class="text-sm font-bold text-action">+{{ data.points }}</div>
+        <div class="text-xs text-slate-400 mt-0.5">积分变化</div>
       </div>
     </div>
     <div
-      class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-2 mt-3 text-[10px] text-slate-400"
+      class="flex items-center justify-between border-t border-slate-100 dark:border-slate-700 pt-2 mt-3 text-xs text-slate-400"
     >
       <span>{{ data.weekStart }} ~ {{ data.weekEnd }} · 社区互动 {{ data.interactions }} 次</span>
-      <span v-if="daysLeft != null && daysLeft > 0">距考试 {{ daysLeft }} 天</span>
     </div>
     <PostComposer
       v-if="showComposer"
