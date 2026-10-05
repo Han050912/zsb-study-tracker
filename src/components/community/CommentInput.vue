@@ -43,8 +43,16 @@ defineExpose({
   }
 })
 
+function onEnter(event: KeyboardEvent) {
+  // Enter 在中文输入法选词阶段只确认文字，不提前发布评论。
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  send()
+}
+
 function send() {
-  const t = text.value.trim()
+  // 点击发送前读 textarea 最新值，覆盖输入法刚结束时 v-model 尚未同步的文本。
+  const t = (inputRef.value?.value ?? text.value).trim()
   // 图文至少一项（支持纯图片评论）；上传中或提交中禁止发送
   if ((!t && !images.value.length) || uploading.value || props.submitting) return
   if (hasError.value) {
@@ -71,11 +79,12 @@ function send() {
         class="input flex-1"
         :disabled="!isLoggedIn || submitting"
         :placeholder="isLoggedIn ? placeholder : '登录后参与评论…'"
-        @keydown.enter.exact.prevent="send"
+        @keydown.enter.exact="onEnter"
         @paste="onPaste"
       ></textarea>
       <button
         v-if="isLoggedIn"
+        type="button"
         class="btn-ghost !px-2.5 shrink-0"
         title="添加图片（最多 3 张）"
         :disabled="submitting"
@@ -85,6 +94,7 @@ function send() {
       </button>
       <button
         v-if="isLoggedIn"
+        type="button"
         class="btn-primary shrink-0"
         :disabled="(!text.trim() && !images.length) || uploading || submitting"
         @click="send"
