@@ -8,25 +8,27 @@ import { uid, today } from '../../utils/date'
 import { stageDelete } from '../../services/syncOutbox'
 import { touchRecord } from './staging'
 import type { Todo } from '../../types'
+import { isValidTodoDate } from '../../utils/todoTime'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type TodosActionsShape = {
-  addTodo(text: string, schedule?: { startAt?: number; dueAt?: number }): void
+  addTodo(text: string, schedule?: { startAt?: number; dueAt?: number }, date?: string): void
   updateTodo(id: string, text: string): void
   setTodoSchedule(id: string, schedule: { startAt?: number | null; dueAt?: number | null }): void
   markTodosNotified(ids: string[], kind: 'start' | 'due'): void
   toggleTodo(id: string): void
   deleteTodo(id: string): void
-  reorderTodos(orderedIds: string[]): void
+  reorderTodos(orderedIds: string[], date?: string): void
 }
 
 export const todosActions: TodosActionsShape = {
   /** 新增待办；可同时指定开始时间与最晚截止时间（时间戳），到点由提醒调度器弹通知 */
-  addTodo(this: AppStoreThis, text: string, schedule?: { startAt?: number; dueAt?: number }) {
+  addTodo(this: AppStoreThis, text: string, schedule?: { startAt?: number; dueAt?: number }, date = today()) {
     const title = text.trim()
     if (!title) throw new Error('请填写任务内容')
-    const maxOrder = Math.max(0, ...this.todayTodos.map((t) => t.order))
-    const todo: Todo = { id: uid(), date: today(), text: title, done: false, order: maxOrder + 1 }
+    if (!isValidTodoDate(date)) throw new Error('请选择有效的任务日期')
+    const maxOrder = Math.max(0, ...this.todos.filter((t) => t.date === date).map((t) => t.order))
+    const todo: Todo = { id: uid(), date, text: title, done: false, order: maxOrder + 1 }
     if (schedule?.startAt) todo.startAt = schedule.startAt
     if (schedule?.dueAt) todo.dueAt = schedule.dueAt
     this.todos.push(todo)
@@ -106,24 +108,25 @@ export const todosActions: TodosActionsShape = {
   },
 
   /**
-   * 按拖拽后得到的新顺序排列今日待办：重新分配 order 并去重保存。
-   * orderedIds 为拖拽结束后期望的顺序（仅今日待办 id）；未在列表中的今日待办保持原位追加在末尾。
+   * 重新排列所选日期的待办，未传日期时保持今日行为；其他日期不受影响。
+   * 未在 orderedIds 中的同日待办按原顺序追加在末尾。
    */
-  reorderTodos(this: AppStoreThis, orderedIds: string[]) {
-    const list = this.todayTodos
+  reorderTodos(this: AppStoreThis, orderedIds: string[], date = today()) {
+    if (!isValidTodoDate(date)) throw new Error('请选择有效的任务日期')
+    const list = this.todos.filter((t) => t.date === date).sort((a, b) => a.order - b.order)
     const byId = new Map(list.map((t) => [t.id, t]))
     let order = 1
     const seen = new Set<string>()
     const touched = new Set<string>()
     for (const id of orderedIds) {
       const t = byId.get(id)
-      if (t) {
+      if (t && !seen.has(id)) {
         t.order = order++
         seen.add(id)
         touched.add(id)
       }
     }
-    // 兜底：列表中存在但未被传入的今日待办，按原顺序追加在末尾
+    // 兜底：同日但未被传入的待办，按原顺序追加在末尾
     for (const t of list) {
       if (!seen.has(t.id)) {
         t.order = order++

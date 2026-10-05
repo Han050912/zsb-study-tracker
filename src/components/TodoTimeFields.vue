@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import TimeFieldCard, { type TimePreset } from './TimeFieldCard.vue'
+import { isValidTodoTime } from '../utils/todoTime'
 
 const props = withDefaults(
   defineProps<{
     start: string
     due: string
     hint?: string
+    dateLabel?: string
+    allowNow?: boolean
   }>(),
   {
-    hint: '时间均为「当日」的时刻，待办须在今日完成。'
+    hint: '时间均为「当日」的时刻，待办须在今日完成。',
+    dateLabel: '今日',
+    allowNow: true
   }
 )
 const emit = defineEmits<{ 'update:start': [string]; 'update:due': [string] }>()
@@ -29,13 +34,21 @@ const duePresets: TimePreset[] = [
   { label: '23:59', value: '23:59' }
 ]
 
-const invalid = computed(() => !!props.start && !!props.due && props.due < props.start)
+const invalid = computed(
+  () =>
+    !!props.start &&
+    !!props.due &&
+    isValidTodoTime(props.start) &&
+    isValidTodoTime(props.due) &&
+    props.due < props.start
+)
 
 const summary = computed(() => {
   const parts: string[] = []
+  if (!isValidTodoTime(props.start) || !isValidTodoTime(props.due)) return ''
   if (props.start) parts.push(`${props.start} 开始`)
   if (props.due) parts.push(`${props.due} 前完成`)
-  return parts.length ? `今日 ${parts.join(' · ')}` : ''
+  return parts.length ? `${props.dateLabel} ${parts.join(' · ')}` : ''
 })
 </script>
 
@@ -68,7 +81,7 @@ const summary = computed(() => {
       title="开始时间"
       desc="到点提醒你「任务已开始」，留空则不提醒"
       accent="sky"
-      :presets="startPresets"
+      :presets="allowNow ? startPresets : startPresets.filter((preset) => preset.value !== 'now')"
       @update:model-value="emit('update:start', $event)"
     >
       <template #icon>

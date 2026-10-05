@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import EmptyState from '../shared/components/EmptyState.vue'
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
@@ -12,19 +12,46 @@ import ExamAnswerStrip from '../components/ExamAnswerStrip.vue'
 import DashboardCompanions from '../components/DashboardCompanions.vue'
 import NavIcon from '../components/NavIcon.vue'
 import { masteryOverview } from '../utils/studyOverview'
-import { Play, GripVertical, Pencil, Trash2, ChevronUp, ChevronDown, ArrowRight } from '@lucide/vue'
+import {
+  Play,
+  GripVertical,
+  Pencil,
+  Trash2,
+  ChevronUp,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ArrowRight
+} from '@lucide/vue'
 import SubjectIcon from '../components/SubjectIcon.vue'
 import Modal from '../components/Modal.vue'
 import TodoTimeFields from '../components/TodoTimeFields.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import LearningPathCard from '../components/LearningPathCard.vue'
 import { notifyPermission, requestNotifyPermission } from '../services/notify'
+import { isValidTodoTime, isValidTodoDate, todoTimeOnDateTs } from '../utils/todoTime'
+import { focusMinutesOn, studyMinutesOn } from '../utils/studyTime'
 import type { Todo } from '../types'
 import dayjs from 'dayjs'
 
 const store = useAppStore()
 const toast = useToast()
 const confirm = useConfirm()
+// 空覆盖值跟随真实今天，跨零点时仍自动显示新一天。
+const taskDateOverride = ref('')
+const taskDate = computed({
+  get: () => taskDateOverride.value || store.todayKey,
+  set: (value: string) => {
+    if (isValidTodoDate(value)) taskDateOverride.value = value === store.todayKey ? '' : value
+  }
+})
+const isTodayTasks = computed(() => taskDate.value === store.todayKey)
+const visibleTodos = computed(() =>
+  store.todos.filter((t) => t.date === taskDate.value).sort((a, b) => a.order - b.order)
+)
+function shiftTaskDate(direction: number) {
+  taskDate.value = new Date(Date.parse(`${taskDate.value}T00:00:00Z`) + direction * 86400000).toISOString().slice(0, 10)
+}
 
 const quote = computed(() => {
   const list = store.settings.quotes.length ? store.settings.quotes : DEFAULT_QUOTES
@@ -48,13 +75,17 @@ const subjectOverviews = computed(() =>
 function subjectRoute(id: string) {
   return id === 'math' || id === 'english' ? `/${id}` : `/subject/${id}`
 }
-function moveTodo(id: string, direction: number) {
-  const ids = store.todayTodos.map((todo) => todo.id)
+async function moveTodo(id: string, direction: number, event: KeyboardEvent) {
+  const handle = event.currentTarget as HTMLElement
+  const ids = visibleTodos.value.map((todo) => todo.id)
   const index = ids.indexOf(id)
   const target = index + direction
-  if (target < 0 || target >= ids.length) return
+  if (index < 0 || target < 0 || target >= ids.length) return
   ;[ids[index], ids[target]] = [ids[target], ids[index]]
-  store.reorderTodos(ids)
+  store.reorderTodos(ids, taskDate.value)
+  // 浏览器移动带焦点的 DOM 节点时会丢失焦点；渲染完成后归还给原任务手柄。
+  await nextTick()
+  handle.focus({ preventScroll: true })
   toast(`任务已移至第 ${target + 1} 项`)
 }
 function toggleTodo(todo: Todo) {
@@ -95,34 +126,39 @@ function saveTodoTitle() {
 // ---- 快捷入口折叠 ----
 const showQuickLinks = ref(false)
 
-// ---- 任务新增：点击「添加」后弹出时间选择器（仅时:分，日期固定为当日）----
+// ---- 新增任务的时间属于打开弹窗时查看的日期 ----
 const newTodo = ref('')
 const showAddSchedule = ref(false)
 const addStart = ref('')
 const addDue = ref('')
+const addTodoDate = ref('')
 
 function openAddSchedule() {
   if (!newTodo.value.trim()) return toast('请先输入任务内容')
+  addTodoDate.value = taskDate.value
   addStart.value = ''
   addDue.value = ''
   showAddSchedule.value = true
 }
 function confirmAddTodo() {
-  const startAt = timeToTodayTs(addStart.value)
-  const dueAt = timeToTodayTs(addDue.value)
+  if (!isValidTodoTime(addStart.value) || !isValidTodoTime(addDue.value))
+    return toast('请输入有效时间：小时 0–23，分钟 0–59')
+  const startAt = todoTimeOnDateTs(addStart.value, addTodoDate.value)
+  const dueAt = todoTimeOnDateTs(addDue.value, addTodoDate.value)
   if (startAt && dueAt && dueAt < startAt) return toast('最晚截止时间不能早于开始时间')
   ensureNotifyPermission(!!startAt || !!dueAt)
-  store.addTodo(newTodo.value.trim(), { startAt, dueAt })
+  store.addTodo(newTodo.value.trim(), { startAt, dueAt }, addTodoDate.value)
   newTodo.value = ''
   showAddSchedule.value = false
   // 两个时间都没填：提示可能无法收到提醒，但仍正常添加（均为可选项）
   toast(startAt || dueAt ? '任务已添加，已设置提醒' : '任务已添加，未设置提醒')
 }
 
-// ---- 修改既有任务的开始 / 最晚截止时间（同样仅限当日，不允许跨日）----
+// ---- 提醒时间始终绑定既有任务的归属日期 ----
 const scheduleEditId = ref('')
 const editStart = ref('')
 const editDue = ref('')
+const scheduleEditDate = computed(() => store.todos.find((todo) => todo.id === scheduleEditId.value)?.date ?? '')
 
 function openSchedule(t: Todo) {
   scheduleEditId.value = t.id
@@ -130,21 +166,16 @@ function openSchedule(t: Todo) {
   editDue.value = t.dueAt ? dayjs(t.dueAt).format('HH:mm') : ''
 }
 function saveSchedule() {
-  const startAt = timeToTodayTs(editStart.value)
-  const dueAt = timeToTodayTs(editDue.value)
+  if (!scheduleEditDate.value) return toast('任务已不存在，请关闭弹窗后重试')
+  if (!isValidTodoTime(editStart.value) || !isValidTodoTime(editDue.value))
+    return toast('请输入有效时间：小时 0–23，分钟 0–59')
+  const startAt = todoTimeOnDateTs(editStart.value, scheduleEditDate.value)
+  const dueAt = todoTimeOnDateTs(editDue.value, scheduleEditDate.value)
   if (startAt && dueAt && dueAt < startAt) return toast('最晚截止时间不能早于开始时间')
   ensureNotifyPermission(!!startAt || !!dueAt)
   store.setTodoSchedule(scheduleEditId.value, { startAt: startAt ?? null, dueAt: dueAt ?? null })
   scheduleEditId.value = ''
   toast('已更新任务时间')
-}
-
-/** "HH:mm" 字符串 → 当日时间戳（秒/毫秒归零）；空值/非法值返回 undefined。日期强制为今日，不可跨日 */
-function timeToTodayTs(v: string): number | undefined {
-  if (!v) return undefined
-  const [h, m] = v.split(':').map(Number)
-  if (Number.isNaN(h) || Number.isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return undefined
-  return dayjs().hour(h).minute(m).second(0).millisecond(0).valueOf()
 }
 
 /** 首次为任务设定时间时申请通知权限，确保到点能弹出系统通知 */
@@ -198,7 +229,8 @@ function openCheckinShare() {
 // ---- 热力图点击：当日学习总时长明细 ----
 const heatDate = ref('')
 const heatRecords = computed(() => store.records.filter((r) => r.date === heatDate.value))
-const heatTotal = computed(() => heatRecords.value.reduce((s, r) => s + r.minutes, 0))
+const heatFocusMinutes = computed(() => focusMinutesOn(store, heatDate.value))
+const heatTotal = computed(() => studyMinutesOn(store, heatDate.value))
 
 /** 任务完成时间格式化（HH:mm） */
 function fmtCompletedAt(ts?: number | null) {
@@ -268,7 +300,7 @@ function finishDrag(commit: boolean) {
     if (from >= 0 && insertIndex !== from) {
       const rest = all.filter((x) => x !== id)
       rest.splice(insertIndex, 0, id)
-      store.reorderTodos(rest)
+      store.reorderTodos(rest, taskDate.value)
     }
   }
   draggingId.value = null
@@ -284,6 +316,9 @@ function onPointerUp() {
 function onPointerCancel() {
   finishDrag(false)
 }
+watch(taskDate, () => {
+  if (draggingId.value) finishDrag(false)
+})
 
 // 组件卸载（拖拽中切路由等极端情况）兜底清理 window 监听器，防止泄漏
 onUnmounted(() => {
@@ -335,21 +370,45 @@ onUnmounted(() => {
           <h2 id="today-list-title" class="section-title !mb-0">任务清单</h2>
           <span class="text-xs text-muted">按你的顺序</span>
         </div>
+        <div class="dashboard-task-dates" role="group" aria-label="切换任务日期">
+          <button type="button" class="icon-button" aria-label="前一天任务" @click="shiftTaskDate(-1)">
+            <ChevronLeft :size="18" aria-hidden="true" />
+          </button>
+          <label for="task-date" class="sr-only">任务日期</label>
+          <input id="task-date" v-model="taskDate" type="date" class="input" />
+          <button type="button" class="icon-button" aria-label="后一天任务" @click="shiftTaskDate(1)">
+            <ChevronRight :size="18" aria-hidden="true" />
+          </button>
+          <button type="button" class="btn-ghost" :disabled="isTodayTasks" @click="taskDateOverride = ''">
+            回到今天
+          </button>
+        </div>
+        <p class="text-xs text-muted mb-3" role="status">
+          {{ isTodayTasks ? '今天' : taskDate }} · 已完成 {{ visibleTodos.filter((todo) => todo.done).length }}/{{
+            visibleTodos.length
+          }}
+          项
+        </p>
         <form class="dashboard-add-task" @submit.prevent="openAddSchedule">
-          <input v-model="newTodo" class="input" aria-label="今天要完成的任务" placeholder="例如：重做极限错题 5 道" />
+          <input
+            v-model="newTodo"
+            class="input"
+            :aria-label="`${isTodayTasks ? '今天' : taskDate}要完成的任务`"
+            placeholder="例如：重做极限错题 5 道"
+          />
           <button class="btn-primary shrink-0" :disabled="!newTodo.trim()">添加</button>
         </form>
         <EmptyState
-          v-if="!store.todayTodos.length"
-          title="今天还没有任务"
+          v-if="!visibleTodos.length"
+          :title="isTodayTasks ? '今天还没有任务' : `${taskDate} 还没有任务`"
           description="写下一件能完成的事，再开始计时。"
         />
-        <p v-if="store.todayTodos.length" id="todo-sort-hint" class="sr-only">
+        <p v-if="visibleTodos.length" id="todo-sort-hint" class="sr-only">
           拖动排序按钮，或聚焦按钮后按上下方向键调整任务顺序。
         </p>
         <div ref="listRef" class="space-y-1">
           <div
-            v-for="t in store.todayTodos"
+            v-for="t in visibleTodos"
             :key="t.id"
             :data-todo-item="t.id"
             class="today-task"
@@ -363,8 +422,8 @@ onUnmounted(() => {
               :aria-label="`调整任务顺序：${t.text}`"
               aria-describedby="todo-sort-hint"
               @pointerdown="onPointerDown($event, t.id)"
-              @keydown.up.prevent="moveTodo(t.id, -1)"
-              @keydown.down.prevent="moveTodo(t.id, 1)"
+              @keydown.up.prevent="moveTodo(t.id, -1, $event)"
+              @keydown.down.prevent="moveTodo(t.id, 1, $event)"
             >
               <GripVertical :size="16" aria-hidden="true" />
             </button>
@@ -545,12 +604,14 @@ onUnmounted(() => {
     </Modal>
 
     <!-- 热力图当日学习明细弹窗 -->
-    <!-- 新增任务：开始 / 最晚截止时间选择器（仅时:分，日期固定为当日）-->
+    <!-- 新增任务：时间与弹窗中明确显示的日期一致 -->
     <Modal title="设定任务时间" :show="showAddSchedule" @close="showAddSchedule = false">
       <TodoTimeFields
         v-model:start="addStart"
         v-model:due="addDue"
-        hint="时间均为「当日」的时刻，任务须在今日完成；两项均为选填。"
+        :date-label="addTodoDate"
+        :allow-now="addTodoDate === store.todayKey"
+        :hint="`任务日期：${addTodoDate}；时间均为这一天的时刻，两项均为选填。${addTodoDate < store.todayKey ? '已过去的提醒时间会立即补发。' : ''}`"
       />
       <template #footer>
         <button class="btn-ghost" @click="showAddSchedule = false">取消</button>
@@ -558,9 +619,15 @@ onUnmounted(() => {
       </template>
     </Modal>
 
-    <!-- 修改既有任务的开始 / 最晚截止时间（同样仅限当日，不允许跨日）-->
+    <!-- 修改既有任务的开始 / 最晚截止时间 -->
     <Modal title="任务时间设置" :show="!!scheduleEditId" @close="scheduleEditId = ''">
-      <TodoTimeFields v-model:start="editStart" v-model:due="editDue" />
+      <TodoTimeFields
+        v-model:start="editStart"
+        v-model:due="editDue"
+        :date-label="scheduleEditDate"
+        :allow-now="scheduleEditDate === store.todayKey"
+        :hint="`任务日期：${scheduleEditDate}；时间均为这一天的时刻。${scheduleEditDate < store.todayKey ? '已过去的提醒时间会立即补发。' : ''}`"
+      />
       <template #footer>
         <button class="btn-ghost" @click="scheduleEditId = ''">取消</button>
         <button class="btn-primary" @click="saveSchedule">保存</button>
@@ -573,7 +640,7 @@ onUnmounted(() => {
           <span class="text-sm text-slate-500 dark:text-slate-400">当日学习总时长</span>
           <span class="text-xl font-black text-action">{{ formatMinutes(heatTotal) }}</span>
         </div>
-        <div v-if="!heatRecords.length" class="text-xs text-slate-400 text-center py-4">
+        <div v-if="!heatRecords.length && !heatFocusMinutes" class="text-xs text-slate-400 text-center py-4">
           这天没有学习记录。之后完成学习，可在科目页记录。
         </div>
         <div v-else class="space-y-2">
@@ -593,6 +660,13 @@ onUnmounted(() => {
               :style="{ color: store.subjectMap[r.subjectId]?.color || '#94a3b8' }"
               >{{ formatMinutes(r.minutes) }}</span
             >
+          </div>
+          <div v-if="heatFocusMinutes" class="rounded-xl border border-line px-3 py-2 text-sm">
+            <div class="flex justify-between gap-2">
+              <span class="font-medium">番茄专注（未分科目）</span>
+              <span class="font-semibold shrink-0">{{ formatMinutes(heatFocusMinutes) }}</span>
+            </div>
+            <p class="mt-1 text-xs text-muted">已计入当日学习总时长，包含提前结束后保存的专注。</p>
           </div>
         </div>
       </div>
@@ -659,6 +733,18 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
+}
+.dashboard-task-dates {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.dashboard-task-dates .input {
+  width: auto;
+  min-width: 148px;
+  flex: 1 1 148px;
 }
 .dashboard-add-task .input {
   min-width: 0;
@@ -771,6 +857,18 @@ onUnmounted(() => {
   }
   .dashboard-next-title {
     font-size: 17px;
+  }
+  .dashboard-task-dates {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+  }
+  .dashboard-task-dates .input {
+    width: 100%;
+    min-width: 0;
+  }
+  .dashboard-task-dates .btn-ghost {
+    grid-column: 1 / -1;
+    justify-self: end;
   }
   .dashboard-records-heading {
     gap: 4px;
