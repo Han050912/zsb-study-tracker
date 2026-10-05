@@ -1,5 +1,6 @@
 import { on } from '../router'
-import { first, run, HttpError } from '../db'
+import { first, HttpError, readBodyBytes } from '../db'
+import { withUserTransaction } from '../syncTransaction'
 import { rateLimit } from '../middleware/rateLimit'
 import { IMAGE_MAX_BYTES, sniff, stripMetadata } from '../image'
 
@@ -7,9 +8,9 @@ import { IMAGE_MAX_BYTES, sniff, stripMetadata } from '../image'
  * 错题图片对象存储（R2）：
  * - error_questions.image 仅存 'r2:<id>' 引用；id 由服务端对「剥离元数据后的落盘字节」计算 sha256，
  *   因此不变式 sha256(存储对象) === id 严格成立
- * - 内容寻址使上传天然幂等：相同内容 → 相同 id → 覆盖同一 R2 key，不产生重复对象
+ * - 内容寻址使公开 id 稳定；R2 使用不可复用的 generation，替换旧对象时事务内排队回收
  * - 读取走认证通道（私有数据）：<img> 无法携带认证头，前端经 authFetch 拉字节转 blob URL
- * - key 按用户隔离：errors/<userId>/<sha256>.<ext>，读取按 (user_id, id) 查归属行
+ * - key 按用户隔离：errors/<userId>/<sha256>/<generation>.<ext>，读取按 (user_id, id) 查归属行
  * - 不提供删除端点：同一对象可能被多条错题引用，删除错题时由同步接口按引用计数清理
  *   （见 api/sync.ts 的「删除驱动的孤儿清理」：仍有其它错题引用时保留归属行与对象）
  */
@@ -29,12 +30,8 @@ export function registerErrorImageRoutes() {
   on('POST', '/api/error-images', true, async (ctx) => {
     await rateLimit(ctx, 'error-images:upload', 20)
 
-    // Content-Length 预检，避免超限文件读入内存后才拒绝
-    const declared = Number(ctx.request.headers.get('Content-Length') || 0)
-    if (declared > IMAGE_MAX_BYTES) throw new HttpError(413, '图片超过 5MB 上限')
-    const buf = new Uint8Array(await ctx.request.arrayBuffer())
+    const buf = await readBodyBytes(ctx.request, IMAGE_MAX_BYTES, '图片超过 5MB 上限')
     if (!buf.byteLength) throw new HttpError(400, '文件为空')
-    if (buf.byteLength > IMAGE_MAX_BYTES) throw new HttpError(413, '图片超过 5MB 上限')
 
     const kind = sniff(buf)
     if (!kind) throw new HttpError(400, '仅支持 PNG / JPEG / WebP / GIF 图片')
@@ -43,30 +40,40 @@ export function registerErrorImageRoutes() {
 
     // 对落盘字节求 id：保证 sha256(存储对象) === id；相同内容重复上传必得同一 id
     const id = await sha256Hex(data)
-    const key = `errors/${ctx.userId}/${id}.${kind.ext}`
-    const prev = await first<{ r2_key: string }>(
-      ctx.env,
-      'SELECT r2_key FROM error_images WHERE user_id = ? AND id = ?',
-      ctx.userId,
-      id
-    )
+    // The public content id is stable; an immutable storage generation prevents an
+    // in-flight cleanup of an earlier upload from deleting this new object.
+    const key = `errors/${ctx.userId}/${id}/${crypto.randomUUID()}.${kind.ext}`
     await ctx.env.IMAGES.put(key, data, { httpMetadata: { contentType: kind.mime } })
-    // 同一 id 的旧对象 key 不同（格式发生变化）时清理，避免残留
-    if (prev && prev.r2_key !== key) {
-      await ctx.env.IMAGES.delete(prev.r2_key).catch((e) => console.error('R2 删除失败', prev.r2_key, e))
-    }
-    await run(
-      ctx.env,
-      `INSERT INTO error_images (id, user_id, r2_key, size, content_type, created_at)
+    try {
+      await withUserTransaction(ctx.env, ctx.userId, async () => ({
+        statements: [
+          ctx.env.DB.prepare(
+            `INSERT OR IGNORE INTO r2_cleanup_jobs (r2_key, created_at)
+            SELECT r2_key, ? FROM error_images WHERE user_id = ? AND id = ?`
+          ).bind(Date.now(), ctx.userId, id),
+          ctx.env.DB.prepare(
+            `INSERT INTO error_images (id, user_id, r2_key, size, content_type, created_at)
        VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_id, id) DO UPDATE SET r2_key = excluded.r2_key, size = excluded.size, content_type = excluded.content_type`,
-      id,
-      ctx.userId,
-      key,
-      data.byteLength,
-      kind.mime,
-      Date.now()
-    )
+       ON CONFLICT(user_id, id) DO UPDATE SET r2_key = excluded.r2_key, size = excluded.size, content_type = excluded.content_type`
+          ).bind(id, ctx.userId, key, data.byteLength, kind.mime, Date.now())
+        ],
+        value: undefined
+      }))
+    } catch (error) {
+      // D1 可能已经提交，只是响应丢失，不能直接删除刚上传的对象。
+      // 补偿也走同一版本守卫：已提交的引用保留；真正回滚的 generation 持久化回收。
+      // 若原 batch 仍在途，该守卫会使它的旧版本决策无法在补偿之后再提交。
+      await withUserTransaction(ctx.env, ctx.userId, async () => ({
+        statements: [
+          ctx.env.DB.prepare(
+            `INSERT OR IGNORE INTO r2_cleanup_jobs (r2_key, created_at)
+             SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM error_images WHERE r2_key = ?)`
+          ).bind(key, Date.now(), key)
+        ],
+        value: undefined
+      })).catch((cleanupError) => console.error('R2 上传补偿任务登记失败', key, cleanupError))
+      throw error
+    }
     // 创建语义统一 201（与 /api/community/upload 一致）；重复上传同内容为幂等覆盖，同样按创建响应
     return Response.json({ id, size: data.byteLength, contentType: kind.mime }, { status: 201 })
   })

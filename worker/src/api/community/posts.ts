@@ -8,7 +8,7 @@ import { parseBody, POST_TYPES, QUESTION_SUBJECT_TAGS, trimMax, imageUrlsSchema 
 import { rateLimit } from '../../middleware/rateLimit'
 import { deleteUploads, uploadIdsOf, IMAGE_MAX_PER_POST, IMAGE_MAX_PER_COMMENT } from '../uploads'
 import { assertCleanAsync, assertCleanLocal } from '../sensitive'
-import { awardBadge, hasBadge } from '../badges'
+import { awardBadge, badgeAwardStatements } from '../badges'
 import {
   nowSec,
   mapPost,
@@ -38,7 +38,7 @@ import {
 /**
  * 每日首帖 +5「社区打卡」的幂等发放语句（发帖写入与发放放同一 batch）：
  *  - 流水：判重（user_id + date + reason）与写入在同一条 INSERT ... SELECT ... WHERE NOT EXISTS
- *    内完成（同 gamification.ts pointsAwardStatements 的单语句幂等范式），并发发帖不会重复发放；
+ *    内完成（条件插入实现单语句幂等），并发发帖不会重复发放；
  *  - 积分：仅当本帖流水（ref_id 为本帖唯一键）真正落账时 +5（无 gamification 行则创建），
  *    与流水在同一 batch 内原子生效，消除「判重通过 → 并发重复发放」的读后写窗口。
  */
@@ -357,15 +357,10 @@ export function registerPostsRoutes() {
     ]
     // 每日首帖 +5：幂等发放（判重 + 流水 + 积分同 batch，见 firstPostAwardStatements）
     stmts.push(...firstPostAwardStatements(ctx.env, ctx.userId, id, utc8Today()))
+    // 首帖/首问徽章与帖子本身同批：发奖失败不能留下已发布但漏奖的帖子。
+    stmts.push(...(await awardBadge(ctx.env, ctx.userId, 'first_post')))
+    if (type === 'question') stmts.push(...(await awardBadge(ctx.env, ctx.userId, 'first_question')))
     await batch(ctx.env, stmts)
-
-    // 徽章：首次发帖 / 首次提问。判定改为**未持有即补发**（幂等），不再依赖「刚好第一次」这种
-    // 一次性条件——否则该徽章 batch 一旦抛错，后续发帖计数已 >1，徽章与成就通知将永久丢失（issue #41）。
-    // awardBadge 主键去重保证只发放一次，失败后下次发帖自动重试可自愈。
-    if (!(await hasBadge(ctx.env, ctx.userId, 'first_post')))
-      await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_post'))
-    if (type === 'question' && !(await hasBadge(ctx.env, ctx.userId, 'first_question')))
-      await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'first_question'))
 
     // 刚写入的帖子被并发删除/隐藏时读不回，明确报错而非 500 崩溃
     const created = await first(ctx.env, `${POST_SELECT} WHERE p.id = ?`, ctx.userId, ctx.userId, id)
@@ -641,16 +636,15 @@ export function registerPostsRoutes() {
         content: `${myName} 采纳了你的回答，+10 积分`
       })
     )
-    await batch(ctx.env, stmts)
-    // 徽章：答疑专家（回答被采纳 ≥10 次；已持有者跳过统计查询）
-    if (!(await hasBadge(ctx.env, comment.user_id, 'answer_expert'))) {
-      const accepted = await first<{ n: number }>(
+    stmts.push(
+      ...badgeAwardStatements(
         ctx.env,
-        'SELECT COUNT(*) AS n FROM community_comments WHERE user_id = ? AND is_accepted = 1',
-        comment.user_id
+        'answer_expert',
+        'SELECT ? AS user_id WHERE (SELECT COUNT(*) FROM community_comments WHERE user_id = ? AND is_accepted = 1) >= 10',
+        [comment.user_id, comment.user_id]
       )
-      if ((accepted?.n ?? 0) >= 10) await batch(ctx.env, await awardBadge(ctx.env, comment.user_id, 'answer_expert'))
-    }
+    )
+    await batch(ctx.env, stmts)
     return Response.json({ acceptedAnswerId: commentId, isResolved: true })
   })
 }

@@ -414,6 +414,7 @@ CREATE TABLE IF NOT EXISTS pomodoro_records (
   description TEXT DEFAULT '',
   source TEXT DEFAULT 'solo',
   partner_name TEXT,
+  completed INTEGER NOT NULL DEFAULT 1 CHECK (completed IN (0, 1)), -- 是否完成；旧记录沿用完成语义
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
   PRIMARY KEY (user_id, id)
@@ -842,3 +843,25 @@ CREATE TABLE IF NOT EXISTS sync_deletions (
   PRIMARY KEY (user_id, domain, record_key)
 );
 CREATE INDEX IF NOT EXISTS idx_sync_deletions_seq ON sync_deletions(user_id, seq);
+
+-- 学习积分每日额度（UTC+8）：spent 只增不减，删除记录/取消完成不会返还当日额度。
+-- last_grant 仅把本条奖励的额度预留值传给同一原子 batch 内紧邻的账本写入。
+CREATE TABLE IF NOT EXISTS study_reward_daily_usage (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  date TEXT NOT NULL,
+  spent INTEGER NOT NULL DEFAULT 0 CHECK (spent >= 0),
+  last_grant INTEGER NOT NULL DEFAULT 0 CHECK (last_grant >= 0),
+  PRIMARY KEY (user_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS maintenance_cursors (
+  name TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  row_id TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS r2_cleanup_jobs (
+  r2_key TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_error_images_r2_key ON error_images(r2_key);

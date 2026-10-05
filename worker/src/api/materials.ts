@@ -6,19 +6,23 @@ import { crudHandlers } from '../db'
 const materialBodySchema = z
   .object({
     id: z.string().optional(),
-    title: z.string(),
+    title: z.string().trim().min(1, '请填写资料标题'),
     type: z.string(),
     subjectId: z.string().optional(),
     priority: z.string().optional(),
     url: z.string().optional(),
     fileName: z.string().optional(),
     author: z.string().optional(),
-    totalPages: z.number().optional(),
-    readPages: z.number().optional(),
+    totalPages: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+    readPages: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     notes: z.string().optional(),
     createdAt: z.number().optional()
   })
   .passthrough()
+  .refine((m) => m.totalPages === undefined || m.readPages === undefined || m.readPages <= m.totalPages, {
+    message: '已读页数不能超过总页数',
+    path: ['readPages']
+  })
 
 /** 学习资料（materials 表 ↔ 前端 Material） */
 export const materialsMapping = crudHandlers({

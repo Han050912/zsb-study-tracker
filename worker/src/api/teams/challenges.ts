@@ -2,8 +2,7 @@ import type { Ctx } from '../../router'
 import { on, body } from '../../router'
 import { all, first, run, batch, uid, utc8Today, HttpError } from '../../db'
 import { rateLimit } from '../../middleware/rateLimit'
-import { notifyStatement } from '../community'
-import { awardBadge } from '../badges'
+import { badgeAwardStatements } from '../badges'
 import { nowSec, assertTeamMember, assertTeamLeader, mapChallenge } from './shared'
 import type { ChallengeRow, ChallengeType } from './shared'
 
@@ -11,7 +10,7 @@ import type { ChallengeRow, ChallengeType } from './shared'
  * 组队挑战域路由：挑战创建 / 进度同步 / 编辑 / 删除 / 取消 / 恢复。
  * 多人组队完成打卡/刷题目标，达标全员获团队徽章。
  * 由 teams/index.ts 的 registerTeamRoutes 聚合注册。
- * 零逻辑改动：on(...) 块从原 teams.ts 逐字搬迁，仅调整 import 与包一层 registerChallengeRoutes()。
+ * 进度、成员资格、徽章与完成标记在同一事务内判定与提交。
  */
 
 /** 计算日期范围的结束日期（含当天） */
@@ -36,146 +35,94 @@ function isChallengeActive(challenge: ChallengeRow): boolean {
 
 async function syncProgress(ctx: Ctx, challenge: ChallengeRow) {
   const challengeId = challenge.id
-  // 从用户数据计算当前进度
-  let currentValue = 0
-
-  if (challenge.type === 'streak') {
-    // 连续打卡天数
-    const g = await first<{ streak: number }>(ctx.env, 'SELECT streak FROM gamification WHERE user_id = ?', ctx.userId)
-    currentValue = g?.streak ?? 0
-  } else if (challenge.type === 'minutes') {
-    // 挑战期间的学习时长
-    const records = await all<{ minutes: number }>(
-      ctx.env,
-      `
-      SELECT SUM(minutes) AS minutes FROM study_records
-      WHERE user_id = ? AND date >= ? AND date <= ?
-    `,
-      ctx.userId,
-      challenge.start_date,
-      challenge.end_date
-    )
-    currentValue = records[0]?.minutes ?? 0
-  } else if (challenge.type === 'problems') {
-    // 挑战期间的刷题数
-    const records = await all<{ total: number }>(
-      ctx.env,
-      `
-      SELECT SUM(total) AS total FROM problem_sessions
-      WHERE user_id = ? AND date >= ? AND date <= ?
-    `,
-      ctx.userId,
-      challenge.start_date,
-      challenge.end_date
-    )
-    currentValue = records[0]?.total ?? 0
-  }
-
-  // 更新进度
-  const isCompleted = currentValue >= challenge.target
+  const today = utc8Today()
+  const now = nowSec()
+  // All membership, progress and completion decisions run in the same transaction. In particular,
+  // a cancellation/member departure after route authorization cannot leave a completed-but-unpaid team.
+  const active = `EXISTS (SELECT 1 FROM team_challenges c
+    WHERE c.id = p.challenge_id AND c.is_cancelled = 0 AND c.is_completed = 0
+      AND c.start_date <= ? AND c.end_date >= ?
+      AND EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = c.team_id AND m.user_id = p.user_id))`
   const stmts: D1PreparedStatement[] = [
     ctx.env.DB.prepare(
-      'UPDATE team_challenge_progress SET current_value = ?, is_completed = ?, completed_at = ? ' +
-        'WHERE challenge_id = ? AND user_id = ?'
-    ).bind(currentValue, isCompleted ? 1 : 0, isCompleted ? nowSec() : null, challengeId, ctx.userId)
+      `UPDATE team_challenge_progress AS p SET current_value = (
+      SELECT CASE c.type
+        WHEN 'streak' THEN (SELECT COALESCE(MAX(g.streak), 0) FROM gamification g WHERE g.user_id = p.user_id)
+        WHEN 'minutes' THEN (SELECT COALESCE(SUM(r.minutes), 0) FROM study_records r
+          WHERE r.user_id = p.user_id AND r.date >= c.start_date AND r.date <= c.end_date)
+        WHEN 'problems' THEN (SELECT COALESCE(SUM(r.total), 0) FROM problem_sessions r
+          WHERE r.user_id = p.user_id AND r.date >= c.start_date AND r.date <= c.end_date)
+        ELSE 0 END FROM team_challenges c WHERE c.id = p.challenge_id
+      ) WHERE p.challenge_id = ? AND p.user_id = ? AND ${active}
+    `
+    ).bind(challengeId, ctx.userId, today, today),
+    ctx.env.DB.prepare(
+      `UPDATE team_challenge_progress AS p SET
+      is_completed = CASE WHEN current_value >= (SELECT target FROM team_challenges WHERE id = p.challenge_id) THEN 1 ELSE 0 END,
+      completed_at = CASE WHEN current_value >= (SELECT target FROM team_challenges WHERE id = p.challenge_id)
+        THEN COALESCE(completed_at, ?) ELSE NULL END
+      WHERE p.challenge_id = ? AND p.user_id = ? AND ${active}
+    `
+    ).bind(now, challengeId, ctx.userId, today, today),
+    ctx.env.DB.prepare(
+      `INSERT OR IGNORE INTO community_notifications
+      (id, user_id, type, target_type, target_id, content, is_read, created_at)
+      SELECT 'team-progress:' || c.id || ':' || p.user_id, p.user_id, 'achievement', 'team', c.team_id,
+        '恭喜！您完成了「' || t.name || '」的挑战目标', 0, ?
+      FROM team_challenge_progress p JOIN team_challenges c ON c.id = p.challenge_id
+      JOIN study_teams t ON t.id = c.team_id
+      WHERE p.challenge_id = ? AND p.user_id = ? AND p.is_completed = 1 AND ${active}
+    `
+    ).bind(now, challengeId, ctx.userId, today, today),
+    ctx.env.DB.prepare(
+      `UPDATE team_challenges SET completed_count = (
+      SELECT COUNT(*) FROM team_challenge_progress p JOIN team_members m
+        ON m.user_id = p.user_id AND m.team_id = team_challenges.team_id
+      WHERE p.challenge_id = team_challenges.id AND p.is_completed = 1
+    ) WHERE id = ? AND is_completed = 0`
+    ).bind(challengeId)
   ]
-
-  // 如果刚完成，发送成就通知
-  const oldProgress = await first<{ is_completed: number }>(
+  const ready = `c.is_cancelled = 0 AND c.is_completed = 0
+    AND c.start_date <= ? AND c.end_date >= ?
+    AND EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = c.team_id)
+    AND NOT EXISTS (SELECT 1 FROM team_members m
+      LEFT JOIN team_challenge_progress p ON p.challenge_id = c.id AND p.user_id = m.user_id
+      WHERE m.team_id = c.team_id AND COALESCE(p.is_completed, 0) = 0)`
+  const recipients = `SELECT m.user_id FROM team_members m JOIN team_challenges c ON c.team_id = m.team_id
+    WHERE c.id = ? AND ${ready}`
+  stmts.push(...badgeAwardStatements(ctx.env, 'team_champion', recipients, [challengeId, today, today]))
+  stmts.push(
+    ctx.env.DB.prepare(
+      `INSERT OR IGNORE INTO community_notifications
+      (id, user_id, type, target_type, target_id, content, is_read, created_at)
+      SELECT 'team-completed:' || c.id || ':' || m.user_id, m.user_id, 'achievement', 'team', c.team_id,
+        '🎉 「' || t.name || '」全员达标！获得团队徽章', 0, ?
+      FROM team_members m JOIN team_challenges c ON c.team_id = m.team_id JOIN study_teams t ON t.id = c.team_id
+      WHERE c.id = ? AND ${ready}
+    `
+    ).bind(now, challengeId, today, today),
+    // Last statement: a failure in any recipient's award rolls this marker AND progress back.
+    ctx.env.DB.prepare(`UPDATE team_challenges AS c SET is_completed = 1 WHERE c.id = ? AND ${ready}`).bind(
+      challengeId,
+      today,
+      today
+    )
+  )
+  await batch(ctx.env, stmts)
+  const result = await first<{ current_value: number; is_completed: number; all_completed: number }>(
     ctx.env,
-    'SELECT is_completed FROM team_challenge_progress WHERE challenge_id = ? AND user_id = ?',
+    `SELECT p.current_value, p.is_completed, c.is_completed AS all_completed
+      FROM team_challenge_progress p JOIN team_challenges c ON c.id = p.challenge_id
+      WHERE p.challenge_id = ? AND p.user_id = ?`,
     challengeId,
     ctx.userId
   )
-
-  if (isCompleted && !oldProgress?.is_completed) {
-    const team = await first<{ name: string }>(ctx.env, 'SELECT name FROM study_teams WHERE id = ?', challenge.team_id)
-
-    stmts.push(
-      notifyStatement(ctx.env, {
-        userId: ctx.userId,
-        type: 'achievement',
-        targetType: 'team',
-        targetId: challenge.team_id,
-        content: `恭喜！您完成了「${team?.name}」的挑战目标`
-      })
-    )
-  }
-
-  // 重算达标人数（而非 +1），消除并发重复同步导致的 completed_count 虚增
-  stmts.push(
-    ctx.env.DB.prepare(
-      'UPDATE team_challenges SET completed_count = ' +
-        '(SELECT COUNT(*) FROM team_challenge_progress WHERE challenge_id = ? AND is_completed = 1) WHERE id = ?'
-    ).bind(challengeId, challengeId)
-  )
-
-  await batch(ctx.env, stmts)
-
-  // 检查是否全员达标
-  const allCompleted = await first<{ total: number; completed: number }>(
-    ctx.env,
-    `
-    SELECT COUNT(*) AS total, SUM(is_completed) AS completed
-    FROM team_challenge_progress
-    WHERE challenge_id = ?
-  `,
-    challengeId
-  )
-
-  // 全员达标：先原子抢占「已完成」标记，防止并发同步或重复同步导致重复发徽章与通知
-  if (
-    !challenge.is_completed &&
-    allCompleted &&
-    allCompleted.completed === allCompleted.total &&
-    allCompleted.total > 0
-  ) {
-    const claimed = await run(
-      ctx.env,
-      'UPDATE team_challenges SET is_completed = 1 WHERE id = ? AND is_completed = 0',
-      challengeId
-    )
-    if (claimed.meta.changes) {
-      const team = await first<{ name: string }>(
-        ctx.env,
-        'SELECT name FROM study_teams WHERE id = ?',
-        challenge.team_id
-      )
-
-      const members = await all<{ user_id: string }>(
-        ctx.env,
-        'SELECT user_id FROM team_members WHERE team_id = ?',
-        challenge.team_id
-      )
-
-      const teamStmts: D1PreparedStatement[] = []
-      // 为全员发放团队徽章并通知
-      for (const m of members) {
-        const badgeStmts = await awardBadge(ctx.env, m.user_id, 'team_champion')
-        teamStmts.push(...badgeStmts)
-
-        teamStmts.push(
-          notifyStatement(ctx.env, {
-            userId: m.user_id,
-            type: 'achievement',
-            targetType: 'team',
-            targetId: challenge.team_id,
-            content: `🎉 「${team?.name}」全员达标！获得团队徽章`
-          })
-        )
-      }
-
-      await batch(ctx.env, teamStmts)
-    }
-  }
-
   return {
-    currentValue,
-    isCompleted,
-    allCompleted: allCompleted?.completed === allCompleted?.total
+    currentValue: result?.current_value ?? 0,
+    isCompleted: !!result?.is_completed,
+    allCompleted: !!result?.all_completed
   }
 }
-
 export function registerChallengeRoutes() {
   on('POST', '/api/teams/:id/sync-active', true, async (ctx) => {
     await rateLimit(ctx, 'sync_active_challenges', 30)

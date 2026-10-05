@@ -1,6 +1,43 @@
 import type { Env } from '../index'
 import { on } from '../router'
-import { all } from '../db'
+import { all, utc8Today } from '../db'
+import { z } from 'zod'
+
+export const habitBodySchema = z
+  .object({
+    name: z.string().trim().min(1),
+    type: z.enum(['checkbox', 'minutes', 'count', 'time']),
+    // Legacy goals included zero/fractions; time/checkbox targets were stored but never consumed.
+    // New goal input stays a positive integer in the frontend.
+    target: z.number().finite().optional(),
+    bad: z.boolean().optional(),
+    records: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
+    checkins: z.record(z.string(), z.literal(1)).optional()
+  })
+  .passthrough()
+  .superRefine((h, ctx) => {
+    if ((h.type === 'count' || h.type === 'minutes') && h.target !== undefined && h.target < 0)
+      ctx.addIssue({ code: 'custom', path: ['target'], message: '习惯目标不能为负数' })
+    const businessDay = utc8Today()
+    for (const [date, value] of Object.entries(h.records ?? {})) {
+      // The UI cannot edit past records. Preserve old count fractions so a legal new check-in can sync.
+      const historicalFraction =
+        h.type === 'count' &&
+        date < businessDay &&
+        z.iso.date().safeParse(date).success &&
+        typeof value === 'number' &&
+        !Number.isInteger(value)
+      const valid =
+        h.type === 'time'
+          ? typeof value === 'string' && (!value || /^([01]\d|2[0-3]):[0-5]\d$/.test(value))
+          : typeof value === 'number' &&
+            Number.isFinite(value) &&
+            value >= 0 &&
+            (h.type !== 'count' || Number.isSafeInteger(value) || historicalFraction) &&
+            (h.type !== 'checkbox' || value === 0 || value === 1)
+      if (!valid) ctx.addIssue({ code: 'custom', path: ['records', date], message: '习惯记录的数量或时间无效' })
+    }
+  })
 
 /**
  * 习惯追踪：

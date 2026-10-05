@@ -164,6 +164,9 @@ export function registerCirclesRoutes() {
           ctx.userId
         ),
         ctx.env.DB.prepare(
+          "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+        ).bind(ctx.params.id, ctx.params.id),
+        ctx.env.DB.prepare(
           "DELETE FROM community_notifications WHERE type = 'system' AND actor_id = ? AND user_id = ? " +
             "AND content LIKE ? ESCAPE '\\'"
         ).bind(ctx.userId, circle.creator_id, `%申请加入圈子「${escapeLike(circle.name)}」%`)
@@ -189,14 +192,18 @@ export function registerCirclesRoutes() {
       )
     } else {
       stmts.push(
-        notifyStatement(ctx.env, {
-          userId: circle.creator_id,
-          type: 'system',
-          actorId: ctx.userId,
-          targetType: 'circle',
-          targetId: ctx.params.id,
-          content: `${myName} 申请加入圈子「${circle.name}」，请到圈子详情页审批`
-        })
+        notifyStatement(
+          ctx.env,
+          {
+            userId: circle.creator_id,
+            type: 'system',
+            actorId: ctx.userId,
+            targetType: 'circle',
+            targetId: ctx.params.id,
+            content: `${myName} 申请加入圈子「${circle.name}」，请到圈子详情页审批`
+          },
+          { ifPreviousChanged: true }
+        )
       )
     }
     await batch(ctx.env, stmts)
@@ -219,16 +226,20 @@ export function registerCirclesRoutes() {
       ctx.env.DB.prepare(
         "UPDATE circle_members SET status = 'active' WHERE circle_id = ? AND user_id = ? AND status = 'pending'"
       ).bind(ctx.params.id, ctx.params.uid),
+      notifyStatement(
+        ctx.env,
+        {
+          userId: ctx.params.uid,
+          type: 'system',
+          targetType: 'circle',
+          targetId: ctx.params.id,
+          content: `🎉 你加入圈子「${circle.name}」的申请已通过`
+        },
+        { ifPreviousChanged: true }
+      ),
       ctx.env.DB.prepare(
         "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
-      ).bind(ctx.params.id, ctx.params.id),
-      notifyStatement(ctx.env, {
-        userId: ctx.params.uid,
-        type: 'system',
-        targetType: 'circle',
-        targetId: ctx.params.id,
-        content: `🎉 你加入圈子「${circle.name}」的申请已通过`
-      })
+      ).bind(ctx.params.id, ctx.params.id)
     ])
     if (!results?.[0]?.meta.changes) throw new HttpError(404, '申请不存在或已处理')
     return Response.json({ ok: true })
@@ -253,14 +264,10 @@ export function registerCirclesRoutes() {
         ctx.params.id,
         ctx.params.uid
       ),
-      ...(target.status === 'active'
-        ? [
-            // 计数在批内按成员表重算（P4-11 同口径），替代 -1 递增并自愈历史漂移
-            ctx.env.DB.prepare(
-              "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
-            ).bind(ctx.params.id, ctx.params.id)
-          ]
-        : [])
+      // 审批和移除可并发：始终按事务内成员状态重算，避免预读 pending 后漏减活跃成员。
+      ctx.env.DB.prepare(
+        "UPDATE community_circles SET member_count = (SELECT COUNT(*) FROM circle_members WHERE circle_id = ? AND status = 'active') WHERE id = ?"
+      ).bind(ctx.params.id, ctx.params.id)
     ])
     return Response.json({ ok: true })
   })

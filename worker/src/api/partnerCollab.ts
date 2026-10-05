@@ -119,8 +119,11 @@ export function registerPartnerStudy() {
     await assertPartner(ctx.env, ctx.userId, partnerId)
 
     // 专注/休息时长（分钟，双方一致）：忠实用户输入，仅对未提供/非数字兜底默认值，clamp 到 [0, 上限]
-    const focusMinutes = sanitizeMinutes(b?.focusMinutes, 25, 120)
     const mode = b?.mode === 'countup' ? 'countup' : 'countdown'
+    const requestedFocus = b?.focusMinutes === undefined ? 25 : Number(b.focusMinutes)
+    if (mode === 'countdown' && (!Number.isFinite(requestedFocus) || requestedFocus < 1 || requestedFocus > 120))
+      throw new HttpError(400, '专注时长需为 1–120 分钟')
+    const focusMinutes = mode === 'countdown' ? requestedFocus : sanitizeMinutes(b?.focusMinutes, 25, 120)
 
     // 阻塞判定带时间窗：只统计「仍活跃」（窗口内有心跳）的会话，超时无更新的僵尸会话不再阻塞
     const busy = await first<{ id: string; from_id: string; to_id: string }>(
@@ -281,13 +284,13 @@ export function registerPartnerStudy() {
     const running = b?.running === true ? 1 : 0
 
     const s = await getSession(ctx.env, ctx.params.id)
-    if (s.status !== 'active') throw new HttpError(400, '会话已结束')
     const side = sideOf(s, ctx.userId)
+    if (s.status !== 'active') return Response.json({ session: await mapSession(ctx.env, s, ctx.userId) })
 
     const now = nowSec()
     await run(
       ctx.env,
-      `UPDATE partner_study_sessions SET ${side}_state = ?, ${side}_minutes = ?, ${side}_online_seconds = ?, ${side}_elapsed_seconds = ?, ${side}_running = ?, updated_at = ?, last_active_at = ? WHERE id = ?`,
+      `UPDATE partner_study_sessions SET ${side}_state = ?, ${side}_minutes = ?, ${side}_online_seconds = ?, ${side}_elapsed_seconds = ?, ${side}_running = ?, updated_at = ?, last_active_at = ? WHERE id = ? AND status = 'active' AND ${side}_state != 'done'`,
       state,
       minutes,
       onlineSeconds,
