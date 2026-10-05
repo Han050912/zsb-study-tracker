@@ -133,6 +133,11 @@ const routes: RouteRecordRaw[] = [
     meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '成长主页' }
   },
   {
+    // 兼容旧分区链接覆盖 hash 路由后生成的地址。
+    path: '/settings-:section(study|subjects|preferences|data)',
+    redirect: (to) => ({ name: 'settings', params: {}, hash: `#settings-${to.params.section}` })
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: () => import('../pages/Settings.vue'),
@@ -155,6 +160,13 @@ export const router = createRouter({
   // 恢复位置时等新页面完成渲染再执行，避免懒加载页内容未挂载、高度不足导致恢复失败
   scrollBehavior(to, from, savedPosition) {
     if (savedPosition) return nextTick().then(() => savedPosition)
+    if (to.hash) {
+      return nextTick().then(() => {
+        const el = document.getElementById(to.hash.slice(1))
+        if (!el) return {}
+        return { el, top: parseFloat(getComputedStyle(el).scrollMarginTop) || 0 }
+      })
+    }
     if (to.path === from.path) return {}
     return { left: 0, top: 0 }
   }

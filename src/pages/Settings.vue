@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { useToast } from '../composables/useToast'
 import { getErrorMessage } from '../utils/error'
@@ -11,8 +12,14 @@ import SettingsDataSection from '../components/settings/SettingsDataSection.vue'
 import { settingsGoalError, type GoalKey } from '../utils/settingsValidation'
 
 const store = useAppStore()
+const route = useRoute()
 const toast = useToast()
 const s = computed(() => store.settings)
+
+// 首次打开时，设置内容会在账号数据加载完成后才挂载。
+onMounted(() => {
+  if (route.hash) document.getElementById(route.hash.slice(1))?.scrollIntoView()
+})
 
 function update(key: string, value: any) {
   store.updateSettings({ [key]: value })
@@ -77,13 +84,18 @@ async function saveUserName() {
 
     <div class="settings-layout">
       <nav class="settings-nav" aria-label="设置分区">
-        <a href="#settings-study">个人与学习</a>
-        <a href="#settings-subjects">科目管理</a>
-        <a href="#settings-preferences">外观与权限</a>
-        <a href="#settings-data">数据与备份</a>
+        <RouterLink :to="{ name: 'settings', hash: '#settings-study' }">个人与学习</RouterLink>
+        <RouterLink :to="{ name: 'settings', hash: '#settings-subjects' }">科目管理</RouterLink>
+        <RouterLink :to="{ name: 'settings', hash: '#settings-preferences' }">外观与权限</RouterLink>
+        <RouterLink :to="{ name: 'settings', hash: '#settings-data' }">数据与备份</RouterLink>
       </nav>
       <div class="settings-content">
-        <section id="settings-study" class="settings-section card" aria-labelledby="settings-study-title">
+        <section
+          id="settings-study"
+          class="settings-section card"
+          :class="{ 'is-target': route.hash === '#settings-study' }"
+          aria-labelledby="settings-study-title"
+        >
           <!-- 基本信息 -->
           <h2 id="settings-study-title" class="section-title">个人与学习</h2>
           <p class="text-xs text-muted mb-4">修改后自动保存；昵称会先经过校验。</p>
@@ -156,14 +168,29 @@ async function saveUserName() {
           </div>
         </section>
 
-        <section id="settings-subjects" class="settings-section" aria-label="科目管理">
+        <section
+          id="settings-subjects"
+          class="settings-section"
+          :class="{ 'is-target': route.hash === '#settings-subjects' }"
+          aria-label="科目管理"
+        >
           <SettingsSubjectManager />
         </section>
-        <section id="settings-preferences" class="settings-section space-y-4" aria-label="外观与权限">
+        <section
+          id="settings-preferences"
+          class="settings-section space-y-4"
+          :class="{ 'is-target': route.hash === '#settings-preferences' }"
+          aria-label="外观与权限"
+        >
           <SettingsAppearance />
           <SettingsQuotes />
         </section>
-        <section id="settings-data" class="settings-section" aria-label="数据与备份">
+        <section
+          id="settings-data"
+          class="settings-section"
+          :class="{ 'is-target': route.hash === '#settings-data' }"
+          aria-label="数据与备份"
+        >
           <SettingsDataSection />
         </section>
       </div>
@@ -210,7 +237,7 @@ async function saveUserName() {
 .settings-section {
   scroll-margin-top: calc(var(--app-header-height, 56px) + 20px);
 }
-.settings-section:target {
+.settings-section.is-target {
   outline: 1px solid var(--action);
   outline-offset: 4px;
   border-radius: var(--radius-card);
