@@ -61,8 +61,8 @@ function toggleMutedType(t: NotificationType) {
 
 <template>
   <!-- 外观 -->
-  <div class="card space-y-3">
-    <div class="section-title">外观与提醒</div>
+  <div class="card space-y-4">
+    <div class="section-title">外观</div>
     <div class="flex gap-2">
       <button
         v-for="t in [
@@ -72,50 +72,63 @@ function toggleMutedType(t: NotificationType) {
         ]"
         :key="t.k"
         class="btn flex-1"
-        :class="s.theme === t.k ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+        :class="s.theme === t.k ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+        :aria-pressed="s.theme === t.k"
         @click="applyTheme(t.k)"
       >
         {{ t.l }}
       </button>
     </div>
-    <div class="flex items-center justify-between">
+    <h2 class="section-title !mb-0 pt-4 border-t border-line">提醒</h2>
+    <div class="flex flex-wrap items-center justify-between gap-3">
       <span class="text-sm">每日学习提醒</span>
       <div class="flex items-center gap-2">
         <input
           type="time"
+          aria-label="每日提醒时间"
           :value="s.reminderTime"
           class="input !w-auto !py-1"
           @change="update('reminderTime', ($event.target as HTMLInputElement).value)"
         />
         <button
-          class="btn !text-xs"
-          :class="s.reminderEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
+          :class="s.reminderEnabled ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+          role="switch"
+          :aria-checked="s.reminderEnabled"
+          aria-label="每日学习提醒"
           @click="toggleReminder(!s.reminderEnabled)"
         >
           {{ s.reminderEnabled ? '已开启' : '已关闭' }}
         </button>
       </div>
     </div>
-    <div class="flex items-center justify-between">
+  </div>
+  <div class="card space-y-4">
+    <h2 class="section-title">社区与搭子权限</h2>
+    <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <span class="text-sm">参与学习进步榜</span>
-        <p class="text-[10px] text-slate-400 mt-0.5">在社区「进步榜」展示昵称与学习时长/刷题数排名，默认关闭</p>
+        <p class="text-xs text-slate-400 mt-0.5">在社区「进步榜」展示昵称与学习时长/刷题数排名，默认关闭</p>
       </div>
       <button
-        class="btn !text-xs"
-        :class="s.joinProgressBoard ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+        class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
+        :class="s.joinProgressBoard ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+        role="switch"
+        :aria-checked="s.joinProgressBoard"
+        aria-label="参与学习进步榜"
         @click="update('joinProgressBoard', !s.joinProgressBoard)"
       >
         {{ s.joinProgressBoard ? '已参与' : '未参与' }}
       </button>
     </div>
-    <div class="flex items-center justify-between">
+    <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <span class="text-sm">主页可见性</span>
-        <p class="text-[10px] text-slate-400 mt-0.5">控制他人访问你成长主页的权限</p>
+        <p class="text-xs text-slate-400 mt-0.5">控制他人访问你成长主页的权限</p>
       </div>
       <select
         class="input !w-auto !py-1.5 !text-xs"
+        aria-label="主页可见性"
         :value="s.profileVisibility"
         @change="
           update('profileVisibility', ($event.target as HTMLSelectElement).value as 'public' | 'login' | 'private')
@@ -126,41 +139,50 @@ function toggleMutedType(t: NotificationType) {
         <option value="private">仅自己可见</option>
       </select>
     </div>
-    <div class="flex items-center justify-between">
+    <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <span class="text-sm">允许搭子查看我的学习数据</span>
-        <p class="text-[10px] text-slate-400 mt-0.5">开启后搭子可查看你的周报对比与定向分享内容，默认关闭</p>
+        <p class="text-xs text-slate-400 mt-0.5">开启后搭子可查看你的周报对比与定向分享内容，默认关闭</p>
       </div>
       <button
-        class="btn !text-xs"
-        :class="s.partnerShareEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+        class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
+        :class="s.partnerShareEnabled ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+        role="switch"
+        :aria-checked="s.partnerShareEnabled"
+        aria-label="允许搭子查看学习数据"
         @click="update('partnerShareEnabled', !s.partnerShareEnabled)"
       >
         {{ s.partnerShareEnabled ? '已开启' : '已关闭' }}
       </button>
     </div>
-    <div class="flex items-center justify-between">
+    <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <span class="text-sm">允许搭子向我发送学习提醒</span>
-        <p class="text-[10px] text-slate-400 mt-0.5">关闭后搭子将无法向你发送学习鼓励提醒，默认开启</p>
+        <p class="text-xs text-slate-400 mt-0.5">关闭后搭子将无法向你发送学习鼓励提醒，默认开启</p>
       </div>
       <button
-        class="btn !text-xs"
-        :class="s.partnerRemindEnabled ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+        class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
+        :class="s.partnerRemindEnabled ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+        role="switch"
+        :aria-checked="s.partnerRemindEnabled"
+        aria-label="允许搭子发送学习提醒"
         @click="update('partnerRemindEnabled', !s.partnerRemindEnabled)"
       >
         {{ s.partnerRemindEnabled ? '已开启' : '已关闭' }}
       </button>
     </div>
     <div class="pt-3 border-t border-slate-100 dark:border-slate-700 space-y-3">
-      <div class="flex items-center justify-between">
+      <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <span class="text-sm">勿扰模式</span>
-          <p class="text-[10px] text-slate-400 mt-0.5">开启后不弹数字角标、不弹系统推送，通知中心照常记录历史</p>
+          <p class="text-xs text-slate-400 mt-0.5">开启后不弹数字角标、不弹系统推送，通知中心照常记录历史</p>
         </div>
         <button
-          class="btn !text-xs"
-          :class="s.doNotDisturb ? 'bg-emerald-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+          class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
+          :class="s.doNotDisturb ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+          role="switch"
+          :aria-checked="s.doNotDisturb"
+          aria-label="勿扰模式"
           @click="update('doNotDisturb', !s.doNotDisturb)"
         >
           {{ s.doNotDisturb ? '已开启' : '已关闭' }}
@@ -196,14 +218,18 @@ function toggleMutedType(t: NotificationType) {
               v-for="t in notifTypeOptions"
               :key="t.k"
               class="btn !text-xs !py-1 !px-2.5"
-              :class="s.dndMutedTypes.includes(t.k) ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+              :class="s.dndMutedTypes.includes(t.k) ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+              :aria-pressed="s.dndMutedTypes.includes(t.k)"
               @click="toggleMutedType(t.k)"
             >
               {{ t.l }}
             </button>
             <button
               class="btn !text-xs !py-1 !px-2.5"
-              :class="s.dndMuteMessage ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+              :class="s.dndMuteMessage ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+              role="switch"
+              :aria-checked="s.dndMuteMessage"
+              aria-label="屏蔽消息提醒"
               @click="update('dndMuteMessage', !s.dndMuteMessage)"
             >
               消息
@@ -212,11 +238,11 @@ function toggleMutedType(t: NotificationType) {
         </div>
       </div>
     </div>
-    <p v-if="!notifSupported" class="text-xs text-amber-500">当前浏览器不支持通知功能，无法使用每日提醒。</p>
-    <p v-else-if="notifPermission === 'denied'" class="text-xs text-red-500">
+    <p v-if="!notifSupported" class="text-xs text-action">当前浏览器不支持通知功能，无法使用每日提醒。</p>
+    <p v-else-if="notifPermission === 'denied'" class="text-xs text-correction">
       通知权限已被拒绝。请点击浏览器地址栏左侧的图标，将「通知」改为「允许」，然后重新打开此页面并开启提醒。
     </p>
     <p v-else-if="notifPermission === 'default'" class="text-xs text-slate-400">开启提醒时会请求浏览器通知权限。</p>
-    <p v-else class="text-xs text-emerald-500">通知权限已授权。</p>
+    <p v-else class="text-xs text-action">通知权限已授权。</p>
   </div>
 </template>

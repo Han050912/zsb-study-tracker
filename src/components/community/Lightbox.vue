@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ChevronLeft, ChevronRight } from '@lucide/vue'
+import IconAction from '../../shared/components/IconAction.vue'
 import { onUnmounted, ref, watch } from 'vue'
 import { imageUrl } from '../../api/community'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../../composables/useOverlayDismiss'
@@ -140,22 +142,20 @@ onUnmounted(onPanEnd)
           缩放 {{ Math.round(scale * 100) }}%（点击图片复位）
         </div>
         <template v-if="urls.length > 1">
-          <button
+          <IconAction
+            :icon="ChevronLeft"
+            label="上一张"
             v-if="index > 0"
-            class="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/15 text-white text-lg hover:bg-white/25"
+            class="absolute left-3 top-1/2 -translate-y-1/2 text-white text-lg arrow-on-overlay"
             @click.stop="prev"
-            aria-label="上一张"
-          >
-            ‹
-          </button>
-          <button
+          />
+          <IconAction
+            :icon="ChevronRight"
+            label="下一张"
             v-if="index < urls.length - 1"
-            class="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-white/15 text-white text-lg hover:bg-white/25"
+            class="absolute right-3 top-1/2 -translate-y-1/2 text-white text-lg arrow-on-overlay"
             @click.stop="next"
-            aria-label="下一张"
-          >
-            ›
-          </button>
+          />
           <div class="absolute bottom-4 inset-x-0 text-center text-white/70 text-xs">
             {{ index + 1 }} / {{ urls.length }}
           </div>

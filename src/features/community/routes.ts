@@ -4,7 +4,7 @@ export const communityRoutes: RouteRecordRaw[] = [
     path: '/community',
     name: 'community',
     component: () => import('../../pages/Community.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: true, adminOnly: false, title: '社区广场' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: true, adminOnly: false, title: '升本讨论' }
   },
   {
     path: '/community/circles',
@@ -28,7 +28,7 @@ export const communityRoutes: RouteRecordRaw[] = [
     path: '/community/post/:id',
     name: 'community-post',
     component: () => import('../../pages/CommunityPost.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: true, adminOnly: false, title: '帖子详情' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: true, adminOnly: false, title: '讨论详情' }
   },
   {
     path: '/community/notifications',

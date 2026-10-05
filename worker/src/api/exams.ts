@@ -8,14 +8,15 @@ const examBodySchema = z
     id: z.string().optional(),
     subjectId: z.string(),
     date: z.string(),
-    title: z.string(),
-    score: z.number(),
-    totalScore: z.number(),
-    minutes: z.number(),
+    title: z.string().refine((value) => !!value.trim(), '请填写试卷名称'),
+    score: z.number().min(0, '得分不能小于 0'),
+    totalScore: z.number().positive('总分需大于 0'),
+    minutes: z.number().positive('用时需大于 0').max(1440, '用时不能超过 1440 分钟'),
     // parts 线上实际形状为「部分名→得分」数组（[{name, score}]，与同步测试用例 14 一致），非 Record
     parts: z.array(z.object({ name: z.string(), score: z.number() })).optional()
   })
   .passthrough()
+  .refine((value) => value.score <= value.totalScore, { message: '得分不能超过总分', path: ['score'] })
 
 /** 真题/套卷（exam_records 表 ↔ 前端 ExamRecord，parts 为 JSON 字符串） */
 export const examsMapping = crudHandlers({

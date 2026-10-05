@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IconAction from '../shared/components/IconAction.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 /**
  * 个人主页（访客态/本人态通用）：社交资料 + 作品 + 学习履历可视化。
  * 公开信息：等级/积分/徽章墙/连续打卡/学习时长热力图/做题统计/科目分布。
@@ -7,7 +9,7 @@
 import { onMounted, ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { usersApi } from '../api/community/users'
-import { TriangleAlert } from '@lucide/vue'
+import { TriangleAlert, ArrowLeft } from '@lucide/vue'
 import { COMMUNITY_BADGES } from '../data/defaults'
 import { sessionUser } from '../services/auth'
 import { formatMinutes } from '../utils/date'
@@ -99,15 +101,17 @@ onMounted(loadAll)
 </script>
 
 <template>
-  <div class="max-w-4xl mx-auto space-y-6">
+  <div class="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
     <!-- 返回导航 -->
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
-      <h2 class="text-lg font-bold flex-1">主页</h2>
+      <span class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
+      <h1 class="page-title flex-1">主页</h1>
     </div>
 
     <!-- 加载中 -->
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-20">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <!-- 错误/不存在 -->
     <div v-else-if="error" class="card text-center py-20">
@@ -137,7 +141,7 @@ onMounted(loadAll)
           <!-- 学习统计加载失败：不用 0 兜底，整块显示错误态 + 重试 -->
           <button
             v-if="statsError"
-            class="w-full flex items-center gap-2 text-xs text-red-500 dark:text-red-400"
+            class="w-full flex items-center gap-2 text-xs text-correction dark:text-correction"
             @click="loadStats"
           >
             <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
@@ -145,22 +149,24 @@ onMounted(loadAll)
           </button>
           <div v-else class="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
-              <div class="text-lg font-bold text-blue-600">
-                {{ totalHours }}<span class="text-sm font-normal">h</span> {{ totalMinutes
-                }}<span class="text-sm font-normal">m</span>
+              <div class="text-lg font-bold text-action">
+                {{ totalHours }}<span class="text-sm font-normal">小时</span> {{ totalMinutes
+                }}<span class="text-sm font-normal">分钟</span>
               </div>
               <div class="text-xs text-slate-400">总学习时长</div>
-              <div class="text-[10px] text-slate-400">{{ stats?.totalStudy.days }} 天</div>
+              <div class="text-xs text-slate-400">{{ stats?.totalStudy.days }} 天</div>
             </div>
             <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
-              <div class="text-lg font-bold text-green-600">{{ stats?.problems.total ?? 0 }}</div>
+              <div class="text-lg font-bold text-action">{{ stats?.problems.total ?? 0 }}</div>
               <div class="text-xs text-slate-400">总做题数</div>
-              <div class="text-[10px] text-slate-400">正确率 {{ stats?.problems.accuracy ?? 0 }}%</div>
+              <div class="text-xs text-slate-400">
+                {{ stats?.problems.total ? `正确率 ${stats.problems.accuracy}%` : '还没有做题记录' }}
+              </div>
             </div>
             <div class="bg-slate-50 dark:bg-slate-800 rounded-lg p-3 text-center">
-              <div class="text-lg font-bold text-blue-600">
-                {{ monthHours }}<span class="text-sm font-normal">h</span> {{ monthMinutes
-                }}<span class="text-sm font-normal">m</span>
+              <div class="text-lg font-bold text-action">
+                {{ monthHours }}<span class="text-sm font-normal">小时</span> {{ monthMinutes
+                }}<span class="text-sm font-normal">分钟</span>
               </div>
               <div class="text-xs text-slate-400">本月学习</div>
             </div>
@@ -169,10 +175,10 @@ onMounted(loadAll)
 
         <!-- 学习热力图（统计失败时同样显示错误态，不渲染空热力图） -->
         <div class="card">
-          <h3 class="text-sm font-bold mb-3">学习热力图（近 30 周）</h3>
+          <h3 class="text-sm font-bold mb-3">近 30 周学习记录</h3>
           <button
             v-if="statsError"
-            class="w-full flex items-center gap-2 text-xs text-red-500 dark:text-red-400"
+            class="w-full flex items-center gap-2 text-xs text-correction dark:text-correction"
             @click="loadStats"
           >
             <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
@@ -180,7 +186,7 @@ onMounted(loadAll)
           </button>
           <template v-else>
             <StreakHeatmap v-if="stats?.heatmap" :data="stats.heatmap" @select="heatDate = $event" />
-            <p class="text-[10px] text-slate-400 mt-2">点击色块可查看当日学习时长</p>
+            <p class="text-xs text-slate-400 mt-2">选择日期查看时长；也可用方向键移动。</p>
           </template>
         </div>
 
@@ -192,7 +198,7 @@ onMounted(loadAll)
               <span class="text-sm w-20 truncate">{{ s.name }}</span>
               <div class="flex-1 bg-slate-100 dark:bg-slate-800 rounded-full h-2.5">
                 <div
-                  class="bg-blue-500 h-2.5 rounded-full transition-all"
+                  class="bg-action h-2.5 rounded-full transition-colors"
                   :style="{ width: `${Math.min((s.minutes / (stats.subjects[0]?.minutes || 1)) * 100, 100)}%` }"
                 />
               </div>
@@ -207,19 +213,19 @@ onMounted(loadAll)
         <div class="card">
           <h3 class="text-sm font-bold mb-3">徽章墙</h3>
           <div v-if="!profile.badges?.length" class="text-xs text-slate-400 py-2">
-            还没有获得徽章。多发帖、多提问、坚持打卡来解锁吧！
+            还没有获得社区徽章。参与讨论或打卡后，可在这里查看。
           </div>
           <div v-else class="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div
               v-for="badgeDef in COMMUNITY_BADGES"
               :key="badgeDef.key"
               class="flex items-center gap-2 p-2 rounded-lg transition-colors"
-              :class="earnedKeys.has(badgeDef.key) ? 'bg-amber-50 dark:bg-amber-900/20' : 'opacity-40 grayscale'"
+              :class="earnedKeys.has(badgeDef.key) ? 'bg-action-soft dark:bg-action-soft' : 'bg-surface-soft'"
             >
               <span class="text-xl">{{ badgeDef.icon }}</span>
               <div class="min-w-0">
                 <div class="text-xs font-semibold truncate">{{ badgeDef.name }}</div>
-                <div class="text-[10px] text-slate-400 truncate">{{ badgeDef.desc }}</div>
+                <div class="text-xs text-muted">{{ badgeDef.desc }}</div>
               </div>
             </div>
           </div>
@@ -234,7 +240,7 @@ onMounted(loadAll)
     <Modal :title="`${heatDate} 学习记录`" :show="!!heatDate" @close="heatDate = ''">
       <div class="flex items-center justify-between bg-primary-50 dark:bg-primary-900/30 rounded-xl px-4 py-3">
         <span class="text-sm text-slate-500 dark:text-slate-400">当日学习总时长</span>
-        <span class="text-xl font-black text-primary-500">{{ formatMinutes(heatMinutes) }}</span>
+        <span class="text-xl font-black text-action">{{ formatMinutes(heatMinutes) }}</span>
       </div>
       <p class="text-xs text-slate-400 text-center pt-3">
         {{ heatMinutes > 0 ? '具体科目明细仅本人可见' : '当日未学习' }}

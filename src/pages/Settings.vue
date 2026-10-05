@@ -8,6 +8,7 @@ import SettingsSubjectManager from '../components/settings/SettingsSubjectManage
 import SettingsAppearance from '../components/settings/SettingsAppearance.vue'
 import SettingsQuotes from '../components/settings/SettingsQuotes.vue'
 import SettingsDataSection from '../components/settings/SettingsDataSection.vue'
+import { settingsGoalError, type GoalKey } from '../utils/settingsValidation'
 
 const store = useAppStore()
 const toast = useToast()
@@ -15,6 +16,18 @@ const s = computed(() => store.settings)
 
 function update(key: string, value: any) {
   store.updateSettings({ [key]: value })
+}
+
+function updateGoal(key: GoalKey, event: Event) {
+  const input = event.target as HTMLInputElement
+  const value = input.value.trim() ? input.valueAsNumber : NaN
+  const error = settingsGoalError(key, value)
+  if (error) {
+    input.value = String(s.value[key])
+    toast(error)
+    return
+  }
+  update(key, value)
 }
 
 /**
@@ -54,70 +67,174 @@ async function saveUserName() {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
-    <h1 class="page-title">设置</h1>
+  <div class="study-page settings-page">
+    <header class="study-page-heading mb-6">
+      <div>
+        <h1 class="page-title">设置</h1>
+        <p class="mt-1 text-sm text-muted">调整学习目标、使用偏好与数据管理方式。</p>
+      </div>
+    </header>
 
-    <!-- 基本信息 -->
-    <div class="card space-y-3">
-      <div class="section-title">基本信息</div>
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="label" for="set-nickname">昵称</label
-          ><input id="set-nickname" v-model="userName" maxlength="30" class="input" @change="saveUserName" />
-        </div>
-        <div>
-          <label class="label" for="set-exam-date">专升本考试日期</label
-          ><input
-            id="set-exam-date"
-            type="date"
-            :value="s.examDate"
-            class="input"
-            @change="update('examDate', ($event.target as HTMLInputElement).value)"
-          />
-        </div>
+    <div class="settings-layout">
+      <nav class="settings-nav" aria-label="设置分区">
+        <a href="#settings-study">个人与学习</a>
+        <a href="#settings-subjects">科目管理</a>
+        <a href="#settings-preferences">外观与权限</a>
+        <a href="#settings-data">数据与备份</a>
+      </nav>
+      <div class="settings-content">
+        <section id="settings-study" class="settings-section card" aria-labelledby="settings-study-title">
+          <!-- 基本信息 -->
+          <h2 id="settings-study-title" class="section-title">个人与学习</h2>
+          <p class="text-xs text-muted mb-4">修改后自动保存；昵称会先经过校验。</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="label" for="set-nickname">昵称</label
+              ><input
+                id="set-nickname"
+                v-model="userName"
+                maxlength="30"
+                class="input"
+                :disabled="savingUserName"
+                :aria-busy="savingUserName"
+                @change="saveUserName"
+              />
+            </div>
+            <div>
+              <label class="label" for="set-exam-date">专升本考试日期</label
+              ><input
+                id="set-exam-date"
+                type="date"
+                :value="s.examDate"
+                class="input"
+                @change="update('examDate', ($event.target as HTMLInputElement).value)"
+              />
+            </div>
+          </div>
+          <div class="settings-goals">
+            <h3 class="section-title">每日目标</h3>
+            <p class="text-xs text-muted mb-3">设定每天计划完成的学习量。</p>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label class="label" for="set-goal-minutes">学习时长（分钟）</label
+                ><input
+                  id="set-goal-minutes"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  step="1"
+                  :value="s.dailyGoalMinutes"
+                  class="input"
+                  @change="updateGoal('dailyGoalMinutes', $event)"
+                />
+              </div>
+              <div>
+                <label class="label" for="set-goal-words">单词量</label
+                ><input
+                  id="set-goal-words"
+                  type="number"
+                  min="1"
+                  step="1"
+                  :value="s.wordGoal"
+                  class="input"
+                  @change="updateGoal('wordGoal', $event)"
+                />
+              </div>
+              <div>
+                <label class="label" for="set-goal-problems">做题量</label
+                ><input
+                  id="set-goal-problems"
+                  type="number"
+                  min="1"
+                  step="1"
+                  :value="s.problemGoal"
+                  class="input"
+                  @change="updateGoal('problemGoal', $event)"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="settings-subjects" class="settings-section" aria-label="科目管理">
+          <SettingsSubjectManager />
+        </section>
+        <section id="settings-preferences" class="settings-section space-y-4" aria-label="外观与权限">
+          <SettingsAppearance />
+          <SettingsQuotes />
+        </section>
+        <section id="settings-data" class="settings-section" aria-label="数据与备份">
+          <SettingsDataSection />
+        </section>
       </div>
     </div>
-
-    <!-- 每日目标 -->
-    <div class="card space-y-3">
-      <div class="section-title">每日目标</div>
-      <div class="grid grid-cols-3 gap-3">
-        <div>
-          <label class="label" for="set-goal-minutes">学习时长（分钟）</label
-          ><input
-            id="set-goal-minutes"
-            type="number"
-            :value="s.dailyGoalMinutes"
-            class="input"
-            @change="update('dailyGoalMinutes', Number(($event.target as HTMLInputElement).value))"
-          />
-        </div>
-        <div>
-          <label class="label" for="set-goal-words">单词量</label
-          ><input
-            id="set-goal-words"
-            type="number"
-            :value="s.wordGoal"
-            class="input"
-            @change="update('wordGoal', Number(($event.target as HTMLInputElement).value))"
-          />
-        </div>
-        <div>
-          <label class="label" for="set-goal-problems">做题量</label
-          ><input
-            id="set-goal-problems"
-            type="number"
-            :value="s.problemGoal"
-            class="input"
-            @change="update('problemGoal', Number(($event.target as HTMLInputElement).value))"
-          />
-        </div>
-      </div>
-    </div>
-
-    <SettingsSubjectManager />
-    <SettingsAppearance />
-    <SettingsQuotes />
-    <SettingsDataSection />
   </div>
 </template>
+
+<style scoped>
+.settings-layout {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  align-items: start;
+  gap: 32px;
+}
+.settings-nav {
+  position: sticky;
+  top: calc(var(--app-header-height, 56px) + 20px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-nav a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  font-size: 14px;
+}
+.settings-nav a:hover {
+  color: var(--action);
+  background: var(--action-soft);
+}
+.settings-nav a:active {
+  color: var(--action-active);
+}
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+.settings-section {
+  scroll-margin-top: calc(var(--app-header-height, 56px) + 20px);
+}
+.settings-section:target {
+  outline: 1px solid var(--action);
+  outline-offset: 4px;
+  border-radius: var(--radius-card);
+}
+.settings-goals {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 900px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .settings-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .settings-nav a {
+    padding-inline: 10px;
+    color: var(--action);
+  }
+}
+</style>

@@ -67,12 +67,12 @@ function openPartners() {
       <UserAvatar :name="n.actorName || '搭'" :avatar="n.actorAvatar" />
       <span
         v-if="!n.isRead"
-        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white dark:border-slate-800"
+        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-correction border-2 border-white dark:border-slate-800"
       ></span>
     </button>
     <div class="flex-1 min-w-0">
       <p class="text-sm text-slate-700 dark:text-slate-200 leading-relaxed break-words">{{ n.content }}</p>
-      <p class="text-[10px] text-slate-400 mt-1">{{ fromNow(n.createdAt) }}</p>
+      <p class="text-xs text-slate-400 mt-1">{{ fromNow(n.createdAt) }}</p>
     </div>
   </div>
 </template>

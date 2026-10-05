@@ -73,8 +73,9 @@ function onCorrectInput(e: Event) {
   }
 }
 function confirmSave() {
+  if (!showConfirm.value) return
   const total = pTotalLocked.value ? pTypesSum.value : Math.max(0, Math.floor(Number(confirmTotal.value) || 0))
-  if (total <= 0) {
+  if (!Number.isFinite(total) || total <= 0) {
     toast('请填写做题数量或各题型')
     return
   }
@@ -126,45 +127,45 @@ function openProblemShare() {
 
 <template>
   <div class="card space-y-3">
-    <div class="section-title">记录本次刷题</div>
-    <p class="text-[10px] text-slate-400">
-      填写本次各题型做的题数（没做的题型可留空），点击「保存」后在弹窗中确认做题总数与答对数量
-    </p>
-    <div class="grid gap-2" :class="typeDefs.length > 4 ? 'grid-cols-5' : 'grid-cols-4'">
+    <h2 class="section-title">记录本次刷题</h2>
+    <p class="text-xs text-muted">填写各题型数量，没做的可留空。保存时确认总题数与答对数量。</p>
+    <div class="grid grid-cols-2 gap-3" :class="typeDefs.length > 4 ? 'sm:grid-cols-5' : 'sm:grid-cols-4'">
       <div v-for="t in typeDefs" :key="t.key">
-        <label class="label">{{ t.label }}</label>
-        <input v-model.number="pTypes[t.key]" type="number" min="0" class="input" />
+        <label class="label" :for="`problem-${subjectId}-${t.key}`">{{ t.label }}</label>
+        <input
+          :id="`problem-${subjectId}-${t.key}`"
+          v-model.number="pTypes[t.key]"
+          type="number"
+          min="0"
+          class="input"
+        />
       </div>
     </div>
-    <button class="btn-primary w-full" @click="openConfirm">保存刷题记录</button>
+    <button class="btn-primary" @click="openConfirm">保存刷题记录</button>
   </div>
   <div class="card">
-    <div class="flex items-center justify-between mb-2">
-      <div class="section-title !mb-0">刷题历史</div>
-      <button class="btn-ghost !py-1 !text-xs" @click="openProblemShare">分享到广场</button>
+    <div class="flex flex-wrap gap-3 items-center justify-between mb-2">
+      <h2 class="section-title !mb-0">刷题历史</h2>
+      <button class="btn-ghost !py-1 !text-xs" @click="openProblemShare">分享到论坛</button>
     </div>
+    <p v-if="!subjectProblems.length" class="py-6 text-sm text-muted">还没有刷题记录，完成练习后在上方记录。</p>
     <div class="space-y-1.5 max-h-72 overflow-y-auto">
-      <div v-for="p in subjectProblems" :key="p.id" class="flex items-center gap-2 text-sm group">
-        <span class="text-xs text-slate-400 w-20">{{ p.date }}</span>
+      <div v-for="p in subjectProblems" :key="p.id" class="problem-record">
+        <span class="text-xs text-muted w-20 shrink-0">{{ p.date }}</span>
         <span class="flex-1">{{ p.correct }}/{{ p.total }} 题</span>
         <span
           class="text-xs font-semibold"
           :class="
             p.total > 0 && p.correct / p.total >= 0.8
-              ? 'text-emerald-500'
+              ? 'text-action'
               : p.total > 0 && p.correct / p.total >= 0.6
-                ? 'text-amber-500'
-                : 'text-red-400'
+                ? 'text-muted'
+                : 'text-correction'
           "
         >
-          {{ p.total > 0 ? Math.round((p.correct / p.total) * 100) : 0 }}%
+          {{ p.total > 0 ? Math.round((p.correct / p.total) * 100) + '%' : '—' }}
         </span>
-        <button
-          class="opacity-0 group-hover:opacity-100 text-red-400 text-xs"
-          @click="store.deleteProblemSession(p.id)"
-        >
-          删除
-        </button>
+        <button class="record-action text-correction text-xs" @click="store.deleteProblemSession(p.id)">删除</button>
       </div>
     </div>
   </div>
@@ -173,8 +174,9 @@ function openProblemShare() {
   <Modal title="确认刷题记录" :show="showConfirm" @close="showConfirm = false">
     <div class="space-y-3">
       <div>
-        <label class="label">做题数量</label>
+        <label class="label" :for="`problem-${subjectId}-total`">做题数量</label>
         <input
+          :id="`problem-${subjectId}-total`"
           :value="pTotalLocked ? pTypesSum : confirmTotal"
           :disabled="pTotalLocked"
           type="number"
@@ -185,20 +187,27 @@ function openProblemShare() {
         <p v-if="pTotalLocked" class="text-[10px] text-slate-400 mt-1">已按各题型总和自动计算</p>
       </div>
       <div>
-        <label class="label">答对数量</label>
+        <label class="label" :for="`problem-${subjectId}-correct`">答对数量</label>
         <input
+          :id="`problem-${subjectId}-correct`"
           :value="confirmCorrect"
           type="number"
           min="0"
-          :class="['input', correctInvalid ? '!border-red-500 shake' : '']"
+          :class="['input', correctInvalid ? '!border-correction shake' : '']"
+          :aria-invalid="correctInvalid"
+          :aria-describedby="`problem-${subjectId}-correct-help`"
           @input="onCorrectInput"
         />
-        <p class="text-[10px] mt-1" :class="correctInvalid ? 'text-red-500' : 'text-slate-400'">
+        <p
+          :id="`problem-${subjectId}-correct-help`"
+          class="text-xs mt-1"
+          :class="correctInvalid ? 'text-correction' : 'text-muted'"
+        >
           答对数量不能超过做题数量
         </p>
       </div>
       <div>
-        <label class="label">题型分布</label>
+        <p class="label">题型分布</p>
         <div v-if="typeBreakdown.length" class="flex flex-wrap gap-1.5">
           <span
             v-for="t in typeBreakdown"
@@ -228,6 +237,18 @@ function openProblemShare() {
 </template>
 
 <style scoped>
+.problem-record {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-block: 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.problem-record:last-child {
+  border-bottom: 0;
+}
 @keyframes shake {
   0%,
   100% {
@@ -248,5 +269,10 @@ function openProblemShare() {
 }
 .shake {
   animation: shake 0.35s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .shake {
+    animation: none;
+  }
 }
 </style>

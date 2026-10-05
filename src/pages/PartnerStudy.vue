@@ -1,23 +1,26 @@
 <script setup lang="ts">
+import IconAction from '../shared/components/IconAction.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 import { usePartnerStore } from '../features/collaboration/stores/partners'
 
 const partnerStore = usePartnerStore()
 /**
  * 双人番茄自习室（开黑）—— 沉浸式全屏 + 番茄钟联动：
- * - 邀请开黑时设定专注/休息时长（默认 25/5，双方一致）
+ * - 邀请自习时设定专注/休息时长（默认 25/5，双方一致）
  * - 各自独立计时（本地番茄钟倒计时）：idle→focus→break→done 一轮
  * - 状态实时同步给对方（PUT + 5s 轮询）；专注完成计入各自番茄统计
  * - 沉浸式全屏：壁纸轮播（哲风壁纸，预加载成功才切换，失败渐变降级）+ 大号倒计时 + 底部自动隐藏按钮
  * - 强制约束：不做聊天界面，仅展示对方状态
  * 视图拆分为 components/partner/ 下三个子组件；本页保留会话管理、返回拦截与弹窗编排
  */
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import AsyncState from '../shared/components/AsyncState.vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { partnersApi } from '../api/community/partners'
-import { RefreshCw, TriangleAlert } from '@lucide/vue'
+import { RefreshCw, TriangleAlert, ArrowLeft } from '@lucide/vue'
 import Modal from '../components/Modal.vue'
 import PartnerPickerCard from '../components/partner/PartnerPickerCard.vue'
 import PartnerStudyHistoryCard from '../components/partner/PartnerStudyHistoryCard.vue'
@@ -32,6 +35,13 @@ const { goBack } = useBack()
 const toast = useToast()
 
 const loading = ref(true)
+const loadError = ref('')
+let disposed = false,
+  initTicket = 0
+onBeforeUnmount(() => {
+  disposed = true
+  initTicket++
+})
 const { partners } = storeToRefs(partnerStore)
 const selectedId = ref((route.query.partner as string) || '')
 const focusMinutes = ref(25)
@@ -44,10 +54,10 @@ const { session, running, pendingChoice } = storeToRefs(timer)
 // ---- 壁纸轮播（与番茄专注共用，见 useWallpaperRotation）；bgUrl 传给自习室全屏视图 ----
 const { bgUrl, startBgRotation } = useWallpaperRotation()
 
-// ---- 历史开黑记录 ----
+// ---- 自习记录 ----
 const history = ref<PartnerStudyRecord[]>([])
 const historyLoading = ref(false)
-/** 历史记录加载失败信息：持久错误态（区别于「还没有开黑记录」空态），提供重试 */
+/** 历史记录加载失败信息：持久错误态（区别于「还没有一起自习的记录」空态），提供重试 */
 const historyError = ref('')
 
 // ---- 会话管理 ----
@@ -56,7 +66,8 @@ async function loadPartners() {
     await partnerStore.load()
     if (selectedId.value && !partners.value.some((p) => p.userId === selectedId.value)) selectedId.value = ''
   } catch (e) {
-    toast(getErrorMessage(e, '搭子列表加载失败'))
+    loadError.value = getErrorMessage(e, '搭子列表加载失败，请重试')
+    throw e
   }
 }
 
@@ -65,6 +76,7 @@ async function loadHistory() {
   historyError.value = ''
   try {
     const res = await partnersApi.studyHistory()
+    if (disposed) return
     history.value = res.records ?? []
   } catch (e) {
     historyError.value = getErrorMessage(e, '历史记录加载失败')
@@ -76,6 +88,13 @@ async function loadHistory() {
 
 async function invite() {
   if (!selectedId.value || creating.value) return
+  if (
+    mode.value === 'countdown' &&
+    (!Number.isFinite(focusMinutes.value) || focusMinutes.value < 1 || focusMinutes.value > 120)
+  ) {
+    toast('专注时长需为 1–120 分钟')
+    return
+  }
   creating.value = true
   try {
     const res = await partnersApi.createStudySession(
@@ -84,15 +103,18 @@ async function invite() {
       mode.value === 'countdown' ? focusMinutes.value : undefined
     )
     const detail = await partnersApi.studySession(res.id)
+    if (disposed) return
     if (!detail?.session) {
       toast('会话已创建，但获取详情失败，请返回后重试')
-      await loadPartners()
+      await init()
       return
     }
     timer.enterSession(detail.session)
-    toast('自习室已创建，开始开黑吧！')
+    toast('自习室已创建，可以开始专注')
   } catch (e) {
+    if (disposed) return
     toast(getErrorMessage(e, '创建失败'))
+    await init()
   } finally {
     creating.value = false
   }
@@ -119,10 +141,12 @@ onBeforeRouteLeave(() => {
   return true
 })
 
-function chooseEnd() {
+async function chooseEnd() {
   exitDialog.value = 'none'
-  allowLeave = true
-  timer.endSession().finally(() => goBack())
+  if (await timer.endSession()) {
+    allowLeave = true
+    goBack()
+  }
 }
 
 function chooseReturn() {
@@ -146,13 +170,17 @@ onMounted(() => {
 })
 
 async function init() {
+  if (disposed) return
+  const ticket = ++initTicket
   if (timer.session) {
     loading.value = false
     return
   }
   loading.value = true
+  loadError.value = ''
   try {
     const res = await partnersApi.activeStudySession()
+    if (disposed || ticket !== initTicket) return
     if (res.session) {
       timer.enterSession(res.session)
       if (timer.phase !== 'idle' && timer.phase !== 'done') {
@@ -163,9 +191,9 @@ async function init() {
       await loadHistory()
     }
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    if (!disposed && ticket === initTicket) loadError.value = getErrorMessage(e, '自习室未能加载，请检查网络后重试')
   } finally {
-    loading.value = false
+    if (!disposed && ticket === initTicket) loading.value = false
   }
 }
 
@@ -176,7 +204,7 @@ watch(
     if (v && !old) {
       startBgRotation()
     } else if (!v && old) {
-      loadPartners()
+      void loadPartners().catch(() => {})
       loadHistory()
     }
   },
@@ -186,7 +214,7 @@ watch(
 watch(
   () => timer.pomodoroCompleted,
   (v, old) => {
-    if (v > old) toast('完成一个番茄钟！+5 积分')
+    if (v > old) toast('完成一个番茄钟！')
   }
 )
 
@@ -194,7 +222,7 @@ watch(
 watch(
   () => timer.sessionCompleted,
   (v, old) => {
-    if (v > old) toast('本次开黑完成，继续加油！')
+    if (v > old) toast('本次自习已完成')
   }
 )
 </script>
@@ -202,11 +230,14 @@ watch(
 <template>
   <div class="min-h-screen">
     <!-- 无会话：卡片式选择搭子（非全屏） -->
-    <div v-if="!session" class="collaboration-page max-w-2xl mx-auto px-4 py-6 space-y-5">
-      <button class="btn-ghost !text-xs" @click="handleBack">← 返回</button>
-      <div class="section-title !mb-0">开黑自习室</div>
+    <div v-if="!session" class="collaboration-page study-page reading-page space-y-5">
+      <span class="!text-xs arrow-action" @click="handleBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="handleBack" /> 返回</span
+      >
+      <h1 class="page-title">搭子自习室</h1>
 
-      <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
+      <LoadingState v-if="loading" />
+      <AsyncState v-else-if="loadError" :error="loadError" @retry="init" />
       <PartnerPickerCard
         v-else
         v-model:selected-id="selectedId"
@@ -217,10 +248,10 @@ watch(
         @invite="invite"
       />
 
-      <!-- 历史开黑记录（加载失败：持久错误态 + 重试，不落「还没有开黑记录」空态） -->
+      <!-- 自习记录（加载失败：持久错误态 + 重试，不落「还没有一起自习的记录」空态） -->
       <div v-if="historyError" class="card space-y-2">
-        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">历史开黑记录</div>
-        <div class="flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+        <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">自习记录</div>
+        <div class="flex items-center gap-2 text-xs text-correction dark:text-correction">
           <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
           <span class="flex-1">{{ historyError }}</span>
           <button class="btn-ghost !text-xs shrink-0" @click="loadHistory">

@@ -28,7 +28,7 @@ async function toggle() {
     if (res.following !== next) emit('change', res.following) // 以服务端为准纠偏
   } catch (e) {
     emit('change', !next) // 回滚
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '关注状态未能更新，请重试'))
   } finally {
     submitting.value = false
   }
@@ -40,10 +40,11 @@ async function toggle() {
     class="text-xs px-3 py-1.5 rounded-full font-medium transition-colors shrink-0"
     :class="
       followedByMe
-        ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-red-500'
-        : 'bg-primary-500 text-white hover:bg-primary-600'
+        ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-correction'
+        : 'bg-action text-on-action hover:brightness-95 active:brightness-90'
     "
     :disabled="submitting"
+    :aria-pressed="followedByMe"
     @click.stop="toggle"
   >
     {{ label }}

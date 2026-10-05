@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../../shared/components/LoadingState.vue'
 /** 用户作品 Tab：帖子 / 点赞（仅本人）。游标分页 + 加载更多 + 空态/错误重试；点赞/踩计数口径与 community store 一致 */
 import { onMounted, ref, watch } from 'vue'
 import { getErrorMessage } from '../../utils/error'
@@ -68,7 +69,7 @@ async function onLike(p: CommunityPost) {
   try {
     await entities.likePost(p.id)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '点赞未能更新，请重试'))
   }
 }
 
@@ -77,7 +78,7 @@ async function onDislike(p: CommunityPost) {
   try {
     await entities.dislikePost(p.id)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '不赞同状态未能更新，请重试'))
   }
 }
 </script>
@@ -88,7 +89,7 @@ async function onDislike(p: CommunityPost) {
     <div class="flex border-b border-slate-100 dark:border-slate-700">
       <button
         class="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors"
-        :class="activeTab === 'posts' ? 'border-primary-500 text-primary-600' : 'border-transparent text-slate-400'"
+        :class="activeTab === 'posts' ? 'border-primary-500 text-action' : 'border-transparent text-slate-400'"
         @click="activeTab = 'posts'"
       >
         帖子
@@ -96,7 +97,7 @@ async function onDislike(p: CommunityPost) {
       <button
         v-if="isSelf"
         class="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors"
-        :class="activeTab === 'likes' ? 'border-primary-500 text-primary-600' : 'border-transparent text-slate-400'"
+        :class="activeTab === 'likes' ? 'border-primary-500 text-action' : 'border-transparent text-slate-400'"
         @click="activeTab = 'likes'"
       >
         点赞
@@ -123,11 +124,11 @@ async function onDislike(p: CommunityPost) {
 
     <!-- 错误态 -->
     <div v-if="loadError" class="text-center text-xs text-slate-400 py-6">
-      加载失败
+      帖子未能加载，请重试。
       <button class="btn-ghost !text-xs ml-1" @click="loadMore">重试</button>
     </div>
     <!-- 加载中 -->
-    <div v-else-if="loading" class="text-center text-xs text-slate-400 py-6">加载中…</div>
+    <LoadingState v-else-if="loading" />
     <!-- 加载更多 -->
     <div v-else-if="cursor" class="text-center py-4">
       <button class="btn-ghost !text-xs" @click="loadMore">加载更多</button>

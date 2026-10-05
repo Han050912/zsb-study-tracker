@@ -29,10 +29,11 @@ import { registerAdminRoutes } from './api/admin'
 import { registerLearningPathRoutes } from './api/learningPath'
 import { registerPdfRoutes } from './api/pdfs'
 import { registerUploadRoutes, cleanupOrphanUploads } from './api/uploads'
+import { cleanupR2Objects } from './r2Cleanup'
 import { registerFeedbackRoutes } from './api/feedback'
 import { registerTeamRoutes } from './api/teams'
 import { HttpError, isConstraintError } from './db'
-import { canCache, canCachePublic, getCached, purgeUserCache, putCache } from './middleware/cache'
+import { canCachePublic, getCached, putCache } from './middleware/cache'
 import { corsHeaders, isLocalHost } from './cors'
 
 export interface Env {
@@ -83,8 +84,9 @@ export default {
     }
 
     try {
-      // 高频只读 GET 请求走边缘缓存（私有前缀按用户隔离，公开图片/头像全站共享）
-      if (canCache(request) || canCachePublic(request)) {
+      // 只有公开图片允许在鉴权前命中缓存；旧的私有 token 哈希缓存不再读取。
+      const publicCacheable = canCachePublic(request)
+      if (publicCacheable) {
         const cached = await getCached(request)
         if (cached) {
           // Cache API 返回的 Response headers 不可变，需先复制一份再写 CORS 头
@@ -96,14 +98,11 @@ export default {
 
       const res = await route(request, env)
       for (const [k, v] of Object.entries(cors)) res.headers.set(k, v)
+      // 包括 Cookie 认证和可选认证返回的数据，禁止切号后浏览器复用上一账户响应。
+      if (!publicCacheable) res.headers.set('Cache-Control', 'private, no-store')
 
-      // 缓存成功的 200 响应
-      if ((canCache(request) || canCachePublic(request)) && res.status === 200) {
+      if (publicCacheable && res.status === 200) {
         putCache(request, res.clone(), ctx)
-      }
-      // 写操作成功后失效该用户的读缓存，避免写入后 TTL 内读到旧数据
-      if (request.method !== 'GET' && res.status < 400) {
-        purgeUserCache(request, ctx)
       }
 
       return res
@@ -121,7 +120,7 @@ export default {
             ? '数据与现有记录冲突，请检查输入后重试'
             : '服务器内部错误'
       if (status === 500) console.error(e)
-      return Response.json({ message }, { status, headers: cors })
+      return Response.json({ message }, { status, headers: { ...cors, 'Cache-Control': 'private, no-store' } })
     }
   },
 
@@ -130,11 +129,13 @@ export default {
     // 各项任务彼此独立：allSettled 保证任一失败不影响其他；rejected 结果在此统一 console.error 留日志，
     // 且配置 ALERT_WEBHOOK 时聚合发送 webhook 告警（不配置 = 仅日志，行为同现状）
     const tasks: [string, Promise<unknown>][] = [
-      ['周报推送', pushWeeklyReports(env)],
       ['孤图清理', cleanupOrphanUploads(env)],
+      ['附件清理重试', cleanupR2Objects(env)],
       ['黑名单清理', cleanupExpiredTokens(env)],
       ['僵尸会话清理', cleanupStaleSessions(env)]
     ]
+    // Maintenance runs hourly; reports retain their Monday morning schedule.
+    if (controller.cron === '0 0 * * 1') tasks.push(['周报推送', pushWeeklyReports(env)])
     const results = await Promise.allSettled(tasks.map(([, p]) => p))
     const failures: string[] = []
     results.forEach((r, i) => {

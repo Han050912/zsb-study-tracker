@@ -50,7 +50,14 @@ function goProfile() {
   <Modal :show="show" title="找用户" @close="emit('update:show', false)">
     <!-- 搜索框 -->
     <div class="flex gap-2">
-      <input v-model="keyword" class="input flex-1" placeholder="输入用户ID" maxlength="32" @keydown.enter="search" />
+      <input
+        v-model="keyword"
+        class="input flex-1"
+        aria-label="输入用户ID"
+        placeholder="输入用户ID"
+        maxlength="32"
+        @keydown.enter="search"
+      />
       <button class="btn-primary !text-xs shrink-0" :disabled="searching" @click="search">
         {{ searching ? '搜索中' : '搜索' }}
       </button>
@@ -64,19 +71,19 @@ function goProfile() {
           <span class="font-semibold truncate">{{ result.userName }}</span>
           <span
             v-if="result.verified"
-            class="w-3.5 h-3.5 rounded-full bg-sky-500 text-white text-[9px] flex items-center justify-center shrink-0"
+            class="w-3.5 h-3.5 rounded-full bg-action text-on-action text-[9px] flex items-center justify-center shrink-0"
             title="认证专家"
             >✓</span
           >
         </div>
         <div class="text-xs text-slate-400 mt-0.5">用户ID：{{ result.userCode }}</div>
         <p class="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-1">
-          {{ result.bio || '这个人很懒，什么都没写' }}
+          {{ result.bio || '还没有填写备考介绍' }}
         </p>
       </div>
       <div class="shrink-0 flex items-center gap-1.5">
         <button
-          class="text-xs px-2 py-1.5 rounded-full font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-primary-500"
+          class="text-xs px-2 py-1.5 rounded-full font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-action"
           @click="goProfile"
         >
           主页

@@ -1,12 +1,11 @@
 import type { Env } from '../index'
-import { first, run, uid } from '../db'
-import { notifyStatement } from './community'
+import { first } from '../db'
 
 /**
  * 徽章系统：服务端事件驱动发放，user_badges 主键 (user_id, badge_key) 去重保证仅发放一次。
  * 徽章一旦获得永久保留（与成就体系同口径：记录的是「曾达成」，后续回落不回收）。
  * 发放时推送 achievement 通知；重大徽章额外在同一事务内自动创建成就广播帖（ref_type='badge'），
- * 因 awardBadge 幂等（重复持有直接返回空数组），广播帖天然只发一次。
+ * 稳定自然键和条件插入保证重复调用不会再发奖，并能补齐旧事务遗漏的通知或广播。
  * 前端徽章目录见 src/data/defaults.ts COMMUNITY_BADGES（名称需与此处一致）。
  */
 
@@ -36,61 +35,58 @@ const BROADCAST_BADGES: readonly BadgeKey[] = [
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
-/** 发放徽章（幂等）；首次获得时推送 achievement 通知；重大徽章附带成就广播帖语句；返回批处理语句数组（供外部事务调用）。
- *  两阶段缺口已闭合：徽章行由 run 原子抢占后，效果语句若因调用方批次失败而丢失，
- *  下次重放会在「已持有但无通知」时补发；广播帖另以 (ref_type, ref_id) 自然键去重。 */
-export async function awardBadge(env: Env, userId: string, key: BadgeKey): Promise<D1PreparedStatement[]> {
+/**
+ * 构造原子发奖语句。usersSql 必须是内部参数化 SELECT，返回 user_id；所有条件在提交时判断。
+ * 徽章、通知和广播均在调用方 batch 内，构造阶段绝不抢先写库；稳定键使重试和并发幂等。
+ * 同时兼容修复前已经落库但效果缺失的徽章（按旧通知文案/广播自然键去重）。
+ */
+export function badgeAwardStatements(
+  env: Env,
+  key: BadgeKey,
+  usersSql: string,
+  params: unknown[]
+): D1PreparedStatement[] {
   const content = `🎖️ 你获得了徽章「${BADGE_DEFS[key]}」`
-  // 原子抢占：INSERT OR IGNORE 保证并发下仅一次 changes=1，消除「读-检查-写」导致的通知/广播帖重复窗口
-  const inserted = await run(
-    env,
-    'INSERT OR IGNORE INTO user_badges (user_id, badge_key, awarded_at) VALUES (?, ?, ?)',
-    userId,
-    key,
-    nowSec()
-  )
-  if (!inserted.meta.changes) {
-    // 已持有：通知缺失说明上次调用方的批次整体回滚过（徽章行已提交、效果未提交），此处补发；
-    // 通知已在则视为发放完成，幂等返回空（旧行为，避免重复通知/广播帖）
-    const notified = await first(
-      env,
-      'SELECT 1 AS x FROM community_notifications WHERE user_id = ? AND type = ? AND content = ?',
-      userId,
-      'achievement',
-      content
-    )
-    if (notified) return []
-  }
-
+  const now = nowSec()
   const stmts: D1PreparedStatement[] = [
-    notifyStatement(env, {
-      userId,
-      type: 'achievement',
-      content
-    })
+    env.DB.prepare(
+      `WITH recipients AS (${usersSql})
+      INSERT OR IGNORE INTO user_badges (user_id, badge_key, awarded_at)
+      SELECT DISTINCT user_id, ?, ? FROM recipients
+    `
+    ).bind(...params, key, now),
+    env.DB.prepare(
+      `WITH recipients AS (${usersSql})
+      INSERT OR IGNORE INTO community_notifications (id, user_id, type, content, is_read, created_at)
+      SELECT 'badge:' || ? || ':' || r.user_id, r.user_id, 'achievement', ?, 0, ? FROM recipients r
+      WHERE NOT EXISTS (SELECT 1 FROM community_notifications n
+        WHERE n.user_id = r.user_id AND n.type = 'achievement' AND n.content = ?)
+    `
+    ).bind(...params, key, content, now, content)
   ]
 
   // 成就广播帖：服务端模板内容（跳过敏感词校验）、不发放积分（不走发帖路由防刷分）、正常进公共广场。
   // 插入以 (ref_type='badge', ref_id='<key>:<userId>') 为自然幂等键，补发路径不会重复建帖
   if (BROADCAST_BADGES.includes(key)) {
-    const refId = `${key}:${userId}`
     stmts.push(
       env.DB.prepare(
-        'INSERT INTO community_posts (id, user_id, type, content, tags, image_urls, ref_type, ref_id, created_at, updated_at) ' +
-          "SELECT ?, ?, 'achievement', ?, '[]', '[]', 'badge', ?, ?, ? " +
-          "WHERE NOT EXISTS (SELECT 1 FROM community_posts WHERE ref_type = 'badge' AND ref_id = ?)"
-      ).bind(
-        uid(),
-        userId,
-        `🎖️ 达成成就「${BADGE_DEFS[key]}」！每一份坚持都算数，继续加油！`,
-        refId,
-        nowSec(),
-        nowSec(),
-        refId
-      )
+        `WITH recipients AS (${usersSql})
+        INSERT OR IGNORE INTO community_posts
+          (id, user_id, type, content, tags, image_urls, ref_type, ref_id, created_at, updated_at)
+        SELECT 'badge:' || ? || ':' || r.user_id, r.user_id, 'achievement', ?, '[]', '[]',
+          'badge', ? || ':' || r.user_id, ?, ? FROM recipients r
+        WHERE NOT EXISTS (SELECT 1 FROM community_posts p
+          WHERE p.ref_type = 'badge' AND p.ref_id = ? || ':' || r.user_id)
+      `
+      ).bind(...params, key, `🎖️ 达成成就「${BADGE_DEFS[key]}」！每一份坚持都算数，继续加油！`, key, now, now, key)
     )
   }
   return stmts
+}
+
+/** 保留现有调用签名；只构造语句，调用者必须将返回值并入业务 batch。 */
+export async function awardBadge(env: Env, userId: string, key: BadgeKey): Promise<D1PreparedStatement[]> {
+  return badgeAwardStatements(env, key, 'SELECT ? AS user_id', [userId])
 }
 
 /** 门槛类徽章的快捷判定：已持有则跳过统计查询（省一次 COUNT/SUM） */

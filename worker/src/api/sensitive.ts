@@ -27,6 +27,16 @@ function toHalfWidth(s: string): string {
   return out
 }
 
+// sb/sm 只匹配独立缩写及其分隔变形，避免 USB、Smith、用户名中的子串误命中。
+// 在移除空白前检测，保留「before sb after」的边界；中文相邻仍视为独立缩写。
+const SHORT_HARD_WORDS = new Set(['sb', 'sm'])
+/* eslint-disable no-misleading-character-class -- 变体选择符与零宽字符按字面量匹配，用于识别分隔变形；派生正则复用同一字符表 */
+const SEPARATOR_CHAR =
+  /[\s\-_.*#@!?,，。！？~·、（）()【】[\]<>《》"'“”‘’:：;；|\\/+=￥$&^%\u200b-\u200f\ufeff\ufe0e\ufe0f]/
+const NORMALIZE_SEPARATORS = new RegExp(`${SEPARATOR_CHAR.source}+`, 'g')
+const SHORT_HARD_RE = new RegExp(`(?:^|[^a-z0-9])s${SEPARATOR_CHAR.source}*[bm](?![a-z0-9])`)
+/* eslint-enable no-misleading-character-class */
+
 /** 常见谐音/拆字/变体映射：把绕过写法归一为规范词，供词表命中 */
 const HOMOPHONE_MAP: Record<string, string> = {
   威信: '微信',
@@ -64,23 +74,19 @@ const HOMOPHONE_MAP: Record<string, string> = {
  * 键按长度降序，避免短 key 提前吞掉长 key（如「vx」先于「v」）。
  */
 const HOMOPHONE_RULES: { key: string; value: string; wordRe?: RegExp }[] = Object.keys(HOMOPHONE_MAP)
+  .filter((key) => !SHORT_HARD_WORDS.has(key))
   .sort((a, b) => b.length - a.length)
   .map((key) => ({
     key,
     value: HOMOPHONE_MAP[key],
-    // 纯英文缩写（sb/nc/vx）若用子串替换会误伤英文单词（since/USB/sync 等），
+    // 纯英文缩写（nc/vx；sb 已独立检测）若用子串替换会误伤英文单词（since/sync 等），
     // 仅按词边界（前后非字母）替换；中文谐音 key 无此风险，保持子串替换
     wordRe: /^[a-z]+$/.test(key) ? new RegExp(`\\b${key}\\b`, 'g') : undefined
   }))
 
 function normalize(s: string): string {
-  let t = toHalfWidth(s).toLowerCase()
   // 去除空白、间隔符、零宽字符、变体选择符与常见标点/括号
-  t = t.replace(
-    // eslint-disable-next-line no-misleading-character-class -- 变体选择符(U+FE0E/FE0F)与零宽字符在此按字面量逐个匹配，属有意为之
-    /[\s\-_.*#@!?,，。！？~·、（）()【】[\]<>《》"'“”‘’:：;；|\\/+=￥$&^%\u200b-\u200f\ufeff\ufe0e\ufe0f]+/g,
-    ''
-  )
+  let t = s.replace(NORMALIZE_SEPARATORS, '')
   // 谐音归一：替换规则与顺序见模块级 HOMOPHONE_RULES
   for (const r of HOMOPHONE_RULES) {
     t = r.wordRe ? t.replace(r.wordRe, r.value) : t.split(r.key).join(r.value)
@@ -88,7 +94,7 @@ function normalize(s: string): string {
   return t
 }
 
-const hardAc = new AhoCorasick(HARD_WORDS)
+const hardAc = new AhoCorasick(HARD_WORDS.filter((word) => !SHORT_HARD_WORDS.has(word)))
 const softAc = new AhoCorasick(SOFT_WORDS)
 
 // ---------- 对外接口 ----------
@@ -102,9 +108,10 @@ export interface ModerationResult {
 
 /** 检测文本的软硬违规命中情况 */
 export function moderate(text: string): ModerationResult {
-  const t = normalize(text)
+  const original = toHalfWidth(text).toLowerCase()
+  const t = normalize(original)
   return {
-    hard: hardAc.containsAny(t),
+    hard: SHORT_HARD_RE.test(original) || hardAc.containsAny(t),
     soft: softAc.containsAny(t)
   }
 }

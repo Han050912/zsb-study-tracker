@@ -1,9 +1,10 @@
 import type { Env } from '../index'
 import { on } from '../router'
-import { all, first, run, batch, uid, HttpError } from '../db'
+import { all, first, run, batch, uid, HttpError, readBodyBytes } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
-import { awardBadge, hasBadge } from './badges'
+import { badgeAwardStatements } from './badges'
 import { IMAGE_MAX_BYTES, sniff, stripMetadata } from '../image'
+import { domainVersionStatement, withUserTransaction } from '../syncTransaction'
 
 /**
  * 社区图片上传：R2 存储 + Worker 代理读取。
@@ -65,24 +66,24 @@ async function referencedUploadIds(env: Env, ids: string[]): Promise<Set<string>
   return found
 }
 
-/** 删除给定上传行的 R2 对象（含缩略图）与归属行；R2 删除失败仅记日志，不阻塞 DB 清理 */
+/** 单条 SELECT/DELETE 均为 D1 的 100 参数上限留余量。 */
+const SQL_ID_CHUNK = 90
+
+/** R2 删除成功后才移除归属行；失败时保留 key，下一次清理可幂等重试。 */
 async function deleteUploadRows(
   env: Env,
   rows: { id: string; r2_key: string; thumb_r2_key: string | null }[]
 ): Promise<void> {
-  if (!rows.length) return
-  await Promise.all(
-    rows.flatMap((r) => {
-      const dels: Promise<void>[] = [
-        env.IMAGES.delete(r.r2_key).catch((e) => console.error('R2 删除失败', r.r2_key, e))
-      ]
-      if (r.thumb_r2_key)
-        dels.push(env.IMAGES.delete(r.thumb_r2_key).catch((e) => console.error('R2 删除失败', r.thumb_r2_key, e)))
-      return dels
-    })
-  )
-  const ph = rows.map(() => '?').join(',')
-  await run(env, `DELETE FROM community_uploads WHERE id IN (${ph})`, ...rows.map((r) => r.id))
+  for (let i = 0; i < rows.length; i += SQL_ID_CHUNK) {
+    const chunk = rows.slice(i, i + SQL_ID_CHUNK)
+    // 限制同时进行的 R2 操作数；部分删除后失败也保留本块 DB 行以供重试。
+    for (const row of chunk) {
+      await env.IMAGES.delete(row.r2_key)
+      if (row.thumb_r2_key) await env.IMAGES.delete(row.thumb_r2_key)
+    }
+    const ids = chunk.map((row) => row.id)
+    await run(env, `DELETE FROM community_uploads WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids)
+  }
 }
 
 /** 从帖子/评论/私信/反馈的 image_urls JSON 中提取上传 id（仅认本系统路径，忽略外部 URL） */
@@ -101,7 +102,7 @@ export function uploadIdsOf(raw: unknown): string[] {
  *
  * **仍有其它引用时不删**（issue #37）：同一张图可被多个帖子 / 评论 / 私信 / 反馈复用，
  * 删除其中一个引用方（其引用关系已随级联删除先行解除）不得连带删掉其它引用方仍在使用的
- * R2 对象与 `community_uploads` 归属行。R2 删除失败仅记日志，不阻塞 DB 清理。
+ * R2 对象与 `community_uploads` 归属行。R2 删除失败保留归属行，后续 cron 可继续重试。
  */
 export async function deleteUploads(env: Env, ids: string[]): Promise<void> {
   const candidates = [...new Set(ids)]
@@ -109,19 +110,33 @@ export async function deleteUploads(env: Env, ids: string[]): Promise<void> {
   const referenced = await referencedUploadIds(env, candidates)
   const deletable = candidates.filter((id) => !referenced.has(id))
   if (!deletable.length) return
-  const ph = deletable.map(() => '?').join(',')
-  const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null }>(
-    env,
-    `SELECT id, r2_key, thumb_r2_key FROM community_uploads WHERE id IN (${ph})`,
-    ...deletable
-  )
-  await deleteUploadRows(env, rows)
+  for (let i = 0; i < deletable.length; i += SQL_ID_CHUNK) {
+    const ids = deletable.slice(i, i + SQL_ID_CHUNK)
+    const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null }>(
+      env,
+      `SELECT id, r2_key, thumb_r2_key FROM community_uploads WHERE id IN (${ids.map(() => '?').join(',')})`,
+      ...ids
+    )
+    await deleteUploadRows(env, rows)
+  }
 }
 
 /** 单轮清理的候选批大小（游标推进的步长） */
 const CLEANUP_BATCH = 200
-/** 单轮 cron 最多处理的候选行数：约束单次执行耗时（避免 cron 超时），游标保证下次接着推进 */
+/** 单轮 cron 最多处理的候选行数：持久化游标使下一轮接着推进。 */
 const CLEANUP_MAX_ROWS = 1000
+const CLEANUP_CURSOR_NAME = 'community_uploads'
+
+function saveCleanupCursor(env: Env, createdAt: number, id: string): Promise<unknown> {
+  return run(
+    env,
+    `INSERT INTO maintenance_cursors (name, created_at, row_id) VALUES (?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET created_at = excluded.created_at, row_id = excluded.row_id`,
+    CLEANUP_CURSOR_NAME,
+    createdAt,
+    id
+  )
+}
 
 /**
  * 惰性清理：删除 30 天前且**未被帖子 / 评论 / 私信 / 反馈引用**的孤图。由每周 cron 调用。
@@ -134,8 +149,13 @@ const CLEANUP_MAX_ROWS = 1000
  */
 export async function cleanupOrphanUploads(env: Env): Promise<void> {
   const cutoff = nowSec() - 30 * 86400
-  let cursorCreatedAt = -1
-  let cursorId = ''
+  const saved = await first<{ created_at: number; row_id: string }>(
+    env,
+    'SELECT created_at, row_id FROM maintenance_cursors WHERE name = ?',
+    CLEANUP_CURSOR_NAME
+  )
+  let cursorCreatedAt = saved?.created_at ?? -1
+  let cursorId = saved?.row_id ?? ''
   for (let processed = 0; processed < CLEANUP_MAX_ROWS;) {
     const rows = await all<{ id: string; r2_key: string; thumb_r2_key: string | null; created_at: number }>(
       env,
@@ -148,7 +168,10 @@ export async function cleanupOrphanUploads(env: Env): Promise<void> {
       cursorId,
       CLEANUP_BATCH
     )
-    if (!rows.length) break
+    if (!rows.length) {
+      await saveCleanupCursor(env, -1, '')
+      break
+    }
     const last = rows[rows.length - 1]
     cursorCreatedAt = last.created_at
     cursorId = last.id
@@ -161,7 +184,12 @@ export async function cleanupOrphanUploads(env: Env): Promise<void> {
       env,
       rows.filter((r) => !referenced.has(r.id))
     )
-    if (rows.length < CLEANUP_BATCH) break
+    // 只有整页成功才推进；失败重跑同一页，已删除的 R2 对象删除操作本身幂等。
+    await saveCleanupCursor(env, cursorCreatedAt, cursorId)
+    if (rows.length < CLEANUP_BATCH) {
+      await saveCleanupCursor(env, -1, '')
+      break
+    }
   }
 }
 
@@ -174,11 +202,8 @@ export function registerUploadRoutes() {
     const q = new URL(ctx.request.url).searchParams
     const variant = q.get('variant')
     const thumbFor = q.get('id')
-    const declared = Number(ctx.request.headers.get('Content-Length') || 0)
-    if (declared > IMAGE_MAX_BYTES) throw new HttpError(413, '图片超过 5MB 上限')
-    const buf = new Uint8Array(await ctx.request.arrayBuffer())
+    const buf = await readBodyBytes(ctx.request, IMAGE_MAX_BYTES, '图片超过 5MB 上限')
     if (!buf.byteLength) throw new HttpError(400, '文件为空')
-    if (buf.byteLength > IMAGE_MAX_BYTES) throw new HttpError(413, '图片超过 5MB 上限')
 
     const kind = sniff(buf)
     if (!kind) throw new HttpError(400, '仅支持 PNG / JPEG / WebP / GIF 图片')
@@ -210,24 +235,38 @@ export function registerUploadRoutes() {
     // 否则 cleanupOrphanUploads 会因头像不被帖子/评论/反馈引用而在 30 天后误删
     if (variant === 'avatar') {
       if (kind.ext === 'gif') throw new HttpError(400, '头像仅支持 PNG / JPEG / WebP')
-      const old = await first<{ avatar: string | null }>(
-        ctx.env,
-        'SELECT avatar FROM user_settings WHERE user_id = ?',
-        ctx.userId
-      )
       const avId = uid()
       const avKey = `avatars/${avId}.${kind.ext}`
       await ctx.env.IMAGES.put(avKey, data, { httpMetadata: { contentType: kind.mime } })
       const url = `/api/avatar/${avId}.${kind.ext}`
-      await run(
-        ctx.env,
-        'INSERT INTO user_settings (user_id, avatar) VALUES (?, ?) ' +
-          'ON CONFLICT(user_id) DO UPDATE SET avatar = excluded.avatar',
-        ctx.userId,
-        url
-      )
+      // 与设置同步共用版本守卫，避免同步的旧预读覆盖刚上传的头像。
+      const oldAvatar = await withUserTransaction(ctx.env, ctx.userId, async (versions) => {
+        const old = await first<{ avatar: string | null; updated_at: number }>(
+          ctx.env,
+          'SELECT avatar, updated_at FROM user_settings WHERE user_id = ?',
+          ctx.userId
+        )
+        const seq = (versions.settings ?? 0) + 1
+        const updatedAt = Math.max(Date.now(), Number(old?.updated_at ?? 0) + 1)
+        return {
+          value: old?.avatar,
+          statements: [
+            ctx.env.DB.prepare(
+              'INSERT INTO user_settings (user_id, avatar, updated_at, server_seq) VALUES (?, ?, ?, ?) ' +
+                'ON CONFLICT(user_id) DO UPDATE SET avatar = excluded.avatar, ' +
+                'updated_at = excluded.updated_at, server_seq = excluded.server_seq'
+            ).bind(ctx.userId, url, updatedAt, seq),
+            ctx.env.DB.prepare('UPDATE default_quotes SET updated_at = ?, server_seq = ? WHERE user_id = ?').bind(
+              updatedAt,
+              seq,
+              ctx.userId
+            ),
+            domainVersionStatement(ctx.env, ctx.userId, 'settings', seq)
+          ]
+        }
+      })
       // 删除旧头像对象（失败仅记日志；下次换头像时会随新流程再尝试删除）
-      const oldFile = old?.avatar?.match(/^\/api\/avatar\/([a-f0-9]{16}\.(?:png|jpg|webp))$/)?.[1]
+      const oldFile = oldAvatar?.match(/^\/api\/avatar\/([a-f0-9]{16}\.(?:png|jpg|webp))$/)?.[1]
       if (oldFile)
         await ctx.env.IMAGES.delete(`avatars/${oldFile}`).catch((e) =>
           console.error('[avatar] 旧头像删除失败', oldFile, e)
@@ -240,27 +279,18 @@ export function registerUploadRoutes() {
     await ctx.env.IMAGES.put(key, data, { httpMetadata: { contentType: kind.mime } })
     const url = `/api/community/images/${id}`
     const filename = (new URL(ctx.request.url).searchParams.get('filename') || '').slice(0, 100)
-    await run(
-      ctx.env,
-      'INSERT INTO community_uploads (id, user_id, filename, r2_key, url, size, content_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      id,
-      ctx.userId,
-      filename,
-      key,
-      url,
-      data.byteLength,
-      kind.mime,
-      nowSec()
-    )
-    // 徽章：图片达人（累计上传 ≥50 张；已持有者跳过统计查询）
-    if (!(await hasBadge(ctx.env, ctx.userId, 'image_50'))) {
-      const cnt = await first<{ n: number }>(
+    await batch(ctx.env, [
+      ctx.env.DB.prepare(
+        'INSERT INTO community_uploads (id, user_id, filename, r2_key, url, size, content_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(id, ctx.userId, filename, key, url, data.byteLength, kind.mime, nowSec()),
+      // 元数据与徽章/通知同批提交，失败重试不能留下「满 50 张但漏奖」的状态。
+      ...badgeAwardStatements(
         ctx.env,
-        'SELECT COUNT(*) AS n FROM community_uploads WHERE user_id = ?',
-        ctx.userId
+        'image_50',
+        'SELECT ? AS user_id WHERE (SELECT COUNT(*) FROM community_uploads WHERE user_id = ?) >= 50',
+        [ctx.userId, ctx.userId]
       )
-      if ((cnt?.n ?? 0) >= 50) await batch(ctx.env, await awardBadge(ctx.env, ctx.userId, 'image_50'))
-    }
+    ])
     return Response.json({ id, url, size: data.byteLength, contentType: kind.mime }, { status: 201 })
   })
 

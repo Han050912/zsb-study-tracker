@@ -47,13 +47,13 @@ const emit = defineEmits<{ remove: [index: number]; retry: [index: number] }>()
         class="absolute inset-x-1 bottom-1 h-1 rounded bg-white/50"
       >
         <div
-          class="h-full rounded bg-primary-500 transition-all"
+          class="h-full rounded bg-primary-500 transition-colors"
           :style="{ width: `${Math.round(img.progress * 100)}%` }"
         ></div>
       </div>
       <div
         v-if="progress === 'percent' && img.progress < 1 && !img.error"
-        class="absolute inset-0 bg-black/40 flex items-center justify-center text-[10px] text-white"
+        class="absolute inset-0 bg-black/40 flex items-center justify-center text-xs text-white"
       >
         {{ Math.round(img.progress * 100) }}%
       </div>
@@ -61,16 +61,16 @@ const emit = defineEmits<{ remove: [index: number]; retry: [index: number] }>()
       <div
         v-if="img.error"
         class="absolute inset-0 flex flex-col items-center justify-center gap-0.5 bg-white/70 dark:bg-slate-900/70"
-        :class="size === 'md' ? 'text-xs' : 'text-[10px]'"
+        :class="size === 'md' ? 'text-xs' : 'text-xs'"
       >
-        <button class="text-red-500 font-medium" @click="emit('retry', i)">重试</button>
+        <button class="text-correction font-medium" @click="emit('retry', i)">重试</button>
         <button class="text-slate-500" @click="emit('remove', i)">移除</button>
       </div>
       <!-- 删除 -->
       <button
         v-if="removable"
         class="absolute rounded-full bg-black/50 text-white leading-none"
-        :class="size === 'md' ? 'top-1 right-1 w-5 h-5 text-xs' : 'top-0.5 right-0.5 w-4 h-4 text-[10px]'"
+        :class="size === 'md' ? 'top-1 right-1 w-5 h-5 text-xs' : 'top-0.5 right-0.5 w-4 h-4 text-xs'"
         @click="emit('remove', i)"
       >
         ×

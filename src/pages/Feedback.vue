@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ArrowLeft } from '@lucide/vue'
+import IconAction from '../shared/components/IconAction.vue'
 import { computed, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -12,7 +14,7 @@ const toast = useToast()
 
 const TYPE_OPTIONS: { value: FeedbackType; label: string }[] = [
   { value: 'feature', label: '功能建议' },
-  { value: 'bug', label: 'Bug报告' },
+  { value: 'bug', label: '问题反馈' },
   { value: 'experience', label: '体验评价' },
   { value: 'other', label: '其他' }
 ]
@@ -21,6 +23,7 @@ const type = ref<FeedbackType>('feature')
 const content = ref('')
 const contact = ref('')
 const images = ref<{ url: string }[]>([])
+const fileInput = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
 const submitting = ref(false)
 
@@ -33,6 +36,7 @@ async function onPick(e: Event) {
   const input = e.target as HTMLInputElement
   const files = Array.from(input.files || [])
   input.value = ''
+  if (uploading.value || submitting.value) return
   const slots = IMAGE_MAX - images.value.length
   if (slots <= 0) return
   uploading.value = true
@@ -55,6 +59,7 @@ function removeImage(i: number) {
 }
 
 async function submit() {
+  if (submitting.value || uploading.value) return
   if (!content.value.trim()) {
     toast('请填写反馈内容')
     return
@@ -67,10 +72,10 @@ async function submit() {
       contact: contact.value.trim() || undefined,
       imageUrls: images.value.map((i) => i.url)
     })
-    toast('反馈已提交，感谢！')
+    toast('已提交反馈')
     goBack()
   } catch (e) {
-    toast(getErrorMessage(e, '提交失败'))
+    toast(getErrorMessage(e, '反馈未能提交，请检查网络后重试'))
   } finally {
     submitting.value = false
   }
@@ -78,9 +83,11 @@ async function submit() {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
+  <div class="study-page reading-page space-y-4">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2.5" @click="goBack">← 返回</button>
+      <span class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
       <h1 class="page-title">意见反馈</h1>
     </div>
 
@@ -92,12 +99,13 @@ async function submit() {
           <button
             v-for="o in TYPE_OPTIONS"
             :key="o.value"
-            class="px-3 py-1.5 rounded-full text-sm border transition-colors"
+            class="min-h-11 px-3 py-1.5 rounded-full text-sm border transition-colors"
             :class="
               type === o.value
-                ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 border-primary-200 dark:border-primary-800 font-semibold'
+                ? 'bg-primary-50 dark:bg-primary-900/30 text-action dark:text-action border-primary-200 dark:border-primary-800 font-semibold'
                 : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
             "
+            :aria-pressed="type === o.value"
             @click="type = o.value"
           >
             {{ o.label }}
@@ -107,15 +115,16 @@ async function submit() {
 
       <!-- 文字描述 -->
       <div>
-        <div class="label">描述 <span class="text-red-400">*</span></div>
+        <div class="label">描述 <span class="text-correction">*</span></div>
         <textarea
           v-model="content"
           :maxlength="CONTENT_MAX"
           rows="5"
           class="input !h-auto resize-y"
+          aria-label="请描述你遇到的问题或建议…"
           placeholder="请描述你遇到的问题或建议…"
         />
-        <div class="text-right text-[10px] text-slate-400 mt-1">{{ content.length }} / {{ CONTENT_MAX }}</div>
+        <div class="text-right text-xs text-slate-400 mt-1">{{ content.length }} / {{ CONTENT_MAX }}</div>
       </div>
 
       <!-- 截图上传 -->
@@ -129,28 +138,51 @@ async function submit() {
               alt="反馈截图"
             />
             <button
-              class="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-slate-800 text-white text-xs leading-none"
+              type="button"
+              class="absolute -top-2 -right-2 w-11 h-11 flex items-center justify-center rounded-control"
+              :aria-label="`移除第${i + 1}张截图`"
               @click="removeImage(i)"
             >
-              ×
+              <span
+                class="w-5 h-5 flex items-center justify-center rounded-full bg-ink text-surface text-xs leading-none"
+                aria-hidden="true"
+                >×</span
+              >
             </button>
           </div>
-          <label
+          <button
             v-if="images.length < IMAGE_MAX"
-            :class="uploading ? 'opacity-50 pointer-events-none' : ''"
-            class="w-20 h-20 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 flex flex-col items-center justify-center text-slate-400 text-[10px] cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"
+            type="button"
+            :disabled="uploading"
+            aria-label="添加反馈截图"
+            class="w-20 h-20 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 flex flex-col items-center justify-center text-slate-400 text-xs cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700"
+            @click="fileInput?.click()"
           >
             <span class="text-xl leading-none">{{ uploading ? '…' : '+' }}</span>
             <span>{{ uploading ? '上传中' : '添加截图' }}</span>
-            <input type="file" accept="image/*" multiple class="hidden" @change="onPick" />
-          </label>
+          </button>
+          <input
+            ref="fileInput"
+            type="file"
+            accept="image/*"
+            multiple
+            class="hidden"
+            :disabled="uploading"
+            @change="onPick"
+          />
         </div>
       </div>
 
       <!-- 联系方式 -->
       <div>
         <div class="label">联系方式（可选）</div>
-        <input v-model="contact" :maxlength="100" class="input" placeholder="QQ / 微信 / 邮箱，便于我们跟进" />
+        <input
+          v-model="contact"
+          :maxlength="100"
+          class="input"
+          aria-label="QQ / 微信 / 邮箱，便于我们跟进"
+          placeholder="QQ / 微信 / 邮箱，便于我们跟进"
+        />
       </div>
 
       <button class="btn-primary w-full" :disabled="!canSubmit" @click="submit">

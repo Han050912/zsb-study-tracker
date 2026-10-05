@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
 import { computed, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
-import { useChart, chartTextColor } from '../composables/useChart'
-import { businessDate, formatMinutes } from '../utils/date'
+import { useChart, chartTextColor, chartColor } from '../composables/useChart'
+import { formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import { MOODS } from '../data/defaults'
 import { PROBLEM_TYPE_LABELS } from '../data/problemTypes'
@@ -13,7 +14,9 @@ const store = useAppStore()
 const range = ref<7 | 30>(7)
 
 const days = computed(() =>
-  Array.from({ length: range.value }, (_, i) => businessDate(Date.now() - (range.value - 1 - i) * 86400_000))
+  Array.from({ length: range.value }, (_, i) =>
+    new Date(Date.parse(store.todayKey + 'T00:00:00Z') - (range.value - 1 - i) * 86400_000).toISOString().slice(0, 10)
+  )
 )
 
 // ---- 柱状图点击：当日各科目学习时长细分详情 ----
@@ -72,16 +75,8 @@ const {
       {
         type: 'bar',
         data: days.value.map((d) => store.minutesByDate[d] || 0),
-        itemStyle: { color: '#3b82f6', borderRadius: [4, 4, 0, 0] },
+        itemStyle: { color: chartColor('action'), borderRadius: [4, 4, 0, 0] },
         barMaxWidth: 20,
-        cursor: 'pointer'
-      },
-      {
-        type: 'line',
-        smooth: true,
-        data: days.value.map((d) => store.minutesByDate[d] || 0),
-        lineStyle: { color: '#93c5fd' },
-        itemStyle: { color: '#93c5fd' },
         cursor: 'pointer'
       }
     ],
@@ -96,7 +91,7 @@ const {
         const map = subjectMinutesOn(d)
         const entries = Object.entries(map)
         if (!entries.length) {
-          lines.push('当日暂无学习记录')
+          lines.push('这天还没有学习记录')
         } else {
           let total = 0
           for (const [sid, minutes] of entries) {
@@ -110,15 +105,10 @@ const {
       }
     }
   }),
-  [days],
+  [days, computed(() => store.minutesByDate)],
   (params) => {
     // 点击任意时间柱子，展示当天所有科目精准学习时长
-    // 折线 series 覆盖在柱子上方，两种 seriesType 均接受（dataIndex→日期映射一致）
-    if (
-      params.componentType === 'series' &&
-      (params.seriesType === 'bar' || params.seriesType === 'line') &&
-      typeof params.dataIndex === 'number'
-    ) {
+    if (params.componentType === 'series' && params.seriesType === 'bar' && typeof params.dataIndex === 'number') {
       const d = days.value[params.dataIndex]
       if (d) barDate.value = d
     }
@@ -128,7 +118,8 @@ const {
 // ---- 科目占比 ----
 const subjectMinutes = computed(() => {
   const map: Record<string, number> = {}
-  for (const r of store.records) map[r.subjectId] = (map[r.subjectId] || 0) + r.minutes
+  for (const r of store.records.filter((r) => days.value.includes(r.date)))
+    map[r.subjectId] = (map[r.subjectId] || 0) + r.minutes
   return store.subjects
     .filter((s) => map[s.id])
     .map((s) => ({ name: s.name, value: map[s.id], itemStyle: { color: s.color } }))
@@ -169,9 +160,9 @@ const {
     return {
       name: s.name,
       type: 'line' as const,
-      smooth: true,
-      data: days.value.map((d) => (byDate[d] ? Math.round((byDate[d].c / byDate[d].t) * 100) : null)),
-      connectNulls: true,
+      smooth: false,
+      data: days.value.map((d) => (byDate[d]?.t ? Math.round((byDate[d].c / byDate[d].t) * 100) : null)),
+      connectNulls: false,
       lineStyle: { color: s.color },
       itemStyle: { color: s.color }
     }
@@ -188,12 +179,16 @@ const {
     series,
     tooltip: { trigger: 'axis' }
   }
-}, [days])
+}, [
+  days,
+  computed(() => store.problemSessions.map((p) => [p.subjectId, p.date, p.total, p.correct])),
+  computed(() => store.subjects.map((s) => [s.id, s.name, s.color]))
+])
 
 // ---- 题型分布（动态聚合：兼容数学/英语/通用题型模板与历史数据） ----
 const typeStats = computed(() => {
   const t: Record<string, number> = {}
-  for (const p of store.problemSessions) {
+  for (const p of store.problemSessions.filter((p) => days.value.includes(p.date))) {
     for (const [k, v] of Object.entries(p.types || {})) {
       t[k] = (t[k] || 0) + (Number(v) || 0)
     }
@@ -208,31 +203,23 @@ const {
   retry: retryType
 } = useChart(
   () => ({
+    grid: { left: 70, right: 30, top: 12, bottom: 24 },
+    xAxis: { type: 'value', minInterval: 1, axisLabel: { color: chartTextColor() } },
+    yAxis: {
+      type: 'category',
+      data: typeStats.value.map((item) => item.name),
+      axisLabel: { color: chartTextColor(), width: 60, overflow: 'truncate' }
+    },
     series: [
       {
-        type: 'pie',
-        radius: '60%',
-        label: { color: chartTextColor(), fontSize: 11 },
-        data: typeStats.value,
-        itemStyle: {
-          color: (p: any) =>
-            [
-              '#3b82f6',
-              '#10b981',
-              '#f59e0b',
-              '#a855f7',
-              '#ef4444',
-              '#06b6d4',
-              '#f97316',
-              '#ec4899',
-              '#6366f1',
-              '#84cc16',
-              '#14b8a6'
-            ][p.dataIndex]
-        }
+        type: 'bar',
+        data: typeStats.value.map((item) => item.value),
+        barMaxWidth: 16,
+        itemStyle: { color: chartColor('action') },
+        label: { show: true, position: 'right', color: chartTextColor() }
       }
     ],
-    tooltip: { trigger: 'item' }
+    tooltip: { trigger: 'axis' }
   }),
   [typeStats]
 )
@@ -260,25 +247,25 @@ const {
         name: '番茄数',
         type: 'bar',
         data: days.value.map((d) => store.pomodoro.daily[d]?.count || 0),
-        itemStyle: { color: '#f97316', borderRadius: [4, 4, 0, 0] },
+        itemStyle: { color: chartColor('action'), borderRadius: [4, 4, 0, 0] },
         barMaxWidth: 16
       },
       {
         name: '专注分钟',
         type: 'line',
         yAxisIndex: 1,
-        smooth: true,
+        smooth: false,
         data: days.value.map((d) => store.pomodoro.daily[d]?.minutes || 0),
-        lineStyle: { color: '#fdba74' },
-        itemStyle: { color: '#fdba74' }
+        lineStyle: { color: chartColor('muted') },
+        itemStyle: { color: chartColor('muted') }
       }
     ],
     tooltip: { trigger: 'axis' }
   }),
-  [days]
+  [days, computed(() => days.value.map((d) => [store.pomodoro.daily[d]?.count, store.pomodoro.daily[d]?.minutes]))]
 )
 
-// ---- 情绪曲线 ----
+// ---- 这段时间的心情 ----
 const {
   el: moodEl,
   status: moodStatus,
@@ -302,11 +289,11 @@ const {
     series: [
       {
         type: 'line',
-        smooth: true,
+        smooth: false,
         data,
-        connectNulls: true,
-        lineStyle: { color: '#ec4899' },
-        itemStyle: { color: '#ec4899' },
+        connectNulls: false,
+        lineStyle: { color: chartColor('muted') },
+        itemStyle: { color: chartColor('muted') },
         label: {
           show: true,
           fontSize: 9,
@@ -320,11 +307,11 @@ const {
       formatter: (p: any) => `${days.value[p[0].dataIndex]}<br>心情：${labels[p[0].dataIndex] || '未记录'}`
     }
   }
-}, [days])
+}, [days, computed(() => days.value.map((d) => store.summaries[d]?.mood))])
 
 // ---- 周报 ----
 const report = computed(() => {
-  const weekDays = Array.from({ length: 7 }, (_, i) => businessDate(Date.now() - (6 - i) * 86400_000))
+  const weekDays = days.value
   const min = weekDays.reduce((s, d) => s + (store.minutesByDate[d] || 0), 0)
   const problems = store.problemSessions.filter((p) => weekDays.includes(p.date))
   const pTotal = problems.reduce((s, p) => s + p.total, 0)
@@ -337,20 +324,25 @@ const report = computed(() => {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
-    <div class="flex items-center justify-between">
-      <h1 class="page-title">数据统计中心</h1>
+  <div class="study-page space-y-4">
+    <div class="study-page-heading">
+      <div>
+        <h1 class="page-title">学习统计</h1>
+        <p class="page-description">回看投入的时间、做题情况与专注记录，调整下一步计划。</p>
+      </div>
       <div class="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
         <button
           class="btn !py-1 !text-xs"
-          :class="range === 7 ? 'bg-white dark:bg-slate-700 shadow-sm' : ''"
+          :class="range === 7 ? 'bg-action-soft text-action' : ''"
+          :aria-pressed="range === 7"
           @click="range = 7"
         >
           近7天
         </button>
         <button
           class="btn !py-1 !text-xs"
-          :class="range === 30 ? 'bg-white dark:bg-slate-700 shadow-sm' : ''"
+          :class="range === 30 ? 'bg-action-soft text-action' : ''"
+          :aria-pressed="range === 30"
           @click="range = 30"
         >
           近30天
@@ -358,81 +350,110 @@ const report = computed(() => {
       </div>
     </div>
 
-    <!-- 周报卡片：口径为滚动近 7 天（非自然周），标题与文案按实际口径标注（P2-01） -->
-    <div class="card bg-gradient-to-r from-primary-500 to-indigo-600 !text-white border-0">
-      <div class="text-sm font-semibold mb-2">近 7 天学习报告</div>
+    <!-- 汇总和图表使用同一段滚动日期范围。 -->
+    <div class="card">
+      <div class="text-sm font-semibold mb-2">近 {{ range }} 天学习回看</div>
       <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
         <div>
-          <div class="text-lg font-black">{{ formatMinutes(report.min) }}</div>
-          <div class="text-[10px] opacity-80">总时长</div>
+          <div class="text-lg font-bold">{{ formatMinutes(report.min) }}</div>
+          <div class="text-xs text-muted">总时长</div>
         </div>
         <div>
-          <div class="text-lg font-black">{{ report.studyDays }}/7</div>
-          <div class="text-[10px] opacity-80">学习天数</div>
+          <div class="text-lg font-bold">{{ report.studyDays }}/{{ range }}</div>
+          <div class="text-xs text-muted">学习天数</div>
         </div>
         <div>
-          <div class="text-lg font-black">{{ report.pTotal }}</div>
-          <div class="text-[10px] opacity-80">刷题</div>
+          <div class="text-lg font-bold">{{ report.pTotal }}</div>
+          <div class="text-xs text-muted">刷题</div>
         </div>
         <div>
-          <div class="text-lg font-black">{{ report.acc === null ? '—' : report.acc + '%' }}</div>
-          <div class="text-[10px] opacity-80">正确率</div>
+          <div class="text-lg font-bold">{{ report.acc === null ? '—' : report.acc + '%' }}</div>
+          <div class="text-xs text-muted">正确率</div>
         </div>
         <div>
-          <div class="text-lg font-black">{{ report.pomo }}</div>
-          <div class="text-[10px] opacity-80">番茄钟</div>
+          <div class="text-lg font-bold">{{ report.pomo }}</div>
+          <div class="text-xs text-muted">番茄钟</div>
         </div>
         <div>
-          <div class="text-lg font-black">+{{ report.points }}</div>
-          <div class="text-[10px] opacity-80">积分</div>
+          <div class="text-lg font-bold">{{ report.points > 0 ? '+' : '' }}{{ report.points }}</div>
+          <div class="text-xs text-muted">积分</div>
         </div>
       </div>
-      <p class="text-xs opacity-80 mt-2">截图即可保存近 7 天报告</p>
+      <p class="study-note mt-3">
+        {{ days[0] }} 至 {{ store.todayKey }} · 正确率按答对题数 ÷ 总题数计算，未做题显示 —。
+      </p>
     </div>
 
     <div class="card">
-      <div class="section-title">⏱ 学习时长（近{{ range }}天）</div>
+      <div class="section-title">每天学了多久 · 近 {{ range }} 天</div>
       <ChartFallback v-if="timeStatus === 'error'" class="h-60" @retry="retryTime" />
       <div v-else ref="timeEl" class="h-60"></div>
-      <p class="text-[10px] text-slate-400 mt-2">悬浮查看当日各科目总学习时长，点击柱子查看科目细分耗时详情</p>
+      <p class="text-[10px] text-slate-400 mt-2">点击柱子查看科目明细，也可用下方日期入口查看。</p>
     </div>
 
     <div class="grid md:grid-cols-2 gap-4">
       <div class="card">
-        <div class="section-title">科目时长占比</div>
+        <div class="section-title">时间分给了哪些科目</div>
         <ChartFallback v-if="pieStatus === 'error'" class="h-56" @retry="retryPie" />
         <div v-else-if="subjectMinutes.length" ref="pieEl" class="h-56"></div>
-        <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
+        <EmptyState v-else title="这段时间还没有学习记录" description="在科目页记录一次学习，再回来查看时间分配。" />
       </div>
       <div class="card">
-        <div class="section-title">题型分布（累计 {{ store.totalProblems }} 题）</div>
+        <div class="section-title">做过哪些题型 · 近 {{ range }} 天</div>
         <ChartFallback v-if="typeStatus === 'error'" class="h-56" @retry="retryType" />
         <div v-else-if="typeStats.length" ref="typeEl" class="h-56"></div>
-        <div v-else class="text-xs text-slate-400 text-center py-10">暂无数据</div>
+        <EmptyState v-else title="这段时间还没有题型记录" description="记录刷题时填写题型数量，就能看到这里的分布。" />
       </div>
     </div>
 
     <div class="card">
-      <div class="section-title">各科目正确率趋势</div>
+      <div class="section-title">正确率有变化吗</div>
       <ChartFallback v-if="accStatus === 'error'" class="h-56" @retry="retryAcc" />
       <div v-else ref="accEl" class="h-56"></div>
+      <p class="study-note">只连接连续有记录的日期。空缺表示未记录，不是答错。</p>
     </div>
 
     <div class="card">
-      <div class="section-title">专注力分析</div>
+      <div class="section-title">番茄钟次数与用时</div>
       <ChartFallback v-if="pomoStatus === 'error'" class="h-56" @retry="retryPomo" />
       <div v-else ref="pomoEl" class="h-56"></div>
     </div>
 
     <div class="card">
-      <div class="section-title">情绪曲线</div>
+      <div class="section-title">这段时间的心情</div>
       <ChartFallback v-if="moodStatus === 'error'" class="h-48" @retry="retryMood" />
       <div v-else ref="moodEl" class="h-48"></div>
+      <p class="study-note">按你填写的心情展示，不用于评价学习能力。</p>
     </div>
+
+    <section class="card" aria-labelledby="statistics-dates">
+      <div class="study-section-heading flex-wrap">
+        <h2 id="statistics-dates" class="section-title !mb-0">按日期查记录</h2>
+        <label class="flex items-center gap-2 text-xs text-muted"
+          >其他日期<input
+            type="date"
+            class="input !w-auto"
+            aria-label="查看任意日期的学习记录"
+            :max="store.todayKey"
+            @change="barDate = ($event.target as HTMLInputElement).value"
+        /></label>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <button
+          v-for="date in days.slice().reverse()"
+          :key="date"
+          class="btn-ghost justify-between text-xs"
+          @click="barDate = date"
+        >
+          <span>{{ date.slice(5) }}</span
+          ><span>{{ formatMinutes(store.minutesByDate[date] || 0) }}</span>
+        </button>
+      </div>
+    </section>
 
     <!-- 柱状图点击：当日各科目学习细分耗时详情卡片 -->
     <Modal :title="`${barDate} 学习时长细分详情`" :show="!!barDate" @close="barDate = ''">
-      <div v-if="!barDetail.length" class="text-xs text-slate-400 text-center py-4">当日暂无学习记录</div>
+      <div v-if="!barDetail.length" class="text-xs text-slate-400 text-center py-4">这天还没有学习记录</div>
       <div v-else class="space-y-3">
         <div
           v-for="item in barDetail"

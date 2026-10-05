@@ -9,6 +9,7 @@ import { uid, today } from '../../utils/date'
 import { stageDelete } from '../../services/syncOutbox'
 import { touchRecord, touchSettings } from './staging'
 import type { Habit } from '../../types'
+import { habitValueError } from '../../utils/studyValidation'
 
 /**
  * 习惯当日是否达标：有 target 的 count/minutes 型习惯需记录值 ≥ 目标；勾选/时刻型及未设目标的习惯只要记录即算打卡。
@@ -50,6 +51,8 @@ export const habitsActions: HabitsActionsShape = {
   recordHabit(this: AppStoreThis, id: string, date: string, value: number | string) {
     const h = this.habits.find((x) => x.id === id)
     if (!h) return
+    const error = habitValueError(h.type, value)
+    if (error) throw new Error(error)
     const hadMet = habitDone(h, h.records[date])
     h.records[date] = value
     if (!h.bad && date === today()) {
@@ -84,7 +87,8 @@ export const habitsActions: HabitsActionsShape = {
   updateHabitTarget(this: AppStoreThis, id: string, target: number) {
     const h = this.habits.find((x) => x.id === id)
     if (!h) return
-    const t = Math.max(1, Math.round(target) || 1)
+    if (!Number.isSafeInteger(target) || target <= 0) throw new Error('每日目标需为大于 0 的整数')
+    const t = target
     h.target = t
     touchRecord('habits', h)
     if (id === VOCAB_HABIT_ID) {

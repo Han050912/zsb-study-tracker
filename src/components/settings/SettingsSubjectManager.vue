@@ -74,7 +74,7 @@ function restoreDefaults() {
         <span class="inline-flex items-center gap-1">
           <SubjectIcon v-if="sub.icon" :icon="sub.icon" /><span>{{ sub.name }}</span>
         </span>
-        <span v-if="sub.builtin" class="text-[10px] text-slate-400">（内置）</span>
+        <span v-if="sub.builtin" class="text-xs text-slate-400">（内置）</span>
         <span class="ml-auto flex items-center gap-1 text-xs text-slate-400">
           权重
           <input
@@ -88,9 +88,9 @@ function restoreDefaults() {
           />
           %
         </span>
-        <button class="text-xs text-red-400 shrink-0" @click="removeSubject(sub.id, sub.name)">删除</button>
+        <button class="text-xs text-correction shrink-0" @click="removeSubject(sub.id, sub.name)">删除</button>
       </div>
-      <p class="text-[10px] text-slate-400">
+      <p class="text-xs text-slate-400">
         可自由增删科目、调整权重；删除科目后其独立页面自动隐藏，新增科目自动生成独立页面。权重为自定义考核占比配置（各科目之和不要求等于
         100%），统计图表仍按实际学习时长计算。
       </p>
@@ -125,7 +125,7 @@ function restoreDefaults() {
             class="flex items-center justify-center rounded-lg border py-1.5 transition-colors"
             :class="
               subForm.icon === name
-                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400'
+                ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30 text-action dark:text-action'
                 : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
             "
             :title="name"
@@ -135,7 +135,7 @@ function restoreDefaults() {
             <component :is="comp" class="w-4 h-4" />
           </button>
         </div>
-        <p class="text-[10px] text-slate-400 mt-1">不选择则仅显示科目名称。</p>
+        <p class="text-xs text-slate-400 mt-1">不选择则仅显示科目名称。</p>
       </div>
       <div class="grid grid-cols-2 gap-2">
         <div>

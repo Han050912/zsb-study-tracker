@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { ArrowLeft } from '@lucide/vue'
+import IconAction from '../shared/components/IconAction.vue'
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
+import AsyncState from '../shared/components/AsyncState.vue'
 /** 搭子分享全屏预览：通知中心与搭子分享页统一入口；完整展示错题/笔记（含图片）+ 批注交流 + 添加到我的笔记 */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
@@ -31,9 +36,14 @@ const detail = ref<PartnerShareDetail | null>(null)
 const loadError = ref('')
 const pdfBytes = ref<Uint8Array | null>(null)
 const pdfError = ref('')
+const pdfLoading = ref(false)
 
 /** 分享错题配图（代理读取的 blob URL；非错题分享或加载失败时为空） */
 const errorImageUrl = ref('')
+const imageError = ref('')
+const imageLoading = ref(false)
+let disposed = false,
+  loadTicket = 0
 
 const commentText = ref('')
 const sendingComment = ref(false)
@@ -63,6 +73,7 @@ const errorView = computed(() => {
 })
 
 const isOwner = computed(() => !!detail.value && detail.value.ownerId === sessionUser.value?.id)
+const canCopy = computed(() => !!detail.value && detail.value.partnerId === sessionUser.value?.id)
 
 /**
  * 笔记正文 HTML（两阶段渲染）：同步渲染立即可见（无公式即最终态）；
@@ -73,30 +84,32 @@ const noteHtml = useMarkdownHtml(() => noteView.value?.content ?? '')
 onMounted(load)
 
 onUnmounted(() => {
+  disposed = true
+  loadTicket++
   if (errorImageUrl.value) URL.revokeObjectURL(errorImageUrl.value)
 })
 
 async function load() {
+  const ticket = ++loadTicket
   loading.value = true
   loadError.value = ''
+  pdfBytes.value = null
+  pdfLoading.value = false
+  pdfError.value = ''
+  imageError.value = ''
+  imageLoading.value = false
+  if (errorImageUrl.value) URL.revokeObjectURL(errorImageUrl.value)
+  errorImageUrl.value = ''
+  detail.value = null
   const id = String(route.params.id)
   try {
-    detail.value = await partnersApi.partnerShare(id)
-    if (errorView.value?.image) {
-      try {
-        errorImageUrl.value = URL.createObjectURL(await partnersApi.partnerShareImage(id))
-      } catch {
-        errorImageUrl.value = ''
-      }
-    }
-    if (noteView.value?.type === 'pdf') {
-      try {
-        pdfBytes.value = await partnersApi.partnerSharePdf(id)
-      } catch (e) {
-        pdfError.value = getErrorMessage(e, 'PDF 加载失败')
-      }
-    }
+    const result = await partnersApi.partnerShare(id)
+    if (disposed || ticket !== loadTicket) return
+    detail.value = result
+    if (errorView.value?.image) void loadImage()
+    if (noteView.value?.type === 'pdf') void loadPdf()
   } catch (e) {
+    if (disposed || ticket !== loadTicket) return
     // 分享已删除：兜底提示并回搭子列表
     if ((e as { status?: number } | null)?.status === 404) {
       toast('内容已不存在')
@@ -106,7 +119,41 @@ async function load() {
     loadError.value = getErrorMessage(e, '加载失败')
     toast(loadError.value)
   } finally {
-    loading.value = false
+    if (ticket === loadTicket && !disposed) loading.value = false
+  }
+}
+
+async function loadImage() {
+  if (!detail.value || imageLoading.value) return
+  const id = detail.value.id,
+    ticket = loadTicket
+  imageLoading.value = true
+  imageError.value = ''
+  try {
+    const blob = await partnersApi.partnerShareImage(id)
+    if (disposed || ticket !== loadTicket) return
+    if (errorImageUrl.value) URL.revokeObjectURL(errorImageUrl.value)
+    errorImageUrl.value = URL.createObjectURL(blob)
+  } catch (e) {
+    if (!disposed && ticket === loadTicket) imageError.value = getErrorMessage(e, '错题图片加载失败，请重试')
+  } finally {
+    if (ticket === loadTicket) imageLoading.value = false
+  }
+}
+
+async function loadPdf() {
+  if (!detail.value || pdfLoading.value) return
+  const id = detail.value.id,
+    ticket = loadTicket
+  pdfLoading.value = true
+  pdfError.value = ''
+  try {
+    const bytes = await partnersApi.partnerSharePdf(id)
+    if (!disposed && ticket === loadTicket) pdfBytes.value = bytes
+  } catch (e) {
+    if (!disposed && ticket === loadTicket) pdfError.value = getErrorMessage(e, 'PDF 加载失败，请重试')
+  } finally {
+    if (ticket === loadTicket) pdfLoading.value = false
   }
 }
 
@@ -130,7 +177,7 @@ async function addComment() {
   sendingComment.value = true
   try {
     await postsApi.addShareComment(d.id, content)
-    commentText.value = ''
+    if (commentText.value.trim() === content) commentText.value = ''
     await refreshDetail()
   } catch (e) {
     toast(getErrorMessage(e, '发送失败'))
@@ -185,29 +232,29 @@ async function confirmCopy() {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto px-4 py-6 space-y-5">
-    <button class="btn-ghost !text-xs" @click="goBack">← 返回</button>
-    <div class="section-title !mb-0">分享预览</div>
+  <div class="collaboration-page study-page reading-page space-y-5">
+    <span class="!text-xs arrow-action" @click="goBack"
+      ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+    >
+    <h1 class="page-title">分享预览</h1>
 
-    <div v-if="loading" class="text-center text-slate-400 dark:text-slate-500 text-xs py-10">加载中…</div>
+    <LoadingState v-if="loading" />
 
-    <div v-else-if="loadError" class="card text-center text-xs text-slate-400 dark:text-slate-500 py-10">
-      {{ loadError }}
-    </div>
+    <AsyncState v-else-if="loadError" :error="loadError" @retry="load" />
 
     <div v-else-if="detail" class="card space-y-3">
       <div class="flex items-center gap-2">
         <span
-          class="text-[10px] px-1.5 py-0.5 rounded-full"
+          class="text-xs px-1.5 py-0.5 rounded-full"
           :class="
             detail.itemType === 'error'
-              ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-500'
-              : 'bg-sky-50 dark:bg-sky-900/30 text-sky-500'
+              ? 'bg-correction-soft dark:bg-correction-soft text-correction'
+              : 'bg-action-soft dark:bg-action-soft text-action'
           "
         >
           {{ detail.itemType === 'error' ? '错题' : '笔记' }}
         </span>
-        <div class="text-[10px] text-slate-400 truncate">{{ detail.ownerName }} 分享给 {{ detail.partnerName }}</div>
+        <div class="text-xs text-slate-400 truncate">{{ detail.ownerName }} 分享给 {{ detail.partnerName }}</div>
         <button v-if="isOwner" class="ml-auto btn-danger !text-xs shrink-0" @click="removeShare">删除分享</button>
       </div>
 
@@ -223,10 +270,11 @@ async function confirmCopy() {
           class="mt-2 max-w-full h-auto rounded-lg border border-slate-100 dark:border-slate-700"
           alt="错题图片"
         />
+        <AsyncState v-if="imageLoading || imageError" :loading="imageLoading" :error="imageError" @retry="loadImage" />
         <div v-if="errorView.answer" class="text-xs text-slate-500 dark:text-slate-400 whitespace-pre-wrap">
           答案：{{ errorView.answer }}
         </div>
-        <div class="text-[10px] text-slate-400">错 {{ errorView.wrongCount }} 次</div>
+        <div class="text-xs text-slate-400">错 {{ errorView.wrongCount }} 次</div>
       </div>
 
       <!-- Markdown 笔记 -->
@@ -237,12 +285,16 @@ async function confirmCopy() {
 
       <!-- PDF 笔记 -->
       <div v-else-if="detail.itemType === 'note' && noteView?.type === 'pdf'" class="h-[60vh]">
-        <div v-if="pdfError" class="flex items-center justify-center text-xs text-red-400 h-full">{{ pdfError }}</div>
+        <AsyncState v-if="pdfLoading || pdfError" :loading="pdfLoading" :error="pdfError" @retry="loadPdf" />
         <PdfViewer v-else :bytes="pdfBytes" />
       </div>
 
       <!-- 添加到我的笔记（仅笔记） -->
-      <button v-if="detail.itemType === 'note'" class="btn-primary !text-xs self-start" @click="openCopyDialog">
+      <button
+        v-if="detail.itemType === 'note' && canCopy"
+        class="btn-primary !text-xs self-start"
+        @click="openCopyDialog"
+      >
         添加到我的笔记
       </button>
 
@@ -251,15 +303,13 @@ async function confirmCopy() {
         <div class="text-xs font-semibold text-slate-500 dark:text-slate-300">
           批注交流（{{ detail.comments.length }}）
         </div>
-        <div v-if="!detail.comments.length" class="text-xs text-slate-400 text-center py-4">
-          还没有批注，来聊聊解题思路吧
-        </div>
+        <EmptyState v-if="!detail.comments.length" title="还没有批注，来聊聊解题思路吧" />
         <div v-for="c in detail.comments" :key="c.id" class="flex items-start gap-2">
           <UserAvatar :name="c.userName" size="sm" />
           <div class="min-w-0 flex-1 rounded-lg bg-slate-50 dark:bg-slate-700/50 px-2 py-1.5">
             <div class="flex items-center gap-2">
               <span class="text-xs font-semibold">{{ c.userName }}</span>
-              <span class="text-[10px] text-slate-400">{{ fromNow(c.createdAt) }}</span>
+              <span class="text-xs text-slate-400">{{ fromNow(c.createdAt) }}</span>
             </div>
             <div class="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap">{{ c.content }}</div>
           </div>
@@ -271,6 +321,7 @@ async function confirmCopy() {
         <input
           v-model="commentText"
           class="input flex-1 !text-xs"
+          aria-label="写下你的批注或解题思路…"
           placeholder="写下你的批注或解题思路…"
           maxlength="500"
           @keydown.enter="addComment"

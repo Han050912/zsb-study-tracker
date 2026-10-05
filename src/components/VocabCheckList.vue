@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 词汇打卡列表组件
- * - 卡片分行布局，支持滚动、吸顶表头、毛玻璃效果
+ * - 单词分行展示，小屏幕工具栏换行
  * - 双模式：英译汉（看单词写释义）/ 汉译英（看释义拼单词），表头一键切换
  * - 点击主词条切换答案显隐，输入框回车/失焦触发校验
  * - 校验结果实时反馈（正确绿边+✓ / 错误红边+展示标准答案）
@@ -11,6 +11,7 @@ import { computed, ref, watch } from 'vue'
 import { today } from '../utils/date'
 import type { MaimemoWordDetail } from '../services/maimemo'
 import PostComposer from './community/PostComposer.vue'
+import { sessionUser } from '../services/auth'
 
 // ---- Props & Emits ----
 const props = defineProps<{
@@ -45,14 +46,24 @@ interface ModeStates {
 }
 
 const emptyAnswer = (): AnswerState => ({ answer: '', validation: null, show: false })
+function validAnswer(value: unknown): value is AnswerState {
+  if (!value || typeof value !== 'object') return false
+  const answer = value as Partial<AnswerState>
+  return (
+    typeof answer.answer === 'string' &&
+    typeof answer.show === 'boolean' &&
+    (answer.validation === null || typeof answer.validation === 'boolean')
+  )
+}
 
 // ---- 本地存储（按日期隔离，跨天由 English 页统一清理） ----
 // 使用本地日期（与 English 页缓存键口径一致）；toISOString 为 UTC 日期，凌晨时段会错位一天。
 // key 每次读写动态取值：页面驻留跨午夜后，作答写入当天 key 而不是固化在组件创建日的 key
+const cacheOwner = sessionUser.value?.id ?? 'guest'
 function storageKey(): string {
-  return `vocab-checkin:${today()}`
+  return `vocab-checkin:${cacheOwner}:${today()}`
 }
-const MODE_KEY = 'vocab-checkin-mode'
+const MODE_KEY = `vocab-checkin-mode:${cacheOwner}`
 
 function loadState(): Record<string, ModeStates> {
   try {
@@ -64,13 +75,21 @@ function loadState(): Record<string, ModeStates> {
       if (!v || typeof v !== 'object') continue
       // 新格式：{ zh: {...}, en: {...} }
       if ('zh' in (v as Record<string, unknown>)) {
-        out[k] = v as ModeStates
+        const states = v as Partial<ModeStates>
+        out[k] = {
+          zh: validAnswer(states.zh) ? states.zh : emptyAnswer(),
+          en: validAnswer(states.en) ? states.en : emptyAnswer()
+        }
         continue
       }
       // 旧格式迁移：{ userAnswer, validation, showMeaning } → 英译汉模式
       const old = v as { userAnswer?: string; validation?: ValidationResult; showMeaning?: boolean }
       out[k] = {
-        zh: { answer: old.userAnswer ?? '', validation: old.validation ?? null, show: !!old.showMeaning },
+        zh: {
+          answer: typeof old.userAnswer === 'string' ? old.userAnswer : '',
+          validation: typeof old.validation === 'boolean' ? old.validation : null,
+          show: !!old.showMeaning
+        },
         en: emptyAnswer()
       }
     }
@@ -123,7 +142,7 @@ function ws(vocId: string): AnswerState {
   return getWord(vocId)[mode.value]
 }
 
-// 单词列表变化时：为所有单词预初始化状态并持久化（如刷新后重新拉取）。
+// 单词列表变化时：为所有单词预初始化状态并持久化（如刷新后同步单词）。
 // 预初始化保证 computed（validatedCount 等）中的 getWord 只做纯读取，不在计算期内修改状态
 watch(
   () => props.words,
@@ -239,95 +258,48 @@ function onInput(vocId: string) {
 
 /** 输入框样式类 */
 function inputClass(w: AnswerState): string {
-  const base =
-    'w-full rounded-xl px-3 py-2 text-sm outline-none transition-all duration-300 border bg-white/80 dark:bg-slate-700/80 dark:text-slate-100'
-  if (w.validation === true)
-    return `${base} border-emerald-400 dark:border-emerald-500 ring-2 ring-emerald-100 dark:ring-emerald-900/30`
-  if (w.validation === false)
-    return `${base} border-red-400 dark:border-red-500 ring-2 ring-red-100 dark:ring-red-900/30`
-  return `${base} border-slate-200 dark:border-slate-600 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:focus:ring-indigo-900/30`
+  if (w.validation === true) return 'input border-action'
+  if (w.validation === false) return 'input border-correction'
+  return 'input'
 }
 </script>
 
 <template>
-  <div class="relative rounded-2xl overflow-hidden">
-    <!-- 渐变背景 -->
-    <div
-      class="absolute inset-0 bg-gradient-to-br from-indigo-50/80 via-white to-violet-50/60 dark:from-slate-800 dark:via-slate-800 dark:to-slate-900 pointer-events-none"
-    />
-
-    <!-- 吸顶表头（毛玻璃）：标题 + 模式切换 + 校验统计 + 进度 + 拉取/刷新入口 -->
-    <div
-      class="sticky top-0 z-10 backdrop-blur-xl bg-white/70 dark:bg-slate-800/70 border-b border-white/30 dark:border-slate-700/50 px-4 py-3"
-    >
+  <div class="rounded-lg border border-line bg-surface overflow-hidden">
+    <header class="border-b border-line p-4 space-y-3">
       <div class="flex items-center justify-between gap-2">
-        <div class="flex items-center gap-3 min-w-0">
-          <h3 class="text-sm font-bold text-slate-700 dark:text-slate-200 shrink-0">今日词汇打卡</h3>
-          <!-- 模式切换：英译汉 / 汉译英 -->
-          <div class="flex shrink-0 rounded-lg bg-slate-100 dark:bg-slate-700 p-0.5 text-[11px] font-medium">
-            <button
-              class="px-2.5 py-1 rounded-md transition-all duration-300"
-              :class="
-                mode === 'zh'
-                  ? 'bg-white dark:bg-slate-600 text-indigo-600 dark:text-indigo-300 shadow-sm'
-                  : 'text-slate-400 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-              "
-              @click="setMode('zh')"
-            >
-              英译汉
-            </button>
-            <button
-              class="px-2.5 py-1 rounded-md transition-all duration-300"
-              :class="
-                mode === 'en'
-                  ? 'bg-white dark:bg-slate-600 text-indigo-600 dark:text-indigo-300 shadow-sm'
-                  : 'text-slate-400 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-              "
-              @click="setMode('en')"
-            >
-              汉译英
-            </button>
-          </div>
-          <span class="text-[10px] text-slate-400 dark:text-slate-500 truncate">
-            {{ validatedCount }}/{{ totalCount }} 已校验 · {{ correctCount }} 正确
-          </span>
-        </div>
-        <div class="flex items-center gap-2 shrink-0">
-          <!-- 进度条 -->
-          <div class="w-16 sm:w-20 h-1.5 rounded-full bg-slate-200 dark:bg-slate-600 overflow-hidden">
-            <div
-              class="h-full rounded-full bg-gradient-to-r from-indigo-400 to-violet-400 transition-all duration-500"
-              :style="{ width: `${progressPercent}%` }"
-            />
-          </div>
-          <span class="text-[10px] font-semibold text-indigo-500 dark:text-indigo-400">{{ progressPercent }}%</span>
-          <!-- 分享到社区广场 -->
-          <button
-            v-if="totalCount"
-            class="text-[11px] px-2.5 py-1 rounded-lg bg-white/80 dark:bg-slate-700 text-indigo-500 dark:text-indigo-300 border border-indigo-200 dark:border-slate-600 hover:bg-indigo-50 dark:hover:bg-slate-600 active:scale-95 transition-all duration-300"
-            @click="showShare = true"
-          >
-            分享
-          </button>
-          <!-- 拉取/刷新 -->
-          <button
-            class="text-[11px] px-2.5 py-1 rounded-lg bg-indigo-500 text-white hover:bg-indigo-600 active:scale-95 transition-all duration-300 disabled:opacity-50"
-            :disabled="loading"
-            @click="emit('refresh')"
-          >
-            {{ loading ? '拉取中…' : words.length ? '刷新' : '拉取单词' }}
-          </button>
-        </div>
+        <h3 class="text-sm font-bold">今日词汇自测</h3>
+        <span class="study-note">{{ validatedCount }}/{{ totalCount }} 已校验 · {{ correctCount }} 正确</span>
       </div>
-    </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="flex gap-1" aria-label="词汇自测模式">
+          <button
+            class="btn text-xs"
+            :class="mode === 'zh' ? 'bg-action-soft text-action' : ''"
+            :aria-pressed="mode === 'zh'"
+            @click="setMode('zh')"
+          >
+            英译汉
+          </button>
+          <button
+            class="btn text-xs"
+            :class="mode === 'en' ? 'bg-action-soft text-action' : ''"
+            :aria-pressed="mode === 'en'"
+            @click="setMode('en')"
+          >
+            汉译英
+          </button>
+        </div>
+        <button v-if="totalCount" class="btn-ghost text-xs ml-auto" @click="showShare = true">分享自测</button>
+        <button class="btn-primary text-xs" :disabled="loading" @click="emit('refresh')">
+          {{ loading ? '同步中…' : '同步单词' }}
+        </button>
+      </div>
+      <p class="study-note">完成 {{ progressPercent }}% · 输入答案后按回车校验，点词条可查看答案。</p>
+    </header>
 
     <!-- 滚动区域（顶部/底部渐变遮罩） -->
     <div class="relative">
-      <!-- 顶部遮罩 -->
-      <div
-        class="absolute top-0 left-0 right-0 h-6 bg-gradient-to-b from-white/90 dark:from-slate-800/90 to-transparent z-[5] pointer-events-none"
-      />
-
       <!-- 列表容器 -->
       <div
         class="vocab-scroll max-h-[420px] overflow-y-auto overscroll-contain px-3 py-3 space-y-2.5"
@@ -336,45 +308,37 @@ function inputClass(w: AnswerState): string {
         <!-- 空状态 -->
         <div v-if="!words.length && !loading" class="text-center py-12">
           <div class="text-3xl mb-3">📝</div>
-          <p class="text-sm text-slate-400 dark:text-slate-500">暂无今日单词数据</p>
+          <p class="text-sm text-slate-400 dark:text-slate-500">还没有同步今天的单词</p>
           <p class="text-[11px] text-slate-300 dark:text-slate-600 mt-1">请先在墨墨 App 中完成今日学习并开启自动同步</p>
-          <button
-            class="mt-4 text-xs px-4 py-2 rounded-xl bg-indigo-500 text-white hover:bg-indigo-600 transition-colors duration-300"
-            @click="emit('refresh')"
-          >
-            重新拉取
-          </button>
+          <button class="btn-primary mt-4 text-xs" @click="emit('refresh')">同步单词</button>
         </div>
 
         <!-- 加载骨架（仅在无已加载数据时显示；有数据时刷新只置灰保留原列表） -->
         <div v-else-if="loading && !words.length" class="space-y-2.5">
-          <div v-for="i in 5" :key="i" class="h-[72px] rounded-2xl bg-white/60 dark:bg-slate-700/40 animate-pulse" />
+          <div v-for="i in 5" :key="i" class="h-[72px] rounded-lg bg-white/60 dark:bg-slate-700/40 animate-pulse" />
         </div>
 
         <!-- 单词卡片列表 -->
         <div
           v-for="word in words"
           :key="word.vocId"
-          class="group relative rounded-2xl bg-white/80 dark:bg-slate-700/60 border border-slate-100/80 dark:border-slate-600/50 p-3.5 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-indigo-100/50 dark:hover:shadow-slate-900/50"
+          class="group relative rounded-lg bg-white/80 dark:bg-slate-700/60 border border-slate-100/80 dark:border-slate-600/50 p-3.5 transition-colors duration-150 hover:border-action dark:hover:border-slate-500"
         >
-          <div class="flex items-start gap-3">
+          <div class="flex flex-col sm:flex-row items-start gap-3">
             <!-- 左侧：主词条 + 标签 -->
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
                 <!-- 主词条（点击切换答案显隐）：英译汉显示单词，汉译英显示释义 -->
                 <button
-                  class="text-base font-bold text-slate-800 dark:text-slate-100 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors duration-300 cursor-pointer select-none text-left"
+                  class="text-base font-bold text-slate-800 dark:text-slate-100 hover:text-action hover:text-action transition-colors duration-300 cursor-pointer select-none text-left"
+                  :aria-expanded="ws(word.vocId).show"
                   @click="toggleAnswer(word.vocId)"
                 >
-                  {{ mode === 'zh' ? word.spelling : word.meaning || '暂无释义' }}
+                  {{ mode === 'zh' ? word.spelling : word.meaning || '未提供释义' }}
                 </button>
 
                 <!-- 新学 / 复习标签 -->
-                <span
-                  v-if="word.isNew"
-                  class="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-400 text-white shadow-sm shadow-amber-200/50"
-                  >NEW</span
-                >
+                <span v-if="word.isNew" class="text-[10px] px-1.5 py-0.5 rounded bg-action-soft text-action">新学</span>
                 <span
                   v-else
                   class="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-600 text-slate-400 dark:text-slate-400"
@@ -382,27 +346,26 @@ function inputClass(w: AnswerState): string {
                 >
 
                 <!-- 完成状态小标记 -->
-                <span
-                  v-if="word.isFinished"
-                  class="text-[9px] text-emerald-500 dark:text-emerald-400"
-                  title="墨墨已完成"
-                  >✓</span
-                >
+                <span v-if="word.isFinished" class="text-[9px] text-action" title="墨墨已完成">✓</span>
               </div>
 
               <!-- 标准答案（点击主词条后展开，淡入淡出） -->
               <Transition name="meaning">
                 <p v-if="ws(word.vocId).show" class="mt-1.5 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                  {{ mode === 'zh' ? word.meaning || '暂无释义' : word.spelling || '暂无' }}
+                  {{ mode === 'zh' ? word.meaning || '未提供释义' : word.spelling || '未提供' }}
                 </p>
               </Transition>
             </div>
 
             <!-- 右侧：输入区 -->
-            <div class="w-[45%] sm:w-[40%] shrink-0">
+            <div class="w-full sm:w-[40%] shrink-0">
               <div class="relative">
                 <input
                   v-model="ws(word.vocId).answer"
+                  :disabled="loading"
+                  :aria-label="
+                    mode === 'zh' ? `${word.spelling} 的中文释义` : `${word.meaning || '当前词条'} 的英文拼写`
+                  "
                   :class="inputClass(ws(word.vocId))"
                   :placeholder="mode === 'zh' ? '输入释义…' : '输入英文单词…'"
                   @input="onInput(word.vocId)"
@@ -413,7 +376,7 @@ function inputClass(w: AnswerState): string {
                 <Transition name="pop">
                   <span
                     v-if="ws(word.vocId).validation === true"
-                    class="absolute right-2.5 top-1/2 -translate-y-1/2 text-emerald-500 text-sm pointer-events-none"
+                    class="absolute right-2.5 top-1/2 -translate-y-1/2 text-action text-sm pointer-events-none"
                     >✓</span
                   >
                 </Transition>
@@ -423,13 +386,13 @@ function inputClass(w: AnswerState): string {
               <Transition name="meaning">
                 <p
                   v-if="ws(word.vocId).validation === false"
-                  class="mt-1.5 text-[11px] text-red-400 dark:text-red-400 leading-relaxed"
+                  class="mt-1.5 text-[11px] text-correction leading-relaxed"
                 >
                   <template v-if="mode === 'zh'">
-                    <span class="text-slate-400 dark:text-slate-500">标准释义：</span>{{ word.meaning || '暂无' }}
+                    <span class="text-slate-400 dark:text-slate-500">标准释义：</span>{{ word.meaning || '未提供' }}
                   </template>
                   <template v-else>
-                    <span class="text-slate-400 dark:text-slate-500">正确拼写：</span>{{ word.spelling || '暂无' }}
+                    <span class="text-slate-400 dark:text-slate-500">正确拼写：</span>{{ word.spelling || '未提供' }}
                   </template>
                 </p>
               </Transition>
@@ -437,11 +400,6 @@ function inputClass(w: AnswerState): string {
           </div>
         </div>
       </div>
-
-      <!-- 底部遮罩 -->
-      <div
-        class="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-white/90 dark:from-slate-800/90 to-transparent z-[5] pointer-events-none"
-      />
     </div>
 
     <!-- 背单词成果分享 -->
@@ -464,25 +422,29 @@ function inputClass(w: AnswerState): string {
   background: transparent;
 }
 .vocab-scroll::-webkit-scrollbar-thumb {
-  background-color: #c7d2fe;
+  background-color: var(--line);
   border-radius: 9999px;
 }
 ::global(.dark) .vocab-scroll::-webkit-scrollbar-thumb {
-  background-color: #475569;
+  background-color: var(--line);
 }
 .vocab-scroll::-webkit-scrollbar-thumb:hover {
-  background-color: #a5b4fc;
+  background-color: var(--muted);
 }
 ::global(.dark) .vocab-scroll::-webkit-scrollbar-thumb:hover {
-  background-color: #64748b;
+  background-color: var(--muted);
 }
 
 /* 释义展开/收起过渡 */
 .meaning-enter-active {
-  transition: all 0.3s ease;
+  transition:
+    opacity var(--motion-base),
+    transform var(--motion-base);
 }
 .meaning-leave-active {
-  transition: all 0.2s ease;
+  transition:
+    opacity var(--motion-fast),
+    transform var(--motion-fast);
 }
 .meaning-enter-from,
 .meaning-leave-to {
@@ -492,7 +454,7 @@ function inputClass(w: AnswerState): string {
 
 /* 校验成功图标弹性缩放 */
 .pop-enter-active {
-  animation: pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: pop-in var(--motion-enter) var(--ease-out);
 }
 .pop-leave-active {
   transition: opacity 0.15s ease;
@@ -503,11 +465,11 @@ function inputClass(w: AnswerState): string {
 
 @keyframes pop-in {
   0% {
-    transform: translateY(-50%) scale(0.3);
+    transform: translateY(-50%) scale(0.85);
     opacity: 0;
   }
   60% {
-    transform: translateY(-50%) scale(1.15);
+    transform: translateY(-50%) scale(1.03);
   }
   100% {
     transform: translateY(-50%) scale(1);

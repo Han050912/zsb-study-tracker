@@ -4,7 +4,7 @@ import { hashPassword, verifyPassword, needsRehash, signToken, verifyTokenFull }
 import { first, all, run, batch, uid, randomCode, HttpError } from '../db'
 import { parseBody, registerSchema, loginSchema, passwordSchema, timingSafeEqual } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
-import { authCookieHeader, clearAuthCookieHeader, extractToken, purgeRevokedCache } from '../middleware/auth'
+import { authCookieHeader, clearAuthCookieHeader, extractToken } from '../middleware/auth'
 import { assertCleanAsync } from './sensitive'
 import type { Env } from '../index'
 
@@ -194,9 +194,6 @@ export function registerAuthRoutes() {
         )
       )
     ])
-    // 黑名单落库后清掉各 jti 的「未吊销」缓存（顺序不可颠倒，同 logout），下一请求即读到已吊销
-    await Promise.all(sessions.map((s) => purgeRevokedCache(s.jti)))
-
     // 为本次会话换发新 token：执行改密的设备无需重新登录，其余设备的会话已全部失效
     const token = await signToken(ctx.userId, ctx.env.JWT_SECRET, row.role || 'user')
     await recordSession(ctx.env, token, ctx.userId)
@@ -223,9 +220,6 @@ export function registerAuthRoutes() {
         )
         // 会话登记随登出移除：该 jti 已吊销，无需再被改密的整批吊销遍历到
         await run(ctx.env, 'DELETE FROM user_sessions WHERE jti = ?', payload.jti)
-        // 黑名单落库后删除该 jti 的「未吊销」缓存条目（顺序不可颠倒：先落库再清缓存，
-        // 否则并发请求可能在两步之间把「未吊销」重新写回缓存）；TTL 内不清理则已登出的 token 仍被放行
-        await purgeRevokedCache(payload.jti)
       }
     }
     return Response.json({ ok: true }, { headers: { 'Set-Cookie': clearAuthCookieHeader(ctx.request) } })

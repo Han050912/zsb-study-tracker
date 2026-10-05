@@ -3,78 +3,81 @@ import { useRoute } from 'vue-router'
 import { useAppStore } from '../stores/app'
 import { isLoggedIn, isAdmin } from '../services/auth'
 
-/** 导航：NAV/mobileNav 动态生成、激活判断、侧边栏折叠持久化 */
+export type NavigationGroup = 'today' | 'study' | 'together' | 'account'
+interface NavigationItem {
+  path: string
+  icon: string
+  label: string
+  subject: boolean
+  group: NavigationGroup
+}
+
+/** 导航分组只负责入口呈现；路由、权限与动态科目仍使用现有来源。 */
 export function useNavigation() {
   const store = useAppStore()
   const route = useRoute()
-
-  // 导航动态生成：科目项随科目列表实时增减（删除科目自动隐藏，新增科目自动出现）
-  // 侧边栏展示科目全名；移动端由 CSS truncate 截断
-  const nav = computed(() => {
-    // 访客态：社区 + 组队（公开小组列表可浏览；其余为个人学习功能，需登录）
-    if (!isLoggedIn.value) {
-      return [
-        { path: '/community', icon: '💬', label: '社区', subject: false },
-        { path: '/teams', icon: '👥', label: '组队协作', subject: false }
-      ]
-    }
-    const subjectItems = store.subjects.map((s) => ({
-      path: s.id === 'math' ? '/math' : s.id === 'english' ? '/english' : `/subject/${s.id}`,
-      icon: s.icon,
-      label: s.name,
-      subject: true
-    }))
+  const nav = computed<NavigationItem[]>(() => {
+    const together: NavigationItem[] = [
+      { path: '/community', icon: 'MessagesSquare', label: '升本讨论', subject: false, group: 'together' },
+      { path: '/teams', icon: 'Users', label: '搭子与小队', subject: false, group: 'together' }
+    ]
+    if (!isLoggedIn.value) return together
     return [
-      { path: '/', icon: '🏠', label: '首页', subject: false },
-      { path: '/community', icon: '💬', label: '社区', subject: false },
-      { path: '/teams', icon: '👥', label: '组队协作', subject: false },
-      ...subjectItems,
-      { path: '/pomodoro', icon: '🍅', label: '专注', subject: false },
-      { path: '/notes', icon: '📔', label: '笔记', subject: false },
-      { path: '/daily-summary', icon: '📝', label: '总结', subject: false },
-      { path: '/statistics', icon: '📊', label: '统计', subject: false },
-      { path: '/error-book', icon: '📕', label: '错题本', subject: false },
-      { path: '/habits', icon: '✅', label: '习惯', subject: false },
-      { path: '/rewards', icon: '🏆', label: '成就', subject: false },
-      { path: '/materials', icon: '📚', label: '资料', subject: false },
-      { path: '/settings', icon: '⚙️', label: '设置', subject: false },
-      // 管理员专属：审核中心（举报队列）
-      ...(isAdmin.value ? [{ path: '/admin', icon: '🛡️', label: '审核', subject: false }] : [])
+      { path: '/', icon: 'CalendarCheck', label: '今天', subject: false, group: 'today' },
+      ...store.subjects.map((s): NavigationItem => ({
+        path: s.id === 'math' ? '/math' : s.id === 'english' ? '/english' : `/subject/${s.id}`,
+        icon: s.icon,
+        label: s.name,
+        subject: true,
+        group: 'study'
+      })),
+      { path: '/pomodoro', icon: 'Timer', label: '番茄钟', subject: false, group: 'study' },
+      { path: '/error-book', icon: 'BookMarked', label: '我的错题', subject: false, group: 'study' },
+      { path: '/notes', icon: 'NotebookPen', label: '我的笔记', subject: false, group: 'study' },
+      { path: '/daily-summary', icon: 'SquarePen', label: '每日总结', subject: false, group: 'study' },
+      { path: '/statistics', icon: 'ChartNoAxesColumn', label: '学习统计', subject: false, group: 'study' },
+      { path: '/habits', icon: 'ListChecks', label: '习惯打卡', subject: false, group: 'study' },
+      { path: '/materials', icon: 'Library', label: '学习资料', subject: false, group: 'study' },
+      ...together,
+      { path: '/account', icon: 'CircleUserRound', label: '我的账号', subject: false, group: 'account' },
+      { path: '/rewards', icon: 'Award', label: '积分与成就', subject: false, group: 'account' },
+      { path: '/settings', icon: 'Settings', label: '设置', subject: false, group: 'account' },
+      ...(isAdmin.value
+        ? [{ path: '/admin', icon: 'ShieldCheck', label: '审核中心', subject: false, group: 'account' as const }]
+        : [])
     ]
   })
-  // 移动端底部导航：首页 + 第一个科目 + 社区/专注/总结/设置（最多 6 项，超出时减少科目位，避免挤压截断）
-  const mobileNav = computed(() => {
-    // 访客态：社区 + 组队 + 登录（登录是移动端主要转化入口，携带回跳地址）
-    if (!isLoggedIn.value) {
-      return [
-        { path: '/community', icon: '💬', label: '社区', subject: false },
-        { path: '/teams', icon: '👥', label: '组队协作', subject: false },
-        { path: `/login?redirect=${encodeURIComponent(route.path || '/community')}`, label: '登录', subject: false }
-      ]
-    }
-    const subjectPaths = nav.value
-      .filter((n) => n.subject)
-      .slice(0, 1)
-      .map((n) => n.path)
-    const picks = ['/', ...subjectPaths, '/community', '/teams', '/pomodoro', '/settings']
-    return picks.map((p) => nav.value.find((n) => n.path === p)).filter((n): n is NonNullable<typeof n> => !!n)
-  })
+  const groups: { key: NavigationGroup; label: string; shortLabel: string; icon: string }[] = [
+    { key: 'today', label: '今天', shortLabel: '今天', icon: 'CalendarCheck' },
+    { key: 'study', label: '我的学习', shortLabel: '学习', icon: 'BookOpen' },
+    { key: 'together', label: '一起备考', shortLabel: '一起备考', icon: 'Users' },
+    { key: 'account', label: '我的', shortLabel: '我的', icon: 'CircleUserRound' }
+  ]
+  const navGroups = computed(() =>
+    groups
+      .map((group) => ({ ...group, items: nav.value.filter((item) => item.group === group.key) }))
+      .filter((group) => group.items.length)
+  )
 
-  /** 导航激活判断：精确匹配或子路径匹配（避免 '/materials' 误激活 '/math' 这类前缀碰撞） */
   function isNavActive(path: string) {
     if (path === '/') return route.path === '/'
     return route.path === path || route.path.startsWith(path + '/')
   }
+  const currentGroup = computed<NavigationGroup | null>(() => {
+    const item = nav.value.find((item) => isNavActive(item.path))
+    if (item) return item.group
+    if (/^\/(messages|profile|follows)(\/|$)/.test(route.path)) return 'together'
+    if (route.path === '/feedback') return 'account'
+    return null
+  })
 
-  // ---- 侧边栏折叠 / 展开（状态持久化，刷新后保持） ----
+  // 保留原存储键、224/64px 两档及注入，避免破坏详情页固定回复栏。
   const NAV_COLLAPSED_KEY = 'zsb-nav-collapsed'
   const navCollapsed = ref(localStorage.getItem(NAV_COLLAPSED_KEY) === '1')
   function toggleNav() {
     navCollapsed.value = !navCollapsed.value
     localStorage.setItem(NAV_COLLAPSED_KEY, navCollapsed.value ? '1' : '0')
   }
-  // 侧边栏宽度状态注入给子页面（如帖子详情底部回复框），使其与主内容区同一列对齐
   provide('navCollapsed', navCollapsed)
-
-  return { nav, mobileNav, isNavActive, navCollapsed, toggleNav }
+  return { navGroups, currentGroup, isNavActive, navCollapsed, toggleNav }
 }

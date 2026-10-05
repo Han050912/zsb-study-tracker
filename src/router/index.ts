@@ -18,7 +18,7 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     name: 'dashboard',
     component: () => import('../pages/Dashboard.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '首页' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '今天的任务' }
   },
   {
     path: '/math',
@@ -42,7 +42,7 @@ const routes: RouteRecordRaw[] = [
     path: '/error-book',
     name: 'error-book',
     component: () => import('../pages/ErrorBook.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '错题本' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '我的错题' }
   },
   {
     path: '/pomodoro',
@@ -54,7 +54,7 @@ const routes: RouteRecordRaw[] = [
     path: '/habits',
     name: 'habits',
     component: () => import('../pages/Habits.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '习惯追踪' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '习惯打卡' }
   },
   {
     path: '/daily-summary',
@@ -86,30 +86,33 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../pages/Notes.vue'),
     meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '笔记' }
   },
-  { path: '/daily-summary/:date', redirect: '/daily-summary' },
+  {
+    path: '/daily-summary/:date',
+    redirect: (to) => ({ path: '/daily-summary', query: { ...to.query, date: to.params.date } })
+  },
   {
     path: '/statistics',
     name: 'statistics',
     component: () => import('../pages/Statistics.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '数据统计' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '学习统计' }
   },
   {
     path: '/rewards',
     name: 'rewards',
     component: () => import('../pages/Rewards.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '成就激励' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '积分与成就' }
   },
   {
     path: '/materials',
     name: 'materials',
     component: () => import('../pages/Materials.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '资料库' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '学习资料' }
   },
   {
     path: '/account',
     name: 'account',
     component: () => import('../pages/Account.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '个人中心' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '我的账号' }
   },
   {
     path: '/follows/:id',
@@ -134,6 +137,12 @@ const routes: RouteRecordRaw[] = [
     name: 'settings',
     component: () => import('../pages/Settings.vue'),
     meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '设置' }
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'not-found',
+    component: () => import('../pages/NotFound.vue'),
+    meta: { layout: 'app', requiresAuth: false, guestAllowed: true, title: '页面不存在' }
   }
 ]
 
@@ -162,7 +171,8 @@ router.beforeEach((to) => {
   if (!isLoggedIn.value) {
     const guestAllowed = to.meta.guestAllowed === true
     const canBrowse = isGuestMode.value && guestAllowed
-    if (to.meta.requiresAuth !== false && to.meta.layout !== 'auth' && !canBrowse) return { name: 'login' }
+    if (to.meta.requiresAuth !== false && to.meta.layout !== 'auth' && !canBrowse)
+      return { name: 'login', query: { redirect: to.fullPath } }
   }
 
   if (to.meta.adminOnly && !isAdmin.value) return { name: 'community' }

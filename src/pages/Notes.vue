@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { ArrowLeft, BookOpen, FileText, Plus, Search, Upload } from '@lucide/vue'
+import IconAction from '../shared/components/IconAction.vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
@@ -7,11 +9,13 @@ import { useAppStore } from '../stores/app'
 import { useMarkdownHtml } from '../composables/useMarkdownHtml'
 import PdfViewer from '../components/PdfViewer.vue'
 import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
+import SubjectIcon from '../components/SubjectIcon.vue'
 import { uploadPdf, fetchPdf, PDF_MAX_BYTES, PDF_MAX_MB } from '../api/pdfs'
 import { uid } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import { getErrorMessage } from '../utils/error'
 import type { Note } from '../types'
+import { sessionUser } from '../services/auth'
 import { getNoteBody, noteBodyExcerpt, noteBodyIncludes, noteBodyIndexVersion } from '../services/noteBodies'
 
 const store = useAppStore()
@@ -19,6 +23,9 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const confirm = useConfirm()
+const noteOwner = sessionUser.value?.id
+let disposed = false
+const sameAccount = () => !!noteOwner && sessionUser.value?.id === noteOwner
 
 // ---- 笔记列表（全部科目，按更新时间倒序） ----
 const search = ref('')
@@ -107,7 +114,7 @@ function flushIfDirty(teardown = false) {
  * - navigate：新建笔记落库后是否把 URL 固定到该 id
  */
 function doSave(silent = false, navigate = true): string | null {
-  if (!draft.value) return null
+  if (!draft.value || !sameAccount()) return null
   if (!draft.value.title?.trim() && !draft.value.content?.trim()) {
     if (!silent) toast('标题与内容均为空，未保存')
     return null
@@ -178,10 +185,12 @@ const uploadingCount = ref(0)
  */
 function importPdf(file: File) {
   const id = uid()
+  const subjectId = draftSubjectForImport()
   uploadingCount.value++
   uploadPdf(id, file)
     .then(() => {
-      store.importNotes(draftSubjectForImport(), [
+      if (disposed || !sameAccount()) return
+      store.importNotes(subjectId, [
         {
           id,
           title: file.name.replace(/\.[^.]+$/, ''),
@@ -193,6 +202,7 @@ function importPdf(file: File) {
       toast(`已导入 PDF「${file.name}」`)
     })
     .catch((e) => {
+      if (disposed || !sameAccount()) return
       toast(`导入「${file.name}」失败：${getErrorMessage(e, '网络错误')}`)
     })
     .finally(() => {
@@ -204,6 +214,7 @@ function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   const files = Array.from(input.files || [])
   input.value = ''
+  const subjectId = draftSubjectForImport()
   for (const file of files) {
     const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
     if (ext === '.pdf') {
@@ -220,16 +231,17 @@ function onFileChange(e: Event) {
       file
         .text()
         .then((content) => {
+          if (disposed || !sameAccount()) return
           if (!content.trim()) {
             toast(`「${file.name}」内容为空，已跳过`)
             return
           }
-          store.importNotes(draftSubjectForImport(), [
-            { title: file.name.replace(/\.[^.]+$/, ''), content, tags: ['导入'] }
-          ])
+          store.importNotes(subjectId, [{ title: file.name.replace(/\.[^.]+$/, ''), content, tags: ['导入'] }])
           toast(`已导入「${file.name}」`)
         })
-        .catch(() => toast(`读取「${file.name}」失败`))
+        .catch(() => {
+          if (!disposed && sameAccount()) toast(`读取「${file.name}」失败`)
+        })
     } else {
       toast(`「${file.name}」格式不支持，仅接受 .md / .txt / .pdf`)
     }
@@ -246,37 +258,99 @@ const pdfBytes = ref<Uint8Array | null>(null)
 const pdfFetchError = ref('')
 let pdfFetchSeq = 0
 
-watch(
-  selectedId,
-  (id) => {
-    const seq = ++pdfFetchSeq
-    pdfBytes.value = null
-    pdfFetchError.value = ''
-    const n = id ? store.notes.find((x) => x.id === id) : null
-    if (n?.type !== 'pdf') return
-    fetchPdf(n.id)
-      .then((b) => {
-        if (seq === pdfFetchSeq) pdfBytes.value = b
-      })
-      .catch((e) => {
-        if (seq === pdfFetchSeq) pdfFetchError.value = getErrorMessage(e, 'PDF 加载失败')
-      })
-  },
-  { immediate: true }
-)
+function loadPdf(id = selectedId.value) {
+  const seq = ++pdfFetchSeq
+  pdfBytes.value = null
+  pdfFetchError.value = ''
+  const n = id ? store.notes.find((x) => x.id === id) : null
+  if (n?.type !== 'pdf') return
+  fetchPdf(n.id)
+    .then((b) => {
+      if (seq === pdfFetchSeq) pdfBytes.value = b
+    })
+    .catch((e) => {
+      if (seq === pdfFetchSeq) pdfFetchError.value = getErrorMessage(e, 'PDF 加载失败')
+    })
+}
+watch(selectedId, (id) => loadPdf(id), { immediate: true })
 
 // ---- 分享给搭子（仅已保存的笔记可分享，草稿需先保存） ----
 const shareNoteId = ref('')
-function shareNote() {
-  if (!draft.value?.id) {
-    toast('请先保存笔记再分享')
+const preparingShare = ref(false)
+async function shareNote() {
+  if (preparingShare.value || !sameAccount()) return
+  const id = doSave(true)
+  if (!id) {
+    toast('请先填写笔记标题或内容')
     return
   }
-  shareNoteId.value = draft.value.id
+  preparingShare.value = true
+  try {
+    if (!(await store.saveAsync())) {
+      if (!disposed && sameAccount()) toast('笔记尚未同步，请检查网络后重试分享')
+      return
+    }
+    if (!disposed && sameAccount() && draft.value?.id === id) shareNoteId.value = id
+  } catch (e) {
+    if (!disposed && sameAccount()) toast(getErrorMessage(e, '笔记同步失败，请重试分享'))
+  } finally {
+    preparingShare.value = false
+  }
 }
 
 // ---- 移动端：列表/编辑 视图切换 ----
 const isEditing = computed(() => !!draft.value)
+
+// 以实际可见空间计算编辑区高度，兼容同步提示、手机安全区与软键盘。
+const workspace = ref<HTMLElement>()
+const workspaceHeight = ref<number>()
+let workspaceObserver: ResizeObserver | undefined
+let mainObserver: MutationObserver | undefined
+let workspaceFrame = 0
+
+function measureWorkspace() {
+  const element = workspace.value
+  if (!element) return
+  const viewport = window.visualViewport
+  const viewportTop = viewport?.offsetTop || 0
+  let bottom = viewportTop + (viewport?.height || window.innerHeight)
+  const mobileNav = document.querySelector<HTMLElement>('.mobile-nav')
+  if (mobileNav && getComputedStyle(mobileNav).display !== 'none') {
+    const navBounds = mobileNav.getBoundingClientRect()
+    if (navBounds.top < bottom && navBounds.bottom > viewportTop) bottom = Math.min(bottom, navBounds.top)
+  }
+  workspaceHeight.value = Math.max(280, Math.floor(bottom - element.getBoundingClientRect().top - 16))
+}
+
+function queueWorkspaceMeasure() {
+  cancelAnimationFrame(workspaceFrame)
+  workspaceFrame = requestAnimationFrame(measureWorkspace)
+}
+
+watch(isEditing, () => nextTick(queueWorkspaceMeasure))
+onMounted(() => {
+  workspaceObserver = new ResizeObserver(queueWorkspaceMeasure)
+  const page = workspace.value?.parentElement
+  const main = workspace.value?.closest('main')
+  if (page) workspaceObserver.observe(page)
+  if (main) {
+    workspaceObserver.observe(main)
+    mainObserver = new MutationObserver(queueWorkspaceMeasure)
+    mainObserver.observe(main, { childList: true })
+  }
+  window.addEventListener('resize', queueWorkspaceMeasure)
+  window.visualViewport?.addEventListener('resize', queueWorkspaceMeasure)
+  window.visualViewport?.addEventListener('scroll', queueWorkspaceMeasure)
+  queueWorkspaceMeasure()
+})
+onUnmounted(() => {
+  cancelAnimationFrame(workspaceFrame)
+  workspaceObserver?.disconnect()
+  mainObserver?.disconnect()
+  window.removeEventListener('resize', queueWorkspaceMeasure)
+  window.visualViewport?.removeEventListener('resize', queueWorkspaceMeasure)
+  window.visualViewport?.removeEventListener('scroll', queueWorkspaceMeasure)
+})
 
 // 离开页面前兜底保存（teardown：不操作路由）
 function flushOnUnload() {
@@ -286,181 +360,518 @@ onMounted(() => window.addEventListener('beforeunload', flushOnUnload))
 onUnmounted(() => {
   window.removeEventListener('beforeunload', flushOnUnload)
   flushIfDirty(true)
+  disposed = true
+  pdfFetchSeq++
 })
 </script>
 
 <template>
-  <!-- 编辑态无 pt-14（工具栏置顶），高度按 pt-0 计算；列表态保留 pt-14 -->
-  <div
-    class="flex"
-    :class="
-      isEditing ? 'h-[calc(100vh-5rem)] md:h-[calc(100vh-1.5rem)]' : 'h-[calc(100vh-8.5rem)] md:h-[calc(100vh-5rem)]'
-    "
-  >
-    <!-- 左侧笔记列表（移动端：编辑时隐藏） -->
-    <aside
-      class="w-full md:w-72 shrink-0 flex-col border-r border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800"
-      :class="isEditing ? 'hidden md:flex' : 'flex'"
-    >
-      <div class="p-3 space-y-2 border-b border-slate-100 dark:border-slate-700">
-        <div class="flex gap-2">
-          <button class="btn-primary flex-1" @click="newNote">＋ 新建笔记</button>
-          <button
-            class="btn-ghost shrink-0"
-            :title="`导入 .md / .txt / .pdf 文件（PDF 单文件 ≤${PDF_MAX_MB}MB）`"
-            :disabled="uploadingCount > 0"
-            @click="fileInput?.click()"
-          >
-            {{ uploadingCount ? '上传中…' : '📁' }}
-          </button>
-          <input
-            ref="fileInput"
-            type="file"
-            multiple
-            accept=".md,.markdown,.txt,.pdf"
-            class="hidden"
-            @change="onFileChange"
-          />
-        </div>
-        <input v-model="search" class="input" placeholder="搜索标题 / 内容 / 标签" />
+  <div class="study-page notes-page" :class="{ 'is-editing': isEditing }">
+    <h1 v-if="isEditing" class="sr-only md:hidden">笔记编辑</h1>
+    <header class="study-page-heading notes-page-heading">
+      <div>
+        <h1 class="page-title">我的笔记</h1>
+        <p class="mt-1 text-sm text-muted">整理学习思路，保存 Markdown 笔记与 PDF 文档。</p>
       </div>
-      <div class="flex-1 overflow-y-auto p-2 space-y-1">
-        <div v-if="!filteredNotes.length" class="text-xs text-slate-400 text-center py-8">
-          {{ search ? '没有匹配的笔记' : '暂无笔记，点击上方「新建笔记」开始' }}
-        </div>
+      <div class="notes-page-actions">
         <button
-          v-for="n in filteredNotes"
-          :key="n.id"
-          class="w-full text-left rounded-xl px-3 py-2.5 transition-colors"
-          :class="
-            selectedId === n.id
-              ? 'bg-primary-50 dark:bg-primary-900/30 ring-1 ring-primary-200 dark:ring-primary-800'
-              : 'hover:bg-slate-50 dark:hover:bg-slate-700'
-          "
-          @click="openNote(n)"
+          class="btn-ghost"
+          :title="`导入 .md / .txt / .pdf 文件（PDF 单文件 ≤${PDF_MAX_MB}MB）`"
+          :disabled="uploadingCount > 0"
+          @click="fileInput?.click()"
         >
-          <div class="flex items-center gap-1.5">
-            <span class="text-xs shrink-0">{{ subjectOf(n)?.icon || '📝' }}</span>
-            <span class="font-medium text-sm truncate flex-1">{{ n.title || '未命名' }}</span>
-            <span class="text-[10px] text-slate-400 shrink-0">{{ fmtTime(n.updatedAt) }}</span>
-          </div>
-          <div class="text-xs text-slate-400 truncate mt-0.5">
-            {{ n.type === 'pdf' ? 'PDF 文档' : noteBodyExcerpt(n.id, 50) || '（空）' }}
-          </div>
+          <Upload :size="16" aria-hidden="true" />{{ uploadingCount ? '导入中…' : '导入文件' }}
         </button>
+        <button class="btn-primary" @click="newNote"><Plus :size="16" aria-hidden="true" />新建笔记</button>
       </div>
-    </aside>
+    </header>
+    <input
+      ref="fileInput"
+      type="file"
+      multiple
+      accept=".md,.markdown,.txt,.pdf"
+      class="hidden"
+      @change="onFileChange"
+    />
 
-    <!-- 右侧编辑区 -->
-    <section
-      class="flex-1 flex-col min-w-0 bg-slate-50 dark:bg-slate-900"
-      :class="isEditing ? 'flex' : 'hidden md:flex'"
+    <div
+      ref="workspace"
+      class="notes-workspace"
+      :style="workspaceHeight ? { height: `${workspaceHeight}px` } : undefined"
     >
-      <template v-if="draft">
-        <!-- 工具栏 -->
-        <div
-          class="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700"
-        >
-          <button class="btn-ghost !py-1 !px-2 md:hidden" title="返回列表" @click="backToList">←</button>
-          <input
-            v-model="draft.title"
-            class="flex-1 min-w-0 bg-transparent text-base font-bold outline-none dark:text-slate-100"
-            placeholder="笔记标题"
-            @input="dirty = true"
-          />
-          <span v-if="dirty" class="text-[10px] text-amber-500 shrink-0">未保存</span>
-          <template v-if="draft.type !== 'pdf'">
-            <div class="hidden sm:flex gap-1 bg-slate-100 dark:bg-slate-700 rounded-lg p-0.5 text-xs">
-              <button
-                v-for="m in [
-                  { k: 'edit', l: '编辑' },
-                  { k: 'split', l: '分栏' },
-                  { k: 'preview', l: '预览' }
-                ]"
-                :key="m.k"
-                class="px-2.5 py-1 rounded-md transition-colors"
-                :class="previewMode === m.k ? 'bg-white dark:bg-slate-600 shadow-sm font-medium' : 'text-slate-500'"
-                @click="previewMode = m.k as any"
-              >
-                {{ m.l }}
-              </button>
+      <aside class="notes-list" :class="isEditing ? 'hidden md:flex' : 'flex'" aria-label="笔记列表">
+        <div class="notes-list-toolbar">
+          <div class="notes-list-heading">
+            <h2>全部笔记</h2>
+            <span>{{ allNotes.length }} 篇</span>
+          </div>
+          <div class="notes-search">
+            <Search :size="16" aria-hidden="true" />
+            <input v-model="search" aria-label="搜索笔记" class="input" placeholder="搜索标题、内容或标签" />
+          </div>
+        </div>
+        <div class="notes-list-items">
+          <div v-if="!filteredNotes.length" class="notes-list-empty">
+            <FileText :size="24" aria-hidden="true" />
+            <p>{{ search ? '没有匹配的笔记' : '还没有笔记' }}</p>
+            <span>{{ search ? '试试更短的关键词。' : '记下今天的思路，方便下次复习。' }}</span>
+          </div>
+          <button
+            v-for="n in filteredNotes"
+            :key="n.id"
+            class="notes-list-item"
+            :class="{ 'is-selected': selectedId === n.id }"
+            :aria-current="selectedId === n.id ? 'true' : undefined"
+            @click="openNote(n)"
+          >
+            <div class="notes-list-item-title">
+              <SubjectIcon v-if="subjectOf(n)?.icon" :icon="subjectOf(n)?.icon" class="notes-subject-icon" />
+              <FileText v-else :size="16" class="notes-subject-icon" aria-hidden="true" />
+              <span>{{ n.title || '未命名' }}</span>
             </div>
-            <button
-              class="sm:hidden btn-ghost !py-1 !px-2 text-xs"
-              @click="previewMode = previewMode === 'preview' ? 'edit' : 'preview'"
-            >
-              {{ previewMode === 'preview' ? '编辑' : '预览' }}
-            </button>
-          </template>
-          <button class="btn-ghost !py-1.5 !text-xs shrink-0" @click="shareNote">分享给搭子</button>
-          <button class="btn-danger !py-1.5 shrink-0" @click="removeNote">删除</button>
-          <button class="btn-primary !py-1.5 shrink-0" @click="doSave()">保存</button>
+            <p class="notes-excerpt">{{ n.type === 'pdf' ? 'PDF 文档' : noteBodyExcerpt(n.id, 50) || '暂无正文' }}</p>
+            <div class="notes-list-item-meta">
+              <span>{{ subjectOf(n)?.name || '未分类' }}</span>
+              <time>{{ fmtTime(n.updatedAt) }}</time>
+            </div>
+          </button>
         </div>
-        <!-- 元信息 -->
-        <div
-          class="flex flex-wrap items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700"
-        >
-          <select v-model="draft.subjectId" class="input !w-auto !py-1 !text-xs" @change="dirty = true">
-            <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
-          </select>
-          <input
-            :value="draft.tags?.join(',')"
-            class="input !flex-1 !py-1 !text-xs min-w-32"
-            placeholder="标签，逗号分隔"
-            @input="
-              ($event) => {
-                draft!.tags = ($event.target as HTMLInputElement).value
-                  .split(',')
-                  .map((s) => s.trim())
-                  .filter(Boolean)
-                dirty = true
-              }
-            "
-          />
-        </div>
-        <!-- 正文区：PDF 笔记为查看器（正文只读，字节回源拉取），Markdown 笔记为编辑 / 预览 -->
-        <div v-if="draft.type === 'pdf'" class="flex-1 min-h-0 flex flex-col">
-          <div
-            v-if="pdfFetchError"
-            class="flex-1 flex items-center justify-center text-xs text-red-400 px-6 text-center"
-          >
-            {{ pdfFetchError }}
-          </div>
-          <PdfViewer v-else :bytes="pdfBytes" class="flex-1 min-h-0" />
-        </div>
-        <div v-else class="flex-1 flex min-h-0">
-          <textarea
-            v-show="previewMode !== 'preview'"
-            v-model="draft.content"
-            class="flex-1 min-w-0 resize-none bg-white dark:bg-slate-800 p-4 text-sm font-mono leading-6 outline-none dark:text-slate-100"
-            :class="previewMode === 'split' ? 'border-r border-slate-100 dark:border-slate-700' : ''"
-            placeholder="支持 Markdown 语法（标题/列表/表格/代码块/任务列表）与 $LaTeX$ 公式…"
-            @input="dirty = true"
-          ></textarea>
-          <div
-            v-show="previewMode !== 'edit'"
-            class="relative flex-1 min-w-0 overflow-y-auto bg-white dark:bg-slate-800 p-4"
-          >
-            <span
-              v-if="previewPending"
-              class="pointer-events-none absolute right-3 top-3 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-400 dark:bg-slate-700 dark:text-slate-500"
-            >
-              渲染中…
-            </span>
-            <div class="md-body" v-html="draftHtml"></div>
-          </div>
-        </div>
-      </template>
+      </aside>
 
-      <!-- 空状态 -->
-      <div v-else class="flex-1 flex flex-col items-center justify-center text-slate-400 gap-3">
-        <div class="text-5xl">📔</div>
-        <p class="text-sm">从左侧选择一篇笔记，或新建一篇</p>
-        <button class="btn-primary" @click="newNote">＋ 新建笔记</button>
-      </div>
-    </section>
-
-    <!-- 分享给搭子弹窗 -->
+      <section class="notes-editor" :class="isEditing ? 'flex' : 'hidden md:flex'" aria-label="笔记编辑器">
+        <template v-if="draft">
+          <div class="notes-editor-heading">
+            <IconAction :icon="ArrowLeft" label="返回列表" class="md:hidden" @click="backToList" />
+            <input
+              v-model="draft.title"
+              class="notes-title-input"
+              aria-label="笔记标题"
+              placeholder="笔记标题"
+              @input="dirty = true"
+            />
+            <span class="notes-save-state" role="status">{{ dirty ? '未保存' : draft.id ? '已保存' : '新笔记' }}</span>
+          </div>
+          <div class="notes-editor-toolbar">
+            <template v-if="draft.type !== 'pdf'">
+              <div class="notes-view-switch hidden sm:flex" role="group" aria-label="编辑视图">
+                <button
+                  v-for="m in [
+                    { k: 'edit', l: '编辑' },
+                    { k: 'split', l: '分栏' },
+                    { k: 'preview', l: '预览' }
+                  ]"
+                  :key="m.k"
+                  :aria-pressed="previewMode === m.k"
+                  @click="previewMode = m.k as any"
+                >
+                  {{ m.l }}
+                </button>
+              </div>
+              <button
+                class="sm:hidden btn-ghost"
+                :aria-pressed="previewMode === 'preview'"
+                @click="previewMode = previewMode === 'preview' ? 'edit' : 'preview'"
+              >
+                {{ previewMode === 'preview' ? '编辑' : '预览' }}
+              </button>
+            </template>
+            <div class="notes-editor-actions">
+              <button class="btn-ghost" :disabled="preparingShare" @click="shareNote">
+                {{ preparingShare ? '准备中…' : '分享给搭子' }}
+              </button>
+              <button class="notes-delete" @click="removeNote">删除</button>
+              <button class="btn-primary" @click="doSave()">保存</button>
+            </div>
+          </div>
+          <div class="notes-editor-meta">
+            <div>
+              <label class="label" for="note-subject">科目</label>
+              <select id="note-subject" v-model="draft.subjectId" class="input" @change="dirty = true">
+                <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
+              </select>
+            </div>
+            <div>
+              <label class="label" for="note-tags">标签</label>
+              <input
+                id="note-tags"
+                :value="draft.tags?.join(',')"
+                class="input"
+                placeholder="逗号分隔，例如：重点,复习"
+                @input="
+                  ($event) => {
+                    draft!.tags = ($event.target as HTMLInputElement).value
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                    dirty = true
+                  }
+                "
+              />
+            </div>
+          </div>
+          <div v-if="draft.type === 'pdf'" class="notes-editor-body flex flex-col">
+            <div
+              v-if="pdfFetchError"
+              class="flex-1 flex flex-col gap-3 items-center justify-center text-sm text-correction px-6 text-center"
+            >
+              {{ pdfFetchError }}
+              <button class="btn-ghost" @click="loadPdf()">重新加载 PDF</button>
+            </div>
+            <PdfViewer v-else :bytes="pdfBytes" class="flex-1 min-h-0" />
+          </div>
+          <div v-else class="notes-editor-body flex">
+            <textarea
+              v-show="previewMode !== 'preview'"
+              v-model="draft.content"
+              class="notes-content-input"
+              :class="{ 'is-split': previewMode === 'split' }"
+              aria-label="笔记正文，支持 Markdown 与 LaTeX 公式"
+              placeholder="从这里开始记录…&#10;&#10;支持 Markdown 标题、列表、表格、代码块与 $LaTeX$ 公式。"
+              @input="dirty = true"
+            ></textarea>
+            <div
+              v-show="previewMode !== 'edit'"
+              class="notes-preview"
+              :class="previewMode === 'split' ? 'hidden sm:block' : ''"
+            >
+              <span v-if="previewPending" class="notes-preview-status" role="status">渲染中…</span>
+              <div class="md-body" v-html="draftHtml"></div>
+            </div>
+          </div>
+        </template>
+        <div v-else class="notes-editor-empty">
+          <BookOpen :size="32" aria-hidden="true" />
+          <h2>打开一篇笔记</h2>
+          <p>从左侧选择笔记，或记录新的学习思路。</p>
+          <button class="btn-primary" @click="newNote"><Plus :size="16" aria-hidden="true" />新建笔记</button>
+        </div>
+      </section>
+    </div>
     <PartnerShareModal v-if="shareNoteId" item-type="note" :item-id="shareNoteId" @close="shareNoteId = ''" />
   </div>
 </template>
+
+<style scoped>
+.notes-page-heading {
+  margin-bottom: 20px;
+}
+.notes-page-actions,
+.notes-editor-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.notes-workspace {
+  display: flex;
+  height: calc(100dvh - var(--app-header-height, 56px) - var(--app-bottom-space, 0px) - 128px);
+  min-height: 280px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+}
+.notes-list {
+  flex-direction: column;
+  width: 288px;
+  flex-shrink: 0;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+}
+.notes-list-toolbar {
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.notes-list-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.notes-list-heading h2 {
+  font-size: 14px;
+  font-weight: 700;
+}
+.notes-list-heading span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.notes-search {
+  position: relative;
+}
+.notes-search > svg {
+  position: absolute;
+  left: 12px;
+  top: 14px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.notes-search .input {
+  padding-left: 36px;
+}
+.notes-list-items {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+.notes-list-item {
+  width: 100%;
+  text-align: left;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  transition: background-color var(--motion-fast);
+}
+.notes-list-item + .notes-list-item {
+  margin-top: 4px;
+}
+.notes-list-item:hover {
+  background: var(--surface-soft);
+}
+.notes-list-item.is-selected {
+  background: var(--action-soft);
+  border-color: var(--line);
+}
+.notes-list-item-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.notes-list-item-title > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-subject-icon {
+  flex-shrink: 0;
+  color: var(--action);
+}
+.notes-excerpt {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-list-item-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.notes-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 36px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+.notes-list-empty span {
+  font-size: 12px;
+}
+.notes-editor {
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.notes-editor-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px 12px;
+}
+.notes-title-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  background: transparent;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  border-radius: 4px;
+}
+.notes-title-input::placeholder {
+  color: var(--muted);
+  font-weight: 400;
+}
+.notes-save-state {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.notes-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 0 20px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.notes-view-switch {
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
+}
+.notes-view-switch button {
+  min-height: 36px;
+  padding: 6px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  border-radius: 5px;
+}
+.notes-view-switch button[aria-pressed='true'] {
+  background: var(--surface);
+  color: var(--action);
+  font-weight: 700;
+}
+.notes-editor-actions {
+  margin-left: auto;
+}
+.notes-editor-actions .btn-ghost,
+.notes-editor-actions .btn-primary {
+  font-size: 12px;
+  padding-inline: 12px;
+}
+.notes-delete {
+  min-height: 44px;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--correction);
+  border-radius: var(--radius-control);
+}
+.notes-delete:hover {
+  background: var(--correction-soft);
+}
+.notes-editor-meta {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr);
+  gap: 12px;
+  padding: 12px 20px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.notes-editor-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.notes-content-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  padding: 20px;
+  color: var(--ink);
+  background: var(--surface);
+  font-size: 14px;
+  line-height: 1.8;
+  caret-color: var(--action);
+  outline-offset: -2px;
+}
+.notes-content-input::placeholder {
+  color: var(--muted);
+}
+.notes-content-input.is-split {
+  border-right: 1px solid var(--line);
+}
+.notes-preview {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 20px;
+}
+.notes-preview-status {
+  position: absolute;
+  right: 16px;
+  top: 12px;
+  padding: 2px 8px;
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  pointer-events: none;
+}
+.notes-editor-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+.notes-editor-empty h2 {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 700;
+}
+.notes-editor-empty p {
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+@media (max-width: 1100px) {
+  .notes-list {
+    width: 250px;
+  }
+}
+@media (max-width: 767px) {
+  .notes-page-actions {
+    width: 100%;
+  }
+  .notes-page-actions .btn-primary {
+    flex: 1;
+  }
+  .notes-list {
+    width: 100%;
+    border-right: 0;
+  }
+  .notes-page.is-editing .notes-page-heading {
+    display: none;
+  }
+  .notes-editor-heading {
+    padding: 12px;
+    gap: 8px;
+  }
+  .notes-title-input {
+    font-size: 17px;
+  }
+  .notes-editor-toolbar {
+    padding: 0 12px 12px;
+    gap: 8px;
+  }
+  .notes-editor-actions {
+    gap: 4px;
+  }
+  .notes-editor-actions .btn-ghost,
+  .notes-editor-actions .btn-primary {
+    padding-inline: 8px;
+  }
+  .notes-editor-meta {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+    padding: 12px;
+    gap: 8px;
+  }
+  .notes-editor-meta .input {
+    font-size: 12px;
+    padding-inline: 8px;
+  }
+  .notes-content-input,
+  .notes-preview {
+    padding: 16px;
+  }
+}
+</style>

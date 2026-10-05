@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import { ArrowLeft } from '@lucide/vue'
+import IconAction from '../shared/components/IconAction.vue'
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
+import AsyncState from '../shared/components/AsyncState.vue'
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -15,17 +20,22 @@ const toast = useToast()
 
 const circles = ref<CommunityCircle[]>([])
 const loading = ref(true)
+const loadError = ref('')
+defineProps<{ embedded?: boolean }>()
 
-onMounted(async () => {
+async function load() {
+  loading.value = true
+  loadError.value = ''
   try {
     const res = await circlesApi.circles()
     circles.value = res.circles
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    loadError.value = getErrorMessage(e, '圈子未能加载，请检查网络后重试')
   } finally {
     loading.value = false
   }
-})
+}
+onMounted(load)
 
 // ---- 建圈 ----
 const showCreate = ref(false)
@@ -66,41 +76,42 @@ const statusLabel = (c: CommunityCircle) =>
 </script>
 
 <template>
-  <div class="space-y-4 max-w-3xl mx-auto">
+  <div class="space-y-4" :class="embedded ? '' : 'collaboration-page study-page reading-page'">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
-      <h2 class="text-lg font-bold flex-1">话题圈子</h2>
+      <span v-if="!embedded" class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
+      <component :is="embedded ? 'h2' : 'h1'" class="page-title flex-1">话题圈子</component>
       <button class="btn-primary !text-xs" @click="showCreate = true">＋ 创建圈子</button>
     </div>
     <p class="text-xs text-slate-400">圈内专属讨论——圈子帖子不会出现在公共广场。公开圈可直接加入，审核圈需圈主批准。</p>
 
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-8">加载中…</div>
-    <div v-else-if="!circles.length" class="card text-center text-sm text-slate-400 py-10">
-      还没有圈子，来创建第一个吧～
-    </div>
+    <LoadingState v-if="loading" />
+    <AsyncState v-else-if="loadError" :error="loadError" @retry="load" />
+    <EmptyState v-else-if="!circles.length" class="card" title="还没有圈子。可以创建一个，按科目组织讨论。" />
 
     <div v-else class="grid gap-3 sm:grid-cols-2">
       <button
         v-for="c in circles"
         :key="c.id"
-        class="card !p-4 text-left hover:shadow-md transition-shadow"
+        class="card !p-4 text-left hover:border-control-line active:bg-surface-soft"
         @click="router.push(`/community/circles/${c.id}`)"
       >
         <div class="flex items-center gap-2">
           <span class="font-semibold truncate flex-1">{{ c.name }}</span>
           <span
-            class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+            class="text-xs px-1.5 py-0.5 rounded-full shrink-0"
             :class="
               c.isPublic
-                ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
-                : 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                ? 'bg-action-soft dark:bg-action-soft text-action dark:text-action'
+                : 'bg-action-soft dark:bg-action-soft text-action dark:text-action'
             "
           >
             {{ c.isPublic ? '公开' : '审核' }}
           </span>
           <span
             v-if="statusLabel(c)"
-            class="text-[10px] px-1.5 py-0.5 rounded-full shrink-0 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400"
+            class="text-xs px-1.5 py-0.5 rounded-full shrink-0 bg-primary-50 dark:bg-primary-900/30 text-action dark:text-action"
           >
             {{ statusLabel(c) }}
           </span>
@@ -108,7 +119,7 @@ const statusLabel = (c: CommunityCircle) =>
         <p class="text-xs text-slate-400 line-clamp-2 mt-1.5 min-h-[2rem]">
           {{ c.description || '这个圈子还没有简介' }}
         </p>
-        <div class="text-[10px] text-slate-400 mt-2">{{ c.memberCount }} 位成员</div>
+        <div class="text-xs text-slate-400 mt-2">{{ c.memberCount }} 位成员</div>
       </button>
     </div>
 
@@ -117,7 +128,13 @@ const statusLabel = (c: CommunityCircle) =>
       <div class="space-y-3">
         <div>
           <div class="label">圈子名称（1-30 字）</div>
-          <input v-model="createName" maxlength="30" class="input" placeholder="如：高数冲刺组 / 2027 计算机统考" />
+          <input
+            v-model="createName"
+            maxlength="30"
+            class="input"
+            aria-label="如：高数冲刺组 / 2027 计算机统考"
+            placeholder="如：高数冲刺组 / 2027 计算机统考"
+          />
         </div>
         <div>
           <div class="label">圈子简介（可选，≤200 字）</div>
@@ -126,6 +143,7 @@ const statusLabel = (c: CommunityCircle) =>
             rows="3"
             maxlength="200"
             class="input"
+            aria-label="这个圈子聊什么？"
             placeholder="这个圈子聊什么？"
           ></textarea>
         </div>
@@ -139,6 +157,7 @@ const statusLabel = (c: CommunityCircle) =>
                   ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
                   : 'text-slate-500 dark:text-slate-400'
               "
+              :aria-pressed="createPublic"
               @click="createPublic = true"
             >
               公开（直接加入）
@@ -150,6 +169,7 @@ const statusLabel = (c: CommunityCircle) =>
                   ? 'bg-white dark:bg-slate-800 font-semibold shadow-sm'
                   : 'text-slate-500 dark:text-slate-400'
               "
+              :aria-pressed="!createPublic"
               @click="createPublic = false"
             >
               审核（圈主批准）

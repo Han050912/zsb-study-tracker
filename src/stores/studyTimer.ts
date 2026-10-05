@@ -11,6 +11,7 @@ import { partnersApi } from '../api/community/partners'
 import { requestKeepalive } from '../api/client'
 import { useAppStore } from './app'
 import type { PartnerStudySession } from '../types'
+import { getErrorMessage } from '../utils/error'
 
 type Phase = 'idle' | 'focus' | 'done'
 
@@ -29,6 +30,8 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   const phase = ref<Phase>('idle')
   const connection = ref<ConnectionState>('connecting')
   const lastSyncedAt = ref(0)
+  const ending = ref(false),
+    endError = ref('')
   let failures = 0,
     sessionGeneration = 0
   let syncQueue: Promise<void> = Promise.resolve()
@@ -73,12 +76,15 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   })
 
   function beginTimer() {
+    if (running.value) return
+    if (handle) clearInterval(handle)
     startTimestamp = Date.now()
     running.value = true
     handle = setInterval(tick, 1000)
   }
 
   function stopTimer() {
+    if (!running.value) return
     running.value = false
     if (handle) {
       clearInterval(handle)
@@ -103,7 +109,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   }
 
   async function start() {
-    if (!session.value) return
+    if (!session.value || running.value || phase.value === 'done') return
     if (phase.value === 'idle') {
       phase.value = 'focus'
       seconds.value = 0
@@ -117,6 +123,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   }
 
   async function pause() {
+    if (!running.value) return
     stopTimer()
     await syncState(phase.value)
   }
@@ -243,17 +250,26 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
 
   async function endSession() {
     const s = session.value
-    if (!s) return
+    if (!s) return true
+    if (ending.value) return false
+    const generation = sessionGeneration
+    ending.value = true
+    endError.value = ''
     stopTimer()
-    if (phase.value === 'focus') {
-      appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', s.partnerName)
-      phase.value = 'done' // 结算后置结束态，阻断 await 间隙内 poll 对 focus 的重复结算
-    }
     try {
       await partnersApi.endStudySession(s.id)
+      if (sessionGeneration !== generation || session.value?.id !== s.id) return true
+      if (phase.value === 'focus' && seconds.value >= 60) {
+        appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', s.partnerName)
+        phase.value = 'done'
+      }
       finishSession()
-    } catch {
-      /* 结束失败静默 */
+      return true
+    } catch (e) {
+      if (sessionGeneration === generation) endError.value = getErrorMessage(e, '自习未能结束，计时已暂停，请重试')
+      return false
+    } finally {
+      if (sessionGeneration === generation || !session.value) ending.value = false
     }
   }
 
@@ -288,6 +304,8 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('pagehide', onPageHide)
     session.value = null
+    ending.value = false
+    endError.value = ''
     phase.value = 'idle'
     seconds.value = 0
     pausedElapsed = 0
@@ -302,6 +320,10 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   }
   async function poll() {
     if (!session.value || pollInFlight) return
+    if (ending.value) {
+      schedulePoll()
+      return
+    }
     const generation = sessionGeneration
     pollInFlight = true
     await syncState(phase.value)
@@ -346,6 +368,8 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     session,
     connection,
     lastSyncedAt,
+    ending,
+    endError,
     reconnect,
     phase,
     seconds,

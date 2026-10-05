@@ -35,27 +35,52 @@ export function isConstraintError(e: unknown): boolean {
 export const JSON_BODY_MAX_BYTES = 256 * 1024
 
 /**
- * 读取请求体文本：先按 Content-Length 预检快速失败，读完后再复核实际大小
- * （防止分块传输 / 谎报长度的客户端绕过预检）。超限抛 413。
- * 复核用 UTF-8 真实字节数（TextEncoder，P4-04）：字符数按 UTF-16 码元计，
- * 对多字节内容（如纯中文每码元 3 字节）会低估约 3 倍，可被分块传输绕过。
- * 开销控制：每个 UTF-16 码元的 UTF-8 字节数至多 3（ASCII 1、BMP 3、增补平面按代理对折算 2，
- * 孤立代理被替换为 3 字节 U+FFFD），故字符数 ≤ maxBytes/3 的请求必不超限，直接跳过编码；
- * 仅当字符数接近上限时才执行一次真实字节复核。
+ * JSON 与文件上传共用的有界读取：无 Content-Length 或分块传输时也在越界的第一块停止。
+ * 按需扩容而非保留全部小块，避免大量微小分块产生无界的数组/对象开销。
  */
-export async function readBodyText(request: Request, maxBytes: number = JSON_BODY_MAX_BYTES): Promise<string> {
+export async function readBodyBytes(
+  request: Request,
+  maxBytes: number,
+  limitMessage = '请求体超过大小上限'
+): Promise<Uint8Array<ArrayBuffer>> {
   const declared = Number(request.headers.get('Content-Length') || 0)
-  if (declared > maxBytes) throw new HttpError(413, '请求体超过大小上限')
-  let text: string
+  if (declared > maxBytes) {
+    await request.body?.cancel().catch(() => {})
+    throw new HttpError(413, limitMessage)
+  }
+  if (!request.body) return new Uint8Array(0)
+  const reader = request.body.getReader()
+  let buffer = new Uint8Array(Math.min(64 * 1024, maxBytes))
+  let length = 0
   try {
-    text = await request.text()
-  } catch {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      if (value.byteLength > maxBytes - length) {
+        await reader.cancel().catch(() => {})
+        throw new HttpError(413, limitMessage)
+      }
+      const end = length + value.byteLength
+      if (end > buffer.byteLength) {
+        const next = new Uint8Array(Math.min(maxBytes, Math.max(end, buffer.byteLength * 2)))
+        next.set(buffer.subarray(0, length))
+        buffer = next
+      }
+      buffer.set(value, length)
+      length = end
+    }
+    return buffer.subarray(0, length)
+  } catch (error) {
+    if (error instanceof HttpError) throw error
     throw new HttpError(400, '请求体读取失败')
+  } finally {
+    reader.releaseLock()
   }
-  if (text.length > maxBytes / 3 && new TextEncoder().encode(text).byteLength > maxBytes) {
-    throw new HttpError(413, '请求体超过大小上限')
-  }
-  return text
+}
+
+/** 先完成有界字节读取再解码，UTF-8 跨分块字符与 BOM 均由同一解码器处理。 */
+export async function readBodyText(request: Request, maxBytes: number = JSON_BODY_MAX_BYTES): Promise<string> {
+  return new TextDecoder().decode(await readBodyBytes(request, maxBytes))
 }
 
 /** 解析 JSON 请求体：超限 413、非法 JSON 400（router.body / schemas.parseBody / CRUD 共用同一实现） */

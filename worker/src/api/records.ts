@@ -8,7 +8,7 @@ const recordBodySchema = z
     id: z.string().optional(),
     subjectId: z.string(),
     date: z.string(),
-    minutes: z.number(),
+    minutes: z.number().positive('学习时长需大于 0').max(1440, '学习时长不能超过 1440 分钟'),
     chapterId: z.string().optional(),
     topic: z.string().optional(),
     note: z.string().optional(),

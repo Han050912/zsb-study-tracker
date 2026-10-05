@@ -19,6 +19,101 @@ beforeEach(() => {
   globalThis.__refactorApi = { get: async () => ({}) }
 })
 
+test('通知已读：同条单飞、失败可重试，切号迟到响应不污染新账号', async () => {
+  const notify = stores.useNotificationStore(),
+    pending = deferred()
+  let calls = 0
+  globalThis.__refactorApi.markRead = () => {
+    calls++
+    return pending.promise
+  }
+  const n = { id: 'n', type: 'comment', isRead: false }
+  notify.notifications = [n]
+  notify.unreadCount = notify.unreadExcludingMuted = 3
+  const a = notify.markRead(n),
+    b = notify.markRead(n)
+  pending.resolve({ ok: true })
+  await Promise.all([a, b])
+  assert.equal(calls, 1)
+  assert.equal(notify.unreadCount, 2)
+  const late = deferred()
+  globalThis.__refactorApi.markRead = () => late.promise
+  const request = notify.markRead({ id: 'old', type: 'comment', isRead: false })
+  notify.resetState()
+  notify.unreadCount = notify.unreadExcludingMuted = 5
+  late.resolve({ ok: true })
+  await request
+  assert.equal(notify.unreadCount, 5)
+  globalThis.__refactorApi.markRead = async () => {
+    throw new Error('offline')
+  }
+  const failed = { id: 'failed', type: 'comment', isRead: false }
+  await assert.rejects(notify.markRead(failed))
+  assert.equal(notify.pendingReadIds.length, 0)
+  assert.equal(failed.isRead, false)
+  globalThis.__refactorApi.markRead = async () => ({ ok: true })
+  await notify.markRead(failed)
+  assert.equal(notify.unreadCount, 4)
+})
+
+test('通知已读：旧拉取不能复活角标，全部已读单飞并保护账号代次', async () => {
+  const notify = stores.useNotificationStore(),
+    stale = deferred(),
+    write = deferred()
+  globalThis.__refactorApi.notifications = () => stale.promise
+  globalThis.__refactorApi.markRead = async () => ({ ok: true })
+  notify.unreadCount = notify.unreadExcludingMuted = 3
+  const fetch = notify.fetchUnreadCount()
+  await notify.markRead({ id: 'n', type: 'comment', isRead: false })
+  stale.resolve({ unreadCount: 3, unreadExcludingMuted: 3 })
+  await fetch
+  assert.equal(notify.unreadCount, 2)
+  let calls = 0
+  globalThis.__refactorApi.markAllRead = () => {
+    calls++
+    return write.promise
+  }
+  const jobs = [notify.markAllRead(), notify.markAllRead()]
+  notify.resetState()
+  notify.unreadCount = notify.unreadExcludingMuted = 4
+  write.resolve({ ok: true })
+  await Promise.all(jobs)
+  assert.equal(calls, 1)
+  assert.equal(notify.unreadCount, 4)
+})
+
+test('双人自习结束：断网保留暂停会话和时长，重试成功仅结算一次', async (t) => {
+  globalThis.window = new EventTarget()
+  globalThis.document = Object.assign(new EventTarget(), { hidden: false })
+  Object.defineProperty(globalThis, 'navigator', { value: { onLine: true }, configurable: true })
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 100000 })
+  globalThis.__refactorApi.updateStudySession = async () => ({ session: { status: 'active', partnerState: 'idle' } })
+  globalThis.__refactorApi.endStudySession = async () => {
+    throw new Error('offline')
+  }
+  let records = 0
+  globalThis.__refactorApi.recordPomodoro = () => records++
+  const timer = stores.useStudyTimerStore()
+  timer.enterSession({ id: 'end', myState: 'focus', focusMinutes: 25, partnerName: '搭子' })
+  await timer.start()
+  t.mock.timers.tick(90000)
+  await settle()
+  assert.equal(await timer.endSession(), false)
+  assert.equal(timer.session.id, 'end')
+  assert.equal(timer.phase, 'focus')
+  assert.equal(timer.running, false)
+  assert.equal(timer.seconds, 90)
+  assert.match(timer.endError, /offline/)
+  assert.equal(records, 0)
+  globalThis.__refactorApi.endStudySession = async () => ({ ok: true })
+  assert.equal(await timer.endSession(), true)
+  assert.equal(timer.session, null)
+  assert.equal(records, 1)
+  await timer.endSession()
+  assert.equal(records, 1)
+  t.mock.timers.reset()
+})
+
 test('新建 feed / squad 缓存保持响应式，首屏从加载态更新为实体列表', async () => {
   const feed = stores.useCommunityFeedStore(),
     squads = stores.useSquadStore(),
@@ -226,4 +321,28 @@ test('study: 轮询失败退避且提示离线，联网后恢复，同会话无�
   t.mock.timers.reset()
   assert.equal(stores.pollingDelay(0, true), 30_000)
   assert.equal(stores.pollingDelay(9, false), 60_000)
+})
+
+test('study: 连续开始/暂停不重复计时，暂停等待不计入专注时长', async (t) => {
+  globalThis.window = new EventTarget()
+  globalThis.document = Object.assign(new EventTarget(), { hidden: false })
+  Object.defineProperty(globalThis, 'navigator', { value: { onLine: true }, configurable: true })
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 100000 })
+  globalThis.__refactorApi.updateStudySession = async () => ({ session: { status: 'active', partnerState: 'idle' } })
+  const timer = stores.useStudyTimerStore()
+  timer.enterSession({ id: 'repeat', myState: 'focus', focusMinutes: 25 })
+  await Promise.all([timer.start(), timer.start(), timer.start()])
+  t.mock.timers.tick(10000)
+  await settle()
+  await timer.pause()
+  assert.equal(timer.seconds, 10)
+  t.mock.timers.tick(20000)
+  await timer.pause()
+  assert.equal(timer.seconds, 10)
+  await timer.start()
+  t.mock.timers.tick(5000)
+  await timer.pause()
+  assert.equal(timer.seconds, 15)
+  timer.finishSession()
+  t.mock.timers.reset()
 })

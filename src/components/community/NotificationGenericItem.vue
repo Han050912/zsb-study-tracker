@@ -14,8 +14,8 @@ const isAchievement = computed(() => props.n.type === 'achievement')
 const icon = computed(() => (isAchievement.value ? Trophy : Bell))
 const iconCls = computed(() =>
   isAchievement.value
-    ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-500 dark:text-amber-400'
-    : 'bg-sky-50 dark:bg-sky-900/30 text-sky-500 dark:text-sky-400'
+    ? 'bg-action-soft dark:bg-action-soft text-action dark:text-action'
+    : 'bg-action-soft dark:bg-action-soft text-action dark:text-action'
 )
 
 // 仅覆盖 GenericItem 实际处理的 targetType 子集；搭子细分类型（partner_share/comment/study/plan/review/remind/unbind）走 NotificationPartnerItem
@@ -51,12 +51,12 @@ function open() {
       <component :is="icon" :size="16" />
       <span
         v-if="!n.isRead"
-        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white dark:border-slate-800"
+        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-correction border-2 border-white dark:border-slate-800"
       ></span>
     </div>
     <div class="flex-1 min-w-0">
       <p class="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">{{ n.content }}</p>
-      <p class="text-[10px] text-slate-400 mt-1">{{ fromNow(n.createdAt) }}</p>
+      <p class="text-xs text-slate-400 mt-1">{{ fromNow(n.createdAt) }}</p>
     </div>
   </button>
 </template>

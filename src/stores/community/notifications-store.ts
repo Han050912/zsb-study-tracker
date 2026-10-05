@@ -13,7 +13,9 @@ export const useNotificationStore = defineStore('community-notifications', {
     notifyFilter: '' as '' | NotificationType,
     generation: 0,
     ticket: 0,
-    unreadTicket: 0
+    unreadTicket: 0,
+    pendingReadIds: [] as string[],
+    readingAll: false
   }),
   actions: {
     resetState() {
@@ -51,18 +53,45 @@ export const useNotificationStore = defineStore('community-notifications', {
       await this.fetchNotifications(true)
     },
     async markRead(n: CommunityNotification) {
-      if (n.isRead) return
-      await notificationsApi.markRead(n.id)
-      n.isRead = true
-      this.unreadCount = Math.max(0, this.unreadCount - 1)
-      if (!(useAppStore().settings.dndMutedTypes ?? []).includes(n.type))
-        this.unreadExcludingMuted = Math.max(0, this.unreadExcludingMuted - 1)
+      if (n.isRead || this.readingAll || this.pendingReadIds.includes(n.id)) return
+      const generation = this.generation
+      this.pendingReadIds.push(n.id)
+      this.ticket++
+      this.unreadTicket++
+      try {
+        await notificationsApi.markRead(n.id)
+        if (generation !== this.generation) return
+        this.ticket++
+        this.unreadTicket++
+        const current = this.notifications.find((item) => item.id === n.id) ?? n
+        const wasUnread = !current.isRead
+        n.isRead = current.isRead = true
+        if (wasUnread) {
+          this.unreadCount = Math.max(0, this.unreadCount - 1)
+          if (!(useAppStore().settings.dndMutedTypes ?? []).includes(n.type))
+            this.unreadExcludingMuted = Math.max(0, this.unreadExcludingMuted - 1)
+        }
+      } finally {
+        if (generation === this.generation) this.pendingReadIds = this.pendingReadIds.filter((id) => id !== n.id)
+      }
     },
     async markAllRead() {
-      await notificationsApi.markAllRead()
-      for (const n of this.notifications) n.isRead = true
-      this.unreadCount = 0
-      this.unreadExcludingMuted = 0
+      if (this.readingAll) return
+      const generation = this.generation
+      this.readingAll = true
+      this.ticket++
+      this.unreadTicket++
+      try {
+        await notificationsApi.markAllRead()
+        if (generation !== this.generation) return
+        this.ticket++
+        this.unreadTicket++
+        for (const n of this.notifications) n.isRead = true
+        this.unreadCount = 0
+        this.unreadExcludingMuted = 0
+      } finally {
+        if (generation === this.generation) this.readingAll = false
+      }
     }
   }
 })

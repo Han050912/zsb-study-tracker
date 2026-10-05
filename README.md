@@ -32,7 +32,7 @@
 
 <br/>
 
-> [:arrow_right: English version](./README_EN.md)
+开发与贡献说明见 [贡献指南](./CONTRIBUTING.md)，后端运行与部署见 [Worker 文档](./worker/README.md)。
 
 </div>
 
@@ -46,22 +46,17 @@
   <tr>
     <td align="center" width="33%" style="padding:6px 12px;"><a href="#-项目简介" style="text-decoration:none;color:#58a6ff;">✨ 项目简介</a></td>
     <td align="center" width="33%" style="padding:6px 12px;"><a href="#-功能特性" style="text-decoration:none;color:#58a6ff;">🧩 功能特性</a></td>
-    <td align="center" width="33%" style="padding:6px 12px;"><a href="#-效果图" style="text-decoration:none;color:#58a6ff;">📸 效果图</a></td>
+    <td align="center" width="33%" style="padding:6px 12px;"><a href="#-技术架构" style="text-decoration:none;color:#58a6ff;">🏗️ 技术架构</a></td>
   </tr>
   <tr>
-    <td align="center" width="33%" style="padding:6px 12px;"><a href="#-技术架构" style="text-decoration:none;color:#58a6ff;">🏗️ 技术架构</a></td>
     <td align="center" width="33%" style="padding:6px 12px;"><a href="#-快速上手" style="text-decoration:none;color:#58a6ff;">🚀 快速上手</a></td>
     <td align="center" width="33%" style="padding:6px 12px;"><a href="#-项目结构" style="text-decoration:none;color:#58a6ff;">📁 项目结构</a></td>
+    <td align="center" width="33%" style="padding:6px 12px;"><a href="#-部署" style="text-decoration:none;color:#58a6ff;">🌐 部署</a></td>
   </tr>
   <tr>
-    <td align="center" width="33%" style="padding:6px 12px;"><a href="#-部署" style="text-decoration:none;color:#58a6ff;">🌐 部署</a></td>
     <td align="center" width="33%" style="padding:6px 12px;"><a href="#-参与贡献指南" style="text-decoration:none;color:#58a6ff;">🤝 贡献指南</a></td>
     <td align="center" width="33%" style="padding:6px 12px;"><a href="#-许可证-license" style="text-decoration:none;color:#58a6ff;">📜 许可证</a></td>
-  </tr>
-  <tr>
     <td align="center" width="33%" style="padding:6px 12px;"><a href="#-about-me" style="text-decoration:none;color:#58a6ff;">👤 About Me</a></td>
-    <td align="center" width="33%" style="padding:6px 12px;"><a href="#-请我喝咖啡" style="text-decoration:none;color:#58a6ff;">☕ 请我喝咖啡</a></td>
-    <td align="center" width="33%" style="padding:6px 12px;"></td>
   </tr>
 </table>
 
@@ -93,7 +88,7 @@
     </td>
     <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
       <strong style="color:#f78166;">☁️ 云端多端同步</strong><br/>
-      <span style="color:#8b949e;">注册账号后数据全量同步到云端（Cloudflare D1），Web 与桌面端随时接着学；PWA 会缓存数据，断网时也能查看最近一次的内容</span>
+      <span style="color:#8b949e;">学习数据通过记录级增量同步保存到 Cloudflare D1，支持 Web 与桌面端继续学习；PWA 缓存应用外壳，笔记正文使用独立的本地缓存，账号与其他 API 功能需要联网</span>
     </td>
   </tr>
   <tr>
@@ -123,7 +118,7 @@
     </td>
     <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
       <strong style="color:#f78166;">🖥️ 桌面端 + PWA</strong><br/>
-      <span style="color:#8b949e;">Windows / macOS 原生客户端：系统托盘、桌面原生通知、自动更新；Web 端可安装为 PWA 并离线缓存</span>
+      <span style="color:#8b949e;">Windows / macOS 客户端支持系统托盘与原生通知；Windows 支持自动更新，macOS 手动更新；Web 端可安装为 PWA 并缓存应用外壳</span>
     </td>
   </tr>
 </table>
@@ -178,7 +173,7 @@
   <tr>
     <td width="50%" valign="top" style="padding:8px 16px;">
       <strong style="color:#58a6ff;">🔐 账号与安全</strong><br/>
-      <span style="color:#8b949e;">注册登录（bcrypt 密码 + JWT HttpOnly Cookie）、Cloudflare Turnstile 人机验证、限流、敏感词本地词库 + Workers AI 复审</span>
+      <span style="color:#8b949e;">注册登录（PBKDF2 密码哈希，Web 使用 JWT HttpOnly Cookie，桌面端使用 Bearer 会话）、Cloudflare Turnstile 人机验证、限流、敏感词本地词库与可选 Workers AI 复审</span>
     </td>
     <td width="50%" valign="top" style="padding:8px 16px;">
       <strong style="color:#58a6ff;">⚙️ 个性化</strong><br/>
@@ -191,83 +186,19 @@
 
 ---
 
-## 📸 效果图
-
-<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
-
-### 📊 首页仪表盘
-
-<span style="color:#8b949e;">今日概览、待办、学习热力图、科目掌握度与今日名言，一屏掌握当日学习节奏。</span>
-
-<br/><br/>
-
-<img src="./public/screenshots/Home.png" alt="首页仪表盘" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
-
-</div>
-
-<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
-
-### 📝 笔记中心（Markdown + LaTeX）
-
-<span style="color:#8b949e;">基于 KaTeX 的数学公式渲染，支持 Markdown 全量语法与笔记检索。</span>
-
-<br/><br/>
-
-<img src="./public/screenshots/Notes.png" alt="笔记中心" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
-
-</div>
-
-<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
-
-### 📖 英语打卡（搭配「墨墨背单词」App）
-
-<span style="color:#8b949e;">与墨墨背单词 App 配合，自定义每日目标，完形、阅读、听力、作文模板多维记录，自动累计积分。</span>
-
-<br/><br/>
-
-<img src="./public/screenshots/English.png" alt="英语打卡" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
-
-</div>
-
-<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
-
-### 📅 每日总结
-
-<span style="color:#8b949e;">自动聚合今日学习数据，支持情绪日志 + 三段式反思 + 明日计划，一键生成分享卡片。</span>
-
-<br/><br/>
-
-<img src="./public/screenshots/Summary.png" alt="每日总结" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
-
-</div>
-
-<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:24px 0;">
-
-### 🏆 成就激励
-
-<span style="color:#8b949e;">青铜 → 王者段位体系、徽章墙、积分流水与连续学习天数，让坚持有看得见的回报。</span>
-
-<br/><br/>
-
-<img src="./public/screenshots/Rewards.png" alt="成就激励" width="100%" style="border-radius:6px;border:1px solid #30363d;" />
-
-</div>
-
----
-
 ## 🏗️ 技术架构
 
 <div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:20px 24px;margin:16px 0;">
 
-| 层次 | 技术选型 |
-| :--- | :--- |
-| 前端 | Vue 3（`<script setup>`）、TypeScript、Vite 5、Vue Router 4（hash 模式）、Pinia 2、Tailwind CSS 3 |
-| 可视化 / 富内容 | ECharts 5、KaTeX 0.16、markdown-it、pdfjs-dist、Lucide 图标（SVG 组件，不使用 emoji 图标） |
-| 桌面端 | Electron 43、electron-builder、electron-updater（Windows 自动更新）、系统托盘与原生通知 |
-| PWA | vite-plugin-pwa（可安装 + Service Worker 离线缓存，API 请求 NetworkFirst） |
-| 后端 | Cloudflare Workers（TypeScript）、自研路由与中间件、bcryptjs 密码哈希、jose 签发 JWT |
-| 数据 | Cloudflare D1（50+ 张业务表，见 `worker/schema.sql`）、R2（社区图片存储）、D1 定时任务（每周一推送周报） |
-| 工程 | ESLint 之外的类型检查 `tsc --noEmit`、`node --test` 单元测试、Worker 冒烟测试 `node test/smoke.mjs`、GitHub Actions 四条流水线 |
+| 层次            | 技术选型                                                                                                                                    |
+| :-------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
+| 前端            | Vue 3（`<script setup>`）、TypeScript、Vite 5、Vue Router 4（hash 模式）、Pinia 2、Tailwind CSS 3                                           |
+| 可视化 / 富内容 | ECharts 5、KaTeX 0.16、markdown-it、pdfjs-dist、Lucide 图标（SVG 组件，不使用 emoji 图标）                                                  |
+| 桌面端          | Electron 43、electron-builder、electron-updater（Windows 自动更新）、系统托盘与原生通知                                                     |
+| PWA             | vite-plugin-pwa；预缓存应用外壳，静态资源按需缓存；API 使用 `NetworkOnly`，笔记正文由 IndexedDB 缓存                                        |
+| 后端            | Cloudflare Workers（TypeScript）、自研路由与中间件；新密码使用 PBKDF2-SHA-256，兼容旧 bcrypt 哈希并在登录后升级；jose 签发有效期 3 天的 JWT |
+| 数据            | D1 保存业务记录、PDF 与笔记正文分片；R2 保存社区和错题图片；定时任务每小时维护、每周一 UTC+8 08:00 推送周报                                 |
+| 工程            | 前端 `vue-tsc --noEmit`、Worker `tsc --noEmit`；ESLint、Prettier、`node --test`、Worker API 冒烟测试；GitHub Actions 共用 CI 门禁           |
 
 </div>
 
@@ -277,72 +208,91 @@
 
 <div style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:20px 24px;margin:16px 0;">
 
-> 环境要求：**Node.js 18 或更高版本**（运行单元测试 `npm test` 需 Node ≥ 22.18，因为 Worker 测试直接导入 `.ts` 源码；CI 与 Worker 部署使用 Node 22，可从 [nodejs.org](https://nodejs.org) 下载安装包）。
+> 环境要求：**Node.js 22.18 或更高版本**、npm 与 Git。Worker 测试直接导入 `.ts` 源码；CI 使用 Node 22。依赖以根目录及 `worker/` 的 `package-lock.json` 为准。
 
 </div>
 
 ### 在浏览器里跑起来
 
-打开终端（Windows 按 `Win+R` 输入 `cmd`，Mac 打开「终端」），依次敲下面几条命令：
+在仓库根目录执行以下命令：
 
 ```bash
-# 把项目代码下载到本地
+# 下载代码
 git clone https://github.com/Han050912/zsb-study-tracker.git
 cd zsb-study-tracker
 
-# 安装项目需要的依赖包（第一次会比较慢，后面就快了）
-npm install
+# 安装前后端锁定的依赖
+npm ci
+npm ci --prefix worker
 
-# 复制环境变量示例为本地开发配置（Windows cmd 用 copy 代替 cp；本地开发把 VITE_API_BASE 改为 http://localhost:8787）
+# Bash：准备本地默认配置（已有文件时保留）
+test -f .env || cp .env.example .env
+
+# 本地开发覆盖：复制后将 VITE_API_BASE 改为 http://localhost:8787
 cp .env.example .env.development
 
-# 启动开发服务器，浏览器会自动打开页面
+# 配置并启动下一节的 Worker 后，启动前端
 npm run dev
 ```
 
-接口地址由 `VITE_API_BASE` 决定：开发模式默认请求本地 Worker `http://localhost:8787`（`.env.development`），生产构建指向线上 Worker `https://cn.zsbservice.de5.net`（`.env`）。也就是说，只跑 `npm run dev` 时同样需要本地 Worker 提供账号与数据接口，继续看下一节。
+PowerShell 首次准备默认配置可执行 `if (-not (Test-Path .env)) { Copy-Item .env.example .env }`，开发覆盖使用 `Copy-Item .env.example .env.development`；Windows cmd 对应使用 `copy`。打开 `.env.development`，将接口配置改为：
+
+```dotenv
+VITE_API_BASE=http://localhost:8787
+```
+
+`.env.example` 提供非敏感的线上 API 默认地址；复制后不修改会继续请求线上服务。`.env`、`.env.development` 和 `.env.desktop.local` 都是 Git 忽略的本地配置，已有文件应保留。前端开发服务器通常位于 `http://localhost:5173`，启动后按终端显示的地址打开浏览器；`npm run dev` 不会自动启动 Worker。生产 Web 构建读取本地 `.env`，CI 构建从 `.env.example` 恢复默认配置，均可通过环境变量 `VITE_API_BASE` 覆盖 API 地址。
 
 ### 启动后端 Worker（本地开发必需）
 
+另开终端，从仓库根目录执行：
+
 ```bash
 cd worker
-npm install
 
-# 初始化本地 D1 数据库（首次执行，会在 .wrangler 下生成 SQLite）
+# Bash；PowerShell 使用 Copy-Item .dev.vars.example .dev.vars
+cp .dev.vars.example .dev.vars
+
+# 仅用于新建本地数据库；已有数据库按 Worker 文档升级
 npm run init:local
 
 # 本地启动 Worker（默认 http://localhost:8787）
-npx wrangler dev
+npm run dev
 ```
 
-后端密钥通过 `worker/.dev.vars` 提供（已 gitignore），本地开发至少需要：
+后端配置通过 `worker/.dev.vars` 提供，该文件已被 Git 忽略。模板包含本地 Turnstile 测试配置：
 
-| 变量 | 说明 |
-| :--- | :--- |
-| `JWT_SECRET` | JWT 签名密钥 |
-| `TURNSTILE_SECRET` | Cloudflare Turnstile 密钥，本地可用官方测试密钥 |
-| `DESKTOP_TOKEN` | 桌面端共享令牌，用于跳过人机验证（与前端构建期注入值一致） |
-| `CF_API_TOKEN` / `CF_ACCOUNT_ID` | Workers AI 内容复审（可选，未配置则自动降级为仅本地词库） |
+| 变量                             | 说明                                                                                                            |
+| :------------------------------- | :-------------------------------------------------------------------------------------------------------------- |
+| `JWT_SECRET`                     | JWT 签名密钥；模板值仅用于本地开发                                                                              |
+| `TURNSTILE_SECRET`               | 与前端开发模式测试 sitekey 配套的测试密钥                                                                       |
+| `ALLOW_LOCAL_ORIGINS=1`          | 本地开发允许 Vite 来源访问；生产环境不配置此开关                                                                |
+| `DESKTOP_TOKEN`                  | 桌面构建及冒烟测试需要匹配的共享令牌；普通 Web 开发不需要                                                       |
+| `CF_API_TOKEN` / `CF_ACCOUNT_ID` | 可选 Workers AI 复审；`CF_ACCOUNT_ID` 已由 `wrangler.toml` 的 `[vars]` 提供，未配置 AI 令牌则仅运行本地词库过滤 |
 
-生产环境用 `npx wrangler secret put <NAME>` 写入，不要提交明文。
+自己的 Cloudflare 部署还需替换 `worker/wrangler.toml` 中的账号、域名、D1 与 R2 绑定。生产密钥使用 `npx wrangler secret put <NAME>` 写入，完整配置与数据库步骤见 [Worker 文档](./worker/README.md)。
 
-后端改动可跑冒烟测试验证：
+后端改动可运行冒烟测试。先在本地 Worker 设置 `DESKTOP_TOKEN`，再在测试进程设置同值的 `SMOKE_DESKTOP_TOKEN`，具体命令与隔离数据库配置见 [Worker 冒烟测试](./worker/README.md#冒烟测试)：
 
 ```bash
-cd worker
-npm run smoke     # 对本地 http://localhost:8787 跑一轮接口自测
+# 在 worker/ 目录，保持本地 Worker 运行
+npm run smoke
 ```
 
 ### 在桌面客户端里跑起来
 
+以下命令从仓库根目录执行：
+
 ```bash
-# 浏览器和桌面端同时启动，改代码两边都会自动刷新
+# 启动 Vite 和 Electron 开发窗口
 npm run electron:dev
 ```
 
+该脚本使用普通 Vite 开发模式，适合调试界面；打包桌面认证路径使用 `build:desktop` 的编译标识，需用桌面构建产物核对。
+
 ### 打包成安装文件
 
-想把应用打包成 `.exe` 或 `.dmg` 发给同学用？跑下面命令就行：
+在根目录创建已被 Git 忽略的 `.env.desktop.local`，设置 `VITE_API_BASE` 和与 Worker 一致的 `DESKTOP_TOKEN`。桌面模式会移除 Web 人机验证界面，缺少匹配令牌时登录无法通过；令牌写入 `dist/api-base.json`，由 Electron 主进程读取，并通过 IPC 提供给认证代码。Web 构建不写入该令牌。
 
 ```bash
 npm run dist:win    # 打包 Windows 安装包，输出在 release/ 文件夹
@@ -350,7 +300,30 @@ npm run dist:mac    # 打包 Mac 安装包（需要在 Mac 电脑上执行）
 npm run dist        # 自动识别你当前的系统来打包
 ```
 
-打包好的 Windows 桌面端会通过 GitHub Release 自动检查新版本并提示更新（electron-updater）。
+打包后的 Windows 桌面端通过已发布的 GitHub Release 检查更新。macOS 支持本地打包，当前发版工作流只生成 Windows 安装包，macOS 需手动下载更新。
+
+### 常用检查
+
+安装根目录和 Worker 依赖后，在根目录执行：
+
+```bash
+npm run typecheck
+npm run lint
+npm run format:check
+npm test
+npm run typecheck --prefix worker
+npm run build
+```
+
+`npm test` 同时运行 Electron 与 Worker 单元测试。`npm run preview` 预览 Web 构建产物；`npm run build:desktop` 生成桌面渲染层。Markdown 当前被仓库 `.prettierignore` 排除，文档变更还需单独检查格式和链接。
+
+### 数据备份与离线使用
+
+设置中的“导出 JSON 备份”包含学习数据和已读取到的文字笔记正文。导出前联网打开需要备份的文字笔记，确认正文已加载。上传的 PDF 和云端错题图片仅保留引用，文件本体需另行下载；文件删除后或换账号导入，JSON 无法恢复这些附件。
+
+导入会在确认后替换当前学习数据并同步到云端，操作前先导出当前备份。清除全部数据还会删除上传的 PDF 与云端错题图片。
+
+PWA 预缓存应用外壳，并缓存已访问的部分静态资源。API 请求使用 `NetworkOnly`，不会在 Service Worker 中缓存账号数据；离线时可访问的内容取决于已有本地缓存和当前登录状态，登录、社区与协作操作需要联网。
 
 ---
 
@@ -363,6 +336,8 @@ zsb-study-tracker/
 ├── src/                     # Vue 3 前端源码
 │   ├── pages/               # 页面组件（30+ 路由页面）
 │   ├── components/          # 通用与业务组件
+│   ├── features/            # 社区与协作功能模块
+│   ├── shared/              # 共用组件、组合式函数与样式
 │   ├── stores/              # Pinia 状态（app / studyTimer / community…）
 │   ├── services/            # 认证、通知、提醒等服务
 │   ├── api/                 # 前端接口封装（client / sync / community）
@@ -372,13 +347,13 @@ zsb-study-tracker/
 │   └── router/              # 路由与访问守卫
 ├── electron/                # Electron 主进程、preload 与打包图标
 ├── worker/                  # Cloudflare Worker 后端
-│   ├── schema.sql           # D1 建表脚本（唯一数据源）
+│   ├── schema.sql           # 新建 D1 数据库的完整结构
+│   ├── migrations/          # 已有数据库的增量升级
 │   ├── src/api/             # 各业务 API 模块
 │   ├── src/proxy/           # 第三方代理（墨墨、壁纸…）
 │   ├── src/middleware/      # 鉴权、限流等中间件
-│   └── test/smoke.mjs       # 接口冒烟测试
-├── public/                  # 静态资源（PWA 图标、截图、打赏码）
-├── docs/                    # 设计文档（本地，不随仓库发布）
+│   └── test/                # 单元测试、接口冒烟与专项回归脚本
+├── public/                  # PWA 图标、manifest 与字体许可证
 ├── vite.config.ts           # Vite + PWA 配置
 ├── tailwind.config.js       # Tailwind 主题
 └── package.json             # 依赖与构建脚本
@@ -394,14 +369,16 @@ zsb-study-tracker/
 
 项目有四条 GitHub Actions 流水线：一条 CI 检查、两条部署、一条桌面端发版。
 
-| 流水线 | 触发条件 | 行为 |
-| :--- | :--- | :--- |
-| `ci.yml` | 推送到 `development` / `master`，或任意 PR | 前端 typecheck / lint / format / 单元测试 / 构建，外加 Worker typecheck |
-| `deploy-pages.yml` | 推送到 `master`（或手动触发） | `npm ci` → `npm run build` → 部署 `dist/` 到 GitHub Pages |
-| `deploy-worker.yml` | 推送到 `master` 且 `worker/**` 有变更（或手动触发） | 在 `worker/` 下 `npm ci` → typecheck 门禁 → `npx wrangler deploy` |
-| `release-desktop.yml` | 打 `v*` tag（或手动触发） | 校验 tag 与 package.json 版本一致 → lint / 单元测试 → 构建桌面端并校验 `dist/api-base.json` 产物 → 发布 Windows 安装包到 GitHub Releases（草稿，需手动 publish） |
+| 流水线                | 触发条件                                                                        | 行为                                                                                                                                  |
+| :-------------------- | :------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------ |
+| `ci.yml`              | 推送到 `development` / `master`、任意 PR，或其他工作流通过 `workflow_call` 调用 | 前端 typecheck、lint、format、Electron/Worker 单元测试、Web 构建与 Worker typecheck                                                   |
+| `deploy-pages.yml`    | 推送到 `master`（或手动触发）                                                   | 等待同一提交的共用 CI 门禁通过 → 构建 Web 产物 → 部署 `dist/` 到 GitHub Pages                                                         |
+| `deploy-worker.yml`   | 推送到 `master` 且 `worker/**` 有变更（或手动触发）                             | 等待共用 CI → Worker typecheck → 应用远程 D1 迁移 → 部署 Worker                                                                       |
+| `release-desktop.yml` | 打 `v*` tag（或手动触发）                                                       | 等待共用 CI → tag 触发时校验版本一致，检查 `DESKTOP_TOKEN` 非空 → 桌面构建及配置产物校验 → 发布 Windows 安装包至 GitHub Releases 草稿 |
 
-部署需要的仓库 Secrets：`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`；Worker 运行期还需配置 `JWT_SECRET`、`TURNSTILE_SECRET`、`DESKTOP_TOKEN` 等变量，并创建 D1 数据库（`zsb-study-db`）与 R2 桶（`zsb-study-images`）。
+Worker 自动部署需要仓库 Secrets：`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`。桌面发版另需仓库 Secret `DESKTOP_TOKEN`，与 Worker 运行期配置一致；Release 草稿需手动发布后才进入自动更新渠道。
+
+Worker 的 `JWT_SECRET`、`TURNSTILE_SECRET` 等运行期密钥独立配置，并绑定 D1 数据库 `zsb-study-db` 和 R2 桶 `zsb-study-images`。新库初始化与已有库升级步骤不同，直接执行 SQL 不会登记迁移状态；发布前按 [Worker 数据库说明](./worker/README.md#数据库初始化与升级) 完成检查。
 
 </div>
 
@@ -467,7 +444,7 @@ zsb-study-tracker/
 
 - **Bug 反馈**：[提交 Issue](https://github.com/Han050912/zsb-study-tracker/issues/new)
 - **需求建议**：同样通过 Issue 提出，并打上 `enhancement` 标签
-- **安全问题**：请参考 [SECURITY.md](./SECURITY.md)
+- **安全问题**：请通过 [GitHub 私有漏洞报告](https://github.com/Han050912/zsb-study-tracker/security/advisories/new) 提交，勿在公开 Issue 披露细节；入口未启用时可 [私信维护者](https://t.me/hanhaoyi888)。
 
 ---
 
@@ -501,21 +478,5 @@ zsb-study-tracker/
 <a href="https://t.me/hanhaoyi888">
   <img src="https://img.shields.io/badge/Telegram-@hanhaoyi888-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram" />
 </a>
-
-</div>
-
----
-
-## ☕ 请我喝咖啡
-
-<div style="background-color:#0d1117;border:1px solid #21262d;border-radius:12px;padding:24px;margin:16px 0;text-align:center;">
-
-如果这个项目对你有帮助，欢迎请我喝杯咖啡，让工具持续迭代下去 ☕
-
-<br/>
-
-| 微信支付 | 支付宝 |
-| :---: | :---: |
-| <img src="./public/donate/wechat.jpg" alt="微信支付" width="220" style="border-radius:8px;" /> | <img src="./public/donate/alipay.jpg" alt="支付宝" width="220" style="border-radius:8px;" /> |
 
 </div>

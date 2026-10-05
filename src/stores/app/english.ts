@@ -8,6 +8,7 @@ import { uid, today } from '../../utils/date'
 import { stageDelete } from '../../services/syncOutbox'
 import { touchEnglish } from './staging'
 import type { VocabRecord, ReadingRecord, ListeningRecord, EssayTemplate } from '../../types'
+import { vocabError, readingError, studyMinutesError } from '../../utils/studyValidation'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type EnglishActionsShape = {
@@ -22,6 +23,8 @@ type EnglishActionsShape = {
 export const englishActions: EnglishActionsShape = {
   /** 背单词逐条打卡：每次背诵单独生成一条记录 */
   addVocabRecord(this: AppStoreThis, newWords: number, reviewWords: number) {
+    const error = vocabError(newWords, reviewWords)
+    if (error) throw new Error(error)
     const points = Math.round((newWords + reviewWords) / 20)
     const record: VocabRecord = { id: uid(), date: today(), newWords, reviewWords, points }
     this.english.vocab.push(record)
@@ -41,6 +44,8 @@ export const englishActions: EnglishActionsShape = {
 
   /** 保存阅读训练记录（+5 积分，refId 关联） */
   addReadingRecord(this: AppStoreThis, wpm: number, accuracy: number) {
+    const error = readingError(wpm, accuracy)
+    if (error) throw new Error(error)
     const record: ReadingRecord = { id: uid(), date: today(), wpm, accuracy }
     this.english.reading.push(record)
     this.addPoints(5, '阅读训练', record.id!)
@@ -50,6 +55,8 @@ export const englishActions: EnglishActionsShape = {
 
   /** 保存听力练习记录（每 10 分钟 +1 积分，refId 关联） */
   addListeningRecord(this: AppStoreThis, minutes: number, material: string, mode: '精听' | '泛听') {
+    const error = studyMinutesError(minutes)
+    if (error) throw new Error(error)
     const record: ListeningRecord = { id: uid(), date: today(), minutes, material, mode }
     this.english.listening.push(record)
     const pts = Math.round(minutes / 10)

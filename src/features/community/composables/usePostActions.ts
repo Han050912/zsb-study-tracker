@@ -39,7 +39,7 @@ export function usePostActions() {
     try {
       await commands[kind](id)
     } catch (e) {
-      toast(getErrorMessage(e, '操作失败'))
+      toast(getErrorMessage(e, '帖子操作未完成，请重试'))
     }
   }
   return { action, showProfile, profileUserId, showReport, reportPostId, openProfile, openReport }

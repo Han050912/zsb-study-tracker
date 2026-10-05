@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IconAction from '../shared/components/IconAction.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -7,7 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { messagesApi } from '../api/community/messages'
 import { usersApi } from '../api/community/users'
 import { imageUrl, IMAGE_MAX_PER_MESSAGE } from '../api/community'
-import { ImageOff, RefreshCw } from '@lucide/vue'
+import { ImageOff, RefreshCw, ArrowLeft } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import ImageUploadPreview from '../components/community/ImageUploadPreview.vue'
 import ReportDialog from '../components/community/ReportDialog.vue'
@@ -43,6 +45,8 @@ const olderError = ref(false)
 const peerName = ref('')
 const peerAvatar = ref('')
 const loading = ref(true)
+const loadError = ref('')
+let disposed = false
 const sending = ref(false)
 const text = ref('')
 const { images, uploading, hasError, fileInput, pickImages, onFileChange, removeImage, retryImage, reset } =
@@ -56,17 +60,23 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 /** 轮询在飞标记：上一次请求未返回时跳过本次 tick，避免请求叠加与重复补拉资料 */
 let pollInFlight = false
 
-async function load(reset = false) {
+async function load(reset = false, afterCursor?: string) {
   try {
-    const res = await messagesApi.messagesWith(peerId, reset ? null : nextCursor.value)
+    const latest = reset ? messages.value[0] : undefined
+    // 同秒 id 是随机值：每轮重读最新一秒，再用服务端游标补齐后续页。
+    const after = afterCursor ?? (latest ? `${latest.createdAt - 1}_~` : null)
+    const res = await messagesApi.messagesWith(peerId, reset ? null : nextCursor.value, after)
+    if (disposed) return
+    loadError.value = ''
     // 打开/刷新即已读对方消息：本次标记数即时同步全局未读计数，无需等轮询
     if (res.markedRead > 0) window.dispatchEvent(new CustomEvent('message:read', { detail: res.markedRead }))
     if (reset) {
-      // 刷新最新一页：保留已向上翻页加载的更早历史（否则 5s 轮询会把历史冲掉）；
-      // 更早历史必然比最新一页更旧，直接拼接在后面仍保持倒序
+      // 轮询从已知最新消息向前逐页补齐，断网期间超过一页的新消息也不会跨过。
       const latestIds = new Set(res.messages.map((m) => m.id))
       const older = messages.value.filter((m) => !latestIds.has(m.id))
-      messages.value = [...res.messages, ...older]
+      messages.value = [...res.messages, ...older].sort(
+        (a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+      )
       // 翻页游标只在首屏建立一次：轮询刷新不得再改写它——否则翻到底（nextCursor 已为 null）后
       // 会被「最新一页」的游标写回，凭空复活一个点了也加载不出任何消息的假按钮
       if (!cursorEstablished.value) {
@@ -83,10 +93,14 @@ async function load(reset = false) {
     // 会话列表接口拿不到对方名/头像，从资料卡补
     if (!peerName.value) {
       const p = await usersApi.profile(peerId)
+      if (disposed) return
       peerName.value = p.userName
       peerAvatar.value = p.avatar || ''
     }
+    return after ? res.nextCursor : null
   } catch (e) {
+    if (disposed) return
+    if (!cursorEstablished.value) loadError.value = getErrorMessage(e, '消息加载失败，请重试')
     // 轮询失败静默（否则每 5s 弹一次）；首屏与翻页失败给出提示
     if (loading.value || loadingOlder.value) {
       toast(getErrorMessage(e, '加载失败'))
@@ -96,6 +110,12 @@ async function load(reset = false) {
   } finally {
     loading.value = false
   }
+}
+
+function retryLoad() {
+  if (loading.value || disposed) return
+  loading.value = true
+  void load(true)
 }
 
 /** 加载更早的消息：按钮可见即点击可用（nextCursor 为 null 时按钮根本不渲染） */
@@ -124,12 +144,15 @@ function isNearBottom() {
 
 /** 拉取一次最新消息，仅当轮询前用户已接近底部时才自动滚底；上次未返回则跳过本次（失败也不阻塞后续轮询） */
 async function pollOnce() {
-  if (pollInFlight) return
+  if (pollInFlight || disposed) return
   pollInFlight = true
   try {
     const before = messages.value.length
     const nearBottom = isNearBottom()
-    await load(true)
+    let cursor: string | null | undefined
+    do {
+      cursor = await load(true, cursor ?? undefined)
+    } while (cursor && !disposed)
     if (messages.value.length !== before && nearBottom) await scrollToBottom()
   } finally {
     pollInFlight = false
@@ -137,6 +160,7 @@ async function pollOnce() {
 }
 /** 页面可见时每 5s 轮询新消息；切后台（标签页隐藏/桌面端最小化）暂停，回前台立即补拉一次 */
 function startPolling() {
+  if (disposed) return
   stopPolling()
   pollTimer = setInterval(pollOnce, 5000)
 }
@@ -157,24 +181,35 @@ function onVisibilityChange() {
 
 onMounted(async () => {
   await load(true)
+  if (disposed) return
   await scrollToBottom()
   // 「打招呼」跳转：自动发送一条问候语（清除 query 防重复触发）
-  if (route.query.greet === '1' && !messages.value.some((m) => m.fromMe && m.content === GREETING)) {
+  if (
+    !loadError.value &&
+    route.query.greet === '1' &&
+    !messages.value.some((m) => m.fromMe && m.content === GREETING)
+  ) {
     try {
       const m = await messagesApi.sendMessage(peerId, GREETING)
+      if (disposed) return
       messages.value.unshift(m)
       await scrollToBottom()
     } catch {
-      /* 发送失败静默忽略，用户可手动发消息 */
+      if (!disposed) {
+        text.value = GREETING
+        toast('问候发送失败，已保留在输入框中，可重新发送')
+      }
     }
   }
-  if (route.query.greet) router.replace({ query: {} })
+  if (disposed) return
+  if (route.query.greet) router.replace({ query: { ...route.query, greet: undefined } })
   startPolling()
   document.addEventListener('visibilitychange', onVisibilityChange)
   updateThumb()
 })
 
 onUnmounted(() => {
+  disposed = true
   stopPolling()
   document.removeEventListener('visibilitychange', onVisibilityChange)
   if (thumbHideTimer) clearTimeout(thumbHideTimer)
@@ -271,8 +306,11 @@ async function send() {
   sending.value = true
   try {
     const m = await messagesApi.sendMessage(peerId, t, urls)
-    messages.value.unshift(m) // 倒序数组头部插入（最新）
-    text.value = ''
+    if (disposed) return
+    messages.value = [...messages.value.filter((existing) => existing.id !== m.id), m].sort(
+      (a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+    )
+    if (text.value.trim() === t) text.value = ''
     reset()
     await scrollToBottom()
   } catch (e) {
@@ -292,10 +330,12 @@ function openReport(msgId: string) {
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto flex flex-col" style="height: calc(100vh - 10rem)">
+  <div class="study-page reading-page flex flex-col" style="height: calc(100dvh - 7rem); min-height: 400px">
     <!-- 头部 -->
     <div class="flex items-center gap-2 pb-2 border-b border-slate-100 dark:border-slate-700">
-      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
+      <span class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
       <UserAvatar :name="peerName || '?'" :avatar="peerAvatar" size="sm" />
       <span class="font-semibold text-sm truncate flex-1">{{ peerName || '加载中…' }}</span>
     </div>
@@ -309,12 +349,16 @@ function openReport(msgId: string) {
         @mouseenter="onChatMouseEnter"
         @mouseleave="onChatMouseLeave"
       >
-        <div v-if="loading" class="text-center text-xs text-slate-400 py-8">加载中…</div>
+        <LoadingState v-if="loading" />
+        <div v-else-if="loadError && !messages.length" role="alert" class="text-center p-6 space-y-3">
+          <p class="text-sm text-slate-500">{{ loadError }}</p>
+          <button class="btn-ghost" @click="retryLoad">重新加载消息</button>
+        </div>
         <template v-else>
           <div v-if="nextCursor" class="text-center">
             <button
               class="text-xs inline-flex items-center gap-1 hover:underline disabled:text-slate-400 disabled:no-underline"
-              :class="olderError ? 'text-red-500 dark:text-red-400' : 'text-primary-500'"
+              :class="olderError ? 'text-correction dark:text-correction' : 'text-action'"
               :disabled="loadingOlder"
               @click="loadOlder"
             >
@@ -337,7 +381,7 @@ function openReport(msgId: string) {
                 :class="
                   m.content
                     ? m.fromMe
-                      ? 'rounded-2xl px-3.5 py-2 bg-[#95EC69] text-slate-900 rounded-tr-sm'
+                      ? 'rounded-2xl px-3.5 py-2 bg-action-soft text-ink border border-line rounded-tr-sm'
                       : 'rounded-2xl px-3.5 py-2 bg-slate-100 dark:bg-slate-700 dark:text-white rounded-tl-sm'
                     : ''
                 "
@@ -371,16 +415,16 @@ function openReport(msgId: string) {
                       title="图片加载失败"
                     >
                       <ImageOff :size="18" aria-hidden="true" />
-                      <span class="text-[10px]">图片加载失败</span>
+                      <span class="text-xs">图片加载失败</span>
                     </div>
                   </div>
                 </div>
               </div>
               <div class="flex items-center gap-2 mt-0.5 px-1" :class="m.fromMe ? 'justify-end' : ''">
-                <span class="text-[10px] text-slate-400">{{ fromNow(m.createdAt) }}</span>
+                <span class="text-xs text-slate-400">{{ fromNow(m.createdAt) }}</span>
                 <button
                   v-if="!m.fromMe"
-                  class="text-[10px] text-slate-300 hover:text-orange-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  class="message-report min-h-11 min-w-11 text-xs text-muted hover:text-action transition-opacity"
                   @click="openReport(m.id)"
                 >
                   举报
@@ -409,10 +453,19 @@ function openReport(msgId: string) {
         @retry="retryImage"
       />
       <div class="flex gap-2">
-        <input ref="fileInput" type="file" :accept="ACCEPT" multiple class="hidden" @change="onFileChange" />
+        <input
+          ref="fileInput"
+          type="file"
+          :accept="ACCEPT"
+          multiple
+          class="hidden"
+          :disabled="sending"
+          @change="onFileChange"
+        />
         <button
-          class="btn-ghost !px-3 shrink-0 text-slate-500 hover:text-primary-500"
+          class="btn-ghost !px-3 shrink-0 text-slate-500 hover:text-action"
           title="添加图片"
+          :disabled="sending"
           @click="pickImages"
         >
           图片
@@ -421,6 +474,7 @@ function openReport(msgId: string) {
           v-model="text"
           maxlength="500"
           class="input flex-1"
+          aria-label="发消息…（1-500 字）"
           placeholder="发消息…（1-500 字）"
           @keydown.enter.exact.prevent="send"
         />
@@ -440,6 +494,18 @@ function openReport(msgId: string) {
 </template>
 
 <style scoped>
+/* 触屏无需悬停即可举报；鼠标环境在悬停或键盘聚焦消息时显示。 */
+@media (hover: hover) and (pointer: fine) {
+  .message-report {
+    opacity: 0;
+  }
+  .group:hover .message-report,
+  .group:focus-within .message-report,
+  .message-report:focus-visible {
+    opacity: 1;
+  }
+}
+
 /* 隐藏原生滚动条，改由自绘 thumb 展示 */
 .chat-scroll {
   scrollbar-width: none;
@@ -456,13 +522,13 @@ function openReport(msgId: string) {
   top: 0;
   width: 4px;
   border-radius: 9999px;
-  background: #cbd5e1; /* slate-300 */
+  background: var(--line); /* slate-300 */
   opacity: 0;
   transition: opacity 0.3s ease;
   pointer-events: none;
 }
 ::global(.dark) .chat-thumb {
-  background: #475569;
+  background: var(--line);
 } /* slate-600 */
 .chat-thumb.is-visible {
   opacity: 1;

@@ -3,6 +3,7 @@
 import { computed, ref } from 'vue'
 import { useToast } from '../../composables/useToast'
 import { useAppStore } from '../../stores/app'
+import { studyMinutesError } from '../../utils/studyValidation'
 
 const store = useAppStore()
 const toast = useToast()
@@ -12,16 +13,19 @@ const eng = computed(() => store.english)
 const lisMinutes = ref(20)
 const lisMaterial = ref('')
 const lisMode = ref<'精听' | '泛听'>('精听')
+let lastSavedAt = 0
 function addListening() {
-  // v-model.number 清空后为 ''，入 store 前净化
-  const mins = Math.max(0, Math.floor(Number(lisMinutes.value) || 0))
-  if (mins <= 0) {
-    toast('请填写有效的听力时长')
+  if (Date.now() - lastSavedAt < 1200) return
+  const mins = lisMinutes.value
+  const error = studyMinutesError(mins)
+  if (error) {
+    toast(error)
     return
   }
   store.addListeningRecord(mins, lisMaterial.value || '未注明', lisMode.value)
+  lastSavedAt = Date.now()
   lisMaterial.value = ''
-  toast(`听力记录已保存 +${Math.round(mins / 10)} 积分`)
+  toast('听力记录已保存')
 }
 </script>
 
@@ -49,14 +53,11 @@ function addListening() {
   </div>
   <div class="card">
     <div class="section-title">听力历史</div>
+    <p v-if="!eng.listening.length" class="study-note">还没有听力记录，练习后记下材料与用时。</p>
     <div class="space-y-1.5">
       <div v-for="(l, i) in eng.listening.slice().reverse()" :key="i" class="flex items-center gap-3 text-sm">
         <span class="text-xs text-slate-400 w-20">{{ l.date }}</span>
-        <span
-          class="text-[10px] px-1.5 py-0.5 rounded"
-          :class="l.mode === '精听' ? 'bg-emerald-50 text-emerald-600' : 'bg-sky-50 text-sky-600'"
-          >{{ l.mode }}</span
-        >
+        <span class="text-[10px] px-1.5 py-0.5 rounded" :class="'bg-surface-soft text-muted'">{{ l.mode }}</span>
         <span class="flex-1 truncate">{{ l.material }}</span>
         <span class="text-xs text-slate-400">{{ l.minutes }}分钟</span>
       </div>

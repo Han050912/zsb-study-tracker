@@ -1,19 +1,16 @@
 import type { Env } from '../index'
 import { on, body } from '../router'
-import { all, assertMappingBody, batch, first, readBodyText, utc8Today, HttpError } from '../db'
+import { all, assertMappingBody, first, readBodyText, utc8Today, HttpError } from '../db'
 import type { CrudMapping } from '../db'
 import { getSubjectTree, subjectInsertStatements, subjectTreeDeleteStatements } from './subjects'
-import { getHabits, habitUpsertStatements, habitDeleteStatements } from './habits'
+import { getHabits, habitUpsertStatements, habitDeleteStatements, habitBodySchema } from './habits'
 import { awardBadge } from './badges'
 import type { BadgeKey } from './badges'
 import {
   achievementsMergeStatement,
   gamificationProjectionStatement,
   getAchievements,
-  getGamification,
-  pointsAwardStatements,
-  pointsRevokeStatements,
-  resolveAwardPoints
+  getGamification
 } from './gamification'
 import type { PointsAward } from './gamification'
 import { getSettings, settingsRecordStatements, validateSettingsPublicText } from './settings'
@@ -34,6 +31,8 @@ import { materialsMapping } from './materials'
 import { todosMapping } from './todos'
 import { rateLimit } from '../middleware/rateLimit'
 import { purgePdfCache } from './pdfs'
+import { withUserTransaction, withUserSnapshot, domainVersionStatement } from '../syncTransaction'
+import { studyRewardStatements, cappedStudyAwardStatements } from './studyRewards'
 
 /**
  * 记录级增量同步协议（设计 §4）：
@@ -47,14 +46,9 @@ import { purgePdfCache } from './pdfs'
  * `gamification` 由服务端权威维护：客户端推送该域 → 400，仅作为快照随 push/pull 响应回传。
  *
  * 积分（设计 §5.1/§5.2，与记录写入**同一 batch**原子提交）：
- * - `points` 事件：`award` 按 `ref_id` 幂等落账，`reason`/`points` 须通过服务端白名单（行为合法性 +
- *   分值上限，见 gamification.resolveAwardPoints，issue #11）；**未登记行为 / 非法分值形状的 award
- *   事件被直接忽略（不落账、不报错）**——事件来自客户端 outbox，整批 400 会像 issue #4/#5 一样
- *   让该账号所有域的同步被这条毒记录永久阻塞，而「不能伪造分值」由白名单 + 上限钳制已完全达成；
- *   `revoke` 支持 `refId` 精确、`refPrefix` 前缀与
- *   `all: true` 全量（撤销该用户全部有 ref_id 的流水，供导入/清空这类「整体替换」场景使用）。
- * - 记录删除被接受（写墓碑）时，服务端**同时**撤销该记录关联的流水（records/problemSessions/exams →
- *   `<key>`；errorQuestions → `error:<key>`；habits → `habit:<key>:%`）。
+ * - 积分由已接受的业务记录计算；客户端事件仅兼容每日打卡/番茄完成意图，不接收金额与撤销指令。
+ * - 学习、打卡与学习里程碑共用 UTC+8 每日 300 分的持久消耗额度；删除不会返还额度。
+ * - 删除或取消记录按真实数据撤销关联流水；社区奖励保持既有规则。
  * - 权威派生量：今日 `study_records` 分钟 ≥60 → +3（`srv:study-minutes:<date>`）；streak 按学习日期集合
  *   计算并写回 `gamification.streak/last_checkin`；里程碑 7/30/100 天 → +5/+10/+20 且发放对应徽章
  *   （`srv:streak:<days>` 幂等，徽章并入主 batch）。batch 前预读 + 内存叠加，杜绝「积分已发/徽章未发」窗口。
@@ -70,8 +64,7 @@ import { purgePdfCache } from './pdfs'
  * 单表数组域的 upserts 元素为记录对象本身（含 updatedAt），复杂域为 `{ key, value, updatedAt }` 包装。
  * 拉取游标契约（设计 §4.2/§4.4）：客户端推进游标必须取本次 `changes[domain].seq`——即该域**实际返回**
  * 的记录/墓碑中最大的 server_seq/seq；域未出现则不推进。**不得**取 `versions[domain]` 当游标：
- * `allocateSeq` 独立提交会先于业务行可见，「版本号已可见、业务行尚未提交」的窗口里 versions 高于实际
- * 可读序号，取 versions 会把游标推高到空洞号而**永久漏掉**那批尚未提交的行。
+ * 域版本与业务写入通过事务内CAS一起提交，冲突后重新裁决，聚合拉取也检查快照版本。
  * `versions` 仅作信息性展示（诊断），不是游标；增量查询仍以 `server_seq <= versions 快照` 为上界与之配合。
  */
 
@@ -92,9 +85,6 @@ const MAX_ACHIEVEMENTS = 200
  * 否则时钟严重偏快的客户端会给自己的写入「永久占位」，其它设备的后续编辑全部判负而永远不生效。
  */
 const CLOCK_SKEW_MS = 5 * 60_000
-
-/** 秒级时间戳（sync_domain_versions.updated_at 存秒，与社区各表同一口径） */
-const nowSec = () => Math.floor(Date.now() / 1000)
 
 /** D1 单条查询的绑定参数上限约百个 → IN 列表按 50 分片（与项目既有做法一致） */
 const IN_CHUNK = 50
@@ -401,6 +391,8 @@ const habitsStrategy: DomainStrategy = {
       if (typeof (value as Record<string, unknown>)[field] !== 'string')
         throw new HttpError(400, `域 habits 的记录缺少 ${field}（key: ${key}）`)
     }
+    const parsed = habitBodySchema.safeParse(value)
+    if (!parsed.success) throw new HttpError(400, parsed.error.issues[0]?.message || '习惯记录无效')
   },
   storedUpdatedAt: (env, userId, keys) => storedByColumn(env, 'habits', 'id', userId, keys),
   upsertStatements: async (env, userId, item, seq) =>
@@ -606,6 +598,8 @@ const pomodoroStrategy: DomainStrategy = {
     const rec = value as Record<string, unknown>
     if (kind === 'rec' && (typeof rec.date !== 'string' || !Number.isInteger(rec.time)))
       throw new HttpError(400, `域 pomodoro 的 rec: 记录必须含 date 与 time（key: ${key}）`)
+    if (kind === 'rec' && rec.completed !== undefined && typeof rec.completed !== 'boolean')
+      throw new HttpError(400, `域 pomodoro 的 rec: completed 必须是布尔值（key: ${key}）`)
   },
   storedUpdatedAt: async (env, userId, keys) => {
     const dates: string[] = []
@@ -802,65 +796,29 @@ function validateDomainChanges(
 }
 
 /**
- * 校验并拆分 points 事件（设计 §5.1）：
- * - `award`：需 `refId`（幂等键）；`reason`（行为）与 `points` 交由服务端白名单裁定
- *   （`resolveAwardPoints`，issue #11）——客户端只上报「行为 + 引用」；**行为未登记 / 分值形状非法 →
- *   忽略该事件（不落账、不报错）**，分值超额 → 钳制到该行为上限；`date` 缺省为服务端今日。
- *   忽略而非 400：事件来自客户端 outbox，整批拒绝会让该账号所有域的同步被这条毒记录永久阻塞。
- * - `revoke`：`refId`（精确）与 `refPrefix`（前缀）二选一，或 `all: true`（全量撤销，不与前两者同用）
- * 其余非法形状（事件非对象 / op 未知 / award 缺 refId / revoke 自相矛盾）→ 400 中文提示；
- * 例外：award 缺 refId 亦按「忽略」处理（无幂等键无法安全落账，且历史备份快照里存在无 refId
- * 的流水，整批 400 会形成毒记录把该账号所有域的同步永久阻塞）；
- * 校验先于任何数据库访问（与域校验同批原子）。
+ * Preserve the legacy event envelope so malformed operations fail before any write.
+ * Award amounts, dates and revoke selectors are never authority: studyRewards derives
+ * ledger changes from persisted records and recognizes only safe compatibility intents.
  */
-function parsePointsEvents(points: unknown): {
-  awards: PointsAward[]
-  revokes: { refId?: string; refPrefix?: string; all?: true }[]
-} {
-  if (points === undefined || points === null) return { awards: [], revokes: [] }
+function validatePointsEvents(points: unknown): void {
+  if (points === undefined || points === null) return
   if (!Array.isArray(points)) throw new HttpError(400, 'points 必须为数组')
-  const awards: PointsAward[] = []
-  const revokes: { refId?: string; refPrefix?: string; all?: true }[] = []
   for (const item of points) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new HttpError(400, 'points 含非法条目')
     const e = item as Record<string, unknown>
-    const refId = typeof e.refId === 'string' && e.refId ? e.refId : undefined
-    const refPrefix = typeof e.refPrefix === 'string' && e.refPrefix ? e.refPrefix : undefined
-    if (e.op === 'award') {
-      // 缺 refId 无法安全落账（无幂等键会重复入账），忽略该事件而非 400：
-      // 历史备份快照中存在无 refId 的流水，整批拒绝会形成毒记录阻塞全部同步。
-      if (!refId) continue
-      // 分值不再由客户端任意决定：行为合法性 + 分值上限由服务端白名单裁定（issue #11）。
-      // 未登记行为 / 非法分值形状的 award 事件被**忽略**（不落账、不报错）——见 resolveAwardPoints
-      // 注释：award 来自客户端 outbox，整批 400 会让该账号所有域的同步被这条毒记录永久阻塞；
-      // 超额分值不报错，钳制到该行为上限。
-      const award = resolveAwardPoints(e.reason, e.points)
-      if (!award) continue
-      awards.push({
-        refId,
-        points: award.points,
-        reason: award.reason,
-        date: typeof e.date === 'string' && e.date ? e.date : utc8Today()
-      })
-      continue
-    }
-    if (e.op === 'revoke') {
-      if (e.all !== undefined && typeof e.all !== 'boolean')
-        throw new HttpError(400, 'points 的 revoke 事件的 all 必须为布尔值')
-      if (e.all === true) {
-        if (refId || refPrefix)
-          throw new HttpError(400, 'points 的 revoke 事件的 all 不能与 refId 或 refPrefix 同时出现')
-        revokes.push({ all: true })
-        continue
-      }
+    if (e.op === 'award') continue
+    if (e.op !== 'revoke') throw new HttpError(400, 'points 事件的 op 只能是 award 或 revoke')
+    const refId = typeof e.refId === 'string' && !!e.refId
+    const refPrefix = typeof e.refPrefix === 'string' && !!e.refPrefix
+    if (e.all !== undefined && typeof e.all !== 'boolean')
+      throw new HttpError(400, 'points 的 revoke 事件的 all 必须为布尔值')
+    if (e.all === true) {
+      if (refId || refPrefix) throw new HttpError(400, 'points 的 revoke 事件的 all 不能与 refId 或 refPrefix 同时出现')
+    } else {
       if (refId && refPrefix) throw new HttpError(400, 'points 的 revoke 事件不能同时给 refId 与 refPrefix')
       if (!refId && !refPrefix) throw new HttpError(400, 'points 的 revoke 事件必须给 refId 或 refPrefix')
-      revokes.push({ refId, refPrefix })
-      continue
     }
-    throw new HttpError(400, 'points 事件的 op 只能是 award 或 revoke')
   }
-  return { awards, revokes }
 }
 
 /**
@@ -898,40 +856,13 @@ function mergeAchievements(stored: string[], incoming: string[]): string[] {
   return merged
 }
 
-/** 批量读已存在的流水 `ref_id`（幂等判重：本次只对缺失的 refId 发语句并计入响应 awarded） */
-async function readExistingRefIds(env: Env, userId: string, refIds: string[]): Promise<Set<string>> {
-  const rows = await allByKeys<{ ref_id: string }>(
-    env,
-    (ph) => `SELECT ref_id FROM points_log WHERE user_id = ? AND ref_id IN (${ph})`,
-    userId,
-    refIds
-  )
-  return new Set(rows.map((r) => String(r.ref_id)))
-}
-
-/** 记录删除被接受时该域关联的积分流水回收规则（服务端不变量：不依赖客户端是否发了 revoke 事件） */
-function pointsRefOfDeleted(domain: string, key: string): { refId?: string; refPrefix?: string } {
-  switch (domain) {
-    case 'records':
-    case 'problemSessions':
-    case 'exams':
-      return { refId: key }
-    case 'errorQuestions':
-      return { refId: `error:${key}` } // 客户端复习错题时用的就是这个 ref 形式
-    case 'habits':
-      return { refPrefix: `habit:${key}:` } // 习惯打卡积分 ref 形如 habit:<habitId>:<date>
-    default:
-      return {}
-  }
-}
-
 // ---------- 删除驱动的孤儿清理（设计 §6.4） ----------
 
 /**
  * 记录删除被接受时清理其关联的外部数据（语句并入主 batch），替代原先「推送前后整域差集」的清理方式：
  * - `notes`：按 note id 同时删除 Markdown 正文分片与 PDF 原文分片
  * - `errorQuestions`：`image = 'r2:<sha256>'` → 删 `error_images` 归属行 + R2 对象
- * R2 对象无法进 D1 batch，键收集到 `r2Keys` 由主 batch 提交后再删。
+ * R2 对象无法进 D1 batch；同事务写入清理任务，由定时任务重试删除。
  * 幂等：行不存在时删除 0 行；R2 对象不存在时删除为无操作，重复删除同样安全。
  * PDF 读缓存条目同样无法进 batch：待失效的 pdf_id 收集到 `pdfPurgeIds`，主 batch 提交后再删（见调用方）。
  */
@@ -940,7 +871,6 @@ async function orphanCleanupStatements(
   userId: string,
   domain: string,
   keys: string[],
-  r2Keys: Set<string>,
   pdfPurgeIds: Set<string>
 ): Promise<D1PreparedStatement[]> {
   if (!keys.length) return []
@@ -959,53 +889,31 @@ async function orphanCleanupStatements(
   }
 
   if (domain === 'errorQuestions') {
-    // 图片内容寻址：同一 sha256 可能被多条错题引用，仅在「排除本批待删键后已无其它引用」时才删
-    // 归属行与对象，否则会删掉其它错题仍在展示的图片（原整域差集清理天然具备该语义）。
-    // P5-02：引用计数必须排除本批待删键——同一图被本批多条将删除的错题引用时仍要判为可清理，
-    // 否则 error_images 行与 R2 对象永久泄漏。实现为「全量引用数 − 本批引用数」：
-    // 两段都是可分片的 IN 查询，规避 D1 绑定参数上限下无法一次 NOT IN 全部待删键的问题。
-    const rows = await allByKeys<{ id: string; image: string | null }>(
+    const rows = await allByKeys<{ image: string | null }>(
       env,
-      (ph) => `SELECT id, image FROM error_questions WHERE user_id = ? AND id IN (${ph})`,
+      (ph) => `SELECT image FROM error_questions WHERE user_id = ? AND id IN (${ph})`,
       userId,
       keys
     )
-    // 本批待删键按图分桶（只关心 r2: 内容寻址引用）
-    const batchRefs = new Map<string, number>()
-    for (const r of rows) {
-      if (typeof r.image === 'string' && r.image.startsWith('r2:'))
-        batchRefs.set(r.image, (batchRefs.get(r.image) ?? 0) + 1)
-    }
-    if (!batchRefs.size) return []
-    // 各图全量引用数（含本批；去重后的 image 列表分片查询，每个 image 只落在一个分片，直接覆盖写）
-    const totalRows = await allByKeys<{ image: string; refs: number }>(
-      env,
-      (ph) =>
-        'SELECT image, COUNT(*) AS refs FROM error_questions ' +
-        `WHERE user_id = ? AND image IN (${ph}) GROUP BY image`,
-      userId,
-      [...batchRefs.keys()]
-    )
-    const totals = new Map<string, number>()
-    for (const r of totalRows) totals.set(String(r.image), Number(r.refs))
-    // 排除本批待删键后仍被引用（差值 > 0）的图不可清理
     const imageIds = [
       ...new Set(
-        [...batchRefs.keys()]
-          .filter((img) => (totals.get(img) ?? 0) - (batchRefs.get(img) ?? 0) === 0)
-          .map((img) => img.slice(3))
-          .filter(Boolean)
+        rows.flatMap((row) =>
+          typeof row.image === 'string' && row.image.startsWith('r2:') ? [row.image.slice(3)] : []
+        )
       )
     ]
-    if (!imageIds.length) return []
-    const owners = await allByKeys<{ id: string; r2_key: string }>(
-      env,
-      (ph) => `SELECT id, r2_key FROM error_images WHERE user_id = ? AND id IN (${ph})`,
-      userId,
-      imageIds
-    )
-    for (const o of owners) if (o.r2_key) r2Keys.add(String(o.r2_key))
-    return owners.map((o) => env.DB.prepare('DELETE FROM error_images WHERE user_id = ? AND id = ?').bind(userId, o.id))
+    // Evaluate references after every accepted upsert/delete in this batch, including newly added records.
+    return imageIds.flatMap((id) => [
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO r2_cleanup_jobs (r2_key, created_at)
+        SELECT r2_key, ? FROM error_images WHERE user_id = ? AND id = ?
+          AND NOT EXISTS (SELECT 1 FROM error_questions WHERE user_id = ? AND image = ?)`
+      ).bind(Date.now(), userId, id, userId, 'r2:' + id),
+      env.DB.prepare(
+        `DELETE FROM error_images WHERE user_id = ? AND id = ?
+        AND NOT EXISTS (SELECT 1 FROM error_questions WHERE user_id = ? AND image = ?)`
+      ).bind(userId, id, userId, 'r2:' + id)
+    ])
   }
 
   return []
@@ -1104,7 +1012,8 @@ function computeStreak(dates: string[]): number {
 async function deriveServerAwards(
   env: Env,
   userId: string,
-  records: Decision | undefined
+  records: Decision | undefined,
+  today: string
 ): Promise<{
   awards: PointsAward[]
   streak: { streak: number; lastCheckin: string } | null
@@ -1129,7 +1038,6 @@ async function deriveServerAwards(
   // 受影响日期 = 本批 upsert 的新日期 ∪ 被覆盖/删除行的原日期 ∪ 今日（Set 去重）。
   // 今日恒在集合内：分钟奖励口径是「每次 records 推送都按当前聚合重算」，今日记录未被本批触碰时
   // 其聚合值虽不变，但 revokeAll 等场景清掉流水后仍需在下次推送按同一结果补发（ref_id 判重兜底）。
-  const today = utc8Today()
   const affectedDates = new Set<string>([today])
   for (const op of records.upserts) {
     const d = studyDateOf(op.item.value)
@@ -1188,8 +1096,7 @@ async function deriveServerAwards(
   for (const m of STREAK_MILESTONES) {
     if (streak < m.days) continue
     awards.push({ refId: `srv:streak:${m.days}`, points: m.points, reason: m.reason, date: today })
-    // 徽章发放：awardBadge 内部 INSERT OR IGNORE 原子抢占（避免重复通知/广播帖），
-    // 返回的通知/广播帖语句并入主 batch，与积分同批提交
+    // 徽章与通知/广播帖全部是待提交语句，与积分同批提交。
     statements.push(...(await awardBadge(env, userId, m.badge)))
   }
   return { awards, streak: { streak, lastCheckin: dates.length ? dates[dates.length - 1] : '' }, statements }
@@ -1298,30 +1205,6 @@ function removeTombstoneStatement(env: Env, userId: string, domain: string, key:
   )
 }
 
-/**
- * 原子分配域序号（语义为「域级单调序号」，本批写入的所有行/墓碑取该值）。
- *
- * 必须是**单条语句取号**：先 `SELECT version` 再 `version + 1` 会让同域并发 push 拿到同一个序号
- * （版本号却各 +1，最终跳号 2），已把游标推进到该序号的客户端此后 `server_seq > cursor` 会永久漏掉其中一批。
- * `INSERT ... ON CONFLICT DO UPDATE ... RETURNING version` 由 SQLite 在单条语句内原子完成读改写。
- *
- * 取号发生在 batch **之前**：若其后 batch 失败或进程中断会消耗掉一个号（版本空洞）。
- * 这对游标无害——客户端游标只会跳到更大的号，等价于「跳过一个空批次」，不会漏数据。
- */
-export async function allocateSeq(env: Env, userId: string, domain: string): Promise<number> {
-  const row = await first<{ version: number }>(
-    env,
-    `INSERT INTO sync_domain_versions (user_id, domain, version, updated_at) VALUES (?, ?, 1, ?)
-     ON CONFLICT(user_id, domain) DO UPDATE SET version = sync_domain_versions.version + 1, updated_at = excluded.updated_at
-     RETURNING version`,
-    userId,
-    domain,
-    nowSec()
-  )
-  if (!row) throw new HttpError(500, '域序号分配失败')
-  return Number(row.version)
-}
-
 /** 拉取某域的墓碑变更（cursor === null 为全量）；seq 供计算该域游标 */
 async function fetchDeletions(
   env: Env,
@@ -1345,7 +1228,7 @@ async function fetchDeletions(
  * 组装单域拉取结果：记录（按 shape 决定是否包装）+ 墓碑 + 该域游标 `seq`。
  *
  * `seq` = 本次实际返回的记录/墓碑中最大的 server_seq/seq：客户端把它当作新游标（设计 §4.2 游标契约），
- * 因此即使 `versions[domain]` 因 `allocateSeq` 独立提交而高于实际可读序号，游标也不会被推高到空洞号。
+ * 即使某域没有返回记录，也不推进该域游标；聚合读取由外层快照校验保证一致。
  * 响应 deletes 元素仍只回传 `{ key, deletedAt }`（形状稳定），seq 不进入元素。
  */
 async function fetchDomainChanges(
@@ -1393,7 +1276,7 @@ async function pullSnapshot(env: Env, userId: string) {
  * 增量拉取：只返回 (cursor, version] 窗口内的记录与墓碑；空域不出现。
  *
  * 客户端游标取响应里各域的 `seq`（本次实际返回的最大序号，见 fetchDomainChanges），**不是** `versions`：
- * versions 只是信息性字段，`allocateSeq` 先行提交会让它暂时高于实际已提交的业务行。
+ * versions 只用于诊断及查询上界，客户端仍使用实际返回变更中的序号。
  */
 async function pullIncremental(env: Env, userId: string, cursors: Record<string, number>) {
   const [versions, gamification] = await Promise.all([allVersions(env, userId), getGamification(env, userId)])
@@ -1435,7 +1318,7 @@ export function registerSyncRoutes() {
       ctx.request,
       SYNC_MAX_BYTES
     )
-    const events = parsePointsEvents(payload?.points)
+    validatePointsEvents(payload?.points)
     const achievements = parseAchievements(payload?.achievements)
 
     const domainsRaw = payload?.domains
@@ -1489,109 +1372,116 @@ export function registerSyncRoutes() {
       }
     }
 
-    // 3. 逐域先读后写决策
-    const decisions = await Promise.all(
-      validated.map((v) => decideDomain(ctx.env, ctx.userId, v.domain, v.strategy, v.upserts, v.deletes))
-    )
+    const committed = await withUserTransaction(ctx.env, ctx.userId, async (snapshotVersions) => {
+      // One successful transaction uses one business day, even if its reads cross midnight.
+      // A CAS retry captures the day again with its fresh source state.
+      const rewardDay = utc8Today()
+      // Decisions and version allocation are retried together when another writer commits.
+      const decisions = await Promise.all(
+        validated.map((v) => decideDomain(ctx.env, ctx.userId, v.domain, v.strategy, v.upserts, v.deletes))
+      )
 
-    // 4. 序号分配 + 语句装配：域内有任一条生效才原子取号（见 allocateSeq），本批该域全部写入取同一序号
-    const statements: D1PreparedStatement[] = []
-    const versions: Record<string, number> = {}
-    const applied: Record<string, number> = {}
-    const deletes: Record<string, number> = {}
-    // 待撤销的积分流水（删除驱动 + 客户端 revoke 事件）：refId 精确 + refPrefix 前缀 + all 全量
-    const revokeRefIds = new Set<string>()
-    const revokePrefixes = new Set<string>()
-    let revokeAll = false
-    /** 待删除的 R2 对象键：R2 无法进 D1 batch，故主 batch 提交后再删 */
-    const r2Keys = new Set<string>()
-    /** 待失效的 PDF 读缓存 pdf_id（notes 删除驱动）：同上，主 batch 提交后再删缓存条目 */
-    const pdfPurgeIds = new Set<string>()
+      // 域版本与业务数据同批提交；CAS冲突时重新裁决与分配，不预留可被越过的序号。
+      const statements: D1PreparedStatement[] = []
+      const versions: Record<string, number> = {}
+      const applied: Record<string, number> = {}
+      const deletes: Record<string, number> = {}
+      const rewardChanges: { domain: string; key: string; operation: 'upsert' | 'delete' }[] = []
+      /** 待失效的 PDF 读缓存 pdf_id（notes 删除驱动）：同上，主 batch 提交后再删缓存条目 */
+      const pdfPurgeIds = new Set<string>()
 
-    const rejected: RejectedItem[] = []
-    for (let i = 0; i < validated.length; i++) {
-      const { domain, strategy } = validated[i]
-      const d = decisions[i]
-      rejected.push(...d.rejected)
-      if (!d.upserts.length && !d.deletes.length) continue
+      const rejected: RejectedItem[] = []
+      for (let i = 0; i < validated.length; i++) {
+        const { domain, strategy } = validated[i]
+        const d = decisions[i]
+        rejected.push(...d.rejected)
+        if (!d.upserts.length && !d.deletes.length) continue
 
-      const seq = await allocateSeq(ctx.env, ctx.userId, domain)
-      for (const op of d.upserts) {
-        statements.push(...(await strategy.upsertStatements(ctx.env, ctx.userId, op.item, seq)))
-        if (op.revive) statements.push(removeTombstoneStatement(ctx.env, ctx.userId, domain, op.item.key))
+        const seq = (snapshotVersions[domain] ?? 0) + 1
+        statements.push(domainVersionStatement(ctx.env, ctx.userId, domain, seq))
+        for (const op of d.upserts) {
+          rewardChanges.push({ domain, key: op.item.key, operation: 'upsert' })
+          statements.push(...(await strategy.upsertStatements(ctx.env, ctx.userId, op.item, seq)))
+          if (op.revive) statements.push(removeTombstoneStatement(ctx.env, ctx.userId, domain, op.item.key))
+        }
+        const deletedKeys: string[] = []
+        for (const item of d.deletes) {
+          rewardChanges.push({ domain, key: item.key, operation: 'delete' })
+          statements.push(...strategy.deleteStatements(ctx.env, ctx.userId, item.key))
+          statements.push(tombstoneStatement(ctx.env, ctx.userId, domain, item.key, item.deletedAt, seq))
+          deletedKeys.push(item.key)
+        }
+        // 删除驱动的孤儿清理（notes → pdf_chunks；errorQuestions → error_images + R2）
+        statements.push(...(await orphanCleanupStatements(ctx.env, ctx.userId, domain, deletedKeys, pdfPurgeIds)))
+        versions[domain] = seq
+        applied[domain] = d.upserts.length
+        deletes[domain] = d.deletes.length
       }
-      const deletedKeys: string[] = []
-      for (const item of d.deletes) {
-        statements.push(...strategy.deleteStatements(ctx.env, ctx.userId, item.key))
-        statements.push(tombstoneStatement(ctx.env, ctx.userId, domain, item.key, item.deletedAt, seq))
-        deletedKeys.push(item.key)
-        // 删除被接受即撤销该记录关联的积分流水（服务端不变量，不依赖客户端是否发了 revoke 事件；
-        // 与客户端显式 revoke 重复到达也安全——按 refId 删除 + 投影重算都是幂等的）
-        const ref = pointsRefOfDeleted(domain, item.key)
-        if (ref.refId) revokeRefIds.add(ref.refId)
-        if (ref.refPrefix) revokePrefixes.add(ref.refPrefix)
-      }
-      // 删除驱动的孤儿清理（notes → pdf_chunks；errorQuestions → error_images + R2）
-      statements.push(...(await orphanCleanupStatements(ctx.env, ctx.userId, domain, deletedKeys, r2Keys, pdfPurgeIds)))
-      versions[domain] = seq
-      applied[domain] = d.upserts.length
-      deletes[domain] = d.deletes.length
-    }
 
-    // 5. 服务端权威派生（今日学习时长 / streak / 里程碑徽章）：与记录写入同一 batch
-    const recordsIndex = validated.findIndex((v) => v.domain === 'records')
-    const derived = await deriveServerAwards(
-      ctx.env,
-      ctx.userId,
-      recordsIndex >= 0 ? decisions[recordsIndex] : undefined
-    )
+      // 5. 服务端权威派生（今日学习时长 / streak / 里程碑徽章）：与记录写入同一 batch
+      const recordsIndex = validated.findIndex((v) => v.domain === 'records')
+      const derived = await deriveServerAwards(
+        ctx.env,
+        ctx.userId,
+        recordsIndex >= 0 ? decisions[recordsIndex] : undefined,
+        rewardDay
+      )
 
-    // 6. 积分落账：先撤销（删除驱动 + 客户端事件），再按 ref_id 幂等发放。
-    //    同批内既撤销又发放同一 refId 时以**本次发放**为准（离线一次性刷 outbox 的典型场景：取消后
-    //    重新完成打卡）；撤销语句在前执行，因此判重看到的是「已删除」后的状态，与最终落库一致。
-    for (const r of events.revokes) {
-      if (r.refId) revokeRefIds.add(r.refId)
-      if (r.refPrefix) revokePrefixes.add(r.refPrefix)
-      if (r.all) revokeAll = true
-    }
-    statements.push(...pointsRevokeStatements(ctx.env, ctx.userId, [...revokeRefIds], [...revokePrefixes], revokeAll))
-    const awards: PointsAward[] = [...events.awards, ...derived.awards]
-    const existing = await readExistingRefIds(
-      ctx.env,
-      ctx.userId,
-      awards.map((a) => a.refId)
-    )
-    // 同批 refPrefix 撤销覆盖到的 refId 同样以本次发放为准（前缀撤销删掉旧流水后需重新写入）；
-    // revokeAll 清空全部有 ref_id 的流水，故本次发放的每一条都必须重新写入
-    const newAwards = awards.filter(
-      (a) =>
-        !existing.has(a.refId) ||
-        revokeRefIds.has(a.refId) ||
-        revokeAll ||
-        [...revokePrefixes].some((p) => a.refId.startsWith(p))
-    )
-    statements.push(...pointsAwardStatements(ctx.env, ctx.userId, newAwards))
-    statements.push(...derived.statements)
-
-    // 7. 权威投影：points = SUM(points_log.points)；派生过 streak 时一并写回（同批，无中间态）。
-    //    revokeAll（批量撤销）同样触发重算：清空流水后投影随之归零
-    if (newAwards.length || revokeRefIds.size || revokePrefixes.size || revokeAll || derived.streak)
+      // Only validated business mutations may change study rewards. Client refs/amounts are not facts.
+      statements.push(...studyRewardStatements(ctx.env, ctx.userId, rewardChanges, payload?.points, rewardDay))
+      const previousAwards = new Map(
+        (
+          await all<{ id: number; points: number }>(
+            ctx.env,
+            'SELECT id, points FROM points_log WHERE user_id = ? AND date = ?',
+            ctx.userId,
+            rewardDay
+          )
+        ).map((row) => [Number(row.id), Number(row.points)])
+      )
+      statements.push(...cappedStudyAwardStatements(ctx.env, ctx.userId, derived.awards, rewardDay))
+      const awardedIndex = statements.length
+      statements.push(
+        ctx.env.DB.prepare(
+          `SELECT id, ref_id, points, reason, date FROM points_log WHERE user_id = ? AND date = ?
+         AND (substr(ref_id, 1, 6) = 'study:' OR ref_id GLOB 'srv:study-minutes:*' OR ref_id GLOB 'srv:streak:*')`
+        ).bind(ctx.userId, rewardDay)
+      )
+      statements.push(...derived.statements)
       statements.push(gamificationProjectionStatement(ctx.env, ctx.userId, derived.streak ?? undefined))
 
-    // 7b. 成就集合并集（设计 §5.1/§5.2）：规则留在客户端（`checkAchievements()`），以**事件**传输解锁结果；
-    //     服务端只负责「只增不减」的并集落库——读现存列表（保持已有顺序）→ 追加本次新解锁 id → 同一 batch 写回。
-    //     幂等：重复推送同一批 id 结果不变；与上面的积分投影语句各写各的列，同批互不覆盖。
-    if (achievements.length) {
-      const merged = mergeAchievements(await getAchievements(ctx.env, ctx.userId), achievements)
-      if (merged.length > MAX_ACHIEVEMENTS) throw new HttpError(400, `成就列表合并后不能超过 ${MAX_ACHIEVEMENTS} 项`)
-      statements.push(achievementsMergeStatement(ctx.env, ctx.userId, merged))
-    }
+      // 7b. 成就集合并集（设计 §5.1/§5.2）：规则留在客户端（`checkAchievements()`），以**事件**传输解锁结果；
+      //     服务端只负责「只增不减」的并集落库——读现存列表（保持已有顺序）→ 追加本次新解锁 id → 同一 batch 写回。
+      //     幂等：重复推送同一批 id 结果不变；与上面的积分投影语句各写各的列，同批互不覆盖。
+      if (achievements.length) {
+        const merged = mergeAchievements(await getAchievements(ctx.env, ctx.userId), achievements)
+        if (merged.length > MAX_ACHIEVEMENTS) throw new HttpError(400, `成就列表合并后不能超过 ${MAX_ACHIEVEMENTS} 项`)
+        statements.push(achievementsMergeStatement(ctx.env, ctx.userId, merged))
+      }
 
-    // 8. 单 batch 原子提交（任一步失败整批回滚）
-    await batch(ctx.env, statements)
-
-    // 9. R2 对象清理：主 batch 成功后再删，避免「对象已删、记录仍在」；对象不存在时删除为无操作
-    for (const key of r2Keys) await ctx.env.IMAGES.delete(key).catch((e) => console.error('R2 删除失败', key, e))
+      const value = { versions, applied, deletes, rejected, newAwards: [] as PointsAward[], pdfPurgeIds }
+      return {
+        statements,
+        value,
+        readResult: (results: D1Result[]) => {
+          const rows = results[awardedIndex].results as {
+            id: number
+            ref_id: string
+            points: number
+            reason: string
+            date: string
+          }[]
+          return {
+            ...value,
+            newAwards: rows.flatMap((row) => {
+              const delta = Number(row.points) - (previousAwards.get(Number(row.id)) ?? 0)
+              return delta > 0 ? [{ refId: row.ref_id, date: row.date, reason: row.reason, points: delta }] : []
+            })
+          }
+        }
+      }
+    })
+    const { versions, applied, deletes, rejected, newAwards, pdfPurgeIds } = committed
 
     // 9b. PDF 读缓存失效（笔记删除驱动）：同批已删分片，缓存在此处删，避免「缓存已删、分片仍在」
     for (const pdfId of pdfPurgeIds) await purgePdfCache(ctx.userId, pdfId).catch(() => {})
@@ -1631,7 +1521,9 @@ export function registerSyncRoutes() {
     // full=true 或未带游标 → 全量快照（首次 hydrate）
     const full = payload?.full === true || cursorsRaw === undefined || cursorsRaw === null
     return Response.json(
-      full ? await pullSnapshot(ctx.env, ctx.userId) : await pullIncremental(ctx.env, ctx.userId, cursors)
+      await withUserSnapshot(ctx.env, ctx.userId, () =>
+        full ? pullSnapshot(ctx.env, ctx.userId) : pullIncremental(ctx.env, ctx.userId, cursors)
+      )
     )
   })
 }

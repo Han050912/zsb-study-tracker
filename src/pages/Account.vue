@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import IconAction from '../shared/components/IconAction.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
-import { ChevronDown } from '@lucide/vue'
+import { ChevronDown, ChevronUp, ArrowRight } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import { changePassword, passwordPolicyError, sessionUser } from '../services/auth'
 import { getErrorMessage } from '../utils/error'
@@ -12,6 +14,7 @@ import ProfileHeader from '../components/profile/ProfileHeader.vue'
 import SocialStatsBar from '../components/profile/SocialStatsBar.vue'
 import UserWorksTabs from '../components/profile/UserWorksTabs.vue'
 import EditProfileModal from '../components/profile/EditProfileModal.vue'
+import { today } from '../utils/date'
 
 const store = useAppStore()
 const toast = useToast()
@@ -96,6 +99,7 @@ function openPasswordModal() {
 }
 
 async function submitPasswordChange() {
+  if (pwSaving.value) return
   pwError.value = ''
   if (!oldPassword.value) {
     pwError.value = '请输入当前密码'
@@ -147,7 +151,7 @@ async function exportBackup() {
     const blob = new Blob([await store.exportJSON()], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `zsb-backup-${user.value?.username}-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `zsb-backup-${user.value?.username}-${today()}.json`
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -161,9 +165,13 @@ async function exportBackup() {
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
+  <div class="study-page reading-page space-y-4">
+    <header>
+      <h1 class="page-title">我的账号</h1>
+      <p class="study-eyebrow mt-1">个人资料、账号安全和学习记录备份</p>
+    </header>
     <!-- 加载中 -->
-    <div v-if="profileLoading" class="text-center text-xs text-slate-400 py-20">加载中…</div>
+    <LoadingState v-if="profileLoading" />
     <!-- 加载失败 -->
     <div v-else-if="profileError" class="card text-center py-10">
       <p class="text-xs text-slate-400">资料加载失败</p>
@@ -172,15 +180,20 @@ async function exportBackup() {
     <template v-else-if="profile">
       <ProfileHeader :profile="profile" :is-self="true" @edit="showEdit = true" />
       <SocialStatsBar :profile="profile" :is-self="true" @show-works="worksTab = $event" />
-      <UserWorksTabs :user-id="myId" :is-self="true" v-model:active-tab="worksTab" />
     </template>
 
     <!-- 账号安全（折叠，独立于 profile 加载状态，始终可用） -->
     <div class="card">
-      <button class="w-full flex items-center justify-between" @click="showSecurity = !showSecurity">
+      <span class="w-full flex items-center justify-between arrow-action" @click="showSecurity = !showSecurity">
         <span class="font-semibold text-sm">账号安全</span>
-        <ChevronDown :size="16" class="transition-transform text-slate-400" :class="showSecurity ? 'rotate-180' : ''" />
-      </button>
+        <IconAction
+          :icon="showSecurity ? ChevronUp : ChevronDown"
+          label="账号安全"
+          :aria-expanded="showSecurity"
+          class="transition-transform text-slate-400"
+          @click="showSecurity = !showSecurity"
+        />
+      </span>
       <div v-if="showSecurity" class="mt-3 space-y-4">
         <div>
           <h2 class="font-semibold text-sm">登录用户名</h2>
@@ -194,34 +207,36 @@ async function exportBackup() {
           <button class="btn-primary !text-xs shrink-0" @click="openPasswordModal">修改密码</button>
         </div>
         <div class="space-y-1.5">
-          <p class="text-[11px] text-slate-400 leading-relaxed">
+          <p class="text-xs text-slate-400 leading-relaxed">
             忘记密码？账号未绑定邮箱或手机号，无法自助找回；其它设备在线时可在本区块修改密码。
           </p>
           <a
             href="https://github.com/Han050912/zsb-study-tracker/issues/new"
             target="_blank"
             rel="noopener"
-            class="btn-ghost !text-xs inline-flex"
-            >全部设备都无法登录？提交 Issue 联系管理员处理 →</a
-          >
+            class="!text-xs inline-flex arrow-link"
+            >所有设备都无法登录？联系管理员 <ArrowRight class="arrow-inline" :size="16" aria-hidden="true"
+          /></a>
         </div>
       </div>
     </div>
 
     <!-- 数据中心（折叠，独立于 profile 加载状态，始终可用） -->
     <div class="card">
-      <button class="w-full flex items-center justify-between" @click="showDataCenter = !showDataCenter">
+      <span class="w-full flex items-center justify-between arrow-action" @click="showDataCenter = !showDataCenter">
         <span class="font-semibold text-sm">数据中心</span>
-        <ChevronDown
-          :size="16"
+        <IconAction
+          :icon="showDataCenter ? ChevronUp : ChevronDown"
+          label="数据中心"
+          :aria-expanded="showDataCenter"
           class="transition-transform text-slate-400"
-          :class="showDataCenter ? 'rotate-180' : ''"
+          @click="showDataCenter = !showDataCenter"
         />
-      </button>
+      </span>
       <div v-if="showDataCenter" class="mt-3 space-y-4">
         <!-- 账号与云端数据信息 -->
         <div class="space-y-2.5">
-          <h2 class="font-semibold text-sm">云端数据（Cloudflare D1）</h2>
+          <h2 class="font-semibold text-sm">云端学习记录</h2>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
             <div class="flex justify-between bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2">
               <span class="text-slate-500 dark:text-slate-400">注册时间</span>
@@ -232,9 +247,7 @@ async function exportBackup() {
               <span>{{ myDataSize }}</span>
             </div>
           </div>
-          <p class="text-[11px] text-slate-400">
-            所有数据实时同步到云端数据库，多设备登录同一账号即可访问；建议定期导出备份作为应急恢复手段。
-          </p>
+          <p class="text-xs text-slate-400">联网时会自动同步。同一账号可在其他设备继续学习，也可以导出备份留存。</p>
         </div>
 
         <!-- 数据统计 -->
@@ -246,7 +259,7 @@ async function exportBackup() {
               :key="s.label"
               class="bg-slate-50 dark:bg-slate-700/50 rounded-xl px-3 py-2.5 text-center"
             >
-              <div class="text-lg font-bold text-primary-600 dark:text-primary-400">
+              <div class="text-lg font-bold text-action dark:text-action">
                 {{ s.value }}<span class="text-xs font-normal text-slate-400 ml-0.5">{{ s.unit }}</span>
               </div>
               <div class="text-xs text-slate-500 dark:text-slate-400">{{ s.label }}</div>
@@ -255,15 +268,19 @@ async function exportBackup() {
         </div>
 
         <!-- 数据操作 -->
-        <div class="flex items-center justify-between">
-          <div>
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
             <h2 class="font-semibold text-sm">数据备份</h2>
-            <p class="text-xs text-slate-400 mt-0.5">导出当前账号全部数据为 JSON 文件，可在设置页导入恢复</p>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+              导出学习记录与文字笔记为 JSON，可在设置页导入。上传的 PDF、云端错题图片仅保存引用，请单独下载保留文件。
+            </p>
           </div>
           <button class="btn-primary !text-xs shrink-0" @click="exportBackup">导出备份</button>
         </div>
       </div>
     </div>
+
+    <UserWorksTabs v-if="profile" :user-id="myId" :is-self="true" v-model:active-tab="worksTab" />
 
     <EditProfileModal v-model:show="showEdit" @saved="reloadProfile" />
 
@@ -273,7 +290,8 @@ async function exportBackup() {
         <div class="flex justify-end">
           <button
             type="button"
-            class="text-xs text-slate-400 hover:text-primary-500 transition-colors"
+            class="text-xs text-slate-400 hover:text-action transition-colors"
+            :aria-pressed="showPw"
             @click="showPw = !showPw"
           >
             {{ showPw ? '隐藏密码' : '显示密码' }}
@@ -335,23 +353,25 @@ async function exportBackup() {
         <!-- Turnstile 加载失败（含手动重试） -->
         <div
           v-if="turnstileError"
-          class="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2 space-y-1.5"
+          class="text-sm text-correction bg-correction-soft dark:bg-correction-soft rounded-xl px-3 py-2 space-y-1.5"
         >
           <div>人机验证组件加载失败（Cloudflare CDN 在国内可能不稳定），请重试或稍后再试</div>
-          <button
-            type="button"
-            class="text-xs text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300 underline cursor-pointer"
+          <span
+            class="text-xs text-action hover:text-action dark:text-action dark:hover:text-action underline cursor-pointer arrow-action"
             @click="retryTurnstile"
           >
-            → 点击重试
-          </button>
+            <IconAction :icon="ArrowRight" label="点击重试" @click="retryTurnstile" /> 点击重试
+          </span>
         </div>
 
-        <div v-if="pwError" class="text-sm text-red-500 bg-red-50 dark:bg-red-900/20 rounded-xl px-3 py-2">
+        <div
+          v-if="pwError"
+          class="text-sm text-correction bg-correction-soft dark:bg-correction-soft rounded-xl px-3 py-2"
+        >
           {{ pwError }}
         </div>
 
-        <p class="text-[11px] text-slate-400 leading-relaxed">
+        <p class="text-xs text-slate-400 leading-relaxed">
           修改成功后，该账号在其它设备上的登录会立即失效（需用新密码重新登录），本设备保持登录。
         </p>
       </div>

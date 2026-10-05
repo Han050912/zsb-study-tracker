@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingState from '../shared/components/LoadingState.vue'
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ZoomIn, ZoomOut, Maximize, FileWarning } from '@lucide/vue'
 import { getDocument, classifyPdfError } from '../utils/pdf'
@@ -240,7 +241,7 @@ onUnmounted(destroy)
       class="flex-1 min-h-0 overflow-auto bg-slate-100 dark:bg-slate-900 p-3"
       @scroll.passive="onScroll"
     >
-      <div v-if="loading" class="text-center text-xs text-slate-400 py-10">PDF 加载中…</div>
+      <LoadingState v-if="loading" message="正在加载 PDF…" />
       <div v-else-if="loadError" class="flex flex-col items-center gap-2 text-red-400 py-10">
         <FileWarning :size="32" />
         <span class="text-xs">{{ loadError }}</span>

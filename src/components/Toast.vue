@@ -19,14 +19,14 @@ defineExpose({ show })
     <div
       role="status"
       aria-live="polite"
-      class="fixed top-6 inset-x-0 flex flex-col items-center gap-2 pointer-events-none px-4"
+      class="fixed top-header-top inset-x-0 flex flex-col items-center gap-2 pointer-events-none px-4"
       :class="OVERLAY_LAYER.toast"
     >
-      <TransitionGroup name="fade">
+      <TransitionGroup name="toast">
         <div
           v-for="item in toasts"
           :key="item.id"
-          class="bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-800 text-sm px-4 py-2 rounded-full shadow-lg max-w-[calc(100vw-2rem)] break-words"
+          class="toast-message max-w-[min(28rem,calc(100vw-2rem))] break-words"
         >
           {{ item.message }}
         </div>

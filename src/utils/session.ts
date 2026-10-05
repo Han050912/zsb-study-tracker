@@ -15,6 +15,8 @@ export const SESSION_FLAG = 'auth_logged_in'
  * 而 401 处理（该不该清会话跳登录页）与多标签页登出同步都需要这个信息，故单独记账。
  */
 let memorySession = false
+let sessionVersion = 0
+export const getSessionVersion = () => sessionVersion
 
 /** 桌面端从 localStorage 取 JWT（Web 端不落地 token） */
 export function getToken(): string | null {
@@ -33,11 +35,13 @@ export function hasActiveSession(): boolean {
 
 /** 标记本标签页已建立会话（登录 / 注册 / 会话恢复成功时调用） */
 export function markSessionActive(): void {
+  sessionVersion++
   memorySession = true
 }
 
 /** 清空会话：内存登录态 + 持久化凭据（登出、会话过期时调用） */
 export function clearSession(): void {
+  sessionVersion++
   memorySession = false
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(SESSION_FLAG)

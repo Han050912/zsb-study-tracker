@@ -1,5 +1,25 @@
-dist-test/
-dist/
+# Worker 独立开发时也排除依赖、构建和本地数据库状态
+/node_modules/
+/dist-test/
+/dist/
+/.wrangler/
+
+# 本地密钥保留在机器上，模板可入库
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+!.dev.vars.*.example
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+config.secret
+config.secret.*
+secrets.json
+secrets.yml
+secrets.yaml

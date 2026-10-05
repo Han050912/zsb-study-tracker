@@ -4,7 +4,7 @@ export const collaborationRoutes: RouteRecordRaw[] = [
     path: '/teams',
     name: 'teams',
     component: () => import('../../pages/Teams.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: true, adminOnly: false, title: '组队协作' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: true, adminOnly: false, title: '搭子与小队' }
   },
   {
     path: '/teams/squads/:teamId',
@@ -16,13 +16,13 @@ export const collaborationRoutes: RouteRecordRaw[] = [
     path: '/teams/partners/study',
     name: 'partner-study',
     component: () => import('../../pages/PartnerStudy.vue'),
-    meta: { layout: 'immersive', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '开黑自习室' }
+    meta: { layout: 'immersive', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '搭子自习室' }
   },
   {
     path: '/teams/partners/plans',
     name: 'partner-plans',
     component: () => import('../../pages/PartnerPlans.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '协作备考计划' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '共同备考计划' }
   },
   {
     path: '/teams/partners/reviews',

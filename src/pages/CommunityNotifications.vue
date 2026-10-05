@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import EmptyState from '../shared/components/EmptyState.vue'
+import AsyncState from '../shared/components/AsyncState.vue'
 import { onMounted, ref } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
@@ -15,15 +17,19 @@ const toast = useToast()
 
 /** 列表加载中：首屏与切筛选期间显示骨架屏，避免先闪「暂无通知」空态 */
 const loading = ref(false)
+const loadError = ref('')
+let loadTicket = 0
 
 async function fetchList(reset: boolean) {
+  const ticket = ++loadTicket
   loading.value = true
+  loadError.value = ''
   try {
     await store.fetchNotifications(reset)
   } catch (e) {
-    toast(getErrorMessage(e, '加载失败'))
+    if (ticket === loadTicket) loadError.value = getErrorMessage(e, '通知未能加载，请检查网络后重试')
   } finally {
-    loading.value = false
+    if (ticket === loadTicket) loading.value = false
   }
 }
 
@@ -38,6 +44,7 @@ const FILTERS: { k: NotificationType | ''; l: string }[] = [
 ]
 function switchFilter(k: NotificationType | '') {
   if (store.notifyFilter === k) return
+  store.notifyFilter = k
   fetchList(true)
 }
 
@@ -46,7 +53,7 @@ onMounted(() => {
 })
 
 function markRead(n: CommunityNotification) {
-  store.markRead(n).catch(() => {})
+  store.markRead(n).catch((e) => toast(getErrorMessage(e, '通知未能标为已读，请重试')))
 }
 
 async function readAll() {
@@ -54,16 +61,18 @@ async function readAll() {
     await store.markAllRead()
     toast('已全部标记为已读')
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '通知未能标为已读，请重试'))
   }
 }
 </script>
 
 <template>
-  <div class="p-4 md:p-6 max-w-2xl mx-auto space-y-4">
+  <div class="study-page reading-page space-y-4">
     <div class="flex items-center justify-between">
       <h1 class="page-title">通知中心</h1>
-      <button v-if="store.unreadCount" class="btn-ghost !text-xs" @click="readAll">全部已读</button>
+      <button v-if="store.unreadCount" class="btn-ghost !text-xs" :disabled="store.readingAll" @click="readAll">
+        {{ store.readingAll ? '处理中…' : '全部已读' }}
+      </button>
     </div>
 
     <div class="flex flex-wrap gap-2">
@@ -71,7 +80,8 @@ async function readAll() {
         v-for="f in FILTERS"
         :key="f.k"
         class="btn !text-xs !py-1 !px-3"
-        :class="store.notifyFilter === f.k ? 'bg-primary-500 text-white' : 'bg-slate-100 dark:bg-slate-700'"
+        :class="store.notifyFilter === f.k ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+        :aria-pressed="store.notifyFilter === f.k"
         @click="switchFilter(f.k)"
       >
         {{ f.l }}
@@ -86,10 +96,13 @@ async function readAll() {
       </div>
     </div>
 
-    <div v-else-if="!store.notifications.length" class="card text-center py-10 text-slate-400 text-sm">
-      <div class="text-3xl mb-2"></div>
-      <p>暂无通知</p>
-    </div>
+    <AsyncState v-else-if="loadError" :error="loadError" @retry="fetchList(true)" />
+    <EmptyState
+      v-else-if="!store.notifications.length"
+      class="card"
+      title="还没有这类通知"
+      description="新的互动和学习提醒会显示在这里。"
+    />
 
     <div v-else class="card !p-0 divide-y divide-slate-200 dark:divide-slate-700 overflow-hidden">
       <template v-for="n in store.notifications" :key="n.id">
@@ -102,12 +115,7 @@ async function readAll() {
     </div>
 
     <div v-if="store.hasMoreNotify && store.notifications.length" class="text-center">
-      <button
-        class="btn-ghost !text-xs"
-        @click="store.fetchNotifications().catch((e) => toast(getErrorMessage(e, '加载失败')))"
-      >
-        加载更多
-      </button>
+      <button class="btn-ghost !text-xs" :disabled="loading" @click="fetchList(false)">加载更多</button>
     </div>
   </div>
 </template>

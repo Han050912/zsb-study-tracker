@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EmptyState from '../../shared/components/EmptyState.vue'
 /** 作文模板面板：分类模板库列表 + 新增/编辑弹窗（含内置模板一键生成）；数据直接读写 app store */
 import { computed, ref } from 'vue'
 import { useToast } from '../../composables/useToast'
@@ -25,9 +26,14 @@ function openTpl(t?: any) {
   showTpl.value = true
 }
 function saveTpl() {
-  if (!tplForm.value.title) return
+  if (!showTpl.value) return
+  const title = tplForm.value.title.trim()
+  if (!title || !tplForm.value.content.trim()) {
+    toast(!title ? '请填写模板标题' : '请填写模板内容')
+    return
+  }
   // 经 store action 保存：action 内完成「改 state + 打 updatedAt + stage english/template:<id> + save()」
-  store.saveEssayTemplate(tplForm.value)
+  store.saveEssayTemplate({ ...tplForm.value, title })
   showTpl.value = false
   toast('模板已保存')
 }
@@ -35,7 +41,7 @@ function delTpl(id: string) {
   store.deleteEssayTemplate(id)
 }
 
-/** 一键生成内置高分模板库（按标题去重，可重复点击补全缺失项） */
+/** 一键生成内置参考模板库（按标题去重，可重复点击补全缺失项） */
 function generateBuiltin() {
   const existing = new Set(eng.value.templates.map((t) => t.title))
   const missing = BUILTIN_TEMPLATES.filter((bt) => !existing.has(bt.title))
@@ -46,7 +52,7 @@ function generateBuiltin() {
   for (const bt of missing) {
     store.saveEssayTemplate({ title: bt.title, content: bt.content, level: 0, category: bt.category })
   }
-  toast(`已生成 ${missing.length} 套内置高分模板`)
+  toast(`已生成 ${missing.length} 套内置参考模板`)
 }
 
 /** 按分类分组展示（旧数据无 category 归入「自定义」） */
@@ -65,7 +71,7 @@ const tplGroups = computed(() =>
       <div class="flex gap-2">
         <button
           class="btn-ghost !py-1.5"
-          title="一键生成 议论文×5 / 图表文×2 / 信件文×3 高分模板"
+          title="一键生成 议论文×5 / 图表文×2 / 信件文×3 参考模板"
           @click="generateBuiltin"
         >
           生成内置模板库
@@ -73,37 +79,27 @@ const tplGroups = computed(() =>
         <button class="btn-primary !py-1.5" @click="openTpl()">+ 自定义模板</button>
       </div>
     </div>
-    <div v-if="!eng.templates.length" class="text-xs text-slate-400 text-center py-6">
-      暂无模板。点击「生成内置模板库」一键获取 10 套高分模板（议论文 5 套 · 图表文 2 套 · 信件文 3 套）
-    </div>
+    <EmptyState v-if="!eng.templates.length" title="还没有作文模板。可以新建自己的模板，或生成 10 套内置参考模板。" />
     <!-- 分分类多列布局 -->
     <div v-for="g in tplGroups" :key="g.cat" class="mb-4">
       <div class="flex items-center gap-2 mb-2">
-        <span
-          class="text-xs font-bold px-2 py-0.5 rounded-full"
-          :class="
-            g.cat === '议论文'
-              ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-              : g.cat === '图表文'
-                ? 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'
-                : g.cat === '信件文'
-                  ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400'
-                  : 'bg-slate-100 text-slate-500 dark:bg-slate-700'
-          "
-          >{{ g.cat }}</span
-        >
+        <span class="text-xs font-bold px-2 py-0.5 rounded-full" :class="'bg-surface-soft text-muted'">{{
+          g.cat
+        }}</span>
         <span class="text-[10px] text-slate-400">{{ g.items.length }} 套</span>
       </div>
       <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
         <div
           v-for="t in g.items"
           :key="t.id"
-          class="border border-slate-100 dark:border-slate-700 rounded-xl p-3 cursor-pointer hover:shadow-sm transition-shadow"
+          class="border border-slate-100 dark:border-slate-700 rounded-lg p-3 cursor-pointer hover:bg-surface-soft"
           @click="openTpl(t)"
         >
           <div class="flex items-center justify-between gap-2">
-            <span class="font-medium text-xs flex-1">{{ t.title }}</span>
-            <span class="text-amber-400 text-[10px] shrink-0">{{ '★'.repeat(t.level) || '未评级' }}</span>
+            <button class="study-link text-left font-medium text-xs flex-1" @click.stop="openTpl(t)">
+              {{ t.title }}
+            </button>
+            <span class="text-muted text-[10px] shrink-0">{{ '★'.repeat(t.level) || '未评级' }}</span>
           </div>
           <p class="text-[11px] text-slate-400 line-clamp-3 mt-1.5 whitespace-pre-line">{{ t.content }}</p>
         </div>
@@ -139,7 +135,7 @@ const tplGroups = computed(() =>
             v-for="i in 5"
             :key="i"
             class="text-2xl"
-            :class="i <= tplForm.level ? 'text-amber-400' : 'text-slate-300'"
+            :class="i <= tplForm.level ? 'text-muted' : 'text-slate-300'"
             @click="tplForm.level = i"
           >
             ★

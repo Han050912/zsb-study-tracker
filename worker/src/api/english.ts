@@ -4,14 +4,19 @@ import { crudHandlers } from '../db'
 
 /** 各 schema 与对应 toRow 消费字段一一对应 */
 const readingBodySchema = z
-  .object({ id: z.string().optional(), date: z.string(), wpm: z.number(), accuracy: z.number() })
+  .object({
+    id: z.string().optional(),
+    date: z.string(),
+    wpm: z.number().positive(),
+    accuracy: z.number().min(0).max(100)
+  })
   .passthrough()
 
 const listeningBodySchema = z
   .object({
     id: z.string().optional(),
     date: z.string(),
-    minutes: z.number(),
+    minutes: z.number().positive().max(1440),
     material: z.string(),
     mode: z.string()
   })

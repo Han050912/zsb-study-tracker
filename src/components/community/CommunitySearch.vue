@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ArrowRight } from '@lucide/vue'
 import { ref } from 'vue'
 import { usersApi } from '../../api/community/users'
 import { circlesApi } from '../../api/community/circles'
@@ -59,20 +60,20 @@ async function search() {
             maxlength="100"
           /><button class="btn-primary" :disabled="loading">搜索</button>
         </form>
-        <p v-if="error" role="status" class="text-sm mt-3 text-red-500">{{ error }}</p>
+        <p v-if="error" role="status" class="text-sm mt-3 text-correction">{{ error }}</p>
         <RouterLink
           v-if="user && mode === 'users'"
           :to="{ name: 'profile', params: { id: user.userId } }"
-          class="block py-4"
-          >{{ user.userName }} →</RouterLink
+          class="block arrow-link"
+          >{{ user.userName }} <ArrowRight class="arrow-inline" :size="16" aria-hidden="true" /></RouterLink
         ><template v-if="mode === 'circles'"
           ><RouterLink
             v-for="circle in circles"
             :key="circle.id"
             :to="{ name: 'circle-detail', params: { id: circle.id } }"
-            class="block py-4"
-            >{{ circle.name }} →</RouterLink
-          >
+            class="block arrow-link"
+            >{{ circle.name }} <ArrowRight class="arrow-inline" :size="16" aria-hidden="true"
+          /></RouterLink>
           <p v-if="searched && !circles.length" class="text-sm py-4 text-slate-500">
             没有找到这个圈子，试试其他名称。
           </p></template

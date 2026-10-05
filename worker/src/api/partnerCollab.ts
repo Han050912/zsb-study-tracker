@@ -119,8 +119,11 @@ export function registerPartnerStudy() {
     await assertPartner(ctx.env, ctx.userId, partnerId)
 
     // 专注/休息时长（分钟，双方一致）：忠实用户输入，仅对未提供/非数字兜底默认值，clamp 到 [0, 上限]
-    const focusMinutes = sanitizeMinutes(b?.focusMinutes, 25, 120)
     const mode = b?.mode === 'countup' ? 'countup' : 'countdown'
+    const requestedFocus = b?.focusMinutes === undefined ? 25 : Number(b.focusMinutes)
+    if (mode === 'countdown' && (!Number.isFinite(requestedFocus) || requestedFocus < 1 || requestedFocus > 120))
+      throw new HttpError(400, '专注时长需为 1–120 分钟')
+    const focusMinutes = mode === 'countdown' ? requestedFocus : sanitizeMinutes(b?.focusMinutes, 25, 120)
 
     // 阻塞判定带时间窗：只统计「仍活跃」（窗口内有心跳）的会话，超时无更新的僵尸会话不再阻塞
     const busy = await first<{ id: string; from_id: string; to_id: string }>(
@@ -150,19 +153,42 @@ export function registerPartnerStudy() {
 
     const id = uid()
     const now = nowSec()
-    await batch(ctx.env, [
+    const results = await batch(ctx.env, [
       ctx.env.DB.prepare(
-        `INSERT INTO partner_study_sessions (id, from_id, to_id, status, mode, focus_minutes, from_state, to_state, created_at, updated_at, last_active_at) VALUES (?, ?, ?, 'active', ?, ?, 'idle', 'idle', ?, ?, ?)`
-      ).bind(id, ctx.userId, partnerId, mode, focusMinutes, now, now, now),
-      notifyStatement(ctx.env, {
-        userId: partnerId,
-        type: 'partner',
-        actorId: ctx.userId,
-        targetType: 'partner_study',
-        targetId: id,
-        content: `${await displayName(ctx.env, ctx.userId)} 邀请你一起开黑学习（${mode === 'countup' ? '正计时' : `${focusMinutes}分钟专注`}）`
-      })
+        `INSERT INTO partner_study_sessions (id, from_id, to_id, status, mode, focus_minutes, from_state, to_state, created_at, updated_at, last_active_at)
+         SELECT ?, ?, ?, 'active', ?, ?, 'idle', 'idle', ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM partner_study_sessions WHERE status = 'active' AND last_active_at >= ? AND (from_id IN (?, ?) OR to_id IN (?, ?)))`
+      ).bind(
+        id,
+        ctx.userId,
+        partnerId,
+        mode,
+        focusMinutes,
+        now,
+        now,
+        now,
+        now - SESSION_IDLE_TIMEOUT,
+        ctx.userId,
+        partnerId,
+        ctx.userId,
+        partnerId
+      ),
+      // 条件插入与通知同一事务：竞争失败的邀请不能生成指向不存在房间的通知。
+      ctx.env.DB.prepare(
+        `INSERT INTO community_notifications (id, user_id, type, actor_id, target_type, target_id, content, is_read, created_at)
+         SELECT ?, ?, 'partner', ?, 'partner_study', ?, ?, 0, ?
+         WHERE EXISTS (SELECT 1 FROM partner_study_sessions WHERE id = ?)`
+      ).bind(
+        uid(),
+        partnerId,
+        ctx.userId,
+        id,
+        `${await displayName(ctx.env, ctx.userId)} 邀请你一起开黑学习（${mode === 'countup' ? '正计时' : `${focusMinutes}分钟专注`}）`,
+        now,
+        id
+      )
     ])
+    if (!results?.[0].meta.changes) throw new HttpError(409, '你或搭子已有进行中的自习，请刷新后进入现有房间')
     return Response.json({ id }, { status: 201 })
   })
 
@@ -258,13 +284,13 @@ export function registerPartnerStudy() {
     const running = b?.running === true ? 1 : 0
 
     const s = await getSession(ctx.env, ctx.params.id)
-    if (s.status !== 'active') throw new HttpError(400, '会话已结束')
     const side = sideOf(s, ctx.userId)
+    if (s.status !== 'active') return Response.json({ session: await mapSession(ctx.env, s, ctx.userId) })
 
     const now = nowSec()
     await run(
       ctx.env,
-      `UPDATE partner_study_sessions SET ${side}_state = ?, ${side}_minutes = ?, ${side}_online_seconds = ?, ${side}_elapsed_seconds = ?, ${side}_running = ?, updated_at = ?, last_active_at = ? WHERE id = ?`,
+      `UPDATE partner_study_sessions SET ${side}_state = ?, ${side}_minutes = ?, ${side}_online_seconds = ?, ${side}_elapsed_seconds = ?, ${side}_running = ?, updated_at = ?, last_active_at = ? WHERE id = ? AND status = 'active' AND ${side}_state != 'done'`,
       state,
       minutes,
       onlineSeconds,

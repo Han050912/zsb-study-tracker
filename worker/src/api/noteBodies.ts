@@ -1,7 +1,8 @@
 import { on, body } from '../router'
-import { all, batch, first, run, HttpError } from '../db'
+import { all, batch, first, HttpError, readBodyBytes } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import type { Env } from '../index'
+import { withUserTransaction } from '../syncTransaction'
 
 /**
  * Markdown 正文独立通道：正文不进入 notes 元数据同步；按 UTF-8 字节分片存 D1。
@@ -68,11 +69,7 @@ export function registerNoteBodyRoutes() {
   on('PUT', '/api/note-bodies/:id', true, async (ctx) => {
     await rateLimit(ctx, 'note-body:write', 60)
     const noteId = validNoteId(ctx.params.id)
-    const declared = Number(ctx.request.headers.get('Content-Length') || 0)
-    if (declared > NOTE_BODY_MAX_BYTES) throw new HttpError(413, '笔记正文超过 1MB 上限')
-
-    const bytes = new Uint8Array(await ctx.request.arrayBuffer())
-    if (bytes.byteLength > NOTE_BODY_MAX_BYTES) throw new HttpError(413, '笔记正文超过 1MB 上限')
+    const bytes = await readBodyBytes(ctx.request, NOTE_BODY_MAX_BYTES, '笔记正文超过 1MB 上限')
     try {
       new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes)
     } catch {
@@ -109,22 +106,32 @@ export function registerNoteBodyRoutes() {
       await batch(ctx.env, writes)
       // 删除旧版本与晋升临时分片位于同一 D1 batch。若并发请求已写入相同或更新版本，
       // 第一条不会删除它，第二条也因目标仍存在而不会晋升旧临时分片。
-      await batch(ctx.env, [
-        ctx.env.DB.prepare('DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ? AND updated_at < ?').bind(
+      await withUserTransaction(ctx.env, ctx.userId, async () => {
+        const deletion = await first<{ deleted_at: number }>(
+          ctx.env,
+          "SELECT deleted_at FROM sync_deletions WHERE user_id = ? AND domain = 'notes' AND record_key = ?",
           ctx.userId,
-          noteId,
-          updatedAt
-        ),
-        ctx.env.DB.prepare(
-          `UPDATE note_body_chunks SET note_id = ?
+          noteId
+        )
+        if (deletion && deletion.deleted_at >= updatedAt) throw new HttpError(409, '笔记已在另一设备删除，请重新同步')
+        return {
+          statements: [
+            ctx.env.DB.prepare(
+              'DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ? AND updated_at < ?'
+            ).bind(ctx.userId, noteId, updatedAt),
+            ctx.env.DB.prepare(
+              `UPDATE note_body_chunks SET note_id = ?
            WHERE user_id = ? AND note_id = ?
              AND NOT EXISTS (
                SELECT 1 FROM note_body_chunks WHERE user_id = ? AND note_id = ?
              )`
-        ).bind(noteId, ctx.userId, tmpId, ctx.userId, noteId),
-        // 并发竞争失败的临时分片也在同一原子 batch 内清掉；晋升成功时此语句自然删除 0 行。
-        ctx.env.DB.prepare('DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ?').bind(ctx.userId, tmpId)
-      ])
+            ).bind(noteId, ctx.userId, tmpId, ctx.userId, noteId),
+            // 并发竞争失败的临时分片也在同一原子 batch 内清掉；晋升成功时此语句自然删除 0 行。
+            ctx.env.DB.prepare('DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ?').bind(ctx.userId, tmpId)
+          ],
+          value: undefined
+        }
+      })
       const final = await first<{ updated_at: number }>(
         ctx.env,
         'SELECT MAX(updated_at) AS updated_at FROM note_body_chunks WHERE user_id = ? AND note_id = ?',
@@ -134,9 +141,13 @@ export function registerNoteBodyRoutes() {
       const finalAt = Number(final?.updated_at ?? 0)
       return Response.json({ applied: finalAt === updatedAt, updatedAt: finalAt, clamped })
     } catch (error) {
-      await run(ctx.env, 'DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ?', ctx.userId, tmpId).catch(
-        () => {}
-      )
+      // 与最终提交共用版本守卫，阻止响应超时的旧 finalize 在清理后再次执行。
+      await withUserTransaction(ctx.env, ctx.userId, async () => ({
+        statements: [
+          ctx.env.DB.prepare('DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ?').bind(ctx.userId, tmpId)
+        ],
+        value: undefined
+      })).catch((cleanupError) => console.error('笔记临时分片清理失败', cleanupError))
       throw error
     }
   })

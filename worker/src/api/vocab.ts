@@ -7,8 +7,8 @@ const vocabBodySchema = z
   .object({
     id: z.string().optional(),
     date: z.string(),
-    newWords: z.number(),
-    reviewWords: z.number(),
+    newWords: z.number().int().min(0),
+    reviewWords: z.number().int().min(0),
     points: z.number().optional()
   })
   .passthrough()

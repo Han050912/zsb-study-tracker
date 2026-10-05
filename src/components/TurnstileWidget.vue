@@ -88,7 +88,9 @@ onMounted(async () => {
   status.value = 'rendering'
   widgetId = (window as any).turnstile.render(container.value, {
     sitekey: TURNSTILE_SITEKEY,
-    theme: 'light',
+    theme: 'auto',
+    // 窄屏表单可用宽度不足300px；原生compact避免iframe挤出输入区域。
+    size: 'compact',
     callback: (t: string) => {
       token.value = t
       status.value = 'ready'

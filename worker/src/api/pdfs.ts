@@ -1,13 +1,14 @@
 import { on } from '../router'
-import { run, all, batch, HttpError } from '../db'
+import { all, batch, first, HttpError, readBodyBytes } from '../db'
+import { withUserTransaction, withUserSnapshot } from '../syncTransaction'
 
 /**
  * PDF 原文 D1 分片存储：
  * - PDF 二进制拆分为 ~95KB 分片存入 pdf_chunks 表
  * - PDF 直接以 note.id 作为 pdf_id，阅读时按该 id 反查分片拼装
  * - key 按 (user_id, pdf_id) 隔离，删除笔记时由同步接口清理孤儿分片
- * - 读取结果按 (user_id, pdf_id) 缓存于 Cache API（TTL 1 小时），PUT/DELETE 精确失效：
- *   避免每次阅读都全量读 D1 分片并在内存中重新拼装
+ * - 读取结果按 (user_id, pdf_id, 提交版本) 缓存于 Cache API（TTL 1 小时）；
+ *   新版本让所有地区的旧缓存不可达，避免依赖仅限本地的 cache.delete
  */
 
 /** 单文件上限 30MB，与前端 src/api/pdfs.ts 的 PDF_MAX_BYTES 保持一致 */
@@ -23,25 +24,24 @@ const PDF_CACHE_TTL = 3600
  * 读缓存 key：Cache API 的 key 即 URL（查询串参与 key），这里用内部伪域名承载条目，
  * 与真实路由 URL 的缓存 key 空间隔离，避免与 middleware/cache.ts 的条目相互污染。
  * PDF 字节是用户私有数据，必须按用户隔离：本 handler 在认证之后执行，直接用已校验的 ctx.userId 作标识，
- * 不像 middleware/cache.ts 那样用 token 哈希 `_c`（那里在认证前查缓存，只能拿 token 当标识，且公开资源刻意不分片）。
+ * 不使用会话 token 代替认证；入口仅缓存公开图片，本缓存始终位于鉴权后。
  */
-function pdfCacheKey(userId: string, pdfId: string): string {
-  return `https://pdf-cache.internal/${userId}/${pdfId}`
+function pdfCacheKey(userId: string, pdfId: string, revision = 0): string {
+  return `https://pdf-cache.internal/${userId}/${pdfId}/${revision}`
 }
 
-/** 字节响应：响应头与接入缓存前完全一致（浏览器侧语义 private, max-age=3600 不变） */
+/** 浏览器不保留私有字节；鉴权后的内部 Cache API 副本单独设置 TTL。 */
 function pdfBytesResponse(body: BodyInit, totalLen: number): Response {
   return new Response(body, {
     headers: {
       'Content-Type': 'application/pdf',
       'Content-Length': String(totalLen),
-      'Cache-Control': `private, max-age=${PDF_CACHE_TTL}`
+      'Cache-Control': 'private, no-store'
     }
   })
 }
 
-/** 失效指定 PDF 的读缓存：写路径（PUT/DELETE）必须调用，否则替换或删除后最长 TTL 内仍返回旧字节。
- *  同步接口按笔记删除清理孤儿分片（sync.ts）同样必须调用——那里绕过本文件的写路径直删 D1 分片 */
+/** 清除初始版本的本地条目；跨地区失效由数据库提交版本保证，旧版本条目按 TTL 自行过期。 */
 export async function purgePdfCache(userId: string, pdfId: string): Promise<void> {
   await caches.default.delete(pdfCacheKey(userId, pdfId))
 }
@@ -57,25 +57,19 @@ function validId(id: string): string {
 export function registerPdfRoutes() {
   on('PUT', '/api/pdfs/:id', true, async (ctx) => {
     const pdfId = validId(ctx.params.id)
-    // Content-Length 预检，避免超限文件读入内存后才拒绝
-    const declared = Number(ctx.request.headers.get('Content-Length') || 0)
-    if (declared > PDF_MAX_BYTES) throw new HttpError(413, `文件超过 ${PDF_MAX_MB}MB 上限`)
-    const data = await ctx.request.arrayBuffer()
-    if (data.byteLength === 0) throw new HttpError(400, '文件为空')
-    if (data.byteLength > PDF_MAX_BYTES) throw new HttpError(413, `文件超过 ${PDF_MAX_MB}MB 上限`)
+    const startedAt = Date.now()
+    const buf = await readBodyBytes(ctx.request, PDF_MAX_BYTES, `文件超过 ${PDF_MAX_MB}MB 上限`)
+    if (buf.byteLength === 0) throw new HttpError(400, '文件为空')
     // 魔数校验 %PDF-，拒绝伪装成 PDF 的其它文件
-    const head = new Uint8Array(data, 0, 5)
+    const head = buf.subarray(0, 5)
     if (String.fromCharCode(...head) !== '%PDF-') throw new HttpError(400, '文件不是有效的 PDF')
 
-    const buf = new Uint8Array(data)
     const chunkCount = Math.ceil(buf.byteLength / CHUNK_SIZE)
 
     // 分片写入临时 pdf_id，全部成功后原子改名为正式 id——
     // 避免多批 INSERT 中途失败产生不完整文件
-    const tmpId = `__tmp_${pdfId}`
+    const tmpId = `__tmp_${pdfId}_${crypto.randomUUID()}`
     const BATCH_MAX = 50
-    // 预清理可能残留的同名临时分片（上次上传失败 catch 清理也未成功的极端情况）
-    await run(ctx.env, 'DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?', ctx.userId, tmpId)
     try {
       for (let group = 0; group < Math.ceil(chunkCount / BATCH_MAX); group++) {
         const stmts: D1PreparedStatement[] = []
@@ -95,21 +89,38 @@ export function registerPdfRoutes() {
         await batch(ctx.env, stmts)
       }
       // 全部写入成功：删旧正式分片 + 临时分片原子改名
-      await batch(ctx.env, [
-        ctx.env.DB.prepare('DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?').bind(ctx.userId, pdfId),
-        ctx.env.DB.prepare('UPDATE pdf_chunks SET pdf_id = ? WHERE user_id = ? AND pdf_id = ?').bind(
-          pdfId,
+      await withUserTransaction(ctx.env, ctx.userId, async () => {
+        const deletion = await first<{ deleted_at: number }>(
+          ctx.env,
+          "SELECT deleted_at FROM sync_deletions WHERE user_id = ? AND domain = 'notes' AND record_key = ?",
           ctx.userId,
-          tmpId
+          pdfId
         )
-      ])
+        if (deletion && deletion.deleted_at >= startedAt) throw new HttpError(409, '笔记已在另一设备删除，请重新同步')
+        return {
+          statements: [
+            ctx.env.DB.prepare('DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?').bind(ctx.userId, pdfId),
+            ctx.env.DB.prepare('UPDATE pdf_chunks SET pdf_id = ? WHERE user_id = ? AND pdf_id = ?').bind(
+              pdfId,
+              ctx.userId,
+              tmpId
+            )
+          ],
+          value: undefined
+        }
+      })
     } catch (e) {
-      // 清理半成品临时分片
-      await run(ctx.env, 'DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?', ctx.userId, tmpId).catch(() => {})
+      // 补偿同样推进版本：若失败的是在途 finalize，它不能在临时分片被清掉后再删旧正文。
+      await withUserTransaction(ctx.env, ctx.userId, async () => ({
+        statements: [
+          ctx.env.DB.prepare('DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?').bind(ctx.userId, tmpId)
+        ],
+        value: undefined
+      })).catch((cleanupError) => console.error('PDF 临时分片清理失败', cleanupError))
       throw e
     }
 
-    // 替换成功后失效读缓存：否则同一 (user, pdf) 的旧字节会在 TTL 内继续被返回
+    // 新提交版本已使旧缓存不可达，顺便清除本地区的初始版本缓存。
     await purgePdfCache(ctx.userId, pdfId)
 
     return Response.json({ ok: true, size: buf.byteLength })
@@ -117,47 +128,61 @@ export function registerPdfRoutes() {
 
   on('GET', '/api/pdfs/:id', true, async (ctx) => {
     const pdfId = validId(ctx.params.id)
-    const cache = caches.default
-    const cacheKey = pdfCacheKey(ctx.userId, pdfId)
-    const cached = await cache.match(cacheKey)
-    if (cached) {
-      // 命中：字节直接取自 Cache API，不再读 D1、不再拼装；长度按实际字节数给出，不依赖缓存回放的响应头
-      const hit = new Uint8Array(await cached.arrayBuffer())
-      return pdfBytesResponse(hit, hit.byteLength)
-    }
+    return withUserSnapshot(ctx.env, ctx.userId, async () => {
+      // Cache API invalidation is local to one PoP. The database revision makes old
+      // bytes unreachable in every PoP after a replacement or a note deletion.
+      const revision = await first<{ version: number }>(
+        ctx.env,
+        "SELECT version FROM sync_domain_versions WHERE user_id = ? AND domain = '__push__'",
+        ctx.userId
+      )
+      const cache = caches.default
+      const cacheKey = pdfCacheKey(ctx.userId, pdfId, revision?.version ?? 0)
+      const cached = await cache.match(cacheKey)
+      if (cached) {
+        // 命中：字节直接取自 Cache API，不再读 D1、不再拼装；长度按实际字节数给出，不依赖缓存回放的响应头
+        const hit = new Uint8Array(await cached.arrayBuffer())
+        return pdfBytesResponse(hit, hit.byteLength)
+      }
 
-    const rows = await all(
-      ctx.env,
-      'SELECT data FROM pdf_chunks WHERE user_id = ? AND pdf_id = ? ORDER BY chunk_index',
-      ctx.userId,
-      pdfId
-    )
-    if (!rows.length) throw new HttpError(404, '文件不存在或已被删除')
+      const rows = await all(
+        ctx.env,
+        'SELECT data FROM pdf_chunks WHERE user_id = ? AND pdf_id = ? ORDER BY chunk_index',
+        ctx.userId,
+        pdfId
+      )
+      if (!rows.length) throw new HttpError(404, '文件不存在或已被删除')
 
-    // 拼装分片
-    const chunks = rows.map((r: any) => new Uint8Array(r.data))
-    const totalLen = chunks.reduce((s, c) => s + c.byteLength, 0)
-    const buf = new Uint8Array(totalLen)
-    let offset = 0
-    for (const c of chunks) {
-      buf.set(c, offset)
-      offset += c.byteLength
-    }
+      // 拼装分片
+      const chunks = rows.map((r: any) => new Uint8Array(r.data))
+      const totalLen = chunks.reduce((s, c) => s + c.byteLength, 0)
+      const buf = new Uint8Array(totalLen)
+      let offset = 0
+      for (const c of chunks) {
+        buf.set(c, offset)
+        offset += c.byteLength
+      }
 
-    const res = pdfBytesResponse(buf, totalLen)
-    // 缓存副本必须去掉 private：Cloudflare Cache API 对「指示不缓存」的响应直接以 413 拒绝写入
-    // （官方文档 cache.put errors 一节），副本只在 Cache API 内部流转、不经此路径出网给浏览器，
-    // 客户端拿到的仍是 private, max-age=3600；写失败只降级为不缓存，不影响本次读取。
-    const store = res.clone()
-    store.headers.set('Cache-Control', `max-age=${PDF_CACHE_TTL}`)
-    await cache.put(cacheKey, store).catch((e) => console.error('写入 PDF 读缓存失败', e))
-    return res
+      const res = pdfBytesResponse(buf, totalLen)
+      // 缓存副本必须去掉 private：Cloudflare Cache API 对「指示不缓存」的响应直接以 413 拒绝写入
+      // （官方文档 cache.put errors 一节），副本只在 Cache API 内部流转、不经此路径出网给浏览器，
+      // 客户端拿到的仍是 private, no-store；写失败只降级为不缓存，不影响本次读取。
+      const store = res.clone()
+      store.headers.set('Cache-Control', `max-age=${PDF_CACHE_TTL}`)
+      await cache.put(cacheKey, store).catch((e) => console.error('写入 PDF 读缓存失败', e))
+      return res
+    })
   })
 
   on('DELETE', '/api/pdfs/:id', true, async (ctx) => {
     const pdfId = validId(ctx.params.id)
-    await run(ctx.env, 'DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?', ctx.userId, pdfId)
-    // 删除成功后失效读缓存：否则文件已删除，TTL 内仍能读到缓存的旧字节
+    await withUserTransaction(ctx.env, ctx.userId, async () => ({
+      statements: [
+        ctx.env.DB.prepare('DELETE FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?').bind(ctx.userId, pdfId)
+      ],
+      value: undefined
+    }))
+    // 新提交版本在所有地区阻止旧字节被返回，本地条目可提早回收。
     await purgePdfCache(ctx.userId, pdfId)
     return Response.json({ ok: true })
   })

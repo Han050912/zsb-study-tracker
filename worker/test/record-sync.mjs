@@ -1,72 +1,18 @@
 /**
- * 记录级增量同步（POST /api/data/push + POST /api/data/pull）集成测试。
- *
- * 覆盖设计 §8.2 用例 1–8、12、13（单表数组域部分）：
- * 首推插入 / 同时间戳重放幂等 / 旧值被拒 / 新值覆盖 / 删除墓碑与 deletedAt 判负 / 复活 /
- * 增量游标 / 用户隔离 / 多域单请求原子性 / gamification 拒绝客户端写入。
- * 另有修复轮用例 14–19：其余单表域（problemSessions/errorQuestions/exams/notes/materials）往返与增量、
- * 同域并发 push 的序号原子分配、pull 空 body、输入上限（单字段 1MB / 单域 10000 条）、
- * 同请求内重复 key 去重与 upsert+delete 冲突、updatedAt 时钟钳制。
- *
- * 用例 20–27：复杂域（设计 §3.3 键空间）——subjects 子树往返与 id 稳定、habits 打卡 map、
- * pomodoro 三键空间（含 itr 整体替换与 rec 墓碑）、english 四键前缀落表、summaries 键 = date、
- * settings 单记录 LWW 与 maimemoToken「undefined 不覆盖」、full/增量响应形状一致、复杂域非法键 → 400。
- *
- * 修复轮 T3b 新增：
- * - 用例 28：english 四表 NOT NULL 必填字段缺失 → 400（而非 SQLite 约束冒到 500）。
- * - 用例 29：跨记录隔离护栏——推送 hb1 不改动 hb2 的打卡行；删除科目 A 不改动科目 B 的 chapters/topics。
- * - 用例 30：游标契约——changes[domain].seq = 本次实际返回的最大 server_seq，客户端取它而非 versions；
- *   并模拟「版本号已可见、业务行未提交」的空洞窗口，断言取实际 seq 的游标仍能拉到随后提交的行。
- *
- * T4 新增（积分事件化 + 权威派生量 + 删除驱动的孤儿清理，设计 §5/§6.4，用例 31–37）：
- * - 用例 31：今日学习满 60 分钟 → +3（`srv:study-minutes:<today>`），再推一条/重放均不重复发放。
- * - 用例 32：连续 7 天 → `streak === 7`、`srv:streak:7`、`streak_7` 徽章，且徽章与积分同批提交（无中间态）。
- * - 用例 33：客户端 revoke 事件（refId 精确 / refPrefix 前缀）→ 流水删除且 points 按 SUM 重算；
- *   同批内「撤销 + 发放同一 refId」以本次发放为准。
- * - 用例 34：记录删除被接受 → 自动撤销关联流水（records → `<key>`，errorQuestions → `error:<key>`）。
- * - 用例 35：删除 notes → `pdf_chunks` 分片清空；删除 errorQuestions → `error_images` 行 + R2 对象清空
- *   （读取 404），重复删除幂等；同一内容寻址对象仍被其它错题引用时不误删。
- * - 用例 36：points 事件的处置口径——**结构性非法**（未知 op / revoke 缺 ref 或同时给两者）
- *   → 400 中文提示；**award 缺 refId / 未登记 reason / 非法分值形状 → 忽略该事件**
- *   （200、awarded 为空、不落账），与同批合法事件共存不整批拒绝；
- *   合法事件照常落账、超额分值只钳制到行为上限。
- * - 用例 37：不变式 `gamification.points === SUM(points_log.points)`。
- * 用户 B 用于积分用例：其学习日期集合完全可控（A 的记录日期为固定造数日期）。
- * 注意：award 事件的 `reason` 必须在服务端行为白名单内（见 api/gamification.ts 的 AWARD_RULES），
- * 测试里使用的 reason 均为真实行为（每日打卡 / 完成习惯「…」/ 学习 N 分钟 / 复习错题 等）。
- *
- * T4b 新增（成就列表由服务端并集维护，设计 §5.1/§5.2，用例 38）：
- * - 用例 38：`achievements` 推送字段与 `gamification.achievements` 做**只增不减**的集合并集——
- *   推两个 id → 快照含两者；重复推送同一批（含重复项）→ 集合不变、不重复；再推新 id → 追加且旧的不丢；
- *   与记录变更同批提交；非法（非数组 / 元素非字符串 / 空字符串 / 去重后超 200）→ 400 且不改动已有列表。
- *
- * 本批次新增（issue #11 award 语义收敛 + issue #39 记录级字段校验，用例 39）：
- * - issue #11：未登记 reason / 非法分值形状的 award 事件由「400 整批拒绝」改为「忽略该事件」，
- *   避免客户端 outbox 里的毒记录永久阻塞该账号全部域的同步（安全目标由白名单 + 上限钳制达成）。
- * - issue #39：记录级同步的逐字段类型 / 范围 / 长度校验与 REST 侧**共用同一份 zod field schema**
- *   （单表数组域与 english 四前缀表复用 `mapping.schema`，settings 域复用 `settingsBodySchema`）——
- *   非法类型此前会被 SQLite 动态类型原样落库或让 D1 bind 抛 TypeError 变 500，现在一律 400 中文提示。
- *
- * 前置：npx wrangler d1 execute zsb-study-db --local --file=./schema.sql && npx wrangler dev --port 8787
- * 运行：SMOKE_DESKTOP_TOKEN=<DESKTOP_TOKEN> node test/record-sync.mjs [baseURL]（默认 http://localhost:8787）
- * 注意：/api/auth/register 限流 3 次/分钟，本测试只注册 2 个用户。
+ * 记录级同步集成测试：LWW/墓碑/域隔离/原子提交/游标，以及服务端事实计分、
+ * 非可信客户端奖惩事件、北京时间每日300学习积分额度（删除不返还）、成就并集与孤儿清理。
+ * 前置：独立本地D1执行最新schema，启动同persist目录的wrangler dev。
+ * SMOKE_D1_PERSIST_TO 指定隔离目录，SMOKE_DESKTOP_TOKEN 匹配本地Worker配置。
+ * Node 22.13+ 可额外设置 SMOKE_D1_SQLITE 为该目录现有数据库文件，减少 fixture 查询启动开销。
+ * 运行 node test/record-sync.mjs http://localhost:8787；不连接生产数据库。
  */
-import { execSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-
 // 请求重试统一走 ./fetch-retry.mjs
 import { fetchRetry } from './fetch-retry.mjs'
+import { localD1 as d1 } from './local-d1.mjs'
 
 const BASE = process.argv[2] || 'http://localhost:8787'
 const ORIGIN = 'http://localhost:5173'
-const WORKER_DIR = fileURLToPath(new URL('..', import.meta.url))
 const DESKTOP_TOKEN = process.env.SMOKE_DESKTOP_TOKEN || 'zsb-desktop-v2'
-
-function d1(sql) {
-  return execSync(`npx wrangler d1 execute zsb-study-db --local --json --command "${sql}"`, {
-    cwd: WORKER_DIR
-  }).toString()
-}
 
 /** 取 D1 查询结果行数组 */
 function d1Rows(sql) {
@@ -312,10 +258,14 @@ async function main() {
       Object.keys(pPoints.data?.versions ?? {}).length === 0,
     JSON.stringify(pPoints.data)
   )
-  check('award 事件落账（points_log 出现该 ref_id）', logCount(uidA, 't1') === 1, `实际 ${logCount(uidA, 't1')}`)
+  const checkinRef = `study:checkin:${new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)}`
+  check(
+    '打卡使用服务端当天自然键，忽略客户端ref/date/points',
+    logCount(uidA, checkinRef) === 1 && logCount(uidA, 't1') === 0
+  )
   check(
     '响应 awarded 含本次实际发放条目',
-    JSON.stringify(pPoints.data?.awarded) === JSON.stringify([{ points: 6, reason: '每日打卡' }]),
+    JSON.stringify(pPoints.data?.awarded) === JSON.stringify([{ points: 10, reason: '每日打卡' }]),
     JSON.stringify(pPoints.data?.awarded)
   )
   check('points = SUM(points_log.points)', pointsConsistent(uidA).ok, JSON.stringify(pointsConsistent(uidA)))
@@ -326,7 +276,7 @@ async function main() {
   )
   check(
     '重复 award 同 refId → 幂等跳过（awarded 为空、流水仍 1 行）',
-    (pPoints2.data?.awarded ?? []).length === 0 && logCount(uidA, 't1') === 1,
+    (pPoints2.data?.awarded ?? []).length === 0 && logCount(uidA, checkinRef) === 1,
     JSON.stringify(pPoints2.data?.awarded)
   )
 
@@ -1480,7 +1430,7 @@ async function main() {
     JSON.stringify(i30b.data?.changes)
   )
   // 用例 B（回归护栏）：模拟「版本号已提交、业务行未提交」的窗口。
-  // allocateSeq 是独立提交语句，会先于业务行可见：手工把 english 的 version +1 而不写任何业务行，正是该状态。
+  // 人工制造旧版本/迁移留下的空洞。新版正常push会把序号与业务行同批提交，不产生该窗口。
   const verBeforeHole = engVer
   d1(`UPDATE sync_domain_versions SET version = version + 1 WHERE user_id = '${uidA}' AND domain = 'english'`)
   const holeVer = rowOf(
@@ -1502,7 +1452,7 @@ async function main() {
     i30c.data?.versions?.english === holeVer && holeVer > verBeforeHole,
     JSON.stringify({ versions: i30c.data?.versions?.english, holeVer })
   )
-  // 随后那批业务行真正提交：直接以空洞号作为 server_seq 写入（等价于 allocateSeq 已取号后 batch 才落库）
+  // 人工写入遗留空洞号，验证兼容旧游标恢复；新版并发原子性由独立事务回归验证。
   d1(
     `INSERT INTO vocab_records (id, user_id, date, new_words, review_words, points, updated_at, server_seq) VALUES ('vbhole', '${uidA}', '2026-09-10', 5, 5, 0, ${at(301)}, ${holeVer})`
   )
@@ -1551,13 +1501,14 @@ async function main() {
     records: { upserts: [recOn('b60', 60, today8, t31), recOn('b30', 30, today8, at(401))], deletes: [] }
   })
   check(
-    '已跨过阈值再推送/重放 → awarded 为空（ref_id 幂等）',
-    (p31b.data?.awarded ?? []).length === 0,
+    '新30分钟记录计3分，60分钟派生奖励不重复发',
+    (p31b.data?.awarded ?? []).some((a) => a.points === 3 && a.reason === '学习 30 分钟') &&
+      !(p31b.data?.awarded ?? []).some((a) => a.reason === '今日学习满 60 分钟'),
     JSON.stringify(p31b.data?.awarded)
   )
   check(
-    'srv:study-minutes 流水仍只有 1 行且 points 未二次增加',
-    logCount(uidB, studyMinutesRef) === 1 && p31b.data?.gamification?.points === pointsAfter31,
+    'srv:study-minutes 流水仍只有1行，积分只增加新记录3分',
+    logCount(uidB, studyMinutesRef) === 1 && p31b.data?.gamification?.points === pointsAfter31 + 3,
     `${logCount(uidB, studyMinutesRef)} 行 / ${pointsAfter31} → ${p31b.data?.gamification?.points}`
   )
 
@@ -1591,68 +1542,63 @@ async function main() {
   )
   check('快照 points 与 SUM(log) 一致', pointsConsistent(uidB).ok, JSON.stringify(pointsConsistent(uidB)))
 
-  console.log('[用例 33：客户端事件撤销（refId 精确 / refPrefix 前缀），points 按 SUM 重算]')
+  console.log('[用例 33：客户端事件不控制账本；每日打卡固定当天一次，事实取消才能撤销]')
+  const before33 = (await pull(tokenB, { full: true })).data.gamification.points
   const p33a = await push(
     tokenB,
     {},
     {
       points: [
-        { op: 'award', refId: 'bref1', points: 6, reason: '每日打卡', date: today8 },
-        { op: 'award', refId: 'habit:bh1:2026-01-01', points: 2, reason: '完成习惯「早起晨读」', date: '2026-01-01' },
-        { op: 'award', refId: 'habit:bh1:2026-01-02', points: 2, reason: '完成习惯「早起晨读」', date: '2026-01-02' },
-        { op: 'award', refId: 'habit:bh2:2026-01-01', points: 2, reason: '完成习惯「早起晨读」', date: '2026-01-01' }
+        ...Array.from({ length: 100 }, (_, i) => ({
+          op: 'award',
+          refId: 'fake-checkin-' + i,
+          points: 99999,
+          reason: '每日打卡',
+          date: '2099-01-01'
+        })),
+        { op: 'award', refId: 'fake-habit', points: 2, reason: '完成习惯「早起晨读」' },
+        { op: 'award', refId: 'fake-answer', points: 10, reason: '回答被采纳' }
       ]
     }
   )
-  check('四条 award 事件同批落账', (p33a.data?.awarded ?? []).length === 4, JSON.stringify(p33a.data?.awarded))
-  const pointsAfter33a = p33a.data?.gamification?.points
-  const p33b = await push(tokenB, {}, { points: [{ op: 'revoke', refId: 'bref1' }] })
-  check('revoke refId → 精确删除该流水', logCount(uidB, 'bref1') === 0, `实际 ${logCount(uidB, 'bref1')}`)
+  const canonicalCheckin = 'study:checkin:' + today8
   check(
-    'points 重算（= SUM(log)，减少 6）',
-    p33b.data?.gamification?.points === pointsAfter33a - 6 && pointsConsistent(uidB).ok,
-    `${pointsAfter33a} → ${p33b.data?.gamification?.points} / ${JSON.stringify(pointsConsistent(uidB))}`
+    '随机ref/date/points只能触发当天一次10分打卡',
+    p33a.status === 200 && p33a.data.gamification.points === before33 + 10 && logCount(uidB, canonicalCheckin) === 1
   )
-  const p33c = await push(tokenB, {}, { points: [{ op: 'revoke', refPrefix: 'habit:bh1:' }] })
-  check(
-    'revoke refPrefix → 该前缀 2 行删除、前缀外的流水保留',
-    logCount(uidB, 'habit:bh1:2026-01-01') === 0 &&
-      logCount(uidB, 'habit:bh1:2026-01-02') === 0 &&
-      logCount(uidB, 'habit:bh2:2026-01-01') === 1,
-    JSON.stringify([
-      logCount(uidB, 'habit:bh1:2026-01-01'),
-      logCount(uidB, 'habit:bh1:2026-01-02'),
-      logCount(uidB, 'habit:bh2:2026-01-01')
-    ])
-  )
-  check(
-    'points 再次重算（累计减少 10）且一致',
-    p33c.data?.gamification?.points === pointsAfter33a - 10 && pointsConsistent(uidB).ok,
-    `${pointsAfter33a} → ${p33c.data?.gamification?.points}`
-  )
-  check(
-    '撤销可重复执行（幂等，不报错）',
-    (await push(tokenB, {}, { points: [{ op: 'revoke', refPrefix: 'habit:bh1:' }] })).status === 200
-  )
-  // 离线一次性刷 outbox 的典型场景：同一批里先撤销、后重新发放同一 refId（取消后重新完成打卡）
-  const p33d = await push(
+  check('没有真实习惯/采纳业务的事件不落账', logCount(uidB, 'fake-habit') === 0 && logCount(uidB, 'fake-answer') === 0)
+  const p33b = await push(
     tokenB,
     {},
     {
-      // 重新发放的 reason 同样必须在白名单内（'每日打卡' 上限 10，故 5 分不被钳制）
       points: [
-        { op: 'revoke', refId: 'habit:bh2:2026-01-01' },
-        { op: 'award', refId: 'habit:bh2:2026-01-01', points: 5, reason: '每日打卡', date: '2026-01-01' }
+        { op: 'revoke', refId: canonicalCheckin },
+        { op: 'revoke', refPrefix: 'srv:' },
+        { op: 'revoke', all: true }
       ]
     }
   )
   check(
-    '同批撤销 + 发放同一 refId → 以本次发放为准（旧 2 分删除、新 5 分落账）',
-    logCount(uidB, 'habit:bh2:2026-01-01') === 1 &&
-      (p33d.data?.awarded ?? []).some((a) => a.points === 5) &&
-      p33d.data?.gamification?.points === pointsAfter33a - 10 - 2 + 5 &&
-      pointsConsistent(uidB).ok,
-    `${JSON.stringify(p33d.data?.awarded)} points=${p33d.data?.gamification?.points}`
+    '客户端精确/前缀/全量revoke不能删除服务端账本',
+    p33b.data.gamification.points === before33 + 10 &&
+      logCount(uidB, canonicalCheckin) === 1 &&
+      logCount(uidB, studyMinutesRef) === 1
+  )
+  const p33c = await push(tokenB, {
+    todos: { upserts: [{ ...todo('reward-todo', at(420)), done: true }], deletes: [] }
+  })
+  check(
+    '真实完成待办加3分',
+    p33c.data.gamification.points === before33 + 13 && logCount(uidB, 'study:todos:reward-todo') === 1
+  )
+  const p33d = await push(tokenB, {
+    todos: { upserts: [{ ...todo('reward-todo', at(421)), done: false }], deletes: [] }
+  })
+  check(
+    '真实取消待办回收3分，无需客户端revoke',
+    p33d.data.gamification.points === before33 + 10 &&
+      logCount(uidB, 'study:todos:reward-todo') === 0 &&
+      pointsConsistent(uidB).ok
   )
 
   console.log('[用例 34：记录删除被接受 → 自动撤销关联积分（不依赖客户端 revoke 事件）]')
@@ -1664,19 +1610,19 @@ async function main() {
   )
   check(
     '记录与其关联积分同批写入',
-    bRecCount('bdel1') === 1 && logCount(uidB, 'bdel1') === 1,
+    bRecCount('bdel1') === 1 && logCount(uidB, 'study:records:bdel1') === 1,
     `${bRecCount('bdel1')} / ${logCount(uidB, 'bdel1')}`
   )
   const pointsBefore34 = p34.data?.gamification?.points
   const p34b = await push(tokenB, { records: { upserts: [], deletes: [{ key: 'bdel1', deletedAt: at(431) }] } })
   check(
     '删除 records 记录 → 其 ref_id 流水被自动撤销',
-    p34b.data?.deletes?.records === 1 && logCount(uidB, 'bdel1') === 0,
+    p34b.data?.deletes?.records === 1 && logCount(uidB, 'study:records:bdel1') === 0,
     `deletes=${p34b.data?.deletes?.records} 流水=${logCount(uidB, 'bdel1')}`
   )
   check(
-    'points 下降 4 且 = SUM(log)',
-    p34b.data?.gamification?.points === pointsBefore34 - 4 && pointsConsistent(uidB).ok,
+    '真实5分钟记录只计1分，删除下降1且=SUM(log)',
+    p34b.data?.gamification?.points === pointsBefore34 - 1 && pointsConsistent(uidB).ok,
     `${pointsBefore34} → ${p34b.data?.gamification?.points}`
   )
   const p34c = await push(
@@ -1686,14 +1632,14 @@ async function main() {
   )
   check(
     '错题与其 error:<id> 积分同批写入',
-    logCount(uidB, 'error:bdelq') === 1,
+    logCount(uidB, 'study:errorQuestions:bdelq') === 1,
     `实际 ${logCount(uidB, 'error:bdelq')}`
   )
   const pointsBefore34c = p34c.data?.gamification?.points
   const p34d = await push(tokenB, { errorQuestions: { upserts: [], deletes: [{ key: 'bdelq', deletedAt: at(432) }] } })
   check(
     '删除 errorQuestions 记录 → error:<id> 流水被自动撤销',
-    p34d.data?.deletes?.errorQuestions === 1 && logCount(uidB, 'error:bdelq') === 0,
+    p34d.data?.deletes?.errorQuestions === 1 && logCount(uidB, 'study:errorQuestions:bdelq') === 0,
     `deletes=${p34d.data?.deletes?.errorQuestions} 流水=${logCount(uidB, 'error:bdelq')}`
   )
   check(
@@ -1811,7 +1757,7 @@ async function main() {
   check('未知 op → 400', (await pushPoints({ op: 'banana', refId: 'x', points: 1, reason: '每日打卡' })).status === 400)
   const noRefId = await pushPoints({ op: 'award', points: 3, reason: '每日打卡' })
   check(
-    'award 缺 refId → 200 且不落账（无幂等键无法安全入账，忽略该事件）',
+    '无refId的打卡意图仍使用当天自然键，不重复发放',
     noRefId.status === 200 && (noRefId.data?.awarded ?? []).length === 0,
     JSON.stringify(noRefId.data)
   )
@@ -1859,11 +1805,12 @@ async function main() {
     }
   )
   check(
-    '同批混合：非法事件被忽略、合法事件落账且分值钳制到行为上限（999 → 10）',
+    '同批混合：未知行为忽略，已打卡用户换ref也不能再次领取',
     mixed.status === 200 &&
-      JSON.stringify(mixed.data?.awarded) === JSON.stringify([{ points: 10, reason: '每日打卡' }]) &&
+      (mixed.data?.awarded ?? []).length === 0 &&
       logCount(uidB, 'mixed:off') === 0 &&
-      logCount(uidB, 'mixed:ok') === 1,
+      logCount(uidB, 'mixed:ok') === 0 &&
+      logCount(uidB, canonicalCheckin) === 1,
     JSON.stringify({ awarded: mixed.data?.awarded, off: logCount(uidB, 'mixed:off'), ok: logCount(uidB, 'mixed:ok') })
   )
   check('忽略与钳制后投影仍自洽', pointsConsistent(uidB).ok, JSON.stringify(pointsConsistent(uidB)))
@@ -2018,6 +1965,35 @@ async function main() {
     '同批含类型非法域 → 400 且合法域未写入（整批原子）',
     atomic39.status === 400 && recCount('ratomic39') === 0,
     `${atomic39.status} / ${recCount('ratomic39')}`
+  )
+
+  console.log('[用例 40：每日300学习积分，删除重建不返还额度]')
+  const spentBefore40 =
+    rowOf(`SELECT spent FROM study_reward_daily_usage WHERE user_id = '${uidB}' AND date = '${today8}'`)?.spent ?? 0
+  const pointsBefore40 = (await pull(tokenB, { full: true })).data.gamification.points
+  const capIds = ['cap-a', 'cap-b', 'cap-c']
+  const capPush = await push(tokenB, {
+    records: { upserts: capIds.map((id) => recOn(id, 1440, today8, at(600))), deletes: [] }
+  })
+  check(
+    '新记录合计奖励最多填满剩余额度',
+    capPush.status === 200 && capPush.data.gamification.points === pointsBefore40 + Math.max(0, 300 - spentBefore40)
+  )
+  check(
+    '额度spent为300',
+    rowOf(`SELECT spent FROM study_reward_daily_usage WHERE user_id = '${uidB}' AND date = '${today8}'`)?.spent === 300
+  )
+  const capDelete = await push(tokenB, {
+    records: { upserts: [], deletes: capIds.map((key) => ({ key, deletedAt: at(601) })) }
+  })
+  const capRefill = await push(tokenB, {
+    records: { upserts: [recOn('cap-recreate', 1440, today8, at(602))], deletes: [] }
+  })
+  check(
+    '删除记录后新建不返还额度，不再发分',
+    capRefill.data.gamification.points === capDelete.data.gamification.points &&
+      (capRefill.data.awarded ?? []).length === 0 &&
+      pointsConsistent(uidB).ok
   )
 
   console.log(`\n通过 ${passed} / 失败 ${failed}`)

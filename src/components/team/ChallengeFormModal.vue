@@ -83,14 +83,14 @@ async function handleSubmit() {
             class="flex flex-col items-center gap-1 rounded-xl border px-2 py-3 transition-colors"
             :class="
               form.type === t
-                ? 'border-primary-400 dark:border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400'
+                ? 'border-primary-400 dark:border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-action dark:text-action'
                 : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'
             "
             @click="form.type = t"
           >
             <component :is="TYPE_META[t].icon" class="w-5 h-5" />
             <span class="text-xs font-semibold">{{ TYPE_LABEL[t] }}</span>
-            <span class="text-[10px] opacity-70">{{ TYPE_META[t].desc }}</span>
+            <span class="text-xs opacity-70">{{ TYPE_META[t].desc }}</span>
           </button>
         </div>
       </div>
@@ -117,7 +117,7 @@ async function handleSubmit() {
             class="px-2.5 py-1 rounded-full text-xs border transition-colors"
             :class="
               form.target === p
-                ? 'border-primary-400 dark:border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400'
+                ? 'border-primary-400 dark:border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-action dark:text-action'
                 : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'
             "
             @click="form.target = p"

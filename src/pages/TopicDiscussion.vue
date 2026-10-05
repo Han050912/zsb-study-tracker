@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import IconAction from '../shared/components/IconAction.vue'
+import EmptyState from '../shared/components/EmptyState.vue'
+import LoadingState from '../shared/components/LoadingState.vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { requireLogin } from '../services/auth'
 import { getErrorMessage } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import { useRoute, useRouter } from 'vue-router'
 import { postsApi } from '../api/community/posts'
-import { RefreshCw, TriangleAlert } from '@lucide/vue'
+import { RefreshCw, TriangleAlert, ArrowLeft } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
 import PostCard from '../components/community/PostCard.vue'
 import PostComposer from '../components/community/PostComposer.vue'
@@ -26,8 +30,8 @@ const toast = useToast()
 const appStore = useAppStore()
 
 const subjectId = route.params.subjectId as string
-const chapterName = (route.query.chapter as string) || ''
-const topicRef = `${subjectId}|${chapterName}`
+const chapterName = computed(() => (typeof route.query.chapter === 'string' ? route.query.chapter : ''))
+const topicRef = computed(() => `${subjectId}|${chapterName.value}`)
 
 const subject = computed(() => appStore.subjectMap[subjectId])
 
@@ -36,53 +40,83 @@ const feedCursor = ref<string | null>(null)
 const loading = ref(true)
 const feedLoading = ref(false)
 const feedError = ref('')
-
-onMounted(() => {
-  if (!chapterName) {
-    toast('章节参数缺失')
-    router.replace('/community')
-    return
-  }
-  loadFeed(true).finally(() => {
-    loading.value = false
-  })
+const showComposer = ref(false)
+let feedTicket = 0,
+  disposed = false
+onBeforeUnmount(() => {
+  disposed = true
+  feedTicket++
 })
 
+watch(
+  chapterName,
+  () => {
+    feedTicket++
+    showComposer.value = false
+    posts.value = []
+    feedCursor.value = null
+    feedError.value = ''
+    loading.value = true
+    if (!chapterName.value) {
+      toast('章节参数缺失')
+      router.replace('/community')
+      return
+    }
+    void loadFeed(true)
+  },
+  { immediate: true }
+)
+
 async function loadFeed(reset = false) {
-  if (feedLoading.value) return
+  if (!reset && feedLoading.value) return
+  const ticket = ++feedTicket
   feedLoading.value = true
   feedError.value = ''
   try {
     const res = await postsApi.feed({
       topicSubject: subjectId,
-      topicChapter: chapterName,
+      topicChapter: chapterName.value,
       cursor: reset ? null : feedCursor.value
     })
+    if (disposed || ticket !== feedTicket) return
     posts.value = reset ? res.posts : [...posts.value, ...res.posts]
     feedCursor.value = res.nextCursor
   } catch (e) {
+    if (disposed || ticket !== feedTicket) return
     // 首屏失败展示错误态；追加失败仅提示，保留已加载内容
     if (reset) feedError.value = getErrorMessage(e, '加载失败')
     else toast(getErrorMessage(e, '加载失败'))
   } finally {
-    feedLoading.value = false
+    if (ticket === feedTicket) {
+      feedLoading.value = false
+      loading.value = false
+    }
   }
 }
 
 // ---- 发帖 ----
-const showComposer = ref(false)
 function onPosted() {
   loadFeed(true)
 }
 
 // ---- 帖子互动（局部状态） ----
 async function likePost(id: string) {
+  if (requireLogin(router)) return
   const p = posts.value.find((x) => x.id === id)
   if (!p) return
   try {
     await entities.likePost(id)
   } catch (e) {
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '点赞未能更新，请重试'))
+  }
+}
+
+async function dislikePost(id: string) {
+  if (requireLogin(router)) return
+  try {
+    await entities.dislikePost(id)
+  } catch (e) {
+    toast(getErrorMessage(e, '不赞同状态未能更新，请重试'))
   }
 }
 
@@ -102,16 +136,16 @@ function openReport(postId: string) {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto space-y-4">
+  <div class="collaboration-page study-page reading-page space-y-4">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
-      <h2 class="text-lg font-bold flex-1 min-w-0 truncate">
-        {{ subjectLabel(subject, subjectId) }} · {{ chapterName }}
-      </h2>
+      <span class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
+      <h1 class="page-title flex-1 min-w-0 truncate">{{ subjectLabel(subject, subjectId) }} · {{ chapterName }}</h1>
     </div>
     <p class="text-xs text-slate-400 -mt-2">本章节疑难讨论（仅本讨论区可见，不进公共广场）</p>
 
-    <div v-if="loading" class="text-center text-xs text-slate-400 py-10">加载中…</div>
+    <LoadingState v-if="loading" />
 
     <template v-else>
       <!-- 发帖入口 -->
@@ -120,7 +154,7 @@ function openReport(postId: string) {
       </button>
 
       <!-- 讨论帖流：首屏失败提供重试（与广场推荐错误块口径一致） -->
-      <div v-if="feedError" class="card flex items-center gap-2 text-xs text-red-500 dark:text-red-400">
+      <div v-if="feedError" class="card flex items-center gap-2 text-xs text-correction dark:text-correction">
         <TriangleAlert :size="14" aria-hidden="true" class="shrink-0" />
         <span class="flex-1">{{ feedError }}</span>
         <button class="btn-ghost !text-xs shrink-0" @click="loadFeed(true)">
@@ -129,14 +163,17 @@ function openReport(postId: string) {
         </button>
       </div>
       <template v-else>
-        <div v-if="!posts.length && !feedLoading" class="card text-center text-sm text-slate-400 py-8">
-          还没有讨论，来发第一帖吧～
-        </div>
+        <EmptyState
+          v-if="!posts.length && !feedLoading"
+          class="card"
+          title="还没有讨论。可以贴出题目和你的解题步骤，一起找出卡住的地方。"
+        />
         <PostCard
           v-for="p in posts"
           :key="p.id"
           :post="p"
           @like="likePost(p.id)"
+          @dislike="dislikePost(p.id)"
           @open="router.push(`/community/post/${p.id}`)"
           @profile="openProfile(p.userId)"
           @report="openReport(p.id)"

@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import CompanionProgress from './CompanionProgress.vue'
+import EmptyState from '../../shared/components/EmptyState.vue'
 import { computed, ref } from 'vue'
 import { getErrorMessage } from '../../utils/error'
-import { formatMinutes } from '../../utils/date'
 import { useToast } from '../../composables/useToast'
 import { useConfirm } from '../../composables/useConfirm'
 import { deleteChallenge, cancelChallenge, resumeChallenge } from '../../api/teams'
-import { TYPE_LABEL, TYPE_UNIT, STATUS_LABEL, challengeStatus } from '../../utils/teamChallengeMeta'
+import { challengeStatus } from '../../utils/teamChallengeMeta'
 import type { TeamChallenge } from '../../types'
 
 /**
@@ -91,49 +92,12 @@ async function handleResume(c: TeamChallenge) {
       <button v-if="myRole === 'leader'" class="btn-ghost !text-xs" @click="emit('create')">＋ 创建挑战</button>
     </div>
 
-    <div v-if="!challenges.length" class="text-center text-sm text-slate-400 py-6">暂无挑战</div>
+    <EmptyState v-if="!challenges.length" title="还没有挑战。队长可以约定学习时长、做题量或连续打卡目标。" />
 
     <div v-else class="space-y-3">
       <div v-for="c in challenges" :key="c.id" class="border border-slate-100 dark:border-slate-700 rounded-xl p-3">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="text-sm font-semibold">{{ TYPE_LABEL[c.type] }}</span>
-          <span
-            class="text-[10px] px-1.5 py-0.5 rounded-full"
-            :class="
-              challengeStatus(c) === 'active'
-                ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
-                : challengeStatus(c) === 'completed'
-                  ? 'bg-yellow-50 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400'
-                  : challengeStatus(c) === 'cancelled'
-                    ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
-                    : 'bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500'
-            "
-          >
-            {{ STATUS_LABEL[challengeStatus(c)] }}
-          </span>
-        </div>
-        <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          目标 {{ c.target }} {{ TYPE_UNIT[c.type]
-          }}<template v-if="c.type === 'minutes' && c.target >= 60">（{{ formatMinutes(c.target) }}）</template> ·
-          {{ c.startDate }} ~ {{ c.endDate }}
-        </div>
-        <div class="mt-2">
-          <template v-if="isMember">
-            <div class="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-              <span>我的进度 {{ c.myProgress }}/{{ c.target }}</span>
-              <span v-if="c.myCompleted" class="text-emerald-500">已达标</span>
-            </div>
-            <div class="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-              <div
-                class="h-full bg-primary-500 rounded-full"
-                :style="{ width: Math.min(100, Math.round((c.myProgress / c.target) * 100)) + '%' }"
-              ></div>
-            </div>
-          </template>
-          <p v-else class="text-xs text-slate-400">加入小组后可同步进度</p>
-        </div>
-        <div class="flex items-center justify-between mt-2">
-          <span class="text-[10px] text-slate-400">团队达标 {{ c.completedCount }}/{{ memberCount }} 人</span>
+        <CompanionProgress :challenge="c" :member-count="memberCount" :show-mine="isMember" />
+        <div class="flex flex-wrap items-center justify-end mt-4">
           <div class="flex items-center gap-1.5 flex-wrap justify-end">
             <button
               v-if="isMember && challengeStatus(c) === 'active'"
@@ -155,7 +119,7 @@ async function handleResume(c: TeamChallenge) {
                 </button>
                 <button
                   v-if="challengeStatus(c) === 'active'"
-                  class="btn-ghost !text-xs !text-amber-500"
+                  class="btn-ghost !text-xs !text-action"
                   :disabled="manageSubmitting[c.id]"
                   @click="handleCancel(c)"
                 >
@@ -163,14 +127,14 @@ async function handleResume(c: TeamChallenge) {
                 </button>
                 <button
                   v-if="challengeStatus(c) === 'cancelled'"
-                  class="btn-ghost !text-xs !text-emerald-500"
+                  class="btn-ghost !text-xs !text-action"
                   :disabled="manageSubmitting[c.id]"
                   @click="handleResume(c)"
                 >
                   恢复
                 </button>
                 <button
-                  class="btn-ghost !text-xs !text-red-500"
+                  class="btn-ghost !text-xs !text-correction"
                   :disabled="manageSubmitting[c.id]"
                   @click="handleDelete(c)"
                 >

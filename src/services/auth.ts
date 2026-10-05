@@ -28,6 +28,8 @@ export interface SessionUser {
 }
 
 const currentUser = ref<SessionUser | null>(null)
+// Web 退出响应会清 HttpOnly Cookie；新凭证请求须等它完成，避免迟到响应清掉新会话。
+let logoutFlight: Promise<void> | null = null
 // 访客浏览模式：仅能通过登录/注册页「先随便看看」入口开启，开启后才可浏览公开页（社区/组队）。
 // 用 sessionStorage 存标志：刷新页面保持访客态，关闭浏览器会话即失效（下次需重新走入口）
 const guestMode = ref(sessionStorage.getItem(GUEST_FLAG) === '1')
@@ -72,8 +74,11 @@ export async function restoreSession(): Promise<SessionUser | null> {
     setSession(user)
     return user
   } catch (e) {
-    if ((e as { status?: number } | null)?.status === 401) setSession(null)
-    return null
+    if ((e as { status?: number } | null)?.status === 401) {
+      setSession(null)
+      return null
+    }
+    throw e
   }
 }
 
@@ -96,6 +101,7 @@ export async function register(username: string, password: string, cfTurnstileTo
   if (username.length > 20) throw new Error('用户名最多 20 个字符')
   const policyError = passwordPolicyError(password)
   if (policyError) throw new Error(policyError)
+  if (logoutFlight) await logoutFlight
   const { token, user } = await authApi.register(username, password, cfTurnstileToken)
   setSession(user, token)
   return user
@@ -105,6 +111,7 @@ export async function register(username: string, password: string, cfTurnstileTo
 export async function login(username: string, password: string, cfTurnstileToken = ''): Promise<SessionUser> {
   username = username.trim()
   if (!username || !password) throw new Error('请输入用户名和密码')
+  if (logoutFlight) await logoutFlight
   const { token, user } = await authApi.login(username, password, cfTurnstileToken)
   setSession(user, token)
   return user
@@ -137,10 +144,21 @@ function clearApiCaches(): void {
 }
 
 export function logout(): void {
+  if (logoutFlight) {
+    exitGuestMode()
+    return
+  }
   setSession(null) // 先清本地会话（立即生效）
   exitGuestMode() // 退出登录同时清除访客模式，防止多标签页下 guestMode 残留绕过登录页入口
   clearApiCaches() // 清掉缓存里的私有 API 响应，避免换账号后串数据
-  authApi.logout().catch(() => {}) // 异步通知服务端吊销 JWT 并清除 Cookie
+  const request = authApi.logout().then(
+    () => {},
+    () => {}
+  )
+  logoutFlight = request
+  void request.finally(() => {
+    if (logoutFlight === request) logoutFlight = null
+  })
 }
 
 // ---------- 多标签页登出同步 ----------

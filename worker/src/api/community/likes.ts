@@ -1,7 +1,7 @@
 import { on, body } from '../../router'
 import { first, batch, HttpError } from '../../db'
 import { rateLimit } from '../../middleware/rateLimit'
-import { awardBadge, hasBadge } from '../badges'
+import { badgeAwardStatements } from '../badges'
 import { nowSec, awardStatements, revokeStatements, notifyStatement, displayName, assertCircleReadable } from './shared'
 
 /**
@@ -105,18 +105,18 @@ export function registerLikesRoutes() {
         })
       )
     }
-    await batch(ctx.env, stmts)
-    // 徽章：百赞达人（帖子+评论累计获赞 ≥100；已持有者跳过统计查询）
-    if (target.user_id !== ctx.userId && !(await hasBadge(ctx.env, target.user_id, 'likes_100'))) {
-      const total = await first<{ n: number }>(
-        ctx.env,
-        `SELECT (SELECT COALESCE(SUM(likes_count), 0) FROM community_posts WHERE user_id = ?)
-              + (SELECT COALESCE(SUM(likes_count), 0) FROM community_comments WHERE user_id = ?) AS n`,
-        target.user_id,
-        target.user_id
+    if (target.user_id !== ctx.userId)
+      stmts.push(
+        ...badgeAwardStatements(
+          ctx.env,
+          'likes_100',
+          `SELECT ? AS user_id WHERE
+        (SELECT COALESCE(SUM(likes_count), 0) FROM community_posts WHERE user_id = ?)
+        + (SELECT COALESCE(SUM(likes_count), 0) FROM community_comments WHERE user_id = ?) >= 100`,
+          [target.user_id, target.user_id, target.user_id]
+        )
       )
-      if ((total?.n ?? 0) >= 100) await batch(ctx.env, await awardBadge(ctx.env, target.user_id, 'likes_100'))
-    }
+    await batch(ctx.env, stmts)
     return Response.json({ liked: true })
   })
 

@@ -2,7 +2,7 @@
  * app store 的 sync 核心模块：推送（outbox flush）与拉取（pull/hydrate）动作 + 模块级同步状态。
  * 仅 import staging 纯函数与 services/api；不 import 其他 app 域模块的 actions（跨域调用一律走 this）。
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { AppStoreThis } from './this-type'
 import { clearCursors, loadCursors, saveCursors } from './staging'
 import { createDefaultState } from '../../data/defaults'
@@ -11,11 +11,12 @@ import { syncApi, type PullResponse } from '../../api/sync'
 import { DATA_DOMAINS, DOMAIN_SHAPES, applyChanges, serializeChanges } from '../../services/syncDomains'
 import {
   ack,
-  clear as clearOutbox,
   setOutboxUser,
   size as outboxSize,
   takeForFlush,
-  stageUpsert
+  stageUpsert,
+  outboxIssue,
+  type OutboxSnapshot
 } from '../../services/syncOutbox'
 import { sessionUser } from '../../services/auth'
 import { clearErrorImageCache } from '../../api/errorImages'
@@ -26,11 +27,14 @@ import {
   setNoteBodyUser,
   type NoteBodyPushFailure
 } from '../../services/noteBodies'
-import type { Note } from '../../types'
+import type { AppState, Note } from '../../types'
 
 /** 推送防抖计时器（合并连续操作，避免每个 action 都触发一次全量推送） */
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 const SAVE_DEBOUNCE_MS = 800
+// Keep backups below the server's 10 MiB request limit and bound each D1 transaction's work.
+const PUSH_BATCH_CHANGES = 100
+const PUSH_BATCH_BYTES = 2 * 1024 * 1024
 
 /**
  * 是否已成功从云端拉取（hydrate）过数据。
@@ -44,6 +48,27 @@ let hasHydrated = false
  * 不能依赖 sessionUser（logout 先于 resetState 执行，那时已是 null）。
  */
 let activeUserId: string | null = null
+let syncGeneration = 0
+type FlushResult = { ok: boolean; applied: number; rejected: number }
+type SyncResult = FlushResult & { changed: number }
+let syncFlight: { generation: number; userId: string | null; promise: Promise<SyncResult> } | null = null
+let flushFlight: { generation: number; userId: string | null; promise: Promise<FlushResult> } | null = null
+
+function isCurrentSync(generation: number, userId: string | null): boolean {
+  return generation === syncGeneration && !!userId && userId === activeUserId && userId === sessionUser.value?.id
+}
+
+async function withConflictRetry<T>(request: () => Promise<T>, generation: number, userId: string | null): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    if (!isCurrentSync(generation, userId)) throw new Error('登录状态已改变，请重试')
+    try {
+      return await request()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 409 || attempt >= 2) throw error
+      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)))
+    }
+  }
+}
 
 /**
  * 本次会话是否已完成过全量拉取。
@@ -64,7 +89,33 @@ export const MAX_FIELD_CHARS = 1_000_000
  * 4xx 是「服务端明确拒绝」，与「网络不通」语义完全不同：毒记录会让之后每一次推送都被整批拒绝，
  * 只打日志会让用户完全不知道同步已经长期停止，因此把原因留在响应式状态里供界面提示。
  */
-export const syncIssue = ref<string | null>(null)
+const pushIssue = ref<string | null>(null)
+export const syncIssue = computed(() => [outboxIssue.value, pushIssue.value].filter(Boolean).join('；') || null)
+
+/** Rebuild pending edits before loading bodies, while respecting newer remote tombstones. */
+export function restorePendingState(state: AppState, pending: OutboxSnapshot | null, remote: PullResponse): void {
+  if (!pending) return
+  for (const domain of new Set([...Object.keys(pending.upserts), ...Object.keys(pending.deletes)])) {
+    const keyOf = (raw: unknown): string => {
+      const item = raw as { id?: string; key?: string }
+      return String(DOMAIN_SHAPES[domain] === 'raw' ? item.id : item.key)
+    }
+    const remoteStamps = new Map<string, number>()
+    const putStamp = (key: string, stamp: number) =>
+      remoteStamps.set(key, Math.max(remoteStamps.get(key) ?? -Infinity, stamp))
+    for (const item of remote.changes?.[domain]?.upserts ?? [])
+      putStamp(keyOf(item), Number((item as { updatedAt: number }).updatedAt))
+    for (const item of remote.changes?.[domain]?.deletes ?? []) putStamp(item.key, item.deletedAt)
+    const changes = serializeChanges(domain, pending.upserts[domain] ?? {}, pending.deletes[domain] ?? {})
+    applyChanges(domain, state, {
+      seq: 0,
+      upserts: changes.upserts.filter(
+        (item) => Number((item as { updatedAt: number }).updatedAt) > (remoteStamps.get(keyOf(item)) ?? -Infinity)
+      ),
+      deletes: changes.deletes.filter((item) => item.deletedAt > (remoteStamps.get(item.key) ?? -Infinity))
+    })
+  }
+}
 
 /** 本次推送载荷（域 → 变更集合），用于在失败时定位毒记录 */
 type PushDomains = Record<string, ReturnType<typeof serializeChanges>>
@@ -169,62 +220,113 @@ export const syncActions: SyncActionsShape = {
       clearTimeout(saveTimer)
       saveTimer = null
     }
-    return (await this.flushOutbox()).ok
+    // A joined flight may precede this call's latest edit. A second drain includes all keys captured
+    // here; later edits cannot keep an import/logout waiting forever.
+    const required = new Set(takeForFlush()?.receipt?.keys ?? [])
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!(await this.flushOutbox()).ok) return false
+      if (!(takeForFlush()?.receipt?.keys ?? []).some((key) => required.has(key))) return !outboxIssue.value
+    }
+    return false
   },
 
   /**
-   * 推送 outbox 中全部待推送变更：**一次** `POST /api/data/push` 提交所有域 + 积分事件 + 成就。
-   * 成功即 `ack`（含被服务端拒绝的条目：本地**不回滚**，等下次拉取按 LWW 覆盖，仅记日志）；
+   * 将本次开始时的待同步变更分批推送，每批只确认实际提交的操作；后续新编辑留给下一轮。
+   * 被拒绝或钳制的条目随后回拉权威状态，同时保留飞行期间的新编辑。
    * 并按响应采纳权威 `gamification` 快照。失败时 outbox 原样保留，待下次同步重试。
    */
   async flushOutbox(this: AppStoreThis): Promise<{ ok: boolean; applied: number; rejected: number }> {
     if (!hasHydrated) return { ok: true, applied: 0, rejected: 0 }
-    // flushPendingNoteBodies 逐行隔离失败、从不抛错：正文级失败经 bodyIssue 常驻可见，
-    // 且不阻断 outbox 推送（毒正文不该连累其余数据域长期无法上云）
-    const { revisions, failures } = await flushPendingNoteBodies()
-    for (const [id, revision] of revisions) {
-      const note = this.notes.find((item) => item.id === id)
-      if (!note || note.bodyUpdatedAt !== revision.from) continue
-      note.bodyUpdatedAt = revision.to
-      if (note.updatedAt === revision.from) note.updatedAt = revision.to
-      stageUpsert('notes', note.id, note, note.updatedAt)
-    }
-    // 正文级失败常驻可见：成功推送 outbox 也不能把它清掉（它不会随 outbox 一起被确认）
-    syncIssue.value = describeNoteBodyFailures(failures, this.notes)
+    const generation = syncGeneration
+    const userId = activeUserId
+    if (flushFlight?.generation === generation && flushFlight.userId === userId) return flushFlight.promise
+    const run = async (): Promise<FlushResult> => {
+      const cancelled = { ok: false, applied: 0, rejected: 0 }
+      // flushPendingNoteBodies 逐行隔离失败、从不抛错：正文级失败经 bodyIssue 常驻可见，
+      // 且不阻断 outbox 推送（毒正文不该连累其余数据域长期无法上云）
+      const { revisions, failures } = await flushPendingNoteBodies()
+      if (!isCurrentSync(generation, userId)) return cancelled
+      for (const [id, revision] of revisions) {
+        const note = this.notes.find((item) => item.id === id)
+        if (!note || note.bodyUpdatedAt !== revision.from) continue
+        note.bodyUpdatedAt = revision.to
+        if (note.updatedAt === revision.from) note.updatedAt = revision.to
+        stageUpsert('notes', note.id, note, note.updatedAt)
+      }
+      // 正文级失败常驻可见：成功推送 outbox 也不能把它清掉（它不会随 outbox 一起被确认）
+      pushIssue.value = describeNoteBodyFailures(failures, this.notes)
 
-    const snapshot = takeForFlush()
-    if (!snapshot) return { ok: true, applied: 0, rejected: 0 }
+      const remaining = new Set(takeForFlush()?.receipt?.keys ?? [])
+      let appliedTotal = 0,
+        rejectedTotal = 0
+      while (remaining.size) {
+        const snapshot = takeForFlush({ keys: remaining, maxChanges: PUSH_BATCH_CHANGES, maxBytes: PUSH_BATCH_BYTES })
+        // Another tab may already have confirmed the remaining operations.
+        if (!snapshot) break
+        const confirm = () => {
+          ack(snapshot)
+          for (const key of snapshot.receipt!.keys) remaining.delete(key)
+        }
 
-    const domains: PushDomains = {}
-    for (const domain of new Set([...Object.keys(snapshot.upserts), ...Object.keys(snapshot.deletes)])) {
-      const changes = serializeChanges(domain, snapshot.upserts[domain] ?? {}, snapshot.deletes[domain] ?? {})
-      // pomodoro 的 itr: 空列表被裁掉后该域可能为空：空域不上报（服务端拒绝「无任何变更」的请求）
-      if (changes.upserts.length || changes.deletes.length) domains[domain] = changes
-    }
-    if (!Object.keys(domains).length && !snapshot.points.length && !snapshot.achievements.length) {
-      // 全部条目都被序列化裁掉（如仅剩空的 itr:）→ 直接确认，避免服务端 400
-      ack(snapshot)
-      return { ok: true, applied: 0, rejected: 0 }
-    }
+        const domains: PushDomains = {}
+        for (const domain of new Set([...Object.keys(snapshot.upserts), ...Object.keys(snapshot.deletes)])) {
+          const changes = serializeChanges(domain, snapshot.upserts[domain] ?? {}, snapshot.deletes[domain] ?? {})
+          // pomodoro 的 itr: 空列表被裁掉后该域可能为空：空域不上报（服务端拒绝「无任何变更」的请求）
+          if (changes.upserts.length || changes.deletes.length) domains[domain] = changes
+        }
+        if (!Object.keys(domains).length && !snapshot.points.length && !snapshot.achievements.length) {
+          // 全部条目都被序列化裁掉（如仅剩空的 itr:）→ 直接确认，避免服务端 400
+          confirm()
+          continue
+        }
 
+        try {
+          const res = await withConflictRetry(
+            () =>
+              syncApi.pushChanges({
+                domains,
+                points: snapshot.points,
+                achievements: snapshot.achievements
+              }),
+            generation,
+            userId
+          )
+          if (!isCurrentSync(generation, userId)) return cancelled
+          confirm()
+          if (res.gamification) this.$patch({ gamification: res.gamification })
+          const rejected = res.rejected?.length ?? 0
+          rejectedTotal += rejected
+          appliedTotal += Object.values(res.applied ?? {}).reduce((s, n) => s + n, 0)
+          if (rejected || res.clamped) {
+            const remote = await withConflictRetry(() => syncApi.pullChanges({ full: true }), generation, userId)
+            if (!isCurrentSync(generation, userId)) return cancelled
+            this.applyPull(remote, true)
+            restorePendingState(this.$state, takeForFlush(), remote)
+            await reconcileNoteBodies(this.notes)
+            if (!isCurrentSync(generation, userId)) return cancelled
+          }
+        } catch (e) {
+          if (!isCurrentSync(generation, userId)) return cancelled
+          // 4xx 是服务端明确拒绝（毒记录会让整批推送长期被拒），必须把原因暴露出去，不能只打日志
+          const failureMessage = describePushFailure(e, domains)
+          pushIssue.value = pushIssue.value ? `${pushIssue.value}；${failureMessage}` : failureMessage
+          console.error('推送失败：变更仍在本地 outbox，待下次同步重试', e)
+          // A 429 stops this drain too: preserve its unconfirmed receipt and expose the server's
+          // retry message instead of hammering the rate limiter with automatic retries.
+          return { ok: false, applied: appliedTotal, rejected: rejectedTotal }
+        }
+      }
+      return { ok: !failures.length && !outboxIssue.value, applied: appliedTotal, rejected: rejectedTotal }
+    }
+    const flight = { generation, userId, promise: run() }
+    flushFlight = flight
     try {
-      const res = await syncApi.pushChanges({
-        domains,
-        points: snapshot.points,
-        achievements: snapshot.achievements
-      })
-      ack(snapshot)
-      if (res.gamification) this.$patch({ gamification: res.gamification })
-      const rejected = res.rejected?.length ?? 0
-      if (rejected) console.warn(`服务端按 LWW 拒绝了 ${rejected} 条变更（本地保留，待下次拉取覆盖）`, res.rejected)
-      const applied = Object.values(res.applied ?? {}).reduce((s, n) => s + n, 0)
-      return { ok: true, applied, rejected }
-    } catch (e) {
-      // 4xx 是服务端明确拒绝（毒记录会让整批推送长期被拒），必须把原因暴露出去，不能只打日志
-      const pushIssue = describePushFailure(e, domains)
-      syncIssue.value = syncIssue.value ? `${syncIssue.value}；${pushIssue}` : pushIssue
-      console.error('推送失败：变更仍在本地 outbox，待下次同步重试', e)
-      return { ok: false, applied: 0, rejected: 0 }
+      const result = await flight.promise
+      // An edit staged while this request was in flight belongs to a later batch.
+      if (result.ok && isCurrentSync(generation, userId) && outboxSize()) this.save()
+      return result
+    } finally {
+      if (flushFlight === flight) flushFlight = null
     }
   },
 
@@ -243,7 +345,13 @@ export const syncActions: SyncActionsShape = {
     // 正文不能可靠地在 unload keepalive 中上传；有**可推送**的待同步正文时保留两类 outbox 到下次启动。
     // 服务端永远不接受的正文（超过上限）不计入，否则它会永久短路这里的兜底推送。
     if (hasPendingNoteBodies()) return
-    const snapshot = takeForFlush()
+    const pending = takeForFlush()
+    if (!pending) return
+    const snapshot = takeForFlush({
+      keys: new Set(pending.receipt!.keys),
+      maxChanges: PUSH_BATCH_CHANGES,
+      maxBytes: PUSH_BATCH_BYTES
+    })
     if (!snapshot) return
 
     const domains: Record<string, ReturnType<typeof serializeChanges>> = {}
@@ -299,14 +407,24 @@ export const syncActions: SyncActionsShape = {
    */
   async hydrate(this: AppStoreThis) {
     const userId = sessionUser.value?.id ?? null
+    if (!userId) throw new Error('请先登录')
+    if (activeUserId && activeUserId !== userId) this.resetState()
     activeUserId = userId
+    const generation = syncGeneration
+    const assertCurrent = () => {
+      if (!isCurrentSync(generation, userId)) throw new Error('登录状态已改变，请重试')
+    }
     setOutboxUser(userId)
     await setNoteBodyUser(userId)
+    assertCurrent()
 
     const full = !hasFullSynced
-    const res = full
-      ? await syncApi.pullChanges({ full: true })
-      : await syncApi.pullChanges({ cursors: loadCursors(userId) })
+    const res = await withConflictRetry(
+      () => syncApi.pullChanges(full ? { full: true } : { cursors: loadCursors(userId) }),
+      generation,
+      userId
+    )
+    assertCurrent()
 
     const isNewUser =
       full &&
@@ -316,13 +434,31 @@ export const syncActions: SyncActionsShape = {
       }) &&
       !res.gamification?.pointsLog?.length
 
+    const pending = takeForFlush()
     this.applyPull(res, full && !isNewUser)
+    restorePendingState(this.$state, pending, res)
     await reconcileNoteBodies(this.notes)
+    assertCurrent()
     hasHydrated = true
     hasFullSynced = true
 
+    // 默认科目/习惯也是真实数据：首次即入队，否则保存任一记录后刷新会被 full pull 清空。
+    if (isNewUser) {
+      const updatedAt = Date.now()
+      for (const [domain, items] of [
+        ['subjects', this.subjects],
+        ['habits', this.habits]
+      ] as const) {
+        for (const item of items) {
+          if (pending?.upserts[domain]?.[item.id] || pending?.deletes[domain]?.[item.id] !== undefined) continue
+          stageUpsert(domain, item.id, item, updatedAt)
+        }
+      }
+    }
+
     // 先 pull 后 flush（设计 §6.1）
     await this.flushOutbox()
+    assertCurrent()
     // 存量 base64 错题图片外置：后台执行，不阻塞首屏；失败下次 hydrate 自动重试
     if (!isNewUser) this.migrateErrorImages()
   },
@@ -333,35 +469,54 @@ export const syncActions: SyncActionsShape = {
    */
   async syncNow(this: AppStoreThis): Promise<{ ok: boolean; applied: number; rejected: number; changed: number }> {
     if (!hasHydrated) return { ok: false, applied: 0, rejected: 0, changed: 0 }
-    const flushed = await this.flushOutbox()
-    if (!flushed.ok) return { ok: false, applied: flushed.applied, rejected: flushed.rejected, changed: 0 }
+    const generation = syncGeneration
+    const userId = activeUserId
+    if (syncFlight?.generation === generation && syncFlight.userId === userId) return syncFlight.promise
+    const run = async (): Promise<SyncResult> => {
+      const flushed = await this.flushOutbox()
+      if (!flushed.ok || !isCurrentSync(generation, userId))
+        return { ok: false, applied: flushed.applied, rejected: flushed.rejected, changed: 0 }
+      try {
+        const res = await withConflictRetry(
+          () => syncApi.pullChanges({ cursors: loadCursors(userId) }),
+          generation,
+          userId
+        )
+        if (!isCurrentSync(generation, userId)) return { ...flushed, ok: false, changed: 0 }
+        const changed = this.applyPull(res, false)
+        restorePendingState(this.$state, takeForFlush(), res)
+        await reconcileNoteBodies(this.notes)
+        if (!isCurrentSync(generation, userId)) return { ...flushed, ok: false, changed: 0 }
+        return { ok: true, applied: flushed.applied, rejected: flushed.rejected, changed }
+      } catch (e) {
+        console.error('增量拉取失败', e)
+        return { ok: false, applied: flushed.applied, rejected: flushed.rejected, changed: 0 }
+      }
+    }
+    const flight = { generation, userId, promise: run() }
+    syncFlight = flight
     try {
-      const res = await syncApi.pullChanges({ cursors: loadCursors(activeUserId) })
-      const changed = this.applyPull(res, false)
-      await reconcileNoteBodies(this.notes)
-      return { ok: true, applied: flushed.applied, rejected: flushed.rejected, changed }
-    } catch (e) {
-      console.error('增量拉取失败', e)
-      return { ok: false, applied: flushed.applied, rejected: flushed.rejected, changed: 0 }
+      return await flight.promise
+    } finally {
+      if (syncFlight === flight) syncFlight = null
     }
   },
 
   /** 退出登录/切换账号时清空本地同步状态并重置为空白数据，避免串号 */
   resetState(this: AppStoreThis) {
+    syncGeneration++
     hasHydrated = false
     hasFullSynced = false
     if (saveTimer) {
       clearTimeout(saveTimer)
       saveTimer = null
     }
-    // 仅当待推送队列已清空（推送成功）才删除账号分桶：推送失败时保留在 localStorage
-    // （按账号分桶不串号），同账号重新登录后自动续传（服务端按 LWW/refId 幂等，重复推送安全）
-    if (!outboxSize()) clearOutbox()
+    // Logout never deletes pending journal entries; only the ACK receipt can remove confirmed operations.
     clearCursors(activeUserId)
     setOutboxUser(null)
     activeUserId = null
     // 同步失败提示与账号绑定：换账号后不得把上一个账号的失败原因留给下一个账号
-    syncIssue.value = null
+    pushIssue.value = null
     // 清空错题图片 blob 缓存：防止下一账号经 SPA 内切换复用上一账号已授权的图片
     clearErrorImageCache()
     void setNoteBodyUser(null)

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { ArrowLeft, ChevronDown, ChevronUp } from '@lucide/vue'
+import IconAction from '../shared/components/IconAction.vue'
+import EmptyState from '../shared/components/EmptyState.vue'
 import { usePostDetail } from '../features/community/composables/usePostDetail'
 import AsyncState from '../shared/components/AsyncState.vue'
 import PostCard from '../components/community/PostCard.vue'
@@ -66,10 +69,12 @@ const {
 </script>
 
 <template>
-  <div class="collaboration-page p-4 md:p-6 max-w-3xl mx-auto space-y-4">
+  <div class="collaboration-page study-page reading-page space-y-4">
     <div class="flex items-center gap-2">
-      <button class="btn-ghost !px-2.5" @click="goBack">← 返回</button>
-      <h1 class="page-title">帖子详情</h1>
+      <span class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
+      <h1 class="page-title">讨论详情</h1>
     </div>
 
     <AsyncState v-if="loading || loadError" :loading="loading" :error="loadError" @retry="loadPost" />
@@ -94,12 +99,12 @@ const {
           <!-- 已采纳最佳答案时禁用手动标记（需先取消采纳），避免出现矛盾态 -->
           <button
             v-if="isMine && post.type === 'question' && !post.acceptedAnswerId"
-            class="text-xs text-slate-400 hover:text-emerald-500"
+            class="text-xs text-slate-400 hover:text-action"
             @click.stop="toggleResolve"
           >
             {{ post.isResolved ? '取消已解答' : '标记已解答' }}
           </button>
-          <button v-if="canDeletePost" class="text-xs text-slate-400 hover:text-red-500" @click.stop="removePost">
+          <button v-if="canDeletePost" class="text-xs text-slate-400 hover:text-correction" @click.stop="removePost">
             删除
           </button>
         </template>
@@ -114,9 +119,10 @@ const {
               class="px-2 py-1 rounded-md transition-colors"
               :class="
                 commentSort === 'hot'
-                  ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium'
+                  ? 'bg-primary-50 dark:bg-primary-900/30 text-action dark:text-action font-medium'
                   : 'text-slate-400 hover:text-slate-600'
               "
+              :aria-pressed="commentSort === 'hot'"
               @click="commentSort = 'hot'"
             >
               热度
@@ -125,9 +131,10 @@ const {
               class="px-2 py-1 rounded-md transition-colors"
               :class="
                 commentSort === 'latest'
-                  ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-medium'
+                  ? 'bg-primary-50 dark:bg-primary-900/30 text-action dark:text-action font-medium'
                   : 'text-slate-400 hover:text-slate-600'
               "
+              :aria-pressed="commentSort === 'latest'"
               @click="commentSort = 'latest'"
             >
               最新
@@ -135,12 +142,10 @@ const {
           </div>
         </div>
 
-        <div
+        <EmptyState
           v-if="!commentTree.length && !commentsLoading && !commentError"
-          class="text-center text-xs text-slate-400 py-4"
-        >
-          暂无评论，来抢沙发～
-        </div>
+          title="还没有评论。可以补充解题思路，或说说你卡在哪一步。"
+        />
         <div v-for="c in commentTree" :key="c.id" :id="`comment-${c.id}`" class="space-y-3 scroll-mt-24">
           <CommentItem
             :comment="c"
@@ -160,13 +165,18 @@ const {
           />
           <!-- 二级回复：默认折叠，点击展开（抖音式） -->
           <template v-if="c.replyCount || c.replies?.length">
-            <button
+            <span
               v-if="!expandedReplies.has(c.id)"
-              class="text-xs text-slate-400 hover:text-primary-500 ml-11"
+              class="text-xs text-slate-400 hover:text-action ml-11 arrow-action"
               @click="toggleReplies(c.id)"
             >
-              展开 {{ c.replyCount ?? c.replies.length }} 条回复 ↓
-            </button>
+              展开 {{ c.replyCount ?? c.replies.length }} 条回复
+              <IconAction
+                :icon="ChevronDown"
+                :label="`展开 ${c.replyCount ?? c.replies.length} 条回复`"
+                @click="toggleReplies(c.id)"
+              />
+            </span>
             <div v-else class="ml-11 space-y-3 border-l-2 border-slate-100 dark:border-slate-700 pl-3">
               <div v-for="r in c.replies" :key="r.id" :id="`comment-${r.id}`" class="scroll-mt-24">
                 <CommentItem
@@ -184,7 +194,7 @@ const {
                   @profile="openProfile(r.userId)"
                 />
               </div>
-              <p v-if="replyErrors[c.id]" role="status" class="text-sm text-red-500">{{ replyErrors[c.id] }}</p>
+              <p v-if="replyErrors[c.id]" role="status" class="text-sm text-correction">{{ replyErrors[c.id] }}</p>
               <button
                 v-if="!(c.id in replyCursors) || replyCursors[c.id] || replyErrors[c.id]"
                 class="btn-ghost"
@@ -194,9 +204,9 @@ const {
                 {{ replyErrors[c.id] ? '重试回复' : '更多回复' }}
               </button>
               <p v-if="replyLoading[c.id]" role="status" class="text-sm text-slate-500">正在加载回复…</p>
-              <button class="text-xs text-slate-400 hover:text-primary-500" @click="toggleReplies(c.id)">
-                收起回复 ↑
-              </button>
+              <span class="text-xs text-slate-400 hover:text-action arrow-action" @click="toggleReplies(c.id)"
+                >收起回复 <IconAction :icon="ChevronUp" label="收起回复" @click="toggleReplies(c.id)"
+              /></span>
             </div>
           </template>
         </div>
@@ -221,7 +231,7 @@ const {
           >
             <div v-if="replySource" class="flex items-center text-xs text-slate-400 mb-1.5">
               <span class="truncate">正在回复 @{{ replySource.userName }}</span>
-              <button class="text-primary-500 ml-2 shrink-0" @click="cancelReply">取消</button>
+              <button class="text-action ml-2 shrink-0" @click="cancelReply">取消</button>
             </div>
             <CommentInput
               ref="commentInputRef"

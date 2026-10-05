@@ -5,7 +5,7 @@ import { rateLimit } from '../middleware/rateLimit'
 import { displayName, notifyStatement, parseCursor } from './community'
 import { assertPartner, currentPartnerIds } from './partners'
 import { readNoteBody } from './noteBodies'
-import { allocateSeq } from './sync'
+import { withUserTransaction, domainVersionStatement } from '../syncTransaction'
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
@@ -139,6 +139,8 @@ export function registerPartnerShareRoutes() {
     const cursor = url.searchParams.get('cursor') || ''
     const c = cursor ? parseCursor(cursor) : null
     if (cursor && !c) throw new HttpError(400, '分页游标无效，请刷新后重试')
+    const partners = [...(await currentPartnerIds(ctx.env, ctx.userId))]
+    if (!partners.length) return Response.json({ received: [], sent: [], hasMore: false, nextCursor: null })
 
     let sql = `
       SELECT s.*,
@@ -150,8 +152,9 @@ export function registerPartnerShareRoutes() {
       LEFT JOIN user_settings so ON so.user_id = s.owner_id
       LEFT JOIN users up ON up.id = s.partner_id
       LEFT JOIN user_settings sp ON sp.user_id = s.partner_id
-      WHERE s.owner_id = ? OR s.partner_id = ?`
-    const params: unknown[] = [ctx.userId, ctx.userId]
+      WHERE (s.owner_id = ? OR s.partner_id = ?)
+        AND (CASE WHEN s.owner_id = ? THEN s.partner_id ELSE s.owner_id END) IN (${partners.map(() => '?').join(',')})`
+    const params: unknown[] = [ctx.userId, ctx.userId, ctx.userId, ...partners]
     if (c) {
       sql += ' AND (s.created_at < ? OR (s.created_at = ? AND s.id < ?))'
       params.push(c.ts, c.ts, c.id)
@@ -174,11 +177,10 @@ export function registerPartnerShareRoutes() {
     const last = rows[limit - 1]
     const nextCursor = hasMore && last ? `${last.created_at}_${last.id}` : null
 
-    // 列表口径：只保留对手方仍是当前搭子的分享，解绑后即从列表消失（无「半可用」）
-    const partners = await currentPartnerIds(ctx.env, ctx.userId)
+    const page = rows.slice(0, limit)
     return Response.json({
-      received: rows.filter((r) => r.partner_id === ctx.userId && partners.has(r.owner_id)).map(mapShare),
-      sent: rows.filter((r) => r.owner_id === ctx.userId && partners.has(r.partner_id)).map(mapShare),
+      received: page.filter((r) => r.partner_id === ctx.userId).map(mapShare),
+      sent: page.filter((r) => r.owner_id === ctx.userId).map(mapShare),
       hasMore,
       nextCursor
     })
@@ -397,30 +399,33 @@ export function registerPartnerShareRoutes() {
     const copiedAt = Date.now()
     const sourceBody = isPdf ? null : await readNoteBody(ctx.env, share.owner_id, share.item_id)
     const bodyUpdatedAt = sourceBody ? copiedAt : 0
-    const seq = await allocateSeq(ctx.env, ctx.userId, 'notes')
-    const stmts: D1PreparedStatement[] = [
-      ctx.env.DB.prepare(
-        `INSERT INTO notes (id, user_id, subject_id, title, content, tags, type, updated_at, body_updated_at, server_seq)
+    await withUserTransaction(ctx.env, ctx.userId, async (versions) => {
+      const seq = (versions.notes ?? 0) + 1
+      const stmts: D1PreparedStatement[] = [
+        domainVersionStatement(ctx.env, ctx.userId, 'notes', seq),
+        ctx.env.DB.prepare(
+          `INSERT INTO notes (id, user_id, subject_id, title, content, tags, type, updated_at, body_updated_at, server_seq)
          VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?)`
-      ).bind(newId, ctx.userId, subjectId, note.title, note.tags, isPdf ? 'pdf' : null, copiedAt, bodyUpdatedAt, seq)
-    ]
-    if (isPdf) {
-      // 复制 PDF 原文分片到新 pdf_id，保证副本与原笔记完全独立（原作者删除不影响副本）
-      stmts.push(
-        ctx.env.DB.prepare(
-          `INSERT INTO pdf_chunks (user_id, pdf_id, chunk_index, data)
+        ).bind(newId, ctx.userId, subjectId, note.title, note.tags, isPdf ? 'pdf' : null, copiedAt, bodyUpdatedAt, seq)
+      ]
+      if (isPdf) {
+        // 复制 PDF 原文分片到新 pdf_id，保证副本与原笔记完全独立（原作者删除不影响副本）
+        stmts.push(
+          ctx.env.DB.prepare(
+            `INSERT INTO pdf_chunks (user_id, pdf_id, chunk_index, data)
          SELECT ?, ?, chunk_index, data FROM pdf_chunks WHERE user_id = ? AND pdf_id = ?`
-        ).bind(ctx.userId, newId, share.owner_id, share.item_id)
-      )
-    } else if (sourceBody) {
-      stmts.push(
-        ctx.env.DB.prepare(
-          `INSERT INTO note_body_chunks (user_id, note_id, chunk_index, data, updated_at, created_at)
+          ).bind(ctx.userId, newId, share.owner_id, share.item_id)
+        )
+      } else if (sourceBody) {
+        stmts.push(
+          ctx.env.DB.prepare(
+            `INSERT INTO note_body_chunks (user_id, note_id, chunk_index, data, updated_at, created_at)
            SELECT ?, ?, chunk_index, data, ?, ? FROM note_body_chunks WHERE user_id = ? AND note_id = ?`
-        ).bind(ctx.userId, newId, copiedAt, nowSec(), share.owner_id, share.item_id)
-      )
-    }
-    await batch(ctx.env, stmts)
+          ).bind(ctx.userId, newId, copiedAt, nowSec(), share.owner_id, share.item_id)
+        )
+      }
+      return { statements: stmts, value: undefined }
+    })
 
     let tags: string[]
     try {

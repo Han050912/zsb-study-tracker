@@ -30,8 +30,11 @@ export function registerMessagesRoutes() {
         AND (t.peer = CASE WHEN m.from_id = ? THEN m.to_id ELSE m.from_id END)
       JOIN users u ON u.id = t.peer
       LEFT JOIN user_settings s ON s.user_id = t.peer
-      ORDER BY m.created_at DESC
+      WHERE m.from_id = ? OR m.to_id = ?
+      ORDER BY m.created_at DESC, m.id DESC
       LIMIT 100`,
+      ctx.userId,
+      ctx.userId,
       ctx.userId,
       ctx.userId,
       ctx.userId,
@@ -73,6 +76,8 @@ export function registerMessagesRoutes() {
     const url = new URL(ctx.request.url)
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '') || 30, 1), 50)
     const cursor = url.searchParams.get('cursor') || ''
+    const after = url.searchParams.get('after') || ''
+    if (cursor && after) throw new HttpError(400, '不能同时向前和向后翻页')
     const params: unknown[] = [ctx.userId, peerId, peerId, ctx.userId]
     let where = '((from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?))'
     // 游标 `${created_at}_${id}`：同秒消息按 id 决胜，非法游标按无游标处理（与帖子流同口径）
@@ -81,19 +86,31 @@ export function registerMessagesRoutes() {
       where += ' AND (created_at < ? OR (created_at = ? AND id < ?))'
       params.push(c.ts, c.ts, c.id)
     }
+    const a = after ? parseCursor(after) : null
+    if (after && !a) throw new HttpError(400, '消息游标无效，请重新加载')
+    if (a) {
+      where += ' AND (created_at > ? OR (created_at = ? AND id > ?))'
+      params.push(a.ts, a.ts, a.id)
+    }
     const rows = await all<any>(
       ctx.env,
-      `SELECT * FROM community_messages WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ${limit + 1}`,
+      `SELECT * FROM community_messages WHERE ${where} ORDER BY created_at ${a ? 'ASC' : 'DESC'}, id ${a ? 'ASC' : 'DESC'} LIMIT ${limit + 1}`,
       ...params
     )
     const items = rows.slice(0, limit)
     // 标为已读（对方发来的未读消息），返回本次标记数量供前端即时扣减全局未读计数
-    const markRes = await run(
-      ctx.env,
-      'UPDATE community_messages SET is_read = 1 WHERE from_id = ? AND to_id = ? AND is_read = 0',
-      peerId,
-      ctx.userId
-    )
+    const unreadIds = items.filter((r) => r.from_id === peerId && !r.is_read).map((r) => r.id)
+    const markedRead = unreadIds.length
+      ? (
+          await run(
+            ctx.env,
+            `UPDATE community_messages SET is_read = 1 WHERE from_id = ? AND to_id = ? AND is_read = 0 AND id IN (${unreadIds.map(() => '?').join(',')})`,
+            peerId,
+            ctx.userId,
+            ...unreadIds
+          )
+        ).meta.changes
+      : 0
     return Response.json({
       messages: items.map((r) => ({
         id: r.id,
@@ -107,7 +124,7 @@ export function registerMessagesRoutes() {
         fromMe: r.from_id === ctx.userId
       })),
       nextCursor: rows.length > limit ? `${items[items.length - 1].created_at}_${items[items.length - 1].id}` : null,
-      markedRead: markRes.meta.changes
+      markedRead
     })
   })
 

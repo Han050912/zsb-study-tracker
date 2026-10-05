@@ -62,6 +62,7 @@ export const settingsBodySchema = z
   .object({
     userName: z.string().max(30, '昵称最多 30 个字符').optional(),
     bio: z.string().max(100, '简介最多 100 个字符').optional(),
+    // 保留旧账号已有零目标/小数目标的读取后再保存兼容；新表单和 store 使用正整数。
     dailyGoalMinutes: z.number().min(0, '每日学习目标不能为负数').optional(),
     wordGoal: z.number().min(0, '每日单词目标不能为负数').optional(),
     problemGoal: z.number().min(0, '每日做题目标不能为负数').optional(),
@@ -180,7 +181,7 @@ export async function settingsReplaceStatements(
     'problem_goal = excluded.problem_goal, exam_date = excluded.exam_date, theme = excluded.theme, reminder_enabled = excluded.reminder_enabled, ' +
     'reminder_time = excluded.reminder_time, onboarded = excluded.onboarded, join_progress_board = excluded.join_progress_board, profile_visibility = excluded.profile_visibility, bio = excluded.bio, ' +
     'do_not_disturb = excluded.do_not_disturb, dnd_start_time = excluded.dnd_start_time, dnd_end_time = excluded.dnd_end_time, dnd_muted_types = excluded.dnd_muted_types, dnd_mute_message = excluded.dnd_mute_message, ' +
-    'partner_share_enabled = excluded.partner_share_enabled, partner_remind_enabled = excluded.partner_remind_enabled, avatar = excluded.avatar'
+    'partner_share_enabled = excluded.partner_share_enabled, partner_remind_enabled = excluded.partner_remind_enabled, avatar = COALESCE(excluded.avatar, user_settings.avatar)'
   // 昵称缺失或为空（含纯空白）时写入 NULL：展示端统一回退登录用户名（COALESCE 口径），
   // 避免前端误传空字符串导致社区/团队等处出现空白作者名
   const userName = typeof s.userName === 'string' && s.userName.trim() ? s.userName.trim() : null
@@ -205,11 +206,12 @@ export async function settingsReplaceStatements(
     mutedJson,
     s.dndMuteMessage ? 1 : 0,
     s.partnerShareEnabled ? 1 : 0,
-    s.partnerRemindEnabled ? 1 : 0
+    s.partnerRemindEnabled ? 1 : 0,
+    s.avatar ?? null
   ]
   const stmts: D1PreparedStatement[] = []
   const newCols =
-    ', do_not_disturb, dnd_start_time, dnd_end_time, dnd_muted_types, dnd_mute_message, partner_share_enabled, partner_remind_enabled'
+    ', do_not_disturb, dnd_start_time, dnd_end_time, dnd_muted_types, dnd_mute_message, partner_share_enabled, partner_remind_enabled, avatar'
 
   // 墨墨 Token 仅写入时加密存储（AES-256-GCM，密钥派生自 JWT_SECRET）
   const tokenCipher =
@@ -221,7 +223,7 @@ export async function settingsReplaceStatements(
         'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' +
           newCols +
           ') ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
           `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}`
       ).bind(...baseParams)
     )
@@ -231,7 +233,7 @@ export async function settingsReplaceStatements(
         'INSERT INTO user_settings (user_id, user_name, daily_goal_minutes, word_goal, problem_goal, exam_date, theme, reminder_enabled, reminder_time, onboarded, join_progress_board, profile_visibility, bio' +
           newCols +
           ', maimemo_token) ' +
-          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
           `ON CONFLICT(user_id) DO UPDATE SET ${commonCols}, maimemo_token = excluded.maimemo_token`
       ).bind(...baseParams, tokenCipher)
     )

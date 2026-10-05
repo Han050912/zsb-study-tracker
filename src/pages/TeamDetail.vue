@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ArrowLeft } from '@lucide/vue'
+import IconAction from '../shared/components/IconAction.vue'
+import { ref } from 'vue'
 import { useSquadDetail } from '../features/collaboration/composables/useSquadDetail'
 import AsyncState from '../shared/components/AsyncState.vue'
 import AppTabs from '../shared/components/AppTabs.vue'
-import CompanionProgress from '../components/team/CompanionProgress.vue'
 import TeamHeaderCard from '../components/team/TeamHeaderCard.vue'
 import TeamMemberList from '../components/team/TeamMemberList.vue'
 import TeamJoinRequestList from '../components/team/TeamJoinRequestList.vue'
@@ -45,11 +46,10 @@ const {
   syncChallenge
 } = useSquadDetail()
 const section = ref('challenges')
-const hero = computed(() => detail.value?.challenges.find((c) => c.status === 'active'))
 </script>
 
 <template>
-  <div class="collaboration-page max-w-6xl mx-auto p-4 md:p-6 space-y-4">
+  <div class="collaboration-page study-page space-y-4">
     <AsyncState
       v-if="loading || state?.errors.overview"
       :loading="loading"
@@ -58,7 +58,9 @@ const hero = computed(() => detail.value?.challenges.find((c) => c.status === 'a
     />
 
     <template v-else-if="team">
-      <button class="btn-ghost !px-2" @click="goBack">← 返回</button>
+      <span class="arrow-action" @click="goBack"
+        ><IconAction :icon="ArrowLeft" label="返回" @click="goBack" /> 返回</span
+      >
 
       <TeamHeaderCard
         :team-id="teamId"
@@ -93,14 +95,10 @@ const hero = computed(() => detail.value?.challenges.find((c) => c.status === 'a
         class="grid lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start"
       >
         <section class="min-w-0 space-y-4 lg:block" :class="section === 'challenges' ? '' : 'hidden'">
-          <div v-if="hero" class="card !p-6">
-            <p class="text-xs text-slate-500 mb-4">正在一起完成</p>
-            <CompanionProgress :challenge="hero" :member-count="team.memberCount" :show-mine="!!team.myRole" />
-          </div>
           <AsyncState v-if="state?.errors.challenges" :error="state.errors.challenges" @retry="loadChallenges" />
           <TeamChallengeList
             :challenges="detail?.challenges ?? []"
-            :member-count="detail?.members.length ?? 0"
+            :member-count="team.memberCount"
             :my-role="team.myRole"
             :sync-submitting="syncSubmitting"
             @sync="syncChallenge"

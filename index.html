@@ -6,8 +6,8 @@
     <link rel="dns-prefetch" href="//challenges.cloudflare.com" />
     <link rel="preconnect" href="https://challenges.cloudflare.com" crossorigin />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#3b82f6" />
-    <meta name="description" content="专升本每日学习总结 - 高效备考记录工具" />
+    <meta name="theme-color" content="#245c4c" />
+    <meta name="description" content="专升本学习记录、错题复习与备考社区" />
     <link rel="manifest" href="./manifest.json" />
     <!-- iOS PWA 支持（不读 manifest.json，需单独声明） -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -31,10 +31,10 @@
     -->
     <style>
       html {
-        background-color: #f8fafc;
+        background-color: #eef2f0;
       }
       html.dark {
-        background-color: #0f172a;
+        background-color: color-mix(in srgb, #24352f 82%, black);
       }
       body {
         margin: 0;
@@ -50,8 +50,8 @@
       }
       .boot-skeleton__bar,
       .boot-skeleton__card {
-        background-color: #e2e8f0;
-        border-radius: 12px;
+        background-color: color-mix(in srgb, #617169 24%, #ffffff);
+        border-radius: 8px;
         animation: boot-skeleton-pulse 1.4s ease-in-out infinite;
       }
       .boot-skeleton__bar {
@@ -59,12 +59,12 @@
         width: 40%;
       }
       .boot-skeleton__card {
-        border-radius: 16px;
+        border-radius: 8px;
         height: 96px;
       }
       html.dark .boot-skeleton__bar,
       html.dark .boot-skeleton__card {
-        background-color: #1e293b;
+        background-color: #24352f;
       }
       @keyframes boot-skeleton-pulse {
         0%,
@@ -73,6 +73,12 @@
         }
         50% {
           opacity: 0.5;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-skeleton__bar,
+        .boot-skeleton__card {
+          animation: none;
         }
       }
     </style>

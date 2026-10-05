@@ -8,7 +8,7 @@ withDefaults(defineProps<{ pending?: boolean; variant?: 'primary' | 'ghost' | 'd
     <span
       v-if="pending"
       aria-hidden="true"
-      class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+      class="loading-spinner inline-block h-4 w-4 rounded-full border-2 border-current border-r-transparent"
     ></span
     ><slot />
   </button>

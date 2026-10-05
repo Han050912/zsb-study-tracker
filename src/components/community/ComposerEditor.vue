@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { Quote } from '@lucide/vue'
+import IconAction from '../../shared/components/IconAction.vue'
 import { defineAsyncComponent, ref } from 'vue'
 const props = defineProps<{ modelValue: string; placeholder: string; allowTemplate?: boolean }>()
 const emit = defineEmits<{
@@ -26,7 +28,7 @@ const actions = [
   { icon: 'B', label: '粗体', before: '**', after: '**', text: '粗体' },
   { icon: '< >', label: '行内代码', before: '`', after: '`', text: 'code' },
   { icon: '{ }', label: '代码块', before: '\n```\n', after: '\n```\n', text: '代码' },
-  { icon: '❯', label: '引用', before: '\n> ', after: '\n', text: '引用内容' },
+  { icon: '', label: '引用', before: '\n> ', after: '\n', text: '引用内容' },
   { icon: '•', label: '无序列表', before: '\n- ', after: '', text: '列表项' },
   { icon: 'Σ', label: '行内公式', before: '$', after: '$', text: 'E=mc^2' },
   { icon: 'ΣΣ', label: '块级公式', before: '\n$$\n', after: '\n$$\n', text: 'x^2' }
@@ -35,18 +37,27 @@ const actions = [
 <template>
   <div class="collaboration-page">
     <div class="flex gap-1 items-center flex-wrap mb-2">
-      <button
-        v-for="action in actions"
-        :key="action.label"
-        type="button"
-        class="px-3 rounded-lg text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
-        :aria-label="action.label"
-        :title="action.label"
-        :disabled="preview"
-        @click="insert(action.before, action.after, action.text)"
+      <template v-for="action in actions" :key="action.label">
+        <IconAction
+          v-if="action.label === '引用'"
+          :icon="Quote"
+          :label="action.label"
+          :disabled="preview"
+          @click="insert(action.before, action.after, action.text)"
+        />
+        <button
+          v-else
+          type="button"
+          class="px-3 rounded-lg text-sm hover:bg-slate-100 dark:hover:bg-slate-700"
+          :aria-label="action.label"
+          :title="action.label"
+          :disabled="preview"
+          @click="insert(action.before, action.after, action.text)"
+        >
+          {{ action.icon }}
+        </button></template
       >
-        {{ action.icon }}</button
-      ><button v-if="allowTemplate" class="btn-ghost" @click="emit('template')">经验帖模板</button
+      <button v-if="allowTemplate" class="btn-ghost" @click="emit('template')">经验帖模板</button
       ><button class="btn-ghost ml-auto" :aria-pressed="preview" @click="preview = !preview">
         {{ preview ? '继续编辑' : '预览' }}
       </button>
@@ -66,9 +77,9 @@ const actions = [
       ></textarea>
       <div v-if="preview" class="input min-h-36">
         <MarkdownContent v-if="modelValue" :content="modelValue" />
-        <p v-else class="text-slate-500">暂无内容</p>
+        <p v-else class="text-slate-500">先写下内容，再查看预览。</p>
       </div>
     </div>
-    <p class="text-xs text-slate-500 mt-2 text-right training-number">{{ modelValue.length }} / 5000</p>
+    <p class="text-xs text-slate-500 mt-2 text-right font-data">{{ modelValue.length }} / 5000</p>
   </div>
 </template>

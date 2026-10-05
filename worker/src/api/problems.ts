@@ -8,11 +8,12 @@ const problemBodySchema = z
     id: z.string().optional(),
     subjectId: z.string(),
     date: z.string(),
-    total: z.number(),
-    correct: z.number(),
-    types: z.record(z.string(), z.number()).optional()
+    total: z.number().int().positive('做题数量需为正整数'),
+    correct: z.number().int().min(0, '答对数量不能小于 0'),
+    types: z.record(z.string(), z.number().int().min(0)).optional()
   })
   .passthrough()
+  .refine((value) => value.correct <= value.total, { message: '答对数量不能超过做题数量', path: ['correct'] })
 
 /** 刷题记录（problem_sessions 表 ↔ 前端 ProblemSession，types 为 JSON 字符串） */
 export const problemsMapping = crudHandlers({

@@ -44,11 +44,6 @@
       "count": 1
     }
   },
-  "src/pages/Materials.vue": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    }
-  },
   "src/pages/Rewards.vue": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
@@ -61,7 +56,7 @@
   },
   "src/pages/Statistics.vue": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 5
+      "count": 4
     }
   },
   "src/utils/markdown.ts": {

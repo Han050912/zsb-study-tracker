@@ -24,7 +24,8 @@ export function isAllowedOrigin(origin: string | null, allowLocal: boolean): boo
 export function corsHeaders(origin: string | null, allowLocal: boolean): Record<string, string> {
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-CF-Turnstile-Response, X-Desktop-Token',
+    'Access-Control-Allow-Headers':
+      'Content-Type, Authorization, X-CF-Turnstile-Response, X-Desktop-Token, X-Updated-At',
     'Access-Control-Max-Age': '86400',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',

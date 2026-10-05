@@ -62,7 +62,7 @@ export function defaultSubjects(): Subject[] {
       color: '#3b82f6',
       weight: 50,
       builtin: true,
-      chapters: mathChapters,
+      chapters: mathChapters.map((chapter) => ({ ...chapter, topics: [...chapter.topics] })),
       mastery: {},
       topicImportance: {}
     },
@@ -73,7 +73,7 @@ export function defaultSubjects(): Subject[] {
       color: '#10b981',
       weight: 50,
       builtin: true,
-      chapters: engChapters,
+      chapters: engChapters.map((chapter) => ({ ...chapter, topics: [...chapter.topics] })),
       mastery: {},
       topicImportance: {}
     }

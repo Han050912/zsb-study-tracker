@@ -12,6 +12,7 @@ export interface PomodoroFull {
     date: string
     time: number
     minutes: number
+    completed?: boolean
     description: string
     source: string
     partnerName?: string
@@ -25,6 +26,7 @@ export function pomodoroRecordFromRow(r: any) {
     date: r.date,
     time: r.time,
     minutes: r.minutes ?? 0,
+    completed: r.completed !== 0,
     description: r.description ?? '',
     source: r.source ?? 'solo',
     partnerName: r.partner_name || undefined
@@ -90,8 +92,8 @@ export function pomodoroRecordStatement(
   stamp: { updatedAt: number; seq: number }
 ): D1PreparedStatement {
   return env.DB.prepare(
-    'INSERT INTO pomodoro_records (id, user_id, date, time, minutes, description, source, partner_name, updated_at, server_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
-      'ON CONFLICT(user_id, id) DO UPDATE SET date = excluded.date, time = excluded.time, minutes = excluded.minutes, description = excluded.description, source = excluded.source, partner_name = excluded.partner_name, updated_at = excluded.updated_at, server_seq = excluded.server_seq'
+    'INSERT INTO pomodoro_records (id, user_id, date, time, minutes, description, source, partner_name, completed, updated_at, server_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), ?, ?) ' +
+      'ON CONFLICT(user_id, id) DO UPDATE SET date = excluded.date, time = excluded.time, minutes = excluded.minutes, description = excluded.description, source = excluded.source, partner_name = excluded.partner_name, completed = COALESCE(?, pomodoro_records.completed), updated_at = excluded.updated_at, server_seq = excluded.server_seq'
   ).bind(
     id,
     userId,
@@ -101,8 +103,11 @@ export function pomodoroRecordStatement(
     value.description ?? '',
     value.source ?? 'solo',
     value.partnerName ?? null,
+    value.completed === undefined ? null : value.completed ? 1 : 0,
     stamp.updatedAt,
-    stamp.seq
+    stamp.seq,
+    // 旧客户端编辑描述时不携带状态：保留现有 false；旧记录首次写入默认为已完成。
+    value.completed === undefined ? null : value.completed ? 1 : 0
   )
 }
 

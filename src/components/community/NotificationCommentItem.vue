@@ -10,12 +10,14 @@ import { imageUrl } from '../../api/community'
 import { fromNow } from '../../utils/date'
 import { usePostStore } from '../../stores/community'
 import type { CommunityNotification } from '../../types'
+import { ref } from 'vue'
 
 const props = defineProps<{ n: CommunityNotification }>()
 const emit = defineEmits<{ read: [] }>()
 const router = useRouter()
 const store = usePostStore()
 const toast = useToast()
+const liking = ref(false)
 
 function openProfile() {
   emit('read')
@@ -36,7 +38,8 @@ function openComment() {
 
 /* eslint-disable vue/no-mutating-props -- 对 prop 对象的字段做点赞乐观更新；该对象来自父级 store，父级模板会随之响应，非替换 prop 本身 */
 async function like() {
-  if (!props.n.commentId) return
+  if (!props.n.commentId || liking.value) return
+  liking.value = true
   const prevLiked = props.n.commentLikedByMe
   const prevCount = props.n.commentLikesCount ?? 0
   props.n.commentLikedByMe = !prevLiked
@@ -44,10 +47,13 @@ async function like() {
   try {
     const liked = await store.likeComment(props.n.commentId)
     props.n.commentLikedByMe = liked
+    props.n.commentLikesCount = Math.max(0, prevCount + (liked === !!prevLiked ? 0 : liked ? 1 : -1))
   } catch (e) {
     props.n.commentLikedByMe = prevLiked
     props.n.commentLikesCount = prevCount
-    toast(getErrorMessage(e, '操作失败'))
+    toast(getErrorMessage(e, '评论点赞未能更新，请重试'))
+  } finally {
+    liking.value = false
   }
 }
 /* eslint-enable vue/no-mutating-props */
@@ -62,12 +68,12 @@ async function like() {
       <UserAvatar :name="n.actorName || '?'" :avatar="n.actorAvatar" />
       <span
         v-if="!n.isRead"
-        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-rose-500 border-2 border-white dark:border-slate-800"
+        class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-correction border-2 border-white dark:border-slate-800"
       ></span>
     </button>
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-1.5">
-        <span class="text-sm font-semibold truncate cursor-pointer hover:text-primary-500" @click.stop="openProfile">{{
+        <span class="text-sm font-semibold truncate cursor-pointer hover:text-action" @click.stop="openProfile">{{
           n.actorName || '匿名用户'
         }}</span>
         <RelationTag :relation="n.relation" />
@@ -77,12 +83,17 @@ async function like() {
       </p>
       <div class="flex items-center justify-between mt-1.5">
         <div class="flex items-center gap-3">
-          <button class="text-xs text-slate-500 hover:text-primary-500 font-medium" @click.stop="openComment">
+          <button class="text-xs text-slate-500 hover:text-action font-medium" @click.stop="openComment">
             回复评论
           </button>
-          <LikeButton :liked="!!n.commentLikedByMe" :count="n.commentLikesCount ?? 0" @toggle="like" />
+          <LikeButton
+            :liked="!!n.commentLikedByMe"
+            :count="n.commentLikesCount ?? 0"
+            :disabled="liking"
+            @toggle="like"
+          />
         </div>
-        <span class="text-[10px] text-slate-400 shrink-0">{{ fromNow(n.createdAt) }}</span>
+        <span class="text-xs text-slate-400 shrink-0">{{ fromNow(n.createdAt) }}</span>
       </div>
     </div>
     <button

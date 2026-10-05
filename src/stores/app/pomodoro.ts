@@ -11,7 +11,7 @@ import type { PomodoroRecord } from '../../types'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type PomodoroActionsShape = {
-  /** 返回是否实际落了记录（minutes < 1 时未记录返回 false），调用方据此决定是否弹完成提示 */
+  /** 返回是否实际落了记录（不足1分钟或时长非有限数时返回 false），调用方据此决定是否弹提示 */
   recordPomodoro(
     minutes: number,
     description?: string,
@@ -26,7 +26,7 @@ type PomodoroActionsShape = {
 export const pomodoroActions: PomodoroActionsShape = {
   /**
    * 记一次番茄专注，返回是否实际落了记录。`completed=false`（未达设定时长的提前结束）
-   * 只记真实时长与番茄数，不发「完成番茄钟」积分奖励——时长不达标不应发奖励。
+   * 只记真实时长，不计完成次数、不发「完成番茄钟」积分奖励。
    */
   recordPomodoro(
     this: AppStoreThis,
@@ -36,15 +36,24 @@ export const pomodoroActions: PomodoroActionsShape = {
     partnerName?: string,
     completed = true
   ): boolean {
-    if (minutes < 1) return false
+    if (!Number.isFinite(minutes) || minutes < 1) return false
     const t = today()
     const now = Date.now()
     if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
-    this.pomodoro.daily[t].count++
+    if (completed) this.pomodoro.daily[t].count++
     this.pomodoro.daily[t].minutes += minutes
     // 旧账号云端数据可能缺 records 字段，兜底初始化
     if (!Array.isArray(this.pomodoro.records)) this.pomodoro.records = []
-    const record: PomodoroRecord = { id: uid(), date: t, time: now, minutes, description, source, partnerName }
+    const record: PomodoroRecord = {
+      id: uid(),
+      date: t,
+      time: now,
+      minutes,
+      description,
+      source,
+      partnerName,
+      completed
+    }
     this.pomodoro.records.push(record)
     // 积分 refId = 本次番茄记录 id（每次完成必新建记录，天然确定性幂等）；仅达标番茄发奖励
     if (completed) this.addPoints(5, '完成番茄钟', record.id)

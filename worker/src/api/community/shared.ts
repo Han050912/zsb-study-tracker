@@ -234,7 +234,8 @@ export function notifyStatement(
     content: string
     targetType?: string
     targetId?: string
-  }
+  },
+  options: { ifPreviousChanged?: boolean } = {}
 ): D1PreparedStatement {
   // 未显式指定跳转目标时按类型自动推导：帖子类(评论/点赞/采纳) → 帖子；关注 → 用户主页
   let tt = n.targetType ?? null
@@ -250,7 +251,9 @@ export function notifyStatement(
   }
   return env.DB.prepare(
     'INSERT INTO community_notifications (id, user_id, type, actor_id, post_id, comment_id, target_type, target_id, content, is_read, created_at) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)'
+      (options.ifPreviousChanged
+        ? 'SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ? WHERE changes() > 0'
+        : 'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)')
   ).bind(
     uid(),
     n.userId,

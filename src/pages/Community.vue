@@ -42,7 +42,7 @@ const emptyMessage = computed(() =>
       ? '这个筛选下还没有问题，把你的疑惑写下来。'
       : feed.tag || feed.query.keyword
         ? '没有找到相关讨论，试试其他关键词或标签。'
-        : '今天的学习现场，等你分享。'
+        : '还没有讨论，可以分享一道真题或你的复习方法。'
 )
 function chooseView(value: string) {
   if (['follow', 'circles'].includes(value) && requireLogin(router)) return
@@ -86,89 +86,101 @@ onUnmounted(() => observer?.disconnect())
 </script>
 
 <template>
-  <div class="collaboration-page max-w-6xl mx-auto p-4 md:p-6 space-y-5">
-    <header class="flex items-end justify-between gap-3">
+  <div class="collaboration-page study-page social-page discussion-page">
+    <header class="social-heading">
       <div>
-        <p class="text-xs text-slate-500 mb-1">把今天学到的，留给同行的人</p>
-        <h1 class="collaboration-title">社区</h1>
+        <h1 class="social-title">升本讨论</h1>
+        <p class="social-description">一道没解开的题，一份值得分享的经验，都从这里聊起。</p>
       </div>
-      <div class="flex gap-2 items-center">
+      <div class="social-heading-actions">
         <button class="btn-ghost" aria-label="搜索帖子、用户和圈子" title="搜索" @click="showSearch = true">
           <Search :size="18" /><span class="hidden sm:inline">搜索</span></button
-        ><button class="btn-primary hidden md:inline-flex" @click="openComposer"><Plus :size="18" />发布</button>
+        ><button class="btn-primary social-primary" @click="openComposer"><Plus :size="18" />发帖</button>
       </div>
     </header>
-    <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px] gap-8 items-start">
-      <section class="min-w-0 space-y-4">
-        <div class="feed-filters space-y-2">
+    <div class="social-columns">
+      <section class="discussion-main" aria-label="讨论内容">
+        <div class="feed-filters discussion-filters">
           <AppTabs
             id="community-view"
+            class="discussion-tabs"
             :model-value="activeView"
             :items="primaryTabs"
             label="社区内容"
             @update:model-value="chooseView"
           />
-          <div v-if="view !== 'circles'" class="flex gap-2 overflow-x-auto items-center pb-1 text-sm">
-            <button
-              v-for="sort in ['latest', 'hot'] as const"
-              :key="sort"
-              class="px-3 rounded-lg"
-              :class="feed.sort === sort ? 'bg-white dark:bg-slate-800 font-semibold' : 'text-slate-500'"
-              :aria-pressed="feed.sort === sort"
-              @click="setQuery({ sort })"
-            >
-              {{ sort === 'latest' ? '最新' : '热门' }}
-            </button>
-            <span class="h-5 border-l border-slate-300" aria-hidden="true"></span>
-            <button
-              class="px-3 whitespace-nowrap"
-              :aria-pressed="view === 'featured'"
-              @click="setQuery({ view: view === 'featured' ? 'recommend' : 'featured' })"
-            >
-              精华
-            </button>
-            <button
-              v-for="tag in COMMUNITY_TAGS"
-              :key="tag"
-              class="px-3 rounded-lg whitespace-nowrap"
-              :class="
-                feed.tag === tag
-                  ? 'text-primary-600 bg-primary-50 dark:bg-primary-900/30'
-                  : 'text-slate-500 dark:text-slate-400'
-              "
-              :aria-pressed="feed.tag === tag"
-              @click="setQuery({ tag: feed.tag === tag ? undefined : tag })"
-            >
-              {{ tag }}
-            </button>
+          <div v-if="view !== 'circles'" class="discussion-filter-row" aria-label="排序与话题筛选">
+            <div class="discussion-filter-group" role="group" aria-label="讨论排序">
+              <span class="discussion-filter-label">排序</span>
+              <button
+                v-for="sort in ['latest', 'hot'] as const"
+                :key="sort"
+                class="discussion-filter discussion-sort"
+                :aria-pressed="feed.sort === sort"
+                @click="setQuery({ sort })"
+              >
+                {{ sort === 'latest' ? '最新' : '热门' }}
+              </button>
+              <button
+                class="discussion-filter"
+                :aria-pressed="view === 'featured'"
+                @click="setQuery({ view: view === 'featured' ? 'recommend' : 'featured' })"
+              >
+                精华
+              </button>
+            </div>
+            <div class="discussion-filter-group discussion-topic-filters" role="group" aria-label="讨论话题">
+              <span class="discussion-filter-label">话题</span>
+              <button
+                v-for="tag in COMMUNITY_TAGS"
+                :key="tag"
+                class="discussion-filter"
+                :aria-pressed="feed.tag === tag"
+                @click="setQuery({ tag: feed.tag === tag ? undefined : tag })"
+              >
+                {{ tag }}
+              </button>
+            </div>
           </div>
         </div>
         <div
           id="community-view-panel"
           role="tabpanel"
           :aria-labelledby="`community-view-tab-${activeView}`"
-          class="space-y-4"
+          class="discussion-panel"
         >
-          <Circles v-if="view === 'circles' && isLoggedIn" />
+          <Circles v-if="view === 'circles' && isLoggedIn" embedded />
           <template v-else>
-            <div
-              v-if="feed.tag || feed.query.keyword"
-              class="flex flex-wrap items-center justify-between gap-2 text-sm"
-            >
+            <button class="discussion-compose" @click="openComposer">
+              <span class="discussion-compose-mark" aria-hidden="true"><Plus :size="22" /></span>
+              <span class="discussion-compose-copy">
+                <strong>{{ view === 'question' ? '哪道题卡住了？' : '今天，有什么想和同学聊聊？' }}</strong>
+                <span>{{
+                  view === 'question' ? '写下题目和思路，一起找出关键一步。' : '分享复习方法，也可以带着问题来。'
+                }}</span>
+              </span>
+              <span class="discussion-compose-label">{{ view === 'question' ? '提个问题' : '写一条' }}</span>
+            </button>
+            <div v-if="feed.tag || feed.query.keyword" class="discussion-active-filter">
               <span>筛选：{{ feed.tag }} {{ feed.query.keyword }}</span
               ><button class="btn-ghost" @click="setQuery({ tag: undefined, q: undefined })">清除筛选</button>
             </div>
             <button
               v-if="dailyPost && !feed.tag && !feed.query.keyword"
-              class="card w-full flex items-center gap-3 text-left !py-3"
+              type="button"
+              class="discussion-daily"
               @click="router.push({ name: 'community-post', params: { id: dailyPost.id } })"
             >
-              <span class="text-primary-600 dark:text-primary-400 text-xs font-semibold shrink-0">每日一题</span
-              ><span class="truncate text-sm">{{ dailyPost.content }}</span
-              ><ArrowUpRight :size="18" class="shrink-0 ml-auto" />
+              <span class="discussion-daily-label">每日一题</span>
+              <span class="discussion-daily-copy"
+                ><strong>{{ dailyPost.content }}</strong
+                ><span>带着思路，一起解题</span></span
+              >
+              <ArrowUpRight :size="18" aria-hidden="true" class="shrink-0 ml-auto" />
             </button>
-            <button class="lg:hidden text-sm text-slate-500 flex justify-between w-full" @click="showRail = true">
-              今日同行 · 周报与榜单 <span>↗</span>
+            <button type="button" class="discussion-mobile-rail lg:hidden" @click="showRail = true">
+              今日同行 · 周报与榜单
+              <ArrowUpRight :size="18" aria-hidden="true" />
             </button>
             <AsyncState
               :loading="feed.bucket.status === 'initial-loading'"
@@ -186,24 +198,28 @@ onUnmounted(() => observer?.disconnect())
               <p v-if="feed.bucket.status === 'refreshing'" role="status" class="text-xs text-slate-500">
                 正在更新讨论…
               </p>
-              <PostCard
-                v-for="post in feed.posts"
-                :key="post.id"
-                :post="post"
-                @like="action('like', post.id)"
-                @dislike="action('dislike', post.id)"
-                @tag="setQuery({ tag: $event })"
-                @open="router.push({ name: 'community-post', params: { id: post.id } })"
-                @profile="openProfile(post.userId)"
-                @report="openReport(post.id)"
-                @pin="action('pin', post.id)"
-                @feature="action('feature', post.id)"
-                @daily="action('daily', post.id)"
-                @hide="action('hide', post.id)"
-                ><template v-if="isAdmin" #actions
-                  ><button class="text-sm text-red-500" @click.stop="action('remove', post.id)">删除</button></template
-                ></PostCard
-              >
+              <div class="forum-stream discussion-stream">
+                <PostCard
+                  v-for="post in feed.posts"
+                  :key="post.id"
+                  :post="post"
+                  @like="action('like', post.id)"
+                  @dislike="action('dislike', post.id)"
+                  @tag="setQuery({ tag: $event })"
+                  @open="router.push({ name: 'community-post', params: { id: post.id } })"
+                  @profile="openProfile(post.userId)"
+                  @report="openReport(post.id)"
+                  @pin="action('pin', post.id)"
+                  @feature="action('feature', post.id)"
+                  @daily="action('daily', post.id)"
+                  @hide="action('hide', post.id)"
+                  ><template v-if="isAdmin" #actions
+                    ><button class="text-sm text-correction" @click.stop="action('remove', post.id)">
+                      删除
+                    </button></template
+                  ></PostCard
+                >
+              </div>
             </AsyncState>
             <AsyncState
               v-if="feed.posts.length && feed.bucket.initialError"
@@ -216,7 +232,7 @@ onUnmounted(() => observer?.disconnect())
               @retry="feed.fetchFeed(false)"
             />
             <div ref="sentinel" class="h-1"></div>
-            <div class="text-center text-sm text-slate-500" aria-live="polite">
+            <div class="discussion-end" aria-live="polite">
               <button
                 v-if="feed.hasMore && feed.posts.length && !feed.error"
                 class="btn-ghost"
@@ -229,16 +245,10 @@ onUnmounted(() => observer?.disconnect())
           </template>
         </div>
       </section>
-      <aside v-if="feed.bucket.updatedAt" class="hidden lg:block pt-4">
+      <aside v-if="feed.bucket.updatedAt" class="social-rail hidden lg:block" aria-label="同学与备考动态">
         <CommunityRail :extras="feed.recommendExtras" @tag="setQuery({ tag: $event })" />
       </aside>
     </div>
-    <button
-      class="btn-primary md:hidden fixed right-4 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-20 !rounded-full !px-5 shadow-lg"
-      @click="openComposer"
-    >
-      <Plus :size="18" />发布
-    </button>
     <PostComposer
       v-if="composerLoaded"
       v-model:show="showComposer"

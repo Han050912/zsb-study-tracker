@@ -235,7 +235,9 @@ export function useComposer(props: ComposerProps, emit: (event: 'update:show' | 
       } catch {
         /* 不阻塞发布结果 */
       }
-      toast(props.topicRef ? '已发布到讨论区' : '已发布到社区广场')
+      toast(
+        props.topicRef ? '已发布到章节讨论' : selectedCircle.value || props.circleId ? '已发布到圈子' : '已发布到社区'
+      )
       emit('update:show', false)
       emit('posted')
     } catch (e) {
