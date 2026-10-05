@@ -54,6 +54,16 @@
         border-radius: 8px;
         animation: boot-skeleton-pulse 1.4s ease-in-out infinite;
       }
+      .boot-skeleton__status {
+        margin: 0;
+        color: #3e554b;
+        font:
+          14px/1.6 system-ui,
+          sans-serif;
+      }
+      html.dark .boot-skeleton__status {
+        color: #d4e1da;
+      }
       .boot-skeleton__bar {
         height: 16px;
         width: 40%;
@@ -85,10 +95,11 @@
   </head>
   <body>
     <div id="app">
-      <div class="boot-skeleton" aria-hidden="true">
-        <div class="boot-skeleton__bar"></div>
-        <div class="boot-skeleton__card"></div>
-        <div class="boot-skeleton__card"></div>
+      <div class="boot-skeleton" role="status" aria-busy="true">
+        <p class="boot-skeleton__status">正在加载学习助手…</p>
+        <div class="boot-skeleton__bar" aria-hidden="true"></div>
+        <div class="boot-skeleton__card" aria-hidden="true"></div>
+        <div class="boot-skeleton__card" aria-hidden="true"></div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

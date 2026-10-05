@@ -22,6 +22,7 @@ import { useUnreadPolling } from './composables/useUnreadPolling'
 import { useReminders } from './composables/useReminders'
 import { useNavigation, type NavigationGroup } from './composables/useNavigation'
 import { useAppReady, bootError, bootRetrying, retryBoot } from './composables/useAppBoot'
+import { routeLoading, routeLoadError } from './router/loading'
 import { syncIssue } from './stores/app/sync'
 import { hasVolatileOutboxChanges } from './services/syncOutbox'
 
@@ -35,7 +36,8 @@ const router = useRouter()
 
 // ---- Toast 全局服务 ----
 const toastRef = ref<InstanceType<typeof Toast>>()
-provide(TOAST_KEY, (msg: string) => toastRef.value?.show(msg))
+const showToast = (msg: string) => toastRef.value?.show(msg)
+provide(TOAST_KEY, showToast)
 
 // ---- 全局确认弹窗（替代原生 confirm；App 自身亦直接使用 confirmFn） ----
 const { confirmState, confirmFn, resolveConfirm } = useConfirmProvider()
@@ -43,7 +45,8 @@ const { confirmState, confirmFn, resolveConfirm } = useConfirmProvider()
 // ---- 未读轮询（登录后拉取社区/消息未读数；见 composables/useUnreadPolling.ts） ----
 const { messageUnread } = useUnreadPolling()
 // ---- 提醒调度（每日提醒 + 待办提醒 + 搭子提醒；见 composables/useReminders.ts） ----
-useReminders()
+// 本组件的 inject 只会读取祖先，提醒兜底显式使用本组件提供的 Toast。
+useReminders(showToast)
 // ---- 导航（动态生成 + 激活判断 + 折叠持久化；见 composables/useNavigation.ts） ----
 const { navGroups, currentGroup, isNavActive, navCollapsed, toggleNav } = useNavigation()
 const mobileMenu = ref<NavigationGroup | null>(null)
@@ -61,6 +64,9 @@ watch(
 
 // ---- 首屏补水门控（main.ts 把云端数据拉取移出挂载路径；未就绪前只渲染骨架） ----
 const ready = useAppReady()
+function reloadPage() {
+  window.location.reload()
+}
 const offline = ref(!navigator.onLine)
 const retryingSync = ref(false)
 function updateNetwork() {
@@ -214,11 +220,14 @@ onUnmounted(() => {
   </div>
   <div
     v-else-if="!ready"
+    role="status"
+    aria-busy="true"
     class="fixed inset-0 z-[100] flex flex-col gap-3 bg-slate-50 dark:bg-slate-900 pt-content-top px-4"
   >
-    <div class="h-4 w-2/5 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
-    <div class="h-24 rounded-card bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
-    <div class="h-24 rounded-card bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+    <p class="text-sm text-muted">正在加载学习数据…</p>
+    <div aria-hidden="true" class="h-4 w-2/5 rounded-full bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+    <div aria-hidden="true" class="h-24 rounded-card bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+    <div aria-hidden="true" class="h-24 rounded-card bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
   </div>
   <div v-else class="min-h-screen">
     <a v-if="!hideNav" class="skip-link" href="#main-content" @click.prevent="focusMainContent">跳到主要内容</a>
@@ -425,8 +434,16 @@ onUnmounted(() => {
         用 route.path 而非 route.fullPath：仅 query 变化（/notes?id=…、列表页 tab）不应重建页面、丢失页内状态。
       -->
       <RouterView v-slot="{ Component }">
+        <div v-if="routeLoadError" role="alert" class="study-page space-y-3">
+          <p class="text-sm text-correction">{{ routeLoadError }}</p>
+          <button class="btn-primary" @click="reloadPage">重新加载页面</button>
+        </div>
+        <div v-else-if="routeLoading || !Component" role="status" aria-busy="true" class="study-page space-y-3">
+          <p class="text-sm text-muted">正在加载页面…</p>
+          <div aria-hidden="true" class="h-24 rounded-card bg-slate-200 dark:bg-slate-700 animate-pulse"></div>
+        </div>
         <Transition name="fade">
-          <div :key="route.path" class="min-w-0">
+          <div v-if="Component" v-show="!routeLoading && !routeLoadError" :key="route.path" class="min-w-0">
             <component :is="Component" />
           </div>
         </Transition>
