@@ -21,6 +21,7 @@ const tplForm = ref<{ id: string; title: string; content: string; level: number;
   level: 0,
   category: '自定义'
 })
+const templateWordCount = computed(() => (tplForm.value.content.match(/[A-Za-z]+(?:['’][A-Za-z]+)*/g) || []).length)
 function openTpl(t?: any) {
   tplForm.value = t ? { category: '自定义', ...t } : { id: '', title: '', content: '', level: 0, category: '自定义' }
   showTpl.value = true
@@ -107,9 +108,12 @@ const tplGroups = computed(() =>
     </div>
   </div>
 
-  <Modal title="作文模板" :show="showTpl" @close="showTpl = false">
-    <div class="space-y-3">
-      <input v-model="tplForm.title" class="input" placeholder="模板标题，如：议论文开头万能句" />
+  <Modal title="作文模板" :show="showTpl" panel-class="sm:!max-w-2xl" @close="showTpl = false">
+    <div class="space-y-5">
+      <div>
+        <label class="label" for="essay-template-title">模板标题</label>
+        <input id="essay-template-title" v-model="tplForm.title" class="input" placeholder="如：议论文开头万能句" />
+      </div>
       <div>
         <div class="label">分类</div>
         <div class="flex gap-2">
@@ -127,7 +131,24 @@ const tplGroups = computed(() =>
           </button>
         </div>
       </div>
-      <textarea v-model="tplForm.content" rows="8" class="input !text-xs font-mono" placeholder="模板内容…"></textarea>
+      <div class="essay-template-editor">
+        <div class="essay-template-editor-heading">
+          <label class="label !mb-0" for="essay-template-content">模板正文</label>
+          <span class="text-xs text-muted tabular-nums">{{ templateWordCount }} 个英文词</span>
+        </div>
+        <p id="essay-template-hint" class="text-xs text-muted mb-3">
+          按段落整理句型，用 _____ 标出需要替换的主题、论点或例子。
+        </p>
+        <textarea
+          id="essay-template-content"
+          v-model="tplForm.content"
+          rows="12"
+          class="input essay-template-content"
+          aria-describedby="essay-template-hint"
+          placeholder="写下开头、主体和结尾的常用句型，段落之间留一行空白。"
+          spellcheck="true"
+        ></textarea>
+      </div>
       <div>
         <div class="label">掌握程度</div>
         <div class="flex gap-1">
@@ -161,3 +182,24 @@ const tplGroups = computed(() =>
     </template>
   </Modal>
 </template>
+
+<style scoped>
+.essay-template-editor-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.essay-template-content {
+  min-height: 260px;
+  padding: 16px;
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.8;
+  resize: vertical;
+  scrollbar-width: thin;
+  scrollbar-color: var(--control-line) var(--surface);
+}
+</style>
