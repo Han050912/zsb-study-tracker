@@ -23,7 +23,7 @@ export const notesMapping = crudHandlers({
     id,
     user_id: userId,
     subject_id: b.subjectId,
-    title: b.title,
+    title: b.title.trim() || '未命名',
     content: '',
     tags: JSON.stringify(b.tags ?? []),
     type: b.type ?? null,
@@ -44,7 +44,7 @@ export const notesMapping = crudHandlers({
     return {
       id: r.id,
       subjectId: r.subject_id,
-      title: r.title,
+      title: String(r.title ?? '').trim() || '未命名',
       tags,
       updatedAt: r.updated_at,
       bodyUpdatedAt: r.type === 'pdf' ? 0 : Number(r.body_updated_at ?? 0),

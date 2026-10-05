@@ -36,7 +36,7 @@ export const notesActions: NotesActionsShape = {
       const note: Note = {
         id: n.id || uid(),
         subjectId,
-        title: n.title || '未命名',
+        title: n.title.trim() || '未命名',
         tags: n.tags,
         updatedAt: now,
         bodyUpdatedAt: n.type === 'pdf' ? 0 : now,
@@ -58,7 +58,7 @@ export const notesActions: NotesActionsShape = {
         if (bodyChanged) queueNoteBody(n.id, note.content!, now)
         Object.assign(n, {
           subjectId: note.subjectId,
-          title: note.title ?? n.title,
+          title: (note.title ?? n.title).trim() || '未命名',
           tags: note.tags ?? n.tags,
           type: note.type,
           bodyUpdatedAt: bodyChanged ? now : n.bodyUpdatedAt
@@ -71,7 +71,7 @@ export const notesActions: NotesActionsShape = {
       const created: Note = {
         id: uid(),
         subjectId: note.subjectId,
-        title: note.title || '未命名',
+        title: note.title?.trim() || '未命名',
         tags: note.tags || [],
         updatedAt: now,
         bodyUpdatedAt: note.type === 'pdf' ? 0 : now,

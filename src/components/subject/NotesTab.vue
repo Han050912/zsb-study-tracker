@@ -21,7 +21,10 @@ const subjectNotes = computed(() => store.notes.filter((n) => n.subjectId === pr
 const router = useRouter()
 function openNote(n?: Note) {
   if (n) router.push({ path: '/notes', query: { id: n.id } })
-  else router.push({ path: '/notes', query: { new: '1', subject: props.subjectId } })
+  else {
+    noteSearch.value = ''
+    router.push({ path: '/notes', query: { new: '1', subject: props.subjectId } })
+  }
 }
 const noteSearch = ref('')
 const filteredNotes = computed(() => {
@@ -156,7 +159,9 @@ onUnmounted(() => {
           @click="openNote(n)"
         >
           <div class="flex items-center gap-1.5">
-            <button class="study-link font-medium text-sm truncate" @click.stop="openNote(n)">{{ n.title }}</button>
+            <button class="study-link font-medium text-sm truncate" @click.stop="openNote(n)">
+              {{ n.title.trim() || '未命名' }}
+            </button>
             <!-- 正文没上云的笔记在换设备后是空的：必须在列表上可见，不能只留在控制台日志里 -->
             <span
               v-if="pendingNoteBodyIds.has(n.id)"
@@ -166,7 +171,7 @@ onUnmounted(() => {
               <CloudOff :size="10" />未同步
             </span>
           </div>
-          <div class="text-xs text-slate-400 line-clamp-2 mt-1">
+          <div class="text-xs text-slate-400 line-clamp-2 whitespace-pre-line mt-1">
             {{ n.type === 'pdf' ? 'PDF 文档' : noteBodyExcerpt(n.id) }}
           </div>
           <div class="flex gap-1 mt-2 flex-wrap">
