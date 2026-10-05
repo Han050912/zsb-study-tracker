@@ -11,6 +11,8 @@ import { stageUpsert } from '../../services/syncOutbox'
 import { touchRecord, touchSettings } from './staging'
 import type { DailySummary } from '../../types'
 import { settingsGoalError, type GoalKey } from '../../utils/settingsValidation'
+import { sessionUser } from '../../services/auth'
+import { restoreOnboarding } from '../../services/onboarding'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type SettingsActionsShape = {
@@ -40,6 +42,7 @@ export const settingsActions: SettingsActionsShape = {
       if (error) throw new Error(error)
     }
     Object.assign(this.settings, patch)
+    restoreOnboarding(sessionUser.value?.id ?? null, this.settings)
     // 每日目标与习惯列表「每日背单词」「每日做题」按固定 id 实时双向同步
     if (patch.wordGoal !== undefined) {
       const h = this.habits.find((x) => x.id === VOCAB_HABIT_ID && !x.bad)

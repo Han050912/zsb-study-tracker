@@ -4,7 +4,7 @@
  */
 import { computed, ref } from 'vue'
 import type { AppStoreThis } from './this-type'
-import { clearCursors, loadCursors, saveCursors } from './staging'
+import { clearCursors, loadCursors, saveCursors, touchSettings } from './staging'
 import { createDefaultState } from '../../data/defaults'
 import { ApiError } from '../../api/client'
 import { syncApi, type PullResponse } from '../../api/sync'
@@ -19,6 +19,7 @@ import {
   type OutboxSnapshot
 } from '../../services/syncOutbox'
 import { sessionUser } from '../../services/auth'
+import { restoreOnboarding } from '../../services/onboarding'
 import { clearErrorImageCache } from '../../api/errorImages'
 import {
   flushPendingNoteBodies,
@@ -27,7 +28,7 @@ import {
   setNoteBodyUser,
   type NoteBodyPushFailure
 } from '../../services/noteBodies'
-import type { AppState, Note } from '../../types'
+import type { AppState, Note, Settings } from '../../types'
 
 /** 推送防抖计时器（合并连续操作，避免每个 action 都触发一次全量推送） */
 let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -115,6 +116,15 @@ export function restorePendingState(state: AppState, pending: OutboxSnapshot | n
       deletes: changes.deletes.filter((item) => item.deletedAt > (remoteStamps.get(item.key) ?? -Infinity))
     })
   }
+}
+
+/** Preserve completion and upload it with the latest merged settings after an older edit loses LWW. */
+function restoreSyncedOnboarding(userId: string | null, settings: Settings): boolean {
+  const promoted = restoreOnboarding(userId, settings)
+  if (promoted) {
+    touchSettings(settings, Math.max(Date.now(), (settings.updatedAt ?? 0) + 1))
+  }
+  return promoted
 }
 
 /** 本次推送载荷（域 → 变更集合），用于在失败时定位毒记录 */
@@ -302,6 +312,7 @@ export const syncActions: SyncActionsShape = {
             if (!isCurrentSync(generation, userId)) return cancelled
             this.applyPull(remote, true)
             restorePendingState(this.$state, takeForFlush(), remote)
+            restoreSyncedOnboarding(userId, this.settings)
             await reconcileNoteBodies(this.notes)
             if (!isCurrentSync(generation, userId)) return cancelled
           }
@@ -396,6 +407,13 @@ export const syncActions: SyncActionsShape = {
     saveCursors(activeUserId, cursors)
     // gamification 为服务端权威快照：每次 push/pull 响应都整体覆盖本地
     if (res.gamification) this.$patch({ gamification: res.gamification })
+    // 完成引导独立于设置整行 LWW：同戳/旧快照中的 true 也不能被本地 false 或待同步设置抹掉。
+    const cloudOnboarded = res.changes?.settings?.upserts.some((raw) => {
+      const item = raw as { key?: string; value?: { onboarded?: boolean } }
+      return item.key === 'self' && item.value?.onboarded === true
+    })
+    if (this.settings.onboarded || cloudOnboarded)
+      restoreOnboarding(activeUserId, { ...this.settings, onboarded: true })
     return changed
   },
 
@@ -437,6 +455,7 @@ export const syncActions: SyncActionsShape = {
     const pending = takeForFlush()
     this.applyPull(res, full && !isNewUser)
     restorePendingState(this.$state, pending, res)
+    restoreSyncedOnboarding(userId, this.settings)
     await reconcileNoteBodies(this.notes)
     assertCurrent()
     hasHydrated = true
@@ -485,6 +504,7 @@ export const syncActions: SyncActionsShape = {
         if (!isCurrentSync(generation, userId)) return { ...flushed, ok: false, changed: 0 }
         const changed = this.applyPull(res, false)
         restorePendingState(this.$state, takeForFlush(), res)
+        if (restoreSyncedOnboarding(userId, this.settings)) this.save()
         await reconcileNoteBodies(this.notes)
         if (!isCurrentSync(generation, userId)) return { ...flushed, ok: false, changed: 0 }
         return { ok: true, applied: flushed.applied, rejected: flushed.rejected, changed }

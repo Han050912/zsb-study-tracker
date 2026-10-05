@@ -176,10 +176,11 @@ export async function settingsReplaceStatements(
   userId: string,
   s: SettingsFull
 ): Promise<D1PreparedStatement[]> {
+  // 跳过/完成引导只增不减，其他设备的默认设置与旧备份不能重新开启引导。
   const commonCols =
     'user_name = excluded.user_name, daily_goal_minutes = excluded.daily_goal_minutes, word_goal = excluded.word_goal, ' +
     'problem_goal = excluded.problem_goal, exam_date = excluded.exam_date, theme = excluded.theme, reminder_enabled = excluded.reminder_enabled, ' +
-    'reminder_time = excluded.reminder_time, onboarded = excluded.onboarded, join_progress_board = excluded.join_progress_board, profile_visibility = excluded.profile_visibility, bio = excluded.bio, ' +
+    'reminder_time = excluded.reminder_time, onboarded = MAX(COALESCE(user_settings.onboarded, 0), excluded.onboarded), join_progress_board = excluded.join_progress_board, profile_visibility = excluded.profile_visibility, bio = excluded.bio, ' +
     'do_not_disturb = excluded.do_not_disturb, dnd_start_time = excluded.dnd_start_time, dnd_end_time = excluded.dnd_end_time, dnd_muted_types = excluded.dnd_muted_types, dnd_mute_message = excluded.dnd_mute_message, ' +
     'partner_share_enabled = excluded.partner_share_enabled, partner_remind_enabled = excluded.partner_remind_enabled, avatar = COALESCE(excluded.avatar, user_settings.avatar)'
   // 昵称缺失或为空（含纯空白）时写入 NULL：展示端统一回退登录用户名（COALESCE 口径），
