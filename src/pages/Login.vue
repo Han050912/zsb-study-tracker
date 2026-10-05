@@ -311,7 +311,7 @@ async function submit() {
 }
 .login-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.1fr) minmax(366px, 1fr);
   align-items: center;
   gap: 72px;
   width: 100%;
@@ -514,6 +514,7 @@ async function submit() {
 }
 @media (max-width: 900px) {
   .login-layout {
+    grid-template-columns: minmax(0, 1.1fr) minmax(350px, 1fr);
     gap: 32px;
   }
   .login-intro h1 {
@@ -553,6 +554,15 @@ async function submit() {
   }
   .login-form-heading h2 {
     font-size: 21px;
+  }
+}
+@media (max-width: 373px) {
+  /* 保留标准验证组件的 300px 宽度，窄屏只收紧表单两侧留白。 */
+  .login-page {
+    padding-inline: clamp(0px, calc((100% - 318px) / 2), 16px);
+  }
+  .login-form-panel {
+    padding-inline: clamp(0px, calc((100% - 302px) / 2), 20px);
   }
 }
 @media (prefers-reduced-motion: reduce) {

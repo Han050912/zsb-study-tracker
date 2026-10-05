@@ -765,6 +765,32 @@
     position: relative;
     margin-left: auto;
   }
+  .partner-more > summary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 44px;
+    min-height: 44px;
+    padding-inline: 12px;
+    border-radius: var(--radius-control);
+    color: var(--muted);
+    font-size: 14px;
+    list-style: none;
+    cursor: pointer;
+    transition:
+      color 120ms ease,
+      background-color 120ms ease;
+  }
+  .partner-more > summary::-webkit-details-marker {
+    display: none;
+  }
+  .partner-more > summary:hover,
+  .partner-more > summary:focus-visible,
+  .partner-more[open] > summary {
+    color: var(--action);
+    background: var(--action-soft);
+  }
   .partner-more-menu {
     position: absolute;
     right: 0;

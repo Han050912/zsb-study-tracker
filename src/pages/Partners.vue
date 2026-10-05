@@ -12,7 +12,7 @@ import { useConfirm } from '../composables/useConfirm'
 import { useRoute, useRouter } from 'vue-router'
 import { partnersApi } from '../api/community/partners'
 import { usersApi } from '../api/community/users'
-import { RefreshCw, TriangleAlert, ArrowRight, Check } from '@lucide/vue'
+import { RefreshCw, TriangleAlert, ArrowRight, Check, Ellipsis } from '@lucide/vue'
 import UserAvatar from '../components/community/UserAvatar.vue'
 import PartnerWeeklyModal from '../components/partner/PartnerWeeklyModal.vue'
 import type { PartnerItem, UserLookupResult } from '../types'
@@ -216,8 +216,9 @@ async function addPartner(userId: string) {
               共同计划
             </button>
             <details class="partner-more">
-              <summary class="cursor-pointer px-3 flex items-center text-sm" aria-label="更多搭子操作">
-                更多 ···
+              <summary aria-label="更多搭子操作" title="更多搭子操作">
+                <span>更多</span>
+                <Ellipsis :size="18" aria-hidden="true" />
               </summary>
               <div class="partner-more-menu">
                 <button

@@ -515,10 +515,9 @@ function cancelEdit() {
             : ''
     "
   >
-    <!-- 背景图 + 遮罩（图片加载失败时 bgUrl 为空，自动降级为上方渐变） -->
+    <!-- 原色背景图（图片加载失败时 bgUrl 为空，自动降级为上方背景色） -->
     <template v-if="bgUrl">
       <img :src="bgUrl" alt="" class="absolute inset-0 w-full h-full object-cover transition-opacity duration-200" />
-      <div class="absolute inset-0 timer-wallpaper-shade"></div>
     </template>
 
     <!-- 返回入口仅在配置页展示；专注计时中隐藏，保持界面零导航干扰 -->
@@ -685,13 +684,17 @@ function cancelEdit() {
     <!-- 计时中（沉浸式全屏）：大时钟距顶 1/4，番茄钟弱化至右上角，名言紧随大时钟，控制按钮沉底 -->
     <div v-else class="absolute inset-0 z-10" :class="bgUrl ? 'text-white' : 'text-slate-800 dark:text-slate-100'">
       <!-- 当前时间（辅助信息） -->
-      <div class="absolute top-4 right-4 text-right opacity-75">
+      <div class="absolute top-4 right-4 text-right" :class="bgUrl ? 'pomodoro-wallpaper-text' : 'opacity-75'">
         <div class="text-[11px]">{{ !running ? '已暂停' : phase === 'focus' ? '专注中' : '休息中' }}</div>
         <div class="text-xl font-data tabular-nums">{{ clockText }}</div>
       </div>
 
       <!-- 本次番茄钟：专注/休息剩余时长优先 -->
-      <div class="absolute inset-x-0 top-1/4 px-6 text-center" aria-label="本次番茄钟">
+      <div
+        class="absolute inset-x-0 top-1/4 px-6 text-center"
+        :class="bgUrl ? 'pomodoro-wallpaper-text' : ''"
+        aria-label="本次番茄钟"
+      >
         <p class="text-xs mb-3 opacity-75">
           {{ phase === 'break' ? '休息倒计时' : mode === 'countdown' ? '本次专注剩余' : '本次已专注' }}
         </p>
@@ -774,6 +777,12 @@ function cancelEdit() {
 </template>
 
 <style scoped>
+.pomodoro-wallpaper-text {
+  text-shadow:
+    0 1px 3px rgb(0 0 0 / 90%),
+    0 3px 16px rgb(0 0 0 / 55%);
+}
+
 @media (hover: none), (pointer: coarse) {
   .timer-controls {
     opacity: 1;

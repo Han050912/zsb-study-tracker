@@ -89,8 +89,8 @@ onMounted(async () => {
   widgetId = (window as any).turnstile.render(container.value, {
     sitekey: TURNSTILE_SITEKEY,
     theme: 'auto',
-    // 窄屏表单可用宽度不足300px；原生compact避免iframe挤出输入区域。
-    size: 'compact',
+    // 标准尺寸为 300 × 65px；表单布局为原生 iframe 保留完整宽度。
+    size: 'normal',
     callback: (t: string) => {
       token.value = t
       status.value = 'ready'
