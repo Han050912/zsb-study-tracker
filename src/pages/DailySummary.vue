@@ -3,7 +3,8 @@ import IconAction from '../shared/components/IconAction.vue'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useToast } from '../composables/useToast'
 import { useAppStore } from '../stores/app'
-import { today, formatMinutes } from '../utils/date'
+import { today, businessDate, formatMinutes } from '../utils/date'
+import { studyMinutesOn, focusMinutesOn } from '../utils/studyTime'
 import { MOODS } from '../data/defaults'
 import PostComposer from '../components/community/PostComposer.vue'
 import { TriangleAlert, ArrowLeft, ArrowRight } from '@lucide/vue'
@@ -66,14 +67,31 @@ watch(
 /** 聚合某日期的全维度数据概览 */
 function aggregateDay(d: string) {
   const records = store.records.filter((r) => r.date === d)
-  const minutes = records.reduce((s, r) => s + r.minutes, 0)
+  const minutes = studyMinutesOn(store, d)
+  const focusMinutes = focusMinutesOn(store, d)
   const problems = store.problemSessions.filter((p) => p.date === d)
   const pTotal = problems.reduce((s, p) => s + p.total, 0)
   const pCorrect = problems.reduce((s, p) => s + p.correct, 0)
   const pomo = store.pomodoro.daily[d] || { count: 0, minutes: 0, interruptions: 0 }
   const bySubject: Record<string, number> = {}
   for (const r of records) bySubject[r.subjectId] = (bySubject[r.subjectId] || 0) + r.minutes
-  return { minutes, pTotal, pCorrect, pomo, bySubject, accuracy: pTotal ? Math.round((pCorrect / pTotal) * 100) : null }
+  const tasks = store.todos.filter((t) => t.date === d)
+  const completedTasks = tasks.filter((t) => t.done).length
+  const pendingErrors = store.errorQuestions.filter((e) => !e.mastered && e.date <= d).length
+  const updatedNotes = store.notes.filter((n) => businessDate(n.updatedAt) === d).length
+  return {
+    minutes,
+    focusMinutes,
+    pTotal,
+    pCorrect,
+    pomo,
+    bySubject,
+    tasks,
+    completedTasks,
+    pendingErrors,
+    updatedNotes,
+    accuracy: pTotal ? Math.round((pCorrect / pTotal) * 100) : null
+  }
 }
 
 // ---- 当日数据聚合 ----
@@ -123,7 +141,7 @@ const cardData = computed(() => (cardDate.value ? aggregateDay(cardDate.value) :
 const cardSummary = computed(() => (cardDate.value ? store.summaries[cardDate.value] : undefined))
 /** 点击往日日期：弹出当日总结悬浮卡片；今日日期在页面直接编辑 */
 function openDayCard(d: string) {
-  if (d === today()) return
+  if (d >= today()) return
   cardDate.value = d
   showPlan.value = false
 }
@@ -319,6 +337,20 @@ function openCommunityShare() {
               {{ store.subjectMap[sid]?.name }} {{ formatMinutes(min) }}
             </span>
           </div>
+          <p v-if="dayData.focusMinutes" class="study-note mt-2">
+            含未分科目专注 {{ formatMinutes(dayData.focusMinutes) }}
+          </p>
+          <div class="mt-3 space-y-2 text-sm">
+            <p>当日任务：已完成 {{ dayData.completedTasks }}/{{ dayData.tasks.length }} 项</p>
+            <ul v-if="dayData.tasks.length" class="space-y-1">
+              <li v-for="task in dayData.tasks" :key="task.id" class="flex gap-2">
+                <span class="shrink-0 text-muted">{{ task.done ? '已完成' : '待完成' }}</span>
+                <span class="break-words min-w-0">{{ task.text }}</span>
+              </li>
+            </ul>
+            <p>当前待复习错题：{{ dayData.pendingErrors }} 道</p>
+            <p>当日新增或更新笔记：{{ dayData.updatedNotes }} 条</p>
+          </div>
         </div>
 
         <div class="card space-y-4">
@@ -387,16 +419,18 @@ function openCommunityShare() {
           <button
             v-for="(d, i) in calendarDays"
             :key="i"
-            :disabled="!d"
+            :disabled="!d || d > store.todayKey"
             class="aspect-square rounded-lg text-xs flex items-center justify-center relative transition-colors"
             :class="[
               !d
                 ? ''
-                : d === editDate
-                  ? 'bg-action text-on-action font-bold'
-                  : 'hover:bg-slate-100 dark:hover:bg-slate-700'
+                : d > store.todayKey
+                  ? 'text-muted opacity-40 cursor-not-allowed'
+                  : d === editDate
+                    ? 'bg-action text-on-action font-bold'
+                    : 'hover:bg-slate-100 dark:hover:bg-slate-700'
             ]"
-            :title="d && d !== editDate ? '点击查看当日总结卡片' : ''"
+            :title="d && d > store.todayKey ? '未来日期暂不可查看' : d && d !== editDate ? '点击查看当日总结卡片' : ''"
             @click="d && openDayCard(d)"
           >
             {{ d ? Number(d.slice(-2)) : '' }}
@@ -482,6 +516,14 @@ function openCommunityShare() {
                   >
                     {{ store.subjectMap[sid]?.name }} {{ formatMinutes(min) }}
                   </span>
+                </div>
+                <p v-if="cardData.focusMinutes" class="study-note mt-2">
+                  含未分科目专注 {{ formatMinutes(cardData.focusMinutes) }}
+                </p>
+                <div class="mt-3 space-y-1 text-sm">
+                  <p>当日任务：已完成 {{ cardData.completedTasks }}/{{ cardData.tasks.length }} 项</p>
+                  <p>截至该日录入且当前待复习错题：{{ cardData.pendingErrors }} 道</p>
+                  <p>最近更新于该日的笔记：{{ cardData.updatedNotes }} 条</p>
                 </div>
               </div>
               <!-- ② 当日心情（必填） -->

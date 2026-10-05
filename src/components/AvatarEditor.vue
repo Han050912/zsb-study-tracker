@@ -10,6 +10,7 @@ import type Cropper from 'cropperjs'
 import 'cropperjs/dist/cropper.css'
 import Modal from './Modal.vue'
 import { IMAGE_MAX_BYTES, uploadAvatar } from '../api/community'
+import { sessionUser } from '../services/auth'
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ 'update:show': [boolean]; uploaded: [string] }>()
@@ -23,6 +24,11 @@ const imgUrl = ref('')
 const uploading = ref(false)
 let cropper: Cropper | null = null
 let objectUrl = ''
+let editorGeneration = 0
+
+function close() {
+  if (!uploading.value) emit('update:show', false)
+}
 
 function destroyCropper() {
   cropper?.destroy()
@@ -71,6 +77,9 @@ function onFile(e: Event) {
 
 async function submit() {
   if (!cropper || uploading.value) return
+  const generation = editorGeneration
+  const owner = sessionUser.value
+  const isCurrent = () => generation === editorGeneration && props.show && sessionUser.value === owner
   uploading.value = true
   try {
     const canvas = cropper.getCroppedCanvas({ width: 256, height: 256, imageSmoothingQuality: 'high' })
@@ -78,29 +87,38 @@ async function submit() {
     let blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/webp', 0.9))
     if (!blob) blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, 'image/png'))
     if (!blob) throw new Error('图片导出失败，请重试')
+    if (!isCurrent()) return
     const { url } = await uploadAvatar(blob)
+    if (!isCurrent()) return
     emit('uploaded', url)
     emit('update:show', false)
     reset()
     toast('头像已更新')
   } catch (e) {
-    toast(getErrorMessage(e, '上传失败，请重试'))
+    if (isCurrent()) toast(getErrorMessage(e, '上传失败，请重试'))
   } finally {
-    uploading.value = false
+    if (generation === editorGeneration) uploading.value = false
   }
 }
 
 watch(
-  () => props.show,
-  (v) => {
+  () => [props.show, sessionUser.value?.id] as const,
+  ([v], before) => {
+    editorGeneration++
+    uploading.value = false
+    if (before && before[1] !== sessionUser.value?.id) reset()
     if (!v) reset()
-  }
+  },
+  { flush: 'sync' }
 )
-onUnmounted(reset)
+onUnmounted(() => {
+  editorGeneration++
+  reset()
+})
 </script>
 
 <template>
-  <Modal :show="show" title="更换头像" @close="emit('update:show', false)">
+  <Modal :show="show" title="更换头像" @close="close">
     <div v-if="!imgUrl" class="py-10 text-center space-y-3">
       <div>
         <button class="btn-primary" type="button" @click="fileInput?.click()">选择图片</button>

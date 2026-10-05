@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ArrowLeft } from '@lucide/vue'
 import IconAction from '../shared/components/IconAction.vue'
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { useSquadDetail } from '../features/collaboration/composables/useSquadDetail'
 import AsyncState from '../shared/components/AsyncState.vue'
 import AppTabs from '../shared/components/AppTabs.vue'
@@ -46,6 +46,20 @@ const {
   syncChallenge
 } = useSquadDetail()
 const section = ref('challenges')
+const membersSection = ref<HTMLElement | null>(null)
+const requestsSection = ref<HTMLElement | null>(null)
+const disbandOnly = ref(false)
+async function openManagement(target: 'members' | 'requests') {
+  section.value = 'members'
+  await nextTick()
+  const element = target === 'members' ? membersSection.value : requestsSection.value
+  element?.scrollIntoView({ block: 'start' })
+  element?.focus({ preventScroll: true })
+}
+function openLeaderLeave(onlyDisband = false) {
+  disbandOnly.value = onlyDisband
+  showLeaveModal.value = true
+}
 </script>
 
 <template>
@@ -73,7 +87,9 @@ const section = ref('challenges')
         @edit="showEdit = true"
         @leave="handleLeave"
         @withdrawn="handleWithdrawn"
-        @leader-leave="showLeaveModal = true"
+        @leader-leave="openLeaderLeave()"
+        @manage="openManagement"
+        @disband="openLeaderLeave(true)"
       />
 
       <div class="lg:hidden">
@@ -110,22 +126,25 @@ const section = ref('challenges')
         <aside class="space-y-4 lg:block" :class="section === 'members' || section === 'info' ? '' : 'hidden'">
           <div :class="section === 'info' ? 'hidden lg:block' : ''" class="space-y-4">
             <AsyncState v-if="state?.errors.members" :error="state.errors.members" @retry="loadMembers" />
-            <TeamMemberList
-              :members="detail?.members ?? []"
-              :my-role="team.myRole"
-              :transfer-submitting="transferSubmitting"
-              @open-profile="openProfile"
-              @transfer="handleTransfer"
-              @kick="kickTarget = $event"
-            />
-
-            <TeamJoinRequestList
-              :team-id="teamId"
-              :requests="requests"
-              :my-role="team.myRole"
-              @reviewed="reviewed"
-              @open-profile="openProfile"
-            />
+            <div ref="membersSection" tabindex="-1" aria-label="小队成员管理">
+              <TeamMemberList
+                :members="detail?.members ?? []"
+                :my-role="team.myRole"
+                :transfer-submitting="transferSubmitting"
+                @open-profile="openProfile"
+                @transfer="handleTransfer"
+                @kick="kickTarget = $event"
+              />
+            </div>
+            <div v-if="team.myRole === 'leader'" ref="requestsSection" tabindex="-1" aria-label="小队加队审批">
+              <TeamJoinRequestList
+                :team-id="teamId"
+                :requests="requests"
+                :my-role="team.myRole"
+                @reviewed="reviewed"
+                @open-profile="openProfile"
+              />
+            </div>
 
             <AsyncState v-if="state?.errors.requests" :error="state.errors.requests" @retry="loadDetail" />
           </div>
@@ -170,6 +189,7 @@ const section = ref('challenges')
     :members="detail?.members ?? []"
     :submitting="leaderLeaveSubmitting"
     :team-name="team?.name ?? ''"
+    :disband-only="disbandOnly"
     @confirm="handleLeaderLeave"
   />
 

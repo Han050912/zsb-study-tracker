@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 编辑资料弹窗：头像 / 昵称 / 简介；昵称/简介先走只读校验，持久化统一由记录同步负责。 */
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { getErrorMessage } from '../../utils/error'
 import { useToast } from '../../composables/useToast'
 import Modal from '../Modal.vue'
@@ -20,22 +20,40 @@ const user = computed(() => sessionUser.value)
 const userName = ref('')
 const bio = ref('')
 const showAvatarEditor = ref(false)
+const avatarRemoved = ref(false)
+const previewAvatar = computed(() => (avatarRemoved.value ? '' : store.settings.avatar))
+const saving = ref(false)
+let editGeneration = 0
 
 watch(
-  () => props.show,
-  (v) => {
-    if (!v) return
+  () => [props.show, sessionUser.value?.id] as const,
+  ([v]) => {
+    editGeneration++
+    saving.value = false
+    avatarRemoved.value = false
+    if (!v) {
+      showAvatarEditor.value = false
+      return
+    }
     userName.value = store.settings.userName
     bio.value = store.settings.bio
-  }
+  },
+  { immediate: true, flush: 'sync' }
 )
+onUnmounted(() => {
+  editGeneration++
+})
 
 function onAvatarUploaded(url: string) {
+  avatarRemoved.value = false
   store.setAvatar(url)
   emit('saved')
 }
 
-const saving = ref(false)
+function close() {
+  if (saving.value) return
+  emit('update:show', false)
+}
 async function save() {
   const name = userName.value.trim()
   const bioText = bio.value.trim()
@@ -44,29 +62,36 @@ async function save() {
     return
   }
   if (saving.value) return
+  const generation = editGeneration
+  const owner = sessionUser.value
+  const settings = store.settings
+  const removeAvatar = avatarRemoved.value
+  const isCurrent = () =>
+    generation === editGeneration && props.show && sessionUser.value === owner && store.settings === settings
   saving.value = true
   try {
     const validated = await settingsApi.validate({ userName: name, bio: bioText })
-    store.updateSettings(validated)
+    if (!isCurrent()) return
+    store.updateSettings({ ...validated, ...(removeAvatar ? { avatar: '' } : {}) })
     toast('资料已保存')
     emit('saved')
     emit('update:show', false)
   } catch (e) {
-    toast(getErrorMessage(e, '保存失败，请重试'))
+    if (isCurrent()) toast(getErrorMessage(e, '保存失败，请重试'))
   } finally {
-    saving.value = false
+    if (generation === editGeneration) saving.value = false
   }
 }
 </script>
 
 <template>
-  <Modal :show="show" title="编辑资料" @close="emit('update:show', false)">
+  <Modal :show="show" title="编辑资料" @close="close">
     <div class="space-y-5">
       <!-- 头像 -->
       <div class="flex items-center gap-4">
         <img
-          v-if="store.settings.avatar"
-          :src="imageUrl(store.settings.avatar)"
+          v-if="previewAvatar"
+          :src="imageUrl(previewAvatar)"
           class="w-16 h-16 rounded-2xl object-cover bg-slate-200 dark:bg-slate-700"
           alt="当前头像"
         />
@@ -77,7 +102,30 @@ async function save() {
           {{ (userName || '升').trim().slice(0, 1).toUpperCase() }}
         </div>
         <div>
-          <button class="btn-ghost !text-xs" type="button" @click="showAvatarEditor = true">更换头像</button>
+          <div class="flex flex-wrap gap-2">
+            <button class="btn-ghost !text-xs" type="button" :disabled="saving" @click="showAvatarEditor = true">
+              更换头像
+            </button>
+            <button
+              v-if="previewAvatar"
+              class="btn-ghost !text-xs"
+              type="button"
+              :disabled="saving"
+              @click="avatarRemoved = true"
+            >
+              移除头像
+            </button>
+            <button
+              v-else-if="avatarRemoved"
+              class="btn-ghost !text-xs"
+              type="button"
+              :disabled="saving"
+              @click="avatarRemoved = false"
+            >
+              撤销移除
+            </button>
+          </div>
+          <p v-if="avatarRemoved" class="text-sm text-action mt-1.5" role="status">保存后将恢复字母头像。</p>
           <p class="text-xs text-slate-400 mt-1.5">支持 JPG / PNG / WebP，将裁剪为正方形</p>
         </div>
       </div>
@@ -108,7 +156,7 @@ async function save() {
       </div>
     </div>
     <template #footer>
-      <button class="btn-ghost" type="button" @click="emit('update:show', false)">取消</button>
+      <button class="btn-ghost" type="button" :disabled="saving" @click="close">取消</button>
       <button class="btn-primary" type="button" :disabled="saving" @click="save">
         {{ saving ? '保存中…' : '保存' }}
       </button>

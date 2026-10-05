@@ -2,6 +2,7 @@ import type { Env } from '../../index'
 import { all, first, uid, utc8Today, HttpError } from '../../db'
 import { isDbAdmin } from '../../middleware/auth'
 import { uploadIdsOf } from '../uploads'
+import { userDisplayName } from '../../userDisplayName'
 
 /**
  * 社区广场共享 helper：行 → 前端对象映射、通用 SQL 片段、积分/通知语句、圈子辅助、级联删除。
@@ -30,8 +31,8 @@ export function mapPost(r: any) {
   return {
     id: r.id,
     userId: r.user_id,
-    userName: r.user_name || '升本人',
-    userPoints: r.user_points ?? 0,
+    userName: userDisplayName(r.user_name, r.user_code, r.user_id),
+    userPoints: r.user_points ?? undefined,
     userVerified: !!r.user_verified,
     userAvatar: r.user_avatar ?? undefined,
     type: r.type,
@@ -65,7 +66,7 @@ export function mapComment(r: any) {
     id: r.id,
     postId: r.post_id,
     userId: r.user_id,
-    userName: r.user_name || '升本人',
+    userName: userDisplayName(r.user_name, r.user_code, r.user_id),
     userAvatar: r.user_avatar ?? undefined,
     parentId: r.parent_id ?? undefined,
     replyCount: r.reply_count ?? 0,
@@ -110,7 +111,10 @@ export function mapNotification(r: any) {
 
 /** 帖子查询：JOIN 作者展示名/积分 + 当前用户点赞/踩态。参数顺序固定为 [viewerId, viewerId, ...] */
 export const POST_SELECT = `
-  SELECT p.*, COALESCE(s.user_name, u.username) AS user_name, COALESCE(g.points, 0) AS user_points,
+  SELECT p.*, s.user_name, u.user_code,
+    CASE WHEN p.user_id = viewer.viewer_id OR (s.share_learning_stats = 1 AND
+      (s.profile_visibility = 'public' OR (s.profile_visibility = 'login' AND viewer.viewer_id != '')))
+      THEN COALESCE(g.points, 0) END AS user_points,
     u.verified AS user_verified, s.avatar AS user_avatar, ci.name AS circle_name,
     (l.user_id IS NOT NULL) AS liked_by_me,
     (d.user_id IS NOT NULL) AS disliked_by_me
@@ -119,7 +123,8 @@ export const POST_SELECT = `
   LEFT JOIN user_settings s ON s.user_id = p.user_id
   LEFT JOIN gamification g ON g.user_id = p.user_id
   LEFT JOIN community_circles ci ON ci.id = p.circle_id
-  LEFT JOIN community_likes l ON l.target_type = 'post' AND l.target_id = p.id AND l.user_id = ?
+  LEFT JOIN (SELECT ? AS viewer_id) viewer ON 1 = 1
+  LEFT JOIN community_likes l ON l.target_type = 'post' AND l.target_id = p.id AND l.user_id = viewer.viewer_id
   LEFT JOIN community_dislikes d ON d.target_type = 'post' AND d.target_id = p.id AND d.user_id = ?`
 
 // ---------- 积分 / 通知 ----------
@@ -270,12 +275,12 @@ export function notifyStatement(
 
 /** 用户展示名（用户设置昵称优先，回退用户名） */
 export async function displayName(env: Env, userId: string): Promise<string> {
-  const r = await first<{ name: string }>(
+  const r = await first<{ name: string; user_code: string }>(
     env,
-    'SELECT COALESCE(s.user_name, u.username) AS name FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?',
+    'SELECT s.user_name AS name, u.user_code FROM users u LEFT JOIN user_settings s ON s.user_id = u.id WHERE u.id = ?',
     userId
   )
-  return r?.name || '升本人'
+  return userDisplayName(r?.name, r?.user_code, userId)
 }
 
 /** 当前用户是否为管理员。role 为 JWT claim 快照（签发后不可撤销），不能作为授权依据：

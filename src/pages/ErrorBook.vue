@@ -6,13 +6,15 @@ import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
 import { useAppStore } from '../stores/app'
-import { today } from '../utils/date'
+import { businessDate, today } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
-import { problemTypesFor } from '../data/problemTypes'
+import { problemTypesFor, PROBLEM_TYPE_LABELS } from '../data/problemTypes'
+import type { ErrorQuestion } from '../types'
 import Modal from '../components/Modal.vue'
 import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 import RemoteImage from '../components/RemoteImage.vue'
 import { ERROR_IMAGE_PREFIX, uploadErrorImage } from '../api/errorImages'
+import { sessionUser } from '../services/auth'
 
 const store = useAppStore()
 const toast = useToast()
@@ -35,6 +37,30 @@ const list = computed(() => {
 
 const hasFilter = computed(() => !!filterSubject.value || showOnlyUnmastered.value)
 
+function questionSubject(question: ErrorQuestion) {
+  return store.subjects.find((subject) => subject.id === question.subjectId)
+}
+
+function questionTypeLabel(question: ErrorQuestion): string {
+  const type = question.type?.trim()
+  if (!type) return '未知题型'
+  const definition = problemTypesFor(question.subjectId).find((item) => item.key === type || item.label === type)
+  return (
+    definition?.label ??
+    (Object.prototype.hasOwnProperty.call(PROBLEM_TYPE_LABELS, type) ? PROBLEM_TYPE_LABELS[type] : type)
+  )
+}
+
+function questionChapterLabel(question: ErrorQuestion): string {
+  const chapter = question.chapter?.trim()
+  if (!chapter) return '未标注章节'
+  const chapters = questionSubject(question)?.chapters ?? []
+  const match = chapters.find((item) => item.id === chapter || item.name === chapter)
+  if (match) return match.name
+  const parent = chapters.find((item) => item.topics.includes(chapter))
+  return parent ? `${parent.name} / ${chapter}` : chapter
+}
+
 function clearFilters() {
   filterSubject.value = ''
   showOnlyUnmastered.value = false
@@ -42,6 +68,8 @@ function clearFilters() {
 
 const showModal = ref(false)
 const form = ref({ subjectId: 'math', chapter: '', type: '选择', content: '', answer: '', image: '' })
+const contentInput = ref<HTMLTextAreaElement | null>(null)
+const contentError = ref('')
 
 // ---- 题型 / 章节：跟随科目动态联动 ----
 const currentTypes = computed(() => problemTypesFor(form.value.subjectId))
@@ -57,7 +85,7 @@ function onChapterNamePick() {
   form.value.chapter = chapterPick.value.chapterName
 }
 function onTopicPick() {
-  form.value.chapter = chapterPick.value.topicName
+  form.value.chapter = chapterPick.value.topicName || chapterPick.value.chapterName
 }
 
 // 科目切换：题型置为当前科目首个题型，清空章节与两栏选中残留
@@ -81,6 +109,10 @@ const JPEG_QUALITY = 0.85
 const pendingImage = ref<{ bytes: ArrayBuffer; preview: string } | null>(null)
 /** 保存中：上传 + 落库期间禁用保存按钮 */
 const saving = ref(false)
+
+watch([() => form.value.content, pendingImage], () => {
+  if (form.value.content.trim() || pendingImage.value) contentError.value = ''
+})
 
 function clearPendingImage() {
   if (pendingImage.value) URL.revokeObjectURL(pendingImage.value.preview)
@@ -137,17 +169,22 @@ function onImage(e: Event) {
 function closeModal() {
   if (saving.value) return
   showModal.value = false
+  contentError.value = ''
   form.value = { subjectId: 'math', chapter: '', type: '选择', content: '', answer: '', image: '' }
+  chapterPick.value = { chapterName: '', topicName: '' }
   zoomImage.value = ''
   clearPendingImage()
 }
 
 /** 保存：先上传图片（幂等，服务端按内容返回 id），成功后再落库；失败保留弹窗与预览供重试 */
 async function add() {
-  if (!form.value.content && !pendingImage.value) {
-    toast('请填写题目内容或上传图片')
+  if (saving.value) return
+  if (!form.value.content.trim() && !pendingImage.value) {
+    contentError.value = '请填写题目内容或上传图片'
+    contentInput.value?.focus()
     return
   }
+  contentError.value = ''
   saving.value = true
   try {
     let image = ''
@@ -188,10 +225,27 @@ function closeZoom() {
 // 不会多层同时响应）；点击任意处关闭保留原有交互，不使用遮罩自点击判定
 const zoomPanelRef = ref<HTMLElement | null>(null)
 useOverlayDismiss(closeZoom, { show: () => !!zoomImage.value, panel: () => zoomPanelRef.value })
-onUnmounted(clearPendingImage)
+let pageActive = true
+onUnmounted(() => {
+  pageActive = false
+  clearPendingImage()
+})
 
 async function removeError(id: string) {
-  if (!(await confirm('确认删除这道错题？', { danger: true }))) return
+  const question = store.errorQuestions.find((item) => item.id === id)
+  if (!question) return
+  const owner = sessionUser.value?.id
+  const effect =
+    question.reviewCount > 0
+      ? `将同步删除该错题的 ${question.reviewCount} 次复习记录，累计复习次数会相应减少，首次复习获得的积分也会撤销。`
+      : '删除后无法恢复。'
+  if (!(await confirm(`确认删除这道错题？${effect}`, { danger: true }))) return
+  if (
+    !pageActive ||
+    sessionUser.value?.id !== owner ||
+    store.errorQuestions.find((item) => item.id === id) !== question
+  )
+    return
   store.deleteError(id)
   toast('已删除')
 }
@@ -226,6 +280,9 @@ async function removeError(id: string) {
         <dd>{{ reviewCount }} <span class="text-xs font-normal">次</span></dd>
       </div>
     </dl>
+    <p class="text-xs text-muted">
+      累计复习统计当前保留的错题。间隔复习依次安排在复习后的 1、2、4、7、15、30 天，已掌握题目至少间隔 7 天。
+    </p>
 
     <div class="page-toolbar">
       <select aria-label="筛选错题科目" v-model="filterSubject" class="input !w-auto">
@@ -247,14 +304,26 @@ async function removeError(id: string) {
 
     <div class="space-y-3">
       <div v-for="q in list" :key="q.id" class="card">
-        <div class="flex items-center gap-2 text-xs text-slate-400 mb-2 flex-wrap">
-          <span>{{ subjectLabel(store.subjectMap[q.subjectId]) }}</span>
-          <span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">{{ q.type }}</span>
-          <span v-if="q.chapter">{{ q.chapter }}</span>
+        <div class="flex items-center gap-2 text-xs text-muted mb-2 flex-wrap break-words">
+          <span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">
+            科目：{{ subjectLabel(questionSubject(q), '未知科目') }}
+          </span>
+          <span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">题型：{{ questionTypeLabel(q) }}</span>
+          <span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700">章节：{{ questionChapterLabel(q) }}</span>
           <span>{{ q.date }}</span>
           <span v-if="q.mastered" class="text-action font-semibold">✓ 已掌握</span>
         </div>
         <p class="text-sm whitespace-pre-wrap">{{ q.content }}</p>
+        <p class="mt-2 text-xs text-muted">
+          <template v-if="q.lastReviewedAt">最近复习：{{ businessDate(q.lastReviewedAt) }} · </template>
+          <template v-if="q.nextReviewDate">
+            下次复习：<time :datetime="q.nextReviewDate">{{ q.nextReviewDate }}</time>
+            <span v-if="q.nextReviewDate <= store.todayKey" class="text-correction"
+              >（{{ q.nextReviewDate < store.todayKey ? '已到期' : '今天' }}）</span
+            >
+          </template>
+          <template v-else>尚未排期，复习一次后生成下次复习日期。</template>
+        </p>
         <RemoteImage
           v-if="q.image"
           :image="q.image"
@@ -332,8 +401,26 @@ async function removeError(id: string) {
           />
         </div>
         <div>
-          <label class="label" for="eb-content">题目内容</label
-          ><textarea id="eb-content" v-model="form.content" rows="3" class="input" placeholder="题干描述…"></textarea>
+          <label class="label" for="eb-content">题目内容</label>
+          <textarea
+            id="eb-content"
+            ref="contentInput"
+            v-model="form.content"
+            rows="3"
+            class="input"
+            placeholder="题干描述…"
+            :aria-invalid="!!contentError"
+            aria-describedby="eb-content-hint eb-content-error"
+          ></textarea>
+          <p id="eb-content-hint" class="mt-1 text-xs text-muted">题目内容与图片至少填写一项。</p>
+          <p
+            id="eb-content-error"
+            role="alert"
+            aria-atomic="true"
+            :class="contentError ? 'mt-1 text-sm text-correction' : 'sr-only'"
+          >
+            {{ contentError }}
+          </p>
         </div>
         <div>
           <label class="label" for="eb-answer">解析/正确答案</label
@@ -347,7 +434,15 @@ async function removeError(id: string) {
         </div>
         <div>
           <label class="label" for="eb-image">拍照上传（自动压缩，原图 ≤10MB）</label>
-          <input id="eb-image" type="file" accept="image/*" class="text-xs" :disabled="saving" @change="onImage" />
+          <input
+            id="eb-image"
+            type="file"
+            accept="image/*"
+            class="text-xs"
+            :disabled="saving"
+            aria-describedby="eb-content-hint eb-content-error"
+            @change="onImage"
+          />
           <img
             v-if="pendingImage"
             :src="pendingImage.preview"

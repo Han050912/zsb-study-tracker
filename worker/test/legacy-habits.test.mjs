@@ -28,16 +28,18 @@ const compiled = await build({
     {
       name: 'browser-and-auth-boundaries',
       setup(builder) {
-        builder.onResolve({ filter: /(?:services\/noteBodies|middleware\/(?:auth|rateLimit))$/ }, (args) => ({
+        builder.onResolve({ filter: /(?:services\/(?:auth|noteBodies)|middleware\/(?:auth|rateLimit))$/ }, (args) => ({
           path: args.path,
           namespace: 'boundary'
         }))
         builder.onLoad({ filter: /.*/, namespace: 'boundary' }, ({ path: name }) => ({
-          contents: name.endsWith('/auth')
-            ? `export async function resolveAuth() { return { userId: 'u', role: 'user' } }; export const tryGetAuth = resolveAuth; export const isDbAdmin = async () => false;`
-            : name.endsWith('/rateLimit')
-              ? `export async function rateLimit() {}`
-              : `export const getNoteBody = () => ''; export const queueNoteBody = () => {}; export const clearAllNoteBodies = () => {};`
+          contents: name.endsWith('services/auth')
+            ? `export const sessionUser = { value: { id: 'u' } };`
+            : name.endsWith('/auth')
+              ? `export async function resolveAuth() { return { userId: 'u', role: 'user' } }; export const tryGetAuth = resolveAuth; export const isDbAdmin = async () => false;`
+              : name.endsWith('/rateLimit')
+                ? `export async function rateLimit() {}`
+                : `export const getNoteBody = () => ''; export const queueNoteBody = () => {}; export const clearAllNoteBodies = () => {};`
         }))
       }
     }

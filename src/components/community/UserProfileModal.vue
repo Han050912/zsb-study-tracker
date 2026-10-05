@@ -174,7 +174,7 @@ async function revokeVerify() {
               {{ profile.expertise }}专家
             </span>
             <span
-              v-if="!profile.profilePrivate"
+              v-if="!profile.profilePrivate && !profile.learningStatsPrivate"
               class="text-xs px-1.5 py-0.5 rounded-full shrink-0"
               :style="{ color: 'var(--muted)' }"
               >{{ level.name }}学者</span
@@ -219,12 +219,16 @@ async function revokeVerify() {
       </div>
 
       <!-- 荣誉统计 -->
-      <div v-if="!profile.profilePrivate" class="grid grid-cols-5 gap-2 mt-4 text-center">
-        <div class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
+      <div
+        v-if="!profile.profilePrivate"
+        class="grid gap-2 mt-4 text-center"
+        :class="profile.learningStatsPrivate ? 'grid-cols-3' : 'grid-cols-5'"
+      >
+        <div v-if="!profile.learningStatsPrivate" class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
           <div class="text-sm font-bold text-action">{{ profile.points }}</div>
           <div class="text-xs text-slate-400">积分</div>
         </div>
-        <div class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
+        <div v-if="!profile.learningStatsPrivate" class="rounded-lg bg-slate-50 dark:bg-slate-700/40 py-2">
           <div class="text-sm font-bold text-action">{{ profile.streak }}</div>
           <div class="text-xs text-slate-400">连续打卡</div>
         </div>

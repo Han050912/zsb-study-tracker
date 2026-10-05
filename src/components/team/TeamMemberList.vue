@@ -18,8 +18,12 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div v-if="members.length" class="card">
-    <div class="label !mb-2">成员（{{ members.length }}）</div>
+  <div class="card">
+    <h2 class="label !mb-2">成员（{{ members.length }}）</h2>
+    <p v-if="myRole === 'leader'" class="text-xs text-slate-500 dark:text-slate-400 mb-2">
+      在成员右侧的管理菜单中踢出成员或转让队长。
+    </p>
+    <p v-if="!members.length" class="text-sm text-slate-500 dark:text-slate-400">暂无成员信息</p>
     <div class="divide-y divide-slate-100 dark:divide-slate-700">
       <div v-for="m in members" :key="m.userId" class="flex items-center gap-3 py-2">
         <button

@@ -5,6 +5,7 @@ import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor, chartColor } from '../composables/useChart'
 import { formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
+import { focusMinutesOn } from '../utils/studyTime'
 import { MOODS } from '../data/defaults'
 import { PROBLEM_TYPE_LABELS } from '../data/problemTypes'
 import ChartFallback from '../components/ChartFallback.vue'
@@ -90,15 +91,17 @@ const {
         const lines = [`${d}`]
         const map = subjectMinutesOn(d)
         const entries = Object.entries(map)
-        if (!entries.length) {
+        const focus = focusMinutesOn(store, d)
+        if (!entries.length && !focus) {
           lines.push('这天还没有学习记录')
         } else {
-          let total = 0
+          let total = focus
           for (const [sid, minutes] of entries) {
             total += minutes
             const s = store.subjectMap[sid]
             lines.push(`${subjectLabel(s, '已删除科目')}：${formatMinutes(minutes)}`)
           }
+          if (focus) lines.push(`番茄专注（未分科目）：${formatMinutes(focus)}`)
           lines.push(`合计：${formatMinutes(total)}`)
         }
         return lines.join('<br>')
@@ -120,9 +123,12 @@ const subjectMinutes = computed(() => {
   const map: Record<string, number> = {}
   for (const r of store.records.filter((r) => days.value.includes(r.date)))
     map[r.subjectId] = (map[r.subjectId] || 0) + r.minutes
-  return store.subjects
+  const subjects = store.subjects
     .filter((s) => map[s.id])
     .map((s) => ({ name: s.name, value: map[s.id], itemStyle: { color: s.color } }))
+  const focus = days.value.reduce((sum, date) => sum + focusMinutesOn(store, date), 0)
+  if (focus) subjects.push({ name: '番茄专注（未分科目）', value: focus, itemStyle: { color: chartColor('muted') } })
+  return subjects
 })
 const {
   el: pieEl,
@@ -453,7 +459,9 @@ const report = computed(() => {
 
     <!-- 柱状图点击：当日各科目学习细分耗时详情卡片 -->
     <Modal :title="`${barDate} 学习时长细分详情`" :show="!!barDate" @close="barDate = ''">
-      <div v-if="!barDetail.length" class="text-xs text-slate-400 text-center py-4">这天还没有学习记录</div>
+      <div v-if="!barDetail.length && !focusMinutesOn(store, barDate)" class="text-xs text-slate-400 text-center py-4">
+        这天还没有学习记录
+      </div>
       <div v-else class="space-y-3">
         <div
           v-for="item in barDetail"
@@ -477,6 +485,13 @@ const report = computed(() => {
             </div>
           </div>
         </div>
+      </div>
+      <div v-if="focusMinutesOn(store, barDate)" class="mt-3 rounded-xl border border-line p-3 text-sm">
+        <div class="flex justify-between gap-2">
+          <span class="font-semibold">番茄专注（未分科目）</span>
+          <span class="font-bold">{{ formatMinutes(focusMinutesOn(store, barDate)) }}</span>
+        </div>
+        <p class="mt-1 text-xs text-muted">已计入当日学习总时长，包含提前结束后保存的专注。</p>
       </div>
     </Modal>
   </div>

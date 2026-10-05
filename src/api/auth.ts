@@ -17,19 +17,23 @@ export const authApi = {
       body: JSON.stringify({ username, password }),
       ...(cfTurnstileToken ? { headers: { 'X-CF-Turnstile-Response': cfTurnstileToken } } : {})
     }),
-  login: (username: string, password: string, cfTurnstileToken = '') =>
+  login: (username: string, password: string, cfTurnstileToken = '', remember = true) =>
     request<{ token: string; user: AuthUser }>('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, remember }),
       ...(cfTurnstileToken ? { headers: { 'X-CF-Turnstile-Response': cfTurnstileToken } } : {})
     }),
   // 修改密码：服务端校验当前密码，成功后吊销该账号其它会话并换发本次会话 token
-  changePassword: (oldPassword: string, newPassword: string, cfTurnstileToken = '') =>
+  changePassword: (oldPassword: string, newPassword: string, cfTurnstileToken = '', remember = true) =>
     request<{ ok: boolean; token: string }>('/api/auth/password', {
       method: 'POST',
-      body: JSON.stringify({ oldPassword, newPassword }),
+      body: JSON.stringify({ oldPassword, newPassword, remember }),
       ...(cfTurnstileToken ? { headers: { 'X-CF-Turnstile-Response': cfTurnstileToken } } : {})
     }),
   me: () => request<{ user: AuthUser }>('/api/auth/me'),
-  logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
+  logout: (token?: string) =>
+    request<{ ok: boolean }>('/api/auth/logout', {
+      method: 'POST',
+      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {})
+    })
 }

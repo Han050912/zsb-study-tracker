@@ -22,6 +22,8 @@ export interface Settings {
   joinProgressBoard: boolean
   /** 主页可见性：public 所有人 / login 登录(默认) / private 仅自己 */
   profileVisibility: 'public' | 'login' | 'private'
+  /** 在成长主页展示积分、连续打卡和学习统计；默认关闭 */
+  shareLearningStats: boolean
   /** 自定义头像相对 URL（/api/avatar/<file>；空 = 首字母兜底） */
   avatar: string
   /** 个人简介（≤100 字，我的页/访客主页展示） */

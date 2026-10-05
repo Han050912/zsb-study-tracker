@@ -19,6 +19,8 @@ import {
   habitValueError
 } from '../../utils/studyValidation'
 import { isCalendarDate, type GoalKey } from '../../utils/settingsValidation'
+import { sessionUser } from '../../services/auth'
+import { restoreOnboarding } from '../../services/onboarding'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type ImportExportActionsShape = {
@@ -108,6 +110,8 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         text(q.content) &&
         count(q.reviewCount) &&
         typeof q.mastered === 'boolean' &&
+        optional(q.lastReviewedAt, count) &&
+        optional(q.nextReviewDate, isCalendarDate) &&
         ['image', 'answer', 'chapter'].every((k) => optional(q[k], text))
     )
   )
@@ -141,6 +145,7 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         optional(m.priority, (v) => ['高', '中', '低'].includes(String(v))) &&
         optional(m.totalPages, count) &&
         optional(m.readPages, count) &&
+        optional(m.favorite, (v) => typeof v === 'boolean') &&
         (m.totalPages === undefined || m.readPages === undefined || Number(m.readPages) <= Number(m.totalPages)) &&
         ['url', 'fileName', 'author', 'notes', 'subjectId'].every((k) => optional(m[k], text))
     )
@@ -207,6 +212,7 @@ function validBackupFields(data: Record<string, unknown>): boolean {
       'doNotDisturb',
       'dndMuteMessage',
       'partnerShareEnabled',
+      'shareLearningStats',
       'partnerRemindEnabled'
     ].every((k) => optional(settings[k], (v) => typeof v === 'boolean')) ||
     !['reminderTime', 'dndStartTime', 'dndEndTime'].every((k) =>
@@ -405,6 +411,7 @@ export const importExportActions: ImportExportActionsShape = {
       // 备份中的积分仅供本地暂时展示；服务端从恢复的业务记录重新计算，绝不重放备份奖励。
       stagePoints({ op: 'revoke', all: true })
       this.$patch({ ...createDefaultState(), ...data })
+      restoreOnboarding(sessionUser.value?.id ?? null, this.settings)
       this.migrateLegacyData()
       // 恢复笔记正文：新备份单独携带 noteBodies；旧版备份退回 Note.content 内联字段。
       // 缺少 bodyUpdatedAt 的旧笔记恢复正文时前移时间戳，保证正文上传与服务端 LWW 判定必胜
@@ -440,6 +447,7 @@ export const importExportActions: ImportExportActionsShape = {
     stagePoints({ op: 'revoke', all: true })
     clearAllNoteBodies()
     this.$patch(createDefaultState())
+    restoreOnboarding(sessionUser.value?.id ?? null, this.settings)
     // 默认数据（内置科目/习惯/设置）作为新状态整体上行，对齐旧「整域替换」语义
     stageAllUpserts(this.$state, now)
     this.save()

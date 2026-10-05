@@ -20,6 +20,11 @@ const subjectProblems = computed(() =>
     .slice()
     .reverse()
 )
+const problemTotals = computed(() => {
+  const total = subjectProblems.value.reduce((sum, session) => sum + session.total, 0)
+  const correct = subjectProblems.value.reduce((sum, session) => sum + session.correct, 0)
+  return { total, correct, accuracy: total ? Math.round((correct / total) * 100) : null }
+})
 
 // ---- 刷题（题型模板按科目适配：数学/英语/通用，见 data/problemTypes.ts） ----
 const typeDefs = computed(() => problemTypesFor(props.subjectId))
@@ -90,11 +95,6 @@ function confirmSave() {
   showConfirm.value = false
   toast('刷题记录已保存')
 }
-const _accuracy = computed(() => {
-  const t = subjectProblems.value.reduce((s, p) => s + p.total, 0)
-  const c = subjectProblems.value.reduce((s, p) => s + p.correct, 0)
-  return t ? Math.round((c / t) * 100) : 0
-})
 
 // ---- 分享刷题成果到社区广场 ----
 const showShareComposer = ref(false)
@@ -148,11 +148,15 @@ function openProblemShare() {
       <h2 class="section-title !mb-0">刷题历史</h2>
       <button class="btn-ghost !py-1 !text-xs" @click="openProblemShare">分享到论坛</button>
     </div>
+    <p v-if="subjectProblems.length" class="mb-2 text-xs text-muted">
+      {{ subjectProblems.length }} 次记录 · 共 {{ problemTotals.total }} 题 · 答对 {{ problemTotals.correct }} 题 ·
+      正确率 {{ problemTotals.accuracy }}%
+    </p>
     <p v-if="!subjectProblems.length" class="py-6 text-sm text-muted">还没有刷题记录，完成练习后在上方记录。</p>
     <div class="space-y-1.5 max-h-72 overflow-y-auto">
       <div v-for="p in subjectProblems" :key="p.id" class="problem-record">
         <span class="text-xs text-muted w-20 shrink-0">{{ p.date }}</span>
-        <span class="flex-1">{{ p.correct }}/{{ p.total }} 题</span>
+        <span class="flex-1">共 {{ p.total }} 题 · 答对 {{ p.correct }} 题</span>
         <span
           class="text-xs font-semibold"
           :class="

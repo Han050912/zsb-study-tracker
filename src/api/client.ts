@@ -204,7 +204,10 @@ export async function authFetch(
     ...((options.headers as Record<string, string>) || {})
   }
   // 桌面端附加认证头（X-Desktop-Token 无条件发送；Authorization 仅在 token 存在时）
-  Object.assign(headers, desktopAuthHeaders())
+  const desktopHeaders = desktopAuthHeaders()
+  // 退出请求显式携带已清除的旧 JWT；其它窗口迟到的新凭据不能覆盖它并吊销新会话。
+  if (headers.Authorization) delete desktopHeaders.Authorization
+  Object.assign(headers, desktopHeaders)
   // 只重试幂等的 GET；调用方自传 signal（取消上传/下载）时同样不重试，避免把取消变成重复请求
   const isRetryable = (options.method ?? 'GET').toUpperCase() === 'GET' && !options.signal
   const maxRetries = isRetryable ? GET_MAX_RETRIES : 0

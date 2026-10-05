@@ -8,6 +8,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { createDefaultState, LEVELS, levelOf } from '../../data/defaults'
 import { today, daysBetween } from '../../utils/date'
+import { studyMinutesByDate, studyMinutesOn, totalStudyMinutes } from '../../utils/studyTime'
 import type { AppState, StudyRecord, Subject, Todo } from '../../types'
 
 import { syncActions } from './sync'
@@ -52,10 +53,10 @@ export const useAppStore = defineStore('app', {
       return this.records.filter((r) => r.date === this.todayKey)
     },
     todayMinutes(): number {
-      return this.todayRecords.reduce((s, r) => s + r.minutes, 0)
+      return studyMinutesOn(this, this.todayKey)
     },
     totalMinutes(): number {
-      return this.records.reduce((s, r) => s + r.minutes, 0)
+      return totalStudyMinutes(this)
     },
     totalProblems(): number {
       return this.problemSessions.reduce((s, p) => s + p.total, 0)
@@ -76,11 +77,9 @@ export const useAppStore = defineStore('app', {
       return d >= 0 ? d : null
     },
 
-    /** 某科目某日期时长 */
+    /** 每日学习时长（科目录入 + 已结算专注）。 */
     minutesByDate(): Record<string, number> {
-      const map: Record<string, number> = {}
-      for (const r of this.records) map[r.date] = (map[r.date] || 0) + r.minutes
-      return map
+      return studyMinutesByDate(this)
     }
   },
 

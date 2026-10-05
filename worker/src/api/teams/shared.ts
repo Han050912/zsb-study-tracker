@@ -79,7 +79,7 @@ export function mapChallenge(r: ChallengeRow & { my_progress?: number; my_comple
   }
 }
 
-/** 校验当前用户是否为小组成员 */
+/** 校验当前用户是否为小队成员 */
 export async function assertTeamMember(env: Env, userId: string, teamId: string): Promise<{ role: string }> {
   const member = await first<{ role: string }>(
     env,
@@ -87,7 +87,7 @@ export async function assertTeamMember(env: Env, userId: string, teamId: string)
     teamId,
     userId
   )
-  if (!member) throw new HttpError(403, '您不是该小组成员')
+  if (!member) throw new HttpError(403, '您不是该小队成员')
   return member
 }
 
@@ -97,7 +97,7 @@ export async function assertTeamLeader(env: Env, userId: string, teamId: string)
   if (member.role !== 'leader') throw new HttpError(403, '仅队长可操作')
 }
 
-/** 小组可读性校验：私密小组仅成员/管理员/持有效邀请码或被邀请申请人可读成员与挑战列表 */
+/** 小队可读性校验：私密小队仅成员/管理员/持有效邀请码或被邀请申请人可读成员与挑战列表 */
 export async function assertTeamReadable(
   ctx: { env: Env; userId: string; role?: string },
   team: TeamRow & { my_role?: string | null },
@@ -116,5 +116,5 @@ export async function assertTeamReadable(
   ) {
     return
   }
-  throw new HttpError(403, '私密小组仅成员可见')
+  throw new HttpError(403, '私密小队仅成员可见')
 }

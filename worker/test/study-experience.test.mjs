@@ -41,9 +41,12 @@ async function load(file, names, t) {
   globalThis.__studyHooks = []
   globalThis.__studyToasts = []
   globalThis.__studyCharts = []
+  globalThis.__studyConfirm = async () => true
   globalThis.__studyStore = reactive({
     subjects: [{ id: 'math', name: '数学', color: '#123456', chapters: [] }],
     notes: [],
+    todos: [],
+    errorQuestions: [],
     habits: [],
     materials: [],
     records: [],
@@ -77,6 +80,15 @@ async function load(file, names, t) {
     },
     updateHabitTarget(id, value) {
       this.habits.find((h) => h.id === id).target = value
+    },
+    toggleBadHabitCheckin(id, date) {
+      const h = this.habits.find((h) => h.id === id)
+      h.checkins ||= {}
+      if (h.checkins[date]) delete h.checkins[date]
+      else {
+        h.checkins[date] = 1
+        delete h.records[date]
+      }
     },
     importNotes(subjectId, items) {
       this.notes.push(...items.map((n) => ({ ...n, subjectId })))
@@ -119,7 +131,7 @@ async function load(file, names, t) {
           b.onResolve(
             {
               filter:
-                /(?:stores\/(?:app|studyTimer)|composables\/(?:useToast|useConfirm|useMarkdownHtml|useChart|useClock|useWallpaperRotation)|services\/(?:auth|noteBodies|maimemo)|stores\/app\/sync|api\/(?:pdfs|community\/partners))$/
+                /(?:stores\/(?:app|studyTimer)|composables\/(?:useToast|useConfirm|useMarkdownHtml|useChart|useClock|useWallpaperRotation|useOverlayDismiss)|services\/(?:auth|noteBodies|maimemo)|stores\/app\/sync|api\/(?:pdfs|community\/partners))$/
             },
             (args) => ({ path: args.path, namespace: 'mock' })
           )
@@ -135,7 +147,13 @@ async function load(file, names, t) {
             if (path.endsWith('/sync')) return { contents: 'export const MAX_FIELD_CHARS=1000000;' }
             if (path.endsWith('/useToast'))
               return { contents: 'export const useToast=()=>s=>globalThis.__studyToasts.push(s);' }
-            if (path.endsWith('/useConfirm')) return { contents: 'export const useConfirm=()=>async()=>true;' }
+            if (path.endsWith('/useConfirm'))
+              return { contents: 'export const useConfirm=()=>(...args)=>globalThis.__studyConfirm(...args);' }
+            if (path.endsWith('/useOverlayDismiss'))
+              return {
+                contents:
+                  'export const OVERLAY_LAYER={modal:"z-50"}; export const useOverlayDismiss=()=>({onOverlayMousedown(){},onOverlayClick(){}});'
+              }
             if (path.endsWith('/useClock'))
               return {
                 contents: `import {ref} from 'vue';export const useClock=()=>({now:ref(new Date('2026-10-02T12:00:00Z')),clockText:ref('20:00'),dateText:ref('2026-10-02')});`
@@ -238,6 +256,146 @@ test('习惯空输入/负数/小数保留原打卡，显式零允许清空；非
   app.editingTargetValue.value = -10
   app.saveTarget(h)
   assert.equal(h.target, 2)
+})
+
+test('重复勾选先确认，拒绝或等待确认保留打卡；确认后才撤销', async (t) => {
+  const app = await load('src/pages/Habits.vue', ['toggleHabit'], t)
+  const date = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)
+  const h = reactive({ id: 'check', type: 'checkbox', records: {} })
+  globalThis.__studyStore.habits = [h]
+  const prompts = []
+  globalThis.__studyConfirm = async (...args) => {
+    prompts.push(args)
+    return false
+  }
+  await app.toggleHabit(h)
+  assert.equal(h.records[date], 1)
+  assert.equal(prompts.length, 0)
+  await app.toggleHabit(h)
+  assert.equal(h.records[date], 1)
+  assert.equal(prompts.length, 1)
+  assert.equal(prompts[0][1].danger, true)
+  const confirmation = deferred()
+  globalThis.__studyConfirm = () => confirmation.promise
+  const pending = app.toggleHabit(h)
+  await app.toggleHabit(h)
+  assert.equal(h.records[date], 1)
+  confirmation.resolve(true)
+  await pending
+  assert.equal(h.records[date], 0)
+  assert.equal(globalThis.__studyToasts.at(-1), '已取消打卡')
+})
+
+test('取消克制或覆盖发生记录先确认，拒绝时保留原始次数和标记', async (t) => {
+  const app = await load('src/pages/Habits.vue', ['toggleCheckin'], t)
+  const date = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)
+  const h = reactive({ id: 'bad', type: 'count', bad: true, records: { [date]: 2 }, checkins: {} })
+  globalThis.__studyStore.habits = [h]
+  globalThis.__studyConfirm = async () => false
+  await app.toggleCheckin(h)
+  assert.equal(h.records[date], 2)
+  assert.equal(h.checkins[date], undefined)
+  globalThis.__studyConfirm = async () => true
+  await app.toggleCheckin(h)
+  assert.equal(h.records[date], undefined)
+  assert.equal(h.checkins[date], 1)
+  globalThis.__studyConfirm = async () => false
+  await app.toggleCheckin(h)
+  assert.equal(h.checkins[date], 1)
+})
+
+test('打卡确认跨午夜或原始记录已改变时，不改写新日或覆盖新数据', async (t) => {
+  const app = await load('src/pages/Habits.vue', ['toggleHabit', 'toggleCheckin'], t)
+  const originalNow = Date.now
+  let stamp = Date.parse('2026-10-05T15:59:50Z')
+  Date.now = () => stamp
+  t.after(() => {
+    Date.now = originalNow
+  })
+  const date = '2026-10-05',
+    next = '2026-10-06'
+  const good = reactive({ id: 'good', type: 'checkbox', records: { [date]: 1, [next]: 1 } })
+  const bad = reactive({ id: 'bad', type: 'count', bad: true, records: { [date]: 2, [next]: 3 }, checkins: {} })
+  globalThis.__studyStore.habits = [good, bad]
+  let confirmation = deferred()
+  globalThis.__studyConfirm = () => confirmation.promise
+  const pending = app.toggleHabit(good)
+  stamp += 20000
+  confirmation.resolve(true)
+  await pending
+  assert.equal(good.records[date], 1)
+  assert.equal(good.records[next], 1)
+  assert.match(globalThis.__studyToasts.at(-1), /日期已切换/)
+  stamp -= 20000
+  confirmation = deferred()
+  const badPending = app.toggleCheckin(bad)
+  stamp += 20000
+  confirmation.resolve(true)
+  await badPending
+  assert.equal(bad.records[date], 2)
+  assert.equal(bad.records[next], 3)
+  assert.deepEqual(bad.checkins, {})
+  stamp -= 20000
+  confirmation = deferred()
+  const changedPending = app.toggleCheckin(bad)
+  bad.records[date] = 4
+  confirmation.resolve(true)
+  await changedPending
+  assert.equal(bad.records[date], 4)
+  assert.deepEqual(bad.checkins, {})
+  assert.match(globalThis.__studyToasts.at(-1), /记录已更新/)
+})
+
+test('总结按业务日聚合任务、当前待复习错题、笔记和未分科目专注时长', async (t) => {
+  const app = await load('src/pages/DailySummary.vue', ['aggregateDay', 'dayData', 'editDate'], t)
+  const store = globalThis.__studyStore
+  const date = '2026-10-05'
+  store.todos = [
+    { id: 'task', date, text: 'QA 提醒测试任务', done: false },
+    { id: 'done', date, text: '复习极限', done: true },
+    { id: 'past', date: '2026-10-04', text: '昨天任务', done: true }
+  ]
+  store.errorQuestions = [
+    { date, mastered: false },
+    { date: '2026-10-04', mastered: false },
+    { date, mastered: true },
+    { date: '2026-10-06', mastered: false }
+  ]
+  store.notes = [
+    { id: 'note-a', updatedAt: Date.parse('2026-10-04T16:01:00Z') },
+    { id: 'note-b', updatedAt: Date.parse('2026-10-05T15:59:00Z') },
+    { id: 'past', updatedAt: Date.parse('2026-10-04T15:59:00Z') }
+  ]
+  store.records = [{ date, minutes: 4, subjectId: 'math' }]
+  store.pomodoro.daily[date] = { count: 1, minutes: 1 }
+  store.pomodoro.records = [{ date, minutes: 1, completed: true }]
+  const day = app.aggregateDay(date)
+  assert.equal(day.minutes, 5)
+  assert.equal(day.focusMinutes, 1)
+  assert.equal(day.bySubject.math, 4)
+  assert.equal(day.tasks.length, 2)
+  assert.equal(day.tasks[0].text, 'QA 提醒测试任务')
+  assert.equal(day.completedTasks, 1)
+  assert.equal(day.pendingErrors, 2)
+  assert.equal(day.updatedNotes, 2)
+  app.editDate.value = date
+  store.todos[0].done = true
+  store.errorQuestions[0].mastered = true
+  assert.equal(app.dayData.value.completedTasks, 2)
+  assert.equal(app.dayData.value.pendingErrors, 1)
+})
+
+test('总结只打开往日日期，今天和未来日期不会生成空卡片', async (t) => {
+  const app = await load('src/pages/DailySummary.vue', ['openDayCard', 'cardDate', 'editDate'], t)
+  const date = app.editDate.value
+  const future = new Date(Date.parse(`${date}T00:00:00Z`) + 86400_000).toISOString().slice(0, 10)
+  const past = new Date(Date.parse(`${date}T00:00:00Z`) - 86400_000).toISOString().slice(0, 10)
+  app.openDayCard(future)
+  assert.equal(app.cardDate.value, '')
+  app.openDayCard(date)
+  assert.equal(app.cardDate.value, '')
+  app.openDayCard(past)
+  assert.equal(app.cardDate.value, past)
 })
 
 test('笔记分享保存当前草稿且等待同步；失败不打开分享窗', async (t) => {

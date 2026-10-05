@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, defineAsyncComponent } from 'vue'
+import { ref, computed, defineAsyncComponent, watch } from 'vue'
 import { getErrorMessage } from '../utils/error'
 import { useRouter } from 'vue-router'
 import { Eye, EyeOff, ArrowRight, BookOpen, ListChecks, Timer, NotebookPen } from '@lucide/vue'
-import { login, register, enterGuestMode } from '../services/auth'
+import { login, register, enterGuestMode, passwordPolicyError } from '../services/auth'
 import { retryBoot } from '../composables/useAppBoot'
 
 const router = useRouter()
@@ -16,8 +16,19 @@ const showPassword = ref(false)
 const showConfirmPassword = ref(false)
 const errorMsg = ref('')
 const loading = ref(false)
+const rememberMe = ref(true)
 // 忘记密码说明面板：账号无邮箱/手机号绑定，无自助找回渠道，面板给出可行路径
 const showForgotHint = ref(false)
+const registrationPasswordError = computed(() =>
+  mode.value === 'register' && password.value ? passwordPolicyError(password.value) : null
+)
+watch(
+  [username, password, confirmPassword],
+  () => {
+    errorMsg.value = ''
+  },
+  { flush: 'sync' }
+)
 
 // ---- Turnstile 人机验证（仅 Web 端） ----
 // __DESKTOP_BUILD__ 为编译期常量：桌面端构建时为 true，
@@ -27,10 +38,19 @@ const TurnstileWidget = isDesktop ? null : defineAsyncComponent(() => import('..
 const turnstileWidget = ref<{ reset: () => void } | null>(null)
 const turnstileToken = ref('')
 const turnstileKey = ref(0) // 递增以强制重新挂载 TurnstileWidget
-const turnstileError = ref(false) // Turnstile 加载失败的独立状态
+const turnstileError = ref('') // SDK 与验证挑战失败均给出可操作的原因。
+function onTurnstileError(message?: string) {
+  turnstileError.value = message || '人机验证未能加载。请检查网络连接后重新加载验证。'
+}
+watch(turnstileToken, (token) => {
+  if (!token) return
+  if (errorMsg.value === '请先完成人机验证' || errorMsg.value === turnstileError.value) errorMsg.value = ''
+  turnstileError.value = ''
+})
 
 function retryTurnstile() {
-  turnstileError.value = false
+  turnstileError.value = ''
+  errorMsg.value = ''
   turnstileToken.value = ''
   turnstileKey.value++
 }
@@ -65,28 +85,19 @@ async function submit() {
     errorMsg.value = '两次输入的密码不一致'
     return
   }
-  // 注册密码策略与服务端 registerSchema 对齐：8-14 位且同时包含字母和数字
-  if (
-    mode.value === 'register' &&
-    !(
-      password.value.length >= 8 &&
-      password.value.length <= 14 &&
-      /[A-Za-z]/.test(password.value) &&
-      /\d/.test(password.value)
-    )
-  ) {
-    errorMsg.value = '密码需为 8-14 位且包含字母和数字'
+  if (registrationPasswordError.value) {
+    errorMsg.value = registrationPasswordError.value
     return
   }
   // 未完成验证或令牌过期（expired-callback 清空 token）时按钮仍可点，统一在提交时给出明确提示
   if (!isDesktop && !turnstileToken.value) {
-    errorMsg.value = '请先完成人机验证'
+    errorMsg.value = turnstileError.value || '请先完成人机验证'
     return
   }
   loading.value = true
   try {
     if (mode.value === 'login') {
-      await login(username.value.trim(), password.value, turnstileToken.value)
+      await login(username.value.trim(), password.value, turnstileToken.value, rememberMe.value)
     } else {
       await register(username.value.trim(), password.value, turnstileToken.value)
     }
@@ -102,6 +113,7 @@ async function submit() {
     } else {
       errorMsg.value = msg
     }
+    // 服务端先验证 Turnstile；即使密码错误，令牌也已消耗，重试必须获取新令牌。
     turnstileWidget.value?.reset()
   } finally {
     loading.value = false
@@ -193,6 +205,8 @@ async function submit() {
                 :maxlength="mode === 'register' ? 14 : 128"
                 :placeholder="mode === 'register' ? '8-14 位' : '请输入密码'"
                 :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
+                :aria-describedby="mode === 'register' ? 'password-hint' : undefined"
+                :aria-invalid="mode === 'register' ? !!registrationPasswordError : undefined"
               />
               <button
                 type="button"
@@ -206,7 +220,17 @@ async function submit() {
                 <EyeOff v-else :size="16" aria-hidden="true" />
               </button>
             </div>
-            <p v-if="mode === 'register'" class="login-field-hint">8-14 位，需包含字母和数字</p>
+            <p
+              v-if="mode === 'register'"
+              id="password-hint"
+              class="login-field-hint"
+              :class="{ 'is-invalid': registrationPasswordError, 'is-valid': password && !registrationPasswordError }"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              {{ password ? registrationPasswordError || '密码格式符合要求' : '8-14 位，需包含字母和数字' }}
+            </p>
           </div>
           <div v-if="mode === 'register'">
             <label class="login-label" for="confirm-password">确认密码</label>
@@ -236,24 +260,31 @@ async function submit() {
           </div>
 
           <!-- Turnstile 人机验证（仅 Web 端渲染，桌面端产物不含此组件） -->
+          <label v-if="mode === 'login'" class="login-remember">
+            <input v-model="rememberMe" type="checkbox" :disabled="loading" aria-describedby="login-session-hint" />
+            <span>保持登录（最长 3 天）</span>
+          </label>
+          <p v-if="mode === 'login'" id="login-session-hint" class="login-field-hint !mt-0">
+            取消勾选后仅本次会话有效；退出登录会立即结束会话。
+          </p>
           <TurnstileWidget
             v-if="!isDesktop"
             :key="turnstileKey"
             ref="turnstileWidget"
             v-model:token="turnstileToken"
-            @load-error="turnstileError = true"
+            @load-error="onTurnstileError"
           />
 
           <!-- Turnstile 加载失败（含手动重试） -->
           <div v-if="turnstileError" class="login-error" role="alert">
-            <p>人机验证未能加载。请检查网络或刷新页面，再重试验证。</p>
+            <p>{{ turnstileError }}</p>
             <button type="button" class="login-retry" @click="retryTurnstile">
               重新加载验证 <ArrowRight :size="16" aria-hidden="true" />
             </button>
           </div>
 
           <!-- 其他错误 -->
-          <p v-if="errorMsg" class="login-error" role="alert">{{ errorMsg }}</p>
+          <p :class="errorMsg ? 'login-error' : 'sr-only'" role="alert" aria-atomic="true">{{ errorMsg }}</p>
 
           <button type="submit" class="btn-primary login-submit" :disabled="loading">
             {{
@@ -440,7 +471,14 @@ async function submit() {
 .login-field-hint {
   margin-top: 6px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.login-field-hint.is-invalid {
+  color: var(--correction);
+}
+.login-field-hint.is-valid {
+  color: var(--action);
 }
 .login-error {
   padding: 12px;
@@ -470,6 +508,20 @@ async function submit() {
   width: 100%;
   min-height: 46px;
   margin-top: 4px;
+}
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.login-remember input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--action);
 }
 .login-recovery {
   margin-top: 8px;

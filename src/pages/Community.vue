@@ -30,20 +30,20 @@ const dailyPost = ref<CommunityPost | null>(null),
   sentinel = ref<HTMLElement | null>(null)
 const primaryTabs = [
   { value: 'recommend', label: '推荐' },
+  { value: 'featured', label: '精华' },
   { value: 'follow', label: '关注' },
   { value: 'question', label: '提问' },
   { value: 'circles', label: '圈子' }
 ]
 const activeView = computed(() => (primaryTabs.some((t) => t.value === view.value) ? view.value : 'recommend'))
-const emptyMessage = computed(() =>
-  view.value === 'follow'
-    ? '关注同学后，他们的学习动态会出现在这里。'
-    : view.value === 'question'
-      ? '这个筛选下还没有问题，把你的疑惑写下来。'
-      : feed.tag || feed.query.keyword
-        ? '没有找到相关讨论，试试其他关键词或标签。'
-        : '还没有讨论，可以分享一道真题或你的复习方法。'
-)
+const emptyMessage = computed(() => {
+  if (feed.tag || feed.query.keyword)
+    return `没有找到${feed.tag ? `「${feed.tag}」话题下的` : ''}${view.value === 'featured' ? '精华' : ''}相关讨论，试试其他关键词或清除筛选。`
+  if (view.value === 'featured') return '还没有精华讨论，值得推荐的解题思路和复习经验会出现在这里。'
+  if (view.value === 'follow') return '关注同学后，他们的学习动态会出现在这里。'
+  if (view.value === 'question') return '还没有问题，把你的疑惑写下来。'
+  return '还没有讨论，可以分享一道真题或你的复习方法。'
+})
 function chooseView(value: string) {
   if (['follow', 'circles'].includes(value) && requireLogin(router)) return
   void setQuery({ view: value, q: undefined })
@@ -120,13 +120,6 @@ onUnmounted(() => observer?.disconnect())
                 @click="setQuery({ sort })"
               >
                 {{ sort === 'latest' ? '最新' : '热门' }}
-              </button>
-              <button
-                class="discussion-filter"
-                :aria-pressed="view === 'featured'"
-                @click="setQuery({ view: view === 'featured' ? 'recommend' : 'featured' })"
-              >
-                精华
               </button>
             </div>
             <div class="discussion-filter-group discussion-topic-filters" role="group" aria-label="讨论话题">

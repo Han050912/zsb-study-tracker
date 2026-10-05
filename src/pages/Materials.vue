@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUpRight } from '@lucide/vue'
+import { ArrowUpRight, Bookmark } from '@lucide/vue'
 import IconAction from '../shared/components/IconAction.vue'
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useToast } from '../composables/useToast'
@@ -14,6 +14,7 @@ import { subjectLabel } from '../utils/subject'
 import type { Material } from '../types'
 import { materialPagesError } from '../utils/studyValidation'
 import { sessionUser } from '../services/auth'
+import { materialFileBlob } from '../utils/materialFile'
 
 const store = useAppStore()
 const toast = useToast()
@@ -21,6 +22,9 @@ const confirm = useConfirm()
 
 const filterType = ref('')
 const filterSubject = ref('')
+const keyword = ref('')
+const onlyFavorites = ref(false)
+const favoriteCount = computed(() => store.materials.filter((m) => m.favorite).length)
 
 const TYPES = [
   { k: 'book', l: '书籍' },
@@ -33,14 +37,33 @@ const list = computed(() => {
   let l = store.materials.slice().reverse()
   if (filterType.value) l = l.filter((m) => m.type === filterType.value)
   if (filterSubject.value) l = l.filter((m) => m.subjectId === filterSubject.value)
+  if (onlyFavorites.value) l = l.filter((m) => m.favorite)
+  const query = keyword.value.trim().toLocaleLowerCase()
+  if (query) {
+    l = l.filter((m) =>
+      [m.title, m.author, m.notes, m.fileName, m.subjectId ? subjectLabel(store.subjectMap[m.subjectId]) : '']
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(query)
+    )
+  }
   return l
 })
 
-const hasFilter = computed(() => !!filterType.value || !!filterSubject.value)
+const hasFilter = computed(() => !!filterType.value || !!filterSubject.value || !!keyword.value.trim())
 
 function clearFilters() {
   filterType.value = ''
   filterSubject.value = ''
+  keyword.value = ''
+}
+
+function toggleFavorite(m: Material) {
+  const favorite = !m.favorite
+  store.updateMaterial(m.id, { favorite })
+  if (form.value.id === m.id) form.value.favorite = favorite
+  toast(favorite ? '已收藏，可在收藏夹查看' : '已取消收藏')
 }
 
 const showModal = ref(false)
@@ -195,16 +218,11 @@ function progress(m: Material) {
 }
 
 /** 打开资料链接：dataURL（上传的文件）转 Blob 对象 URL 打开；普通链接先规范化再新标签页打开 */
-function openLink(url?: string) {
+function openLink(url?: string, fileName?: string) {
   if (!url) return
   if (url.startsWith('data:')) {
     try {
-      const [meta, base64] = url.split(',')
-      const mime = meta.match(/data:(.*?)(;|$)/)?.[1] || 'application/octet-stream'
-      const bin = atob(base64)
-      const bytes = new Uint8Array(bin.length)
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-      const blobUrl = URL.createObjectURL(new Blob([bytes], { type: mime }))
+      const blobUrl = URL.createObjectURL(materialFileBlob(url, fileName))
       window.open(blobUrl, '_blank', 'noopener,noreferrer')
       // 延迟回收对象 URL，给浏览器留出打开时间
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
@@ -246,6 +264,13 @@ const priorityColor: Record<string, string> = {
     </div>
 
     <div class="page-toolbar">
+      <input
+        v-model="keyword"
+        type="search"
+        aria-label="搜索学习资料"
+        placeholder="搜索标题、作者、科目或笔记"
+        class="input flex-1 min-w-0 sm:min-w-60"
+      />
       <select aria-label="筛选资料类型" v-model="filterType" class="input !w-auto">
         <option value="">全部类型</option>
         <option v-for="t in TYPES" :key="t.k" :value="t.k">{{ t.l }}</option>
@@ -256,13 +281,41 @@ const priorityColor: Record<string, string> = {
       </select>
     </div>
 
+    <div class="flex gap-2 flex-wrap" aria-label="资料范围">
+      <button
+        type="button"
+        class="btn-ghost"
+        :class="!onlyFavorites ? 'bg-action-soft text-action' : ''"
+        :aria-pressed="!onlyFavorites"
+        @click="onlyFavorites = false"
+      >
+        全部资料
+      </button>
+      <button
+        type="button"
+        class="btn-ghost"
+        :class="onlyFavorites ? 'bg-action-soft text-action' : ''"
+        :aria-pressed="onlyFavorites"
+        @click="onlyFavorites = true"
+      >
+        <Bookmark :size="16" aria-hidden="true" /> 收藏夹（{{ favoriteCount }}）
+      </button>
+    </div>
+
     <EmptyState
       v-if="!list.length"
       class="card"
-      :title="hasFilter ? '没有符合条件的资料' : '整理你的学习资料'"
-      :description="hasFilter ? '换个条件试试，或查看全部资料。' : '把教材、课程和常用链接放在一起，随时继续学习。'"
+      :title="hasFilter ? '没有符合条件的资料' : onlyFavorites ? '收藏夹还没有资料' : '整理你的学习资料'"
+      :description="
+        hasFilter
+          ? '换个关键词或筛选条件试试。'
+          : onlyFavorites
+            ? '点击资料上的收藏按钮，把常用资料放在这里。'
+            : '把教材、课程和常用链接放在一起，随时继续学习。'
+      "
     >
       <button v-if="hasFilter" class="btn-ghost" @click="clearFilters">清除筛选</button>
+      <button v-else-if="onlyFavorites" class="btn-ghost" @click="onlyFavorites = false">查看全部资料</button>
       <button v-else class="btn-primary" @click="open()">添加第一份资料</button>
     </EmptyState>
 
@@ -281,6 +334,16 @@ const priorityColor: Record<string, string> = {
           <span class="text-[10px] px-1.5 py-0.5 rounded shrink-0" :class="priorityColor[m.priority]">{{
             m.priority
           }}</span>
+          <button
+            type="button"
+            class="btn-ghost !p-2 shrink-0"
+            :class="m.favorite ? 'text-action' : 'text-muted'"
+            :aria-pressed="!!m.favorite"
+            :aria-label="`${m.favorite ? '取消收藏' : '收藏'}「${m.title}」`"
+            @click.stop="toggleFavorite(m)"
+          >
+            <Bookmark :size="18" :fill="m.favorite ? 'currentColor' : 'none'" aria-hidden="true" />
+          </button>
         </div>
         <div class="text-xs text-slate-400 mt-1 space-x-2">
           <span v-if="m.author">{{ m.author }}</span>
@@ -298,13 +361,13 @@ const priorityColor: Record<string, string> = {
         <span
           v-if="m.url"
           class="text-xs text-action mt-2 inline-block hover:underline arrow-action"
-          @click.stop="openLink(m.url)"
+          @click.stop="openLink(m.url, m.fileName)"
         >
           {{ m.fileName ? `打开文件「${m.fileName}」` : '打开链接' }}
           <IconAction
             :icon="ArrowUpRight"
             :label="m.fileName ? `打开文件「${m.fileName}」` : '打开链接'"
-            @click.stop="openLink(m.url)"
+            @click.stop="openLink(m.url, m.fileName)"
           />
         </span>
       </div>
@@ -312,6 +375,9 @@ const priorityColor: Record<string, string> = {
 
     <Modal title="资料信息" :show="showModal" @close="showModal = false">
       <div class="space-y-3">
+        <label class="flex items-center gap-2 text-sm cursor-pointer">
+          <input v-model="form.favorite" type="checkbox" /> 收藏到资料收藏夹
+        </label>
         <input
           v-model="form.title"
           class="input"

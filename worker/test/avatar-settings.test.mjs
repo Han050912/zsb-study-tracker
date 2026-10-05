@@ -9,7 +9,8 @@ import path from 'node:path'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const compiled = await build({
   stdin: {
-    contents: `export { settingsRecordStatements, getSettings } from './worker/src/api/settings'; export { decryptSecret } from './worker/src/crypto';`,
+    contents: `export { settingsRecordStatements, getSettings } from './worker/src/api/settings'; export { decryptSecret } from './worker/src/crypto';
+      import { registerUsersRoutes } from './worker/src/api/community/users'; registerUsersRoutes(); export { route } from './worker/src/router';`,
     resolveDir: root
   },
   bundle: true,
@@ -21,7 +22,7 @@ const directory = path.join(root, '.cache', 'avatar-tests')
 await mkdir(directory, { recursive: true })
 const modulePath = path.join(directory, `settings-${crypto.randomUUID()}.mjs`)
 await writeFile(modulePath, compiled.outputFiles[0].text)
-const { settingsRecordStatements, getSettings, decryptSecret } = await import(pathToFileURL(modulePath).href)
+const { settingsRecordStatements, getSettings, decryptSecret, route } = await import(pathToFileURL(modulePath).href)
 await unlink(modulePath)
 const schema = await readFile(new URL('../schema.sql', import.meta.url), 'utf8')
 
@@ -33,10 +34,15 @@ function setup() {
     return {
       bind: (...values) => statement(sql, values),
       first: async () => db.prepare(sql).get(...args) ?? null,
+      all: async () => ({ results: db.prepare(sql).all(...args) }),
       run: async () => db.prepare(sql).run(...args)
     }
   }
-  const env = { DB: { prepare: statement }, JWT_SECRET: 'avatar-settings-test-secret' }
+  const env = {
+    DB: { prepare: statement },
+    JWT_SECRET: 'avatar-settings-test-secret',
+    RL_30: { limit: async () => ({ success: true }) }
+  }
   async function save(value, updatedAt = 2, seq = 2) {
     const statements = await settingsRecordStatements(env, 'me', value, { updatedAt, seq })
     db.exec('BEGIN')
@@ -102,6 +108,28 @@ test('未传头像不擦除已上传头像，显式空字符串仍可清除头�
     assert.equal((await getSettings(env, 'me')).avatar, '/api/avatar/0123456789abcdef.webp')
     await save({ userName: '修改昵称', avatar: '' }, 4, 4)
     assert.equal((await getSettings(env, 'me')).avatar, '')
+  } finally {
+    db.close()
+  }
+})
+
+test('移除头像保存后设置冷读与公开资料均为空，后续昵称编辑不恢复旧头像', async () => {
+  const { db, env, save } = setup()
+  const profile = async () => {
+    const response = await route(new Request('https://avatar.invalid/api/community/users/me/profile'), env)
+    assert.equal(response.status, 200)
+    return response.json()
+  }
+  try {
+    await save({ userName: '备考同学', avatar: '/api/avatar/0123456789abcdef.webp', profileVisibility: 'public' })
+    assert.equal((await profile()).avatar, '/api/avatar/0123456789abcdef.webp')
+    await save({ ...(await getSettings(env, 'me')), avatar: '' }, 3, 3)
+    assert.equal((await getSettings(env, 'me')).avatar, '')
+    assert.equal((await profile()).avatar, '')
+    await save({ userName: '新昵称', profileVisibility: 'public' }, 4, 4)
+    assert.equal((await getSettings(env, 'me')).avatar, '')
+    assert.equal((await profile()).avatar, '')
+    assert.equal((await profile()).userName, '新昵称')
   } finally {
     db.close()
   }

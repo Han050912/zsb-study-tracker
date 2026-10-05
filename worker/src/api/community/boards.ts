@@ -2,6 +2,7 @@ import { on } from '../../router'
 import { all, first, utc8Today } from '../../db'
 import { rateLimit } from '../../middleware/rateLimit'
 import { mapPost, POST_SELECT, nowSec } from './shared'
+import { userDisplayName } from '../../userDisplayName'
 
 /**
  * 社区广场榜单域路由：每日一题 / 每日打卡榜 / 学习周报 / 学习进度榜 / 个性化推荐 / 热门话题。
@@ -28,6 +29,7 @@ export function registerBoardsRoutes() {
       all<{
         user_id: string
         user_name: string
+        user_code: string | null
         points: number
         streak: number
         today_points: number
@@ -36,13 +38,13 @@ export function registerBoardsRoutes() {
       }>(
         ctx.env,
         `
-        SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak, u.verified,
+        SELECT g.user_id, s.user_name, u.user_code, g.points, g.streak, u.verified,
           s.avatar AS user_avatar, SUM(pl.points) AS today_points
         FROM points_log pl
         JOIN gamification g ON g.user_id = pl.user_id AND g.last_checkin = ?
         JOIN users u ON u.id = pl.user_id
         LEFT JOIN user_settings s ON s.user_id = pl.user_id
-        WHERE pl.date = ?
+        WHERE pl.date = ? AND s.share_learning_stats = 1 AND s.profile_visibility != 'private'
         GROUP BY pl.user_id
         ORDER BY today_points DESC, g.points DESC
         LIMIT 10`,
@@ -52,6 +54,7 @@ export function registerBoardsRoutes() {
       all<{
         user_id: string
         user_name: string
+        user_code: string | null
         points: number
         streak: number
         verified: number
@@ -59,12 +62,12 @@ export function registerBoardsRoutes() {
       }>(
         ctx.env,
         `
-        SELECT g.user_id, COALESCE(s.user_name, u.username) AS user_name, g.points, g.streak, u.verified,
+        SELECT g.user_id, s.user_name, u.user_code, g.points, g.streak, u.verified,
           s.avatar AS user_avatar
         FROM gamification g
         JOIN users u ON u.id = g.user_id
         LEFT JOIN user_settings s ON s.user_id = g.user_id
-        WHERE g.streak > 0
+        WHERE g.streak > 0 AND s.share_learning_stats = 1 AND s.profile_visibility != 'private'
         ORDER BY g.streak DESC, g.points DESC
         LIMIT 5`
       ),
@@ -86,7 +89,7 @@ export function registerBoardsRoutes() {
     return Response.json({
       today: todayRows.map((r) => ({
         userId: r.user_id,
-        userName: r.user_name || '升本人',
+        userName: userDisplayName(r.user_name, r.user_code, r.user_id),
         userAvatar: r.user_avatar ?? undefined,
         todayPoints: r.today_points,
         streak: r.streak,
@@ -96,7 +99,7 @@ export function registerBoardsRoutes() {
       })),
       streak: streakRows.map((r) => ({
         userId: r.user_id,
-        userName: r.user_name || '升本人',
+        userName: userDisplayName(r.user_name, r.user_code, r.user_id),
         userAvatar: r.user_avatar ?? undefined,
         streak: r.streak,
         totalPoints: r.points,

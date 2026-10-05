@@ -14,8 +14,8 @@ const props = defineProps<{ profile: CommunityUserProfile; isSelf: boolean }>()
 const emit = defineEmits<{ edit: []; 'follow-change': [following: boolean] }>()
 const router = useRouter()
 const store = useAppStore()
-const level = computed(() => levelOf(props.profile.points))
-const avatar = computed(() => (props.isSelf ? store.settings.avatar || props.profile.avatar : props.profile.avatar))
+const level = computed(() => levelOf(props.profile.points ?? 0))
+const avatar = computed(() => (props.isSelf ? store.settings.avatar : props.profile.avatar))
 
 // 头像加载失败回退首字母渐变（同 UserAvatar 口径）；换新头像后允许重新尝试加载
 const avatarFailed = ref(false)
@@ -77,7 +77,7 @@ function goMessage() {
           <span class="text-xl font-bold truncate">{{ profile.userName }}</span>
           <BadgeCheck v-if="profile.verified" :size="14" class="text-action shrink-0" aria-hidden="true" />
           <span
-            v-if="!profile.profilePrivate"
+            v-if="!profile.profilePrivate && !profile.learningStatsPrivate"
             class="text-xs px-1.5 py-0.5 rounded-full shrink-0"
             :style="{ color: 'var(--muted)' }"
             >{{ level.name }}学者</span
@@ -88,7 +88,7 @@ function goMessage() {
           {{ profile.bio || '还没有填写备考介绍' }}
         </p>
         <div class="text-xs text-slate-400 mt-1">
-          <span v-if="!profile.profilePrivate"
+          <span v-if="!profile.profilePrivate && !profile.learningStatsPrivate"
             >{{ profile.points }} 积分 · {{ profile.streak }} 天连续打卡<template v-if="profile.expertise">
               ·
             </template></span

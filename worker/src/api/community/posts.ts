@@ -214,7 +214,7 @@ export function registerPostsRoutes() {
     const comments = await all(
       ctx.env,
       `
-      SELECT c.*, COALESCE(s.user_name, u.username) AS user_name,
+      SELECT c.*, s.user_name, u.user_code,
         u.verified AS user_verified, s.avatar AS user_avatar,
         (l.user_id IS NOT NULL) AS liked_by_me,
         (d.user_id IS NOT NULL) AS disliked_by_me

@@ -3,6 +3,7 @@ import { on, body } from '../router'
 import { all, first, run, batch, uid, HttpError } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import { displayName, notifyStatement } from './community'
+import { userDisplayName } from '../userDisplayName'
 
 const nowSec = () => Math.floor(Date.now() / 1000)
 
@@ -238,7 +239,7 @@ export function registerPartnerRoutes() {
     const candidates = await all<any>(
       ctx.env,
       `
-      SELECT u.id, u.username, u.verified, COALESCE(s.user_name, u.username) AS user_name,
+      SELECT u.id, u.user_code, u.verified, s.user_name,
         s.avatar, s.exam_date, COALESCE(g.points, 0) AS total_points
       FROM users u
       LEFT JOIN user_settings s ON s.user_id = u.id
@@ -314,7 +315,8 @@ export function registerPartnerRoutes() {
       if (hours > 0) reasons.push('学习时段相近')
       suggestions.push({
         userId: c.id,
-        userName: c.user_name || '升本人',
+        userCode: c.user_code || undefined,
+        userName: userDisplayName(c.user_name, c.user_code, c.id),
         verified: !!c.verified,
         userAvatar: c.avatar ?? undefined,
         totalPoints: c.total_points,

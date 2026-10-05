@@ -13,6 +13,7 @@ const props = defineProps<{
   teamName: string
   members: TeamMember[]
   submitting: boolean
+  disbandOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -26,6 +27,7 @@ const confirmName = ref('')
 watch(
   () => props.show,
   () => {
+    leaveMode.value = 'disband'
     confirmName.value = ''
     transferTargetId.value = ''
   }
@@ -33,7 +35,7 @@ watch(
 </script>
 
 <template>
-  <Modal :show="show" title="退出小组" @close="emit('update:show', false)">
+  <Modal :show="show" :title="disbandOnly ? '解散小队' : '退出小队'" @close="emit('update:show', false)">
     <div class="space-y-3">
       <button
         class="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 p-3 transition-colors"
@@ -45,10 +47,11 @@ watch(
         @click="leaveMode = 'disband'"
       >
         <div class="text-sm font-semibold text-correction">解散小队</div>
-        <div class="text-xs text-slate-400 mt-0.5">解散后小组与全部挑战将被删除，不可撤销</div>
+        <div class="text-xs text-slate-400 mt-0.5">解散后小队与全部挑战将被删除，不可撤销</div>
       </button>
 
       <button
+        v-if="!disbandOnly"
         class="w-full text-left rounded-xl border border-slate-200 dark:border-slate-700 p-3 transition-colors"
         :class="
           leaveMode === 'transfer'
@@ -58,7 +61,7 @@ watch(
         @click="leaveMode = 'transfer'"
       >
         <div class="text-sm font-semibold">转让队长并退出</div>
-        <div class="text-xs text-slate-400 mt-0.5">选一名成员接任队长，你将退出小组</div>
+        <div class="text-xs text-slate-400 mt-0.5">选一名成员接任队长，你将退出小队</div>
       </button>
 
       <div v-if="leaveMode === 'transfer'" class="space-y-1 pt-1">

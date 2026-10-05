@@ -3,10 +3,9 @@ import IconAction from '../shared/components/IconAction.vue'
 import LoadingState from '../shared/components/LoadingState.vue'
 /**
  * 个人主页（访客态/本人态通用）：社交资料 + 作品 + 学习履历可视化。
- * 公开信息：等级/积分/徽章墙/连续打卡/学习时长热力图/做题统计/科目分布。
- * 隐私控制：仅公开为主，后续可扩展可见性设置。
+ * 学习数据由本人主动公开；社交资料与作品沿用主页可见性。
  */
-import { onMounted, ref, computed } from 'vue'
+import { onUnmounted, ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { usersApi } from '../api/community/users'
 import { TriangleAlert, ArrowLeft } from '@lucide/vue'
@@ -25,20 +24,22 @@ import type { CommunityUserProfile, UserStudyStats } from '../types'
 const route = useRoute()
 const { goBack } = useBack()
 
-const userId = route.params.id as string
+const userId = computed(() => String(route.params.id ?? ''))
 
 const profile = ref<CommunityUserProfile | null>(null)
 const stats = ref<UserStudyStats | null>(null)
 /** 学习统计加载失败：不用 0 兜底，展示「学习数据加载失败，点击重试」（概览与热力图区域） */
 const statsError = ref(false)
+const statsLoading = ref(false)
 const loading = ref(true)
 const error = ref('')
 const worksTab = ref<'posts' | 'likes'>('posts')
 const showEdit = ref(false)
 
-const isSelf = computed(() => userId === (sessionUser.value?.id ?? ''))
+const isSelf = computed(() => userId.value === (sessionUser.value?.id ?? ''))
 /** 私密主页降级视图：profile 仅含公开子集（昵称/头像/蓝V/关注状态），学习数据与作品缺省 */
 const profilePrivate = computed(() => !!profile.value?.profilePrivate)
+const canViewLearningStats = computed(() => isSelf.value || profile.value?.learningStatsPrivate === false)
 
 // 热力图点击：查看选中日期的学习总时长（公开数据，与首页热力图交互一致）
 const heatDate = ref('')
@@ -57,28 +58,53 @@ const monthHours = computed(() => Math.floor((stats.value?.monthStudy.minutes ??
 const monthMinutes = computed(() => (stats.value?.monthStudy.minutes ?? 0) % 60)
 
 // profile 与 stats 分开加载：私密主页（非本人）时 stats 会 403，但不阻塞资料卡与关注按钮渲染
+let profileTicket = 0
+let statsTicket = 0
 async function loadAll() {
+  const ticket = ++profileTicket
+  ++statsTicket
+  const targetId = userId.value
+  loading.value = true
+  error.value = ''
+  profile.value = null
+  stats.value = null
+  statsError.value = false
+  statsLoading.value = false
+  heatDate.value = ''
   try {
-    profile.value = await usersApi.profile(userId)
+    const result = await usersApi.profile(targetId)
+    if (ticket !== profileTicket) return
+    profile.value = result
   } catch (e) {
+    if (ticket !== profileTicket) return
     if ((e as { status?: number } | null)?.status === 403) error.value = '对方设置了主页仅自己可见'
     else error.value = '用户不存在或已注销'
     loading.value = false
     return
   }
   // 私密主页降级视图：跳过学习统计加载（接口会 403）
-  if (!profile.value.profilePrivate) await loadStats()
-  loading.value = false
+  if (!profile.value.profilePrivate && canViewLearningStats.value) await loadStats()
+  if (ticket === profileTicket) loading.value = false
 }
 
 /** 学习统计单独加载/重试；失败置 statsError（统计与热力图区域显示错误态，不用 0 兜底） */
 async function loadStats() {
+  if (!canViewLearningStats.value) return
+  const ticket = ++statsTicket
+  const targetId = userId.value
   statsError.value = false
+  statsLoading.value = true
   stats.value = null
+  heatDate.value = ''
   try {
-    stats.value = await usersApi.stats(userId)
+    const result = await usersApi.stats(targetId)
+    if (ticket !== statsTicket) return
+    stats.value = result
   } catch {
+    if (ticket !== statsTicket) return
     statsError.value = true // 统计加载失败不阻塞主页展示，但明确告知失败
+  } finally {
+    if (ticket === statsTicket) statsLoading.value = false
   }
 }
 
@@ -97,7 +123,15 @@ function onFollowChange(following: boolean) {
   if (typeof p.mutualCount === 'number' && isMutual !== wasMutual) p.mutualCount += isMutual ? 1 : -1
 }
 
-onMounted(loadAll)
+watch(
+  () => [userId.value, sessionUser.value?.id],
+  () => void loadAll(),
+  { immediate: true }
+)
+onUnmounted(() => {
+  ++profileTicket
+  ++statsTicket
+})
 </script>
 
 <template>
@@ -136,11 +170,13 @@ onMounted(loadAll)
         <UserWorksTabs :user-id="userId" :is-self="isSelf" v-model:active-tab="worksTab" />
 
         <!-- 学习概览：总学习时长 / 总做题数 / 本月学习 -->
-        <div class="card">
+        <p v-if="!canViewLearningStats" class="text-sm text-slate-500">该用户的学习数据仅本人可见。</p>
+        <div v-if="canViewLearningStats" class="card">
           <h3 class="text-sm font-bold mb-3">学习概览</h3>
           <!-- 学习统计加载失败：不用 0 兜底，整块显示错误态 + 重试 -->
+          <LoadingState v-if="statsLoading" />
           <button
-            v-if="statsError"
+            v-else-if="statsError"
             class="w-full flex items-center gap-2 text-xs text-correction dark:text-correction"
             @click="loadStats"
           >
@@ -174,10 +210,11 @@ onMounted(loadAll)
         </div>
 
         <!-- 学习热力图（统计失败时同样显示错误态，不渲染空热力图） -->
-        <div class="card">
+        <div v-if="canViewLearningStats" class="card">
           <h3 class="text-sm font-bold mb-3">近 30 周学习记录</h3>
+          <LoadingState v-if="statsLoading" />
           <button
-            v-if="statsError"
+            v-else-if="statsError"
             class="w-full flex items-center gap-2 text-xs text-correction dark:text-correction"
             @click="loadStats"
           >
@@ -191,7 +228,7 @@ onMounted(loadAll)
         </div>
 
         <!-- 科目分布 -->
-        <div class="card" v-if="stats?.subjects?.length">
+        <div class="card" v-if="canViewLearningStats && stats?.subjects?.length">
           <h3 class="text-sm font-bold mb-3">科目学习分布</h3>
           <div class="space-y-2">
             <div v-for="s in stats.subjects" :key="s.id" class="flex items-center gap-2">
@@ -237,13 +274,19 @@ onMounted(loadAll)
     <EditProfileModal v-model:show="showEdit" @saved="loadAll" />
 
     <!-- 热力图当日学习时长弹窗 -->
-    <Modal :title="`${heatDate} 学习记录`" :show="!!heatDate" @close="heatDate = ''">
+    <Modal :title="`${heatDate} 学习时长`" :show="canViewLearningStats && !!heatDate" @close="heatDate = ''">
       <div class="flex items-center justify-between bg-primary-50 dark:bg-primary-900/30 rounded-xl px-4 py-3">
         <span class="text-sm text-slate-500 dark:text-slate-400">当日学习总时长</span>
         <span class="text-xl font-black text-action">{{ formatMinutes(heatMinutes) }}</span>
       </div>
       <p class="text-xs text-slate-400 text-center pt-3">
-        {{ heatMinutes > 0 ? '具体科目明细仅本人可见' : '当日未学习' }}
+        {{
+          heatMinutes > 0
+            ? isSelf
+              ? '当日学习总时长包含学习记录和番茄专注。'
+              : '仅展示公开的学习总时长，具体学习记录不对外公开。'
+            : '当日暂无学习记录。'
+        }}
       </p>
     </Modal>
   </div>

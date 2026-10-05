@@ -10,7 +10,7 @@ import { nowSec, assertTeamLeader, assertTeamReadable, mapChallenge } from './sh
 import type { TeamRow, ChallengeRow } from './shared'
 
 /**
- * 学习小组域路由：小组 CRUD / 邀请码 / 加入退出 / 申请审批 / 队长管理。
+ * 学习小队域路由：小队 CRUD / 邀请码 / 加入退出 / 申请审批 / 队长管理。
  * 由 teams/index.ts 的 registerTeamRoutes 聚合注册。
  * 零逻辑改动：on(...) 块从原 teams.ts 逐字搬迁，仅调整 import 与包一层 registerTeamsRoutes()。
  */
@@ -39,12 +39,12 @@ function mapTeam(r: TeamRow & { my_role?: string }) {
   }
 }
 
-/** 小组名称/描述/人数的形状校验（创建与编辑共用；敏感词与 DB 依赖校验留在 validateTeamFields / handler 内） */
+/** 小队名称/描述/人数的形状校验（创建与编辑共用；敏感词与 DB 依赖校验留在 validateTeamFields / handler 内） */
 const teamFieldsSchema = z.object({
   name: z
     .string()
     .transform((s) => s.trim())
-    .pipe(z.string().min(1, '小组名称长度为 1-30 字').max(30, '小组名称长度为 1-30 字')),
+    .pipe(z.string().min(1, '小队名称长度为 1-30 字').max(30, '小队名称长度为 1-30 字')),
   // 复刻原行为：非字符串一律归空（避免数字/对象被 String() 成 '123' / '[object Object]' 落库）；字符串静默截断 200
   description: z
     .unknown()
@@ -56,13 +56,13 @@ const teamFieldsSchema = z.object({
     .unknown()
     .optional()
     .transform((v) => (v === null || v === undefined ? 10 : Math.round(Number(v))))
-    .pipe(z.number().refine((n) => Number.isFinite(n) && n >= 2 && n <= 50, '小组人数范围为 2-50 人'))
+    .pipe(z.number().refine((n) => Number.isFinite(n) && n >= 2 && n <= 50, '小队人数范围为 2-50 人'))
 })
 
-/** 创建端点专用：仅此处需要 isPublic（缺省视为私密组）；提为模块级常量，避免每次请求重建 schema */
-const createTeamSchema = teamFieldsSchema.extend({ isPublic: z.boolean().optional() })
+/** 创建与编辑共用；创建缺省为私密，编辑缺省则保留当前可见性。 */
+const teamWriteSchema = teamFieldsSchema.extend({ isPublic: z.boolean().optional() })
 
-/** 校验小组名称/描述的敏感词（形状校验已由 teamFieldsSchema 完成），返回规范化后的字段值（创建与编辑共用） */
+/** 校验小队名称/描述的敏感词（形状校验已由 teamFieldsSchema 完成），返回规范化后的字段值（创建与编辑共用） */
 async function validateTeamFields(
   env: Env,
   parsed: { name: string; description: string; maxMembers: number }
@@ -74,7 +74,7 @@ async function validateTeamFields(
 }
 
 /**
- * 将成员写入小组（公开 join 与审批同意复用）：
+ * 将成员写入小队（公开 join 与审批同意复用）：
  * 占位判定与入组同批提交，计数在批内按成员表重算，批失败一起回滚（消除抢占成功但插入失败导致计数虚增的窗口）；
  * 挑战进度初始化保持独立批次（INSERT OR IGNORE 幂等，满员抛错路径不落任何进度行）。
  */
@@ -88,9 +88,14 @@ async function addMember(env: Env, teamId: string, userId: string): Promise<void
     // 计数在批内按成员表重算：两种结果下均正确，兼自愈历史漂移（与 removeMemberStmts 的重算口径一致）
     env.DB.prepare(
       'UPDATE study_teams SET member_count = (SELECT COUNT(*) FROM team_members WHERE team_id = ?) WHERE id = ?'
-    ).bind(teamId, teamId)
+    ).bind(teamId, teamId),
+    // 私密转公开后可直接加入；与成员写入一起清掉该成员的待审申请。
+    env.DB.prepare(
+      'DELETE FROM team_join_requests WHERE team_id = ? AND user_id = ? ' +
+        'AND EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?)'
+    ).bind(teamId, userId, teamId, userId)
   ])
-  if (!results?.[0]?.meta.changes) throw new HttpError(400, '小组人数已满')
+  if (!results?.[0]?.meta.changes) throw new HttpError(400, '小队人数已满')
 
   const activeChallenges = await all<{ id: string }>(
     env,
@@ -171,13 +176,13 @@ async function removeMemberBatch(env: Env, statements: D1PreparedStatement[]) {
     await batch(env, statements)
   } catch (error) {
     if (error instanceof Error && error.message.includes('NOT NULL constraint failed: study_teams.member_count'))
-      throw new HttpError(409, '小组成员身份已变化，请刷新后重试')
+      throw new HttpError(409, '小队成员身份已变化，请刷新后重试')
     throw error
   }
 }
 
 export function registerTeamsRoutes() {
-  /** GET /api/teams - 获取公开小组列表（公开：访客可浏览公开小组，my=true 分支依赖登录态返回空） */
+  /** GET /api/teams - 获取公开小队列表（公开：访客可浏览公开小队，my=true 分支依赖登录态返回空） */
   on('GET', '/api/teams', false, async (ctx) => {
     await rateLimit(ctx, 'teams_list', 60)
 
@@ -241,7 +246,7 @@ export function registerTeamsRoutes() {
     }
 
     if (myTeams) {
-      // 我加入的小组
+      // 我加入的小队
       const teams = await all<TeamRow & { my_role: string }>(
         ctx.env,
         `
@@ -256,7 +261,7 @@ export function registerTeamsRoutes() {
       return Response.json(teams.map(mapTeam))
     }
 
-    // 公开小组列表
+    // 公开小队列表
     const teams = await all<TeamRow & { my_role?: string }>(
       ctx.env,
       `
@@ -273,12 +278,11 @@ export function registerTeamsRoutes() {
     return Response.json(teams.map(mapTeam))
   })
 
-  /** POST /api/teams - 创建学习小组 */
+  /** POST /api/teams - 创建学习小队 */
   on('POST', '/api/teams', true, async (ctx) => {
     await rateLimit(ctx, 'create_team', 10)
 
-    // isPublic 仅创建端点需要，在共享 schema 上扩展：仅接受布尔，缺省视为私密组
-    const parsed = await parseBody(ctx.request, createTeamSchema)
+    const parsed = await parseBody(ctx.request, teamWriteSchema)
     const fields = await validateTeamFields(ctx.env, parsed)
     const isPublic = parsed.isPublic ?? false
 
@@ -311,7 +315,7 @@ export function registerTeamsRoutes() {
     return Response.json({ id: teamId }, { status: 201 })
   })
 
-  /** GET /api/teams/by-invite - 按邀请码查询私密小组（须注册在 /api/teams/:id 之前） */
+  /** GET /api/teams/by-invite - 按邀请码查询私密小队（须注册在 /api/teams/:id 之前） */
   on('GET', '/api/teams/by-invite', true, async (ctx) => {
     const url = new URL(ctx.request.url)
     const code = (url.searchParams.get('code') || '').trim().toUpperCase()
@@ -336,7 +340,7 @@ export function registerTeamsRoutes() {
     })
   })
 
-  /** GET /api/teams/:id - 获取小组详情 */
+  /** GET /api/teams/:id - 获取小队详情 */
   on('GET', '/api/teams/:id', true, async (ctx) => {
     const teamId = ctx.params.id
 
@@ -352,9 +356,9 @@ export function registerTeamsRoutes() {
       teamId
     )
 
-    if (!team) throw new HttpError(404, '小组不存在')
+    if (!team) throw new HttpError(404, '小队不存在')
 
-    // 私密小组可读性校验：仅成员/管理员/持有效邀请码或被邀请申请人可读；
+    // 私密小队可读性校验：仅成员/管理员/持有效邀请码或被邀请申请人可读；
     // 持邀请码的申请人经由 /teams/:id?invite= 进入申请页，故邀请码与待审申请均须放行
     const myRequest = await first<{ user_id: string }>(
       ctx.env,
@@ -424,14 +428,14 @@ export function registerTeamsRoutes() {
     })
   })
 
-  /** POST /api/teams/:id/join - 加入小组 */
+  /** POST /api/teams/:id/join - 加入小队 */
   on('POST', '/api/teams/:id/join', true, async (ctx) => {
     await rateLimit(ctx, 'join_team', 10)
 
     const teamId = ctx.params.id
 
     const team = await first<TeamRow>(ctx.env, 'SELECT * FROM study_teams WHERE id = ?', teamId)
-    if (!team) throw new HttpError(404, '小组不存在')
+    if (!team) throw new HttpError(404, '小队不存在')
 
     // 检查是否已加入
     const existing = await first<{ user_id: string }>(
@@ -440,24 +444,24 @@ export function registerTeamsRoutes() {
       teamId,
       ctx.userId
     )
-    if (existing) throw new HttpError(400, '您已在该小组中')
+    if (existing) throw new HttpError(400, '您已在该小队中')
 
-    // 私密小组不可公开加入，请使用邀请码申请
-    if (!team.is_public) throw new HttpError(403, '私密小组请使用邀请码申请')
+    // 私密小队不可公开加入，请使用邀请码申请
+    if (!team.is_public) throw new HttpError(403, '私密小队请使用邀请码申请')
 
     await addMember(ctx.env, teamId, ctx.userId)
 
     return Response.json({ ok: true })
   })
 
-  /** POST /api/teams/:id/apply - 通过邀请码申请加入私密小组 */
+  /** POST /api/teams/:id/apply - 通过邀请码申请加入私密小队 */
   on('POST', '/api/teams/:id/apply', true, async (ctx) => {
     await rateLimit(ctx, 'apply_team', 10)
 
     const teamId = ctx.params.id
     const team = await first<TeamRow>(ctx.env, 'SELECT * FROM study_teams WHERE id = ?', teamId)
-    if (!team) throw new HttpError(404, '小组不存在')
-    if (team.is_public) throw new HttpError(400, '公开小组请直接加入')
+    if (!team) throw new HttpError(404, '小队不存在')
+    if (team.is_public) throw new HttpError(400, '公开小队请直接加入')
 
     const { inviteCode } = await body<{ inviteCode?: unknown }>(ctx.request)
     const code = typeof inviteCode === 'string' ? inviteCode.trim().toUpperCase() : ''
@@ -472,7 +476,7 @@ export function registerTeamsRoutes() {
       teamId,
       ctx.userId
     )
-    if (existing) throw new HttpError(400, '您已在该小组中')
+    if (existing) throw new HttpError(400, '您已在该小队中')
 
     const pending = await first<{ user_id: string }>(
       ctx.env,
@@ -482,7 +486,7 @@ export function registerTeamsRoutes() {
     )
     if (pending) throw new HttpError(400, '已有待审核的申请')
 
-    if (team.member_count >= team.max_members) throw new HttpError(400, '小组人数已满')
+    if (team.member_count >= team.max_members) throw new HttpError(400, '小队人数已满')
 
     const applicant = await first<{ name: string }>(
       ctx.env,
@@ -502,14 +506,14 @@ export function registerTeamsRoutes() {
         actorId: ctx.userId,
         targetType: 'team',
         targetId: teamId,
-        content: `${applicant?.name ?? '有人'} 申请加入小组「${team.name}」`
+        content: `${applicant?.name ?? '有人'} 申请加入小队「${team.name}」`
       })
     ])
 
     return Response.json({ ok: true })
   })
 
-  /** POST /api/teams/:id/leave - 退出小组 */
+  /** POST /api/teams/:id/leave - 退出小队 */
   on('POST', '/api/teams/:id/leave', true, async (ctx) => {
     const teamId = ctx.params.id
 
@@ -519,10 +523,10 @@ export function registerTeamsRoutes() {
       teamId,
       ctx.userId
     )
-    if (!member) throw new HttpError(404, '您不在该小组中')
+    if (!member) throw new HttpError(404, '您不在该小队中')
 
     if (member.role === 'leader') {
-      throw new HttpError(400, '队长不能退出，请先转让队长或解散小组')
+      throw new HttpError(400, '队长不能退出，请先转让队长或解散小队')
     }
 
     await removeMemberBatch(ctx.env, removeMemberStmts(ctx.env, teamId, ctx.userId))
@@ -554,7 +558,7 @@ export function registerTeamsRoutes() {
       ctx.env,
       removeMemberStmts(ctx.env, teamId, userId, {
         actorId: ctx.userId,
-        content: `你已被移出小组「${team?.name ?? ''}」`
+        content: `你已被移出小队「${team?.name ?? ''}」`
       })
     )
 
@@ -574,7 +578,7 @@ export function registerTeamsRoutes() {
       teamId,
       newLeaderId
     )
-    if (!target) throw new HttpError(400, '接任成员已不在小组中')
+    if (!target) throw new HttpError(400, '接任成员已不在小队中')
     try {
       await batch(ctx.env, [
         // NOT NULL 约束充当批内断言，防止读校验后成员/队长变化导致部分转让。
@@ -594,12 +598,12 @@ export function registerTeamsRoutes() {
           actorId: ctx.userId,
           targetType: 'team',
           targetId: teamId,
-          content: '原队长已退出，你已接任小组队长'
+          content: '原队长已退出，你已接任小队队长'
         })
       ])
     } catch (error) {
       if (error instanceof Error && error.message.includes('NOT NULL constraint failed: study_teams.creator_id'))
-        throw new HttpError(409, '小组成员已变化，请刷新后重试')
+        throw new HttpError(409, '小队成员已变化，请刷新后重试')
       throw error
     }
     return Response.json({ ok: true })
@@ -621,59 +625,82 @@ export function registerTeamsRoutes() {
       teamId,
       newLeaderId
     )
-    if (!target) throw new HttpError(400, '目标成员不在该小组中')
+    if (!target) throw new HttpError(400, '目标成员不在该小队中')
 
     const team = await first<{ name: string }>(ctx.env, 'SELECT name FROM study_teams WHERE id = ?', teamId)
 
-    await batch(ctx.env, [
-      ctx.env.DB.prepare("UPDATE team_members SET role = 'member' WHERE team_id = ? AND user_id = ?").bind(
-        teamId,
-        ctx.userId
-      ),
-      ctx.env.DB.prepare("UPDATE team_members SET role = 'leader' WHERE team_id = ? AND user_id = ?").bind(
-        teamId,
-        newLeaderId
-      ),
-      ctx.env.DB.prepare('UPDATE study_teams SET creator_id = ? WHERE id = ?').bind(newLeaderId, teamId),
-      notifyStatement(ctx.env, {
-        userId: newLeaderId,
-        type: 'system',
-        actorId: ctx.userId,
-        targetType: 'team',
-        targetId: teamId,
-        content: `你已成为小组「${team?.name ?? ''}」的队长`
-      })
-    ])
+    try {
+      await batch(ctx.env, [
+        ctx.env.DB.prepare(
+          "UPDATE study_teams SET creator_id = CASE WHEN EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ? AND role = 'leader') " +
+            "AND EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ? AND role = 'member') THEN ? ELSE NULL END WHERE id = ?"
+        ).bind(teamId, ctx.userId, teamId, newLeaderId, newLeaderId, teamId),
+        ctx.env.DB.prepare("UPDATE team_members SET role = 'member' WHERE team_id = ? AND user_id = ?").bind(
+          teamId,
+          ctx.userId
+        ),
+        ctx.env.DB.prepare("UPDATE team_members SET role = 'leader' WHERE team_id = ? AND user_id = ?").bind(
+          teamId,
+          newLeaderId
+        ),
+        notifyStatement(ctx.env, {
+          userId: newLeaderId,
+          type: 'system',
+          actorId: ctx.userId,
+          targetType: 'team',
+          targetId: teamId,
+          content: `你已成为小队「${team?.name ?? ''}」的队长`
+        })
+      ])
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('NOT NULL constraint failed: study_teams.creator_id'))
+        throw new HttpError(409, '小队成员已变化，请刷新后重试')
+      throw error
+    }
 
     return Response.json({ ok: true })
   })
 
-  /** PUT /api/teams/:id - 编辑小组信息（名称/描述/人数上限，仅队长） */
+  /** PUT /api/teams/:id - 编辑小队信息（名称/描述/人数上限/可见性，仅队长） */
   on('PUT', '/api/teams/:id', true, async (ctx) => {
     const teamId = ctx.params.id
     await assertTeamLeader(ctx.env, ctx.userId, teamId)
 
-    const team = await first<{ member_count: number }>(
+    const team = await first<Pick<TeamRow, 'member_count' | 'is_public' | 'invite_code' | 'invite_code_expires_at'>>(
       ctx.env,
-      'SELECT member_count FROM study_teams WHERE id = ?',
+      'SELECT member_count, is_public, invite_code, invite_code_expires_at FROM study_teams WHERE id = ?',
       teamId
     )
-    if (!team) throw new HttpError(404, '小组不存在')
+    if (!team) throw new HttpError(404, '小队不存在')
 
-    const fields = await validateTeamFields(ctx.env, await parseBody(ctx.request, teamFieldsSchema))
+    const parsed = await parseBody(ctx.request, teamWriteSchema)
+    const fields = await validateTeamFields(ctx.env, parsed)
 
     if (fields.max < team.member_count) {
       throw new HttpError(400, `人数上限不能低于当前成员数（${team.member_count} 人）`)
     }
 
-    await run(
+    const isPublic = parsed.isPublic ?? !!team.is_public
+    const becomingPrivate = !isPublic && !!team.is_public
+    const inviteCode = isPublic ? null : becomingPrivate ? await newInviteCode(ctx.env) : team.invite_code
+    const inviteExpiresAt = isPublic ? null : becomingPrivate ? nowSec() + 3 * 24 * 3600 : team.invite_code_expires_at
+
+    const saved = await run(
       ctx.env,
-      'UPDATE study_teams SET name = ?, description = ?, max_members = ? WHERE id = ?',
+      'UPDATE study_teams SET name = ?, description = ?, max_members = ?, is_public = ?, invite_code = ?, invite_code_expires_at = ? ' +
+        "WHERE id = ? AND member_count <= ? AND EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ? AND role = 'leader')",
       fields.name,
       fields.description,
       fields.max,
-      teamId
+      isPublic ? 1 : 0,
+      inviteCode,
+      inviteExpiresAt,
+      teamId,
+      fields.max,
+      teamId,
+      ctx.userId
     )
+    if (!saved.meta.changes) throw new HttpError(409, '小队成员已变化，请刷新后重试')
 
     return Response.json({ ok: true })
   })
@@ -732,7 +759,7 @@ export function registerTeamsRoutes() {
         actorId: ctx.userId,
         targetType: 'team',
         targetId: teamId,
-        content: `你已加入小组「${team?.name ?? ''}」`
+        content: `你已加入小队「${team?.name ?? ''}」`
       })
     ])
 
@@ -767,8 +794,8 @@ export function registerTeamsRoutes() {
         targetType: 'team',
         targetId: teamId,
         content: reasonStr
-          ? `你的加入小组「${team?.name ?? ''}」申请被拒绝，原因：${reasonStr}`
-          : `你的加入小组「${team?.name ?? ''}」申请被拒绝`
+          ? `你的加入小队「${team?.name ?? ''}」申请被拒绝，原因：${reasonStr}`
+          : `你的加入小队「${team?.name ?? ''}」申请被拒绝`
       })
     ])
 
@@ -797,8 +824,8 @@ export function registerTeamsRoutes() {
     await assertTeamLeader(ctx.env, ctx.userId, teamId)
 
     const team = await first<{ is_public: number }>(ctx.env, 'SELECT is_public FROM study_teams WHERE id = ?', teamId)
-    if (!team) throw new HttpError(404, '小组不存在')
-    if (team.is_public) throw new HttpError(400, '公开小组无邀请码')
+    if (!team) throw new HttpError(404, '小队不存在')
+    if (team.is_public) throw new HttpError(400, '公开小队无邀请码')
 
     const code = await newInviteCode(ctx.env)
     const expiresAt = nowSec() + 3 * 24 * 3600
@@ -813,17 +840,21 @@ export function registerTeamsRoutes() {
     return Response.json({ inviteCode: code, inviteCodeExpiresAt: expiresAt })
   })
 
-  /** POST /api/teams/:id/disband - 解散小组（仅队长，级联删除成员/挑战/进度） */
+  /** POST /api/teams/:id/disband - 解散小队（仅队长，级联删除成员/挑战/进度） */
   on('POST', '/api/teams/:id/disband', true, async (ctx) => {
     const teamId = ctx.params.id
     await assertTeamLeader(ctx.env, ctx.userId, teamId)
 
-    await batch(ctx.env, [
+    await removeMemberBatch(ctx.env, [
+      ctx.env.DB.prepare(
+        "UPDATE study_teams SET member_count = CASE WHEN EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ? AND role = 'leader') THEN member_count ELSE NULL END WHERE id = ?"
+      ).bind(teamId, ctx.userId, teamId),
       ctx.env.DB.prepare(
         'DELETE FROM team_challenge_progress WHERE challenge_id IN (SELECT id FROM team_challenges WHERE team_id = ?)'
       ).bind(teamId),
       ctx.env.DB.prepare('DELETE FROM team_challenges WHERE team_id = ?').bind(teamId),
       ctx.env.DB.prepare('DELETE FROM team_members WHERE team_id = ?').bind(teamId),
+      ctx.env.DB.prepare('DELETE FROM team_join_requests WHERE team_id = ?').bind(teamId),
       ctx.env.DB.prepare('DELETE FROM study_teams WHERE id = ?').bind(teamId)
     ])
 

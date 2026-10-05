@@ -10,7 +10,7 @@ export const collaborationRoutes: RouteRecordRaw[] = [
     path: '/teams/squads/:teamId',
     name: 'team-detail',
     component: () => import('../../pages/TeamDetail.vue'),
-    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '小组详情' }
+    meta: { layout: 'app', requiresAuth: true, guestAllowed: false, adminOnly: false, title: '小队详情' }
   },
   {
     path: '/teams/partners/study',

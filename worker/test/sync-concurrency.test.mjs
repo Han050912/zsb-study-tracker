@@ -133,6 +133,38 @@ function database(t) {
 const rec = (id, updatedAt, minutes = 10) => ({ id, subjectId: 'math', date: '2026-09-26', minutes, updatedAt })
 const push = (api, records) => api('/api/data/push', { domains: { records: { upserts: records, deletes: [] } } })
 
+test('serial problem saves retain the same total, accuracy and history on repeated cold and incremental pulls', async (t) => {
+  const { db, api, request } = database(t)
+  const session = {
+    id: 'two-questions',
+    subjectId: 'math',
+    date: '2026-10-05',
+    total: 2,
+    correct: 1,
+    types: { choice: 2 },
+    updatedAt: 100
+  }
+  const payload = { domains: { problemSessions: { upserts: [session], deletes: [] } } }
+  await api('/api/data/push', payload)
+  await api('/api/data/push', payload)
+  let cursor = 0
+  for (let reload = 0; reload < 3; reload++) {
+    const full = await api('/api/data/pull', { full: true })
+    const records = full.changes.problemSessions.upserts
+    assert.equal(records.length, 1)
+    assert.deepEqual([records[0].total, records[0].correct, records[0].types.choice], [2, 1, 2])
+    const total = records.reduce((sum, record) => sum + record.total, 0)
+    const correct = records.reduce((sum, record) => sum + record.correct, 0)
+    assert.deepEqual([total, Math.round((correct / total) * 100)], [2, 50])
+    cursor = full.changes.problemSessions.seq
+  }
+  const incremental = await api('/api/data/pull', { cursors: { problemSessions: cursor } })
+  assert.equal(incremental.changes.problemSessions, undefined)
+  const otherUser = await (await request('/api/data/pull', 'POST', { full: true }, { 'X-Test-User': 'peer' })).json()
+  assert.deepEqual(otherUser.changes.problemSessions.upserts, [])
+  assert.equal(db.prepare('SELECT count(*) AS n FROM problem_sessions').get().n, 1)
+})
+
 test('a delayed commit gets a fresh sequence and cannot disappear behind an advanced cursor', async (t) => {
   const { db, api, pauseNextBatch } = database(t)
   const pause = pauseNextBatch()

@@ -8,7 +8,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { applyTeam, withdrawRequest, resetInviteCode, joinTeam } from '../../api/teams'
 import type { StudyTeam } from '../../types'
 
-/** 小组信息卡：基本信息 + 加入/申请/邀请码区；写操作成功后 emit refresh 由页面重载。
+/** 小队信息卡：基本信息 + 加入/申请/邀请码区；写操作成功后 emit refresh 由页面重载。
  *  仅撤回申请例外（emit withdrawn）：撤回后失去详情读取权限，由页面转列表而非重载 */
 const props = defineProps<{
   teamId: string
@@ -24,7 +24,9 @@ const emit = defineEmits<{
   edit: []
   leave: []
   'leader-leave': []
-  /** 撤回申请成功后申请人已无该小组详情读取权限，不能再走 refresh 重载，交由页面跳转 */
+  manage: [section: 'members' | 'requests']
+  disband: []
+  /** 撤回申请成功后申请人已无该小队详情读取权限，不能再走 refresh 重载，交由页面跳转 */
   withdrawn: []
 }>()
 
@@ -94,7 +96,7 @@ async function handleJoin() {
   if (joinSubmitting.value) return
   try {
     await command.run(() => joinTeam(props.teamId))
-    toast('已加入小组')
+    toast('已加入小队')
     emit('refresh')
   } catch (e) {
     toast(getErrorMessage(e, '加入失败'))
@@ -104,10 +106,12 @@ async function handleJoin() {
 function formatDate(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' })
 }
-function menuAction(action: 'edit' | 'leave' | 'leader-leave', event: Event) {
+function menuAction(action: 'edit' | 'leave' | 'leader-leave' | 'members' | 'requests' | 'disband', event: Event) {
   ;(event.currentTarget as HTMLElement).closest('details')?.removeAttribute('open')
   if (action === 'edit') emit('edit')
   else if (action === 'leave') emit('leave')
+  else if (action === 'members' || action === 'requests') emit('manage', action)
+  else if (action === 'disband') emit('disband')
   else emit('leader-leave')
 }
 </script>
@@ -167,7 +171,7 @@ function menuAction(action: 'edit' | 'leave' | 'leader-leave', event: Event) {
           </template>
         </template>
         <button v-else class="btn-primary !text-xs" :disabled="joinSubmitting" @click="handleJoin">
-          {{ joinSubmitting ? '加入中…' : '加入小组' }}
+          {{ joinSubmitting ? '加入中…' : '加入小队' }}
         </button>
       </template>
       <details v-else class="relative ml-auto" @keydown.esc="($event.currentTarget as HTMLDetailsElement).open = false">
@@ -179,12 +183,18 @@ function menuAction(action: 'edit' | 'leave' | 'leader-leave', event: Event) {
             :disabled="leaveSubmitting"
             @click="menuAction('leave', $event)"
           >
-            {{ leaveSubmitting ? '退出中…' : '退出小组' }}
+            {{ leaveSubmitting ? '退出中…' : '退出小队' }}
           </button>
           <template v-else-if="team.myRole === 'leader'">
             <button class="btn-ghost !text-xs w-full" @click="menuAction('edit', $event)">编辑小队</button>
+            <button class="btn-ghost !text-xs w-full" @click="menuAction('members', $event)">成员管理</button>
+            <button class="btn-ghost !text-xs w-full" @click="menuAction('requests', $event)">加队审批</button>
+            <button class="btn-ghost !text-xs w-full" @click="menuAction('members', $event)">转让队长</button>
+            <button class="btn-ghost !text-xs !text-correction w-full" @click="menuAction('disband', $event)">
+              解散小队
+            </button>
             <button class="btn-ghost !text-xs !text-correction" @click="menuAction('leader-leave', $event)">
-              退出小组
+              退出小队
             </button>
           </template>
         </div>

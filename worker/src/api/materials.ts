@@ -16,6 +16,7 @@ const materialBodySchema = z
     totalPages: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     readPages: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
     notes: z.string().optional(),
+    favorite: z.boolean().optional(),
     createdAt: z.number().optional()
   })
   .passthrough()
@@ -41,6 +42,7 @@ export const materialsMapping = crudHandlers({
     total_pages: b.totalPages ?? null,
     read_pages: b.readPages ?? null,
     notes: b.notes ?? null,
+    favorite: b.favorite ? 1 : 0,
     created_at: b.createdAt ?? Date.now()
   }),
   fromRow: (r) => ({
@@ -55,6 +57,7 @@ export const materialsMapping = crudHandlers({
     totalPages: r.total_pages ?? undefined,
     readPages: r.read_pages ?? undefined,
     notes: r.notes ?? undefined,
+    favorite: !!r.favorite,
     createdAt: r.created_at
   })
 })

@@ -7,7 +7,7 @@ export async function readCommentPage(ctx: Ctx, admin: boolean, url: URL) {
   const visible = (alias: string) =>
     admin ? '1 = 1' : `${alias}.is_hidden = 0 AND (${alias}.is_flagged = 0 OR ${alias}.user_id = ?)`
   const visibilityParams = admin ? [] : [ctx.userId]
-  const select = `SELECT c.*, COALESCE(s.user_name, u.username) AS user_name, u.verified AS user_verified, s.avatar AS user_avatar,
+  const select = `SELECT c.*, s.user_name, u.user_code, u.verified AS user_verified, s.avatar AS user_avatar,
     (l.user_id IS NOT NULL) AS liked_by_me, (d.user_id IS NOT NULL) AS disliked_by_me,
     (SELECT COUNT(*) FROM community_comments reply WHERE reply.parent_id = c.id AND ${visible('reply')}) AS reply_count
     FROM community_comments c JOIN users u ON u.id = c.user_id LEFT JOIN user_settings s ON s.user_id = c.user_id

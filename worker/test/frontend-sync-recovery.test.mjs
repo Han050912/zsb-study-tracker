@@ -33,6 +33,8 @@ const result = await build({
     contents: `export * from './src/stores/app/sync'; export * from './src/services/syncOutbox';
     export * from './src/stores/app/staging'; export * from './src/data/defaults';
     export * from './src/stores/app/importExport';
+    export * from './src/stores/app/problems'; export * from './src/stores/app/pomodoro';
+    export * from './src/utils/studyTime';
     export { sessionUser } from './src/services/auth'; export { syncApi } from './src/api/sync';
     export { bodyHooks } from './src/services/noteBodies'; export { ApiError } from './src/api/client';`,
     resolveDir: process.cwd()
@@ -79,12 +81,21 @@ await writeFile(filename, result.outputFiles[0].text)
 const url = pathToFileURL(`${process.cwd()}/${filename}`).href
 async function tab() {
   const app = await import(`${url}?tab=${crypto.randomUUID()}`)
-  const store = Object.assign(app.createDefaultState(), app.syncActions, app.importExportActions, {
-    migrateErrorImages() {},
-    $patch(patch) {
-      Object.assign(this, patch)
+  const store = Object.assign(
+    app.createDefaultState(),
+    app.syncActions,
+    app.importExportActions,
+    app.problemsActions,
+    app.pomodoroActions,
+    {
+      addPoints() {},
+      revokePointsByRef() {},
+      migrateErrorImages() {},
+      $patch(patch) {
+        Object.assign(this, patch)
+      }
     }
-  })
+  )
   Object.defineProperty(store, '$state', { get: () => store })
   tabs.push({ app, store })
   return { app, store }
@@ -265,6 +276,71 @@ test('hydrate never resurrects an older pending record over a newer remote tombs
   app.syncApi.pullChanges = async () => remote([], [{ key: 'r', deletedAt: 200 }])
   await store.hydrate()
   assert.ok(!store.records.some((r) => r.id === 'r'))
+})
+
+test('two questions keep their history and aggregates through failed sync, cold reload and later cloud reload', async () => {
+  const first = await tab()
+  await first.store.hydrate()
+  first.app.syncApi.pushChanges = async () => {
+    throw new first.app.ApiError('offline', 503)
+  }
+  first.store.addProblemSession({ subjectId: 'math', date: '2026-10-05', total: 2, correct: 1, types: { choice: 2 } })
+  const id = first.store.problemSessions[0].id
+  assert.equal((await first.store.flushOutbox()).ok, false)
+  assert.equal(first.app.takeForFlush().upserts.problemSessions[id].value.total, 2)
+  first.store.resetState()
+
+  const second = await tab()
+  let cloud = [],
+    coldRequest
+  second.app.syncApi.pullChanges = async (request) => {
+    coldRequest = request
+    return { full: true, versions: {}, changes: { problemSessions: { seq: 0, upserts: cloud, deletes: [] } } }
+  }
+  second.app.syncApi.pushChanges = async (payload) => {
+    cloud = payload.domains.problemSessions?.upserts ?? cloud
+    return { applied: { problemSessions: cloud.length } }
+  }
+  await second.store.hydrate()
+  assert.deepEqual(coldRequest, { full: true })
+  assert.equal(second.store.problemSessions.length, 1)
+  assert.equal(second.store.problemSessions[0].id, id)
+  assert.deepEqual([second.store.problemSessions[0].total, second.store.problemSessions[0].correct], [2, 1])
+  assert.equal(second.app.size(), 0)
+
+  second.store.resetState()
+  const third = await tab()
+  third.app.syncApi.pullChanges = async (request) => {
+    assert.deepEqual(request, { full: true })
+    return {
+      full: true,
+      versions: { problemSessions: 1 },
+      changes: { problemSessions: { seq: 1, upserts: cloud, deletes: [] } }
+    }
+  }
+  await third.store.hydrate()
+  assert.equal(third.store.problemSessions.length, 1)
+  const total = third.store.problemSessions.reduce((sum, session) => sum + session.total, 0)
+  const correct = third.store.problemSessions.reduce((sum, session) => sum + session.correct, 0)
+  assert.deepEqual([total, Math.round((correct / total) * 100)], [2, 50])
+})
+
+test('a settled focus minute survives cold reload and contributes to study time once', async () => {
+  const first = await tab()
+  await first.store.hydrate()
+  first.app.syncApi.pushChanges = async () => {
+    throw new first.app.ApiError('offline', 503)
+  }
+  first.store.recordPomodoro(1, '自然完成')
+  assert.equal(first.app.totalStudyMinutes(first.store), 1)
+  first.store.resetState()
+  const second = await tab()
+  await second.store.hydrate()
+  const day = second.store.pomodoro.records[0].date
+  assert.deepEqual([second.store.pomodoro.daily[day].count, second.app.studyMinutesOn(second.store, day)], [1, 1])
+  assert.equal(second.app.studyMinutesByDate(second.store)[day], 1)
+  second.store.records.push({ id: 'manual', subjectId: 'math', date: day, minutes: 4 })
+  assert.equal(second.app.totalStudyMinutes(second.store), 5)
 })
 
 test('new-user defaults do not overwrite pending customizations or deleted default subjects', async () => {

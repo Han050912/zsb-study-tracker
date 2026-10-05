@@ -77,6 +77,7 @@ function openNote(n: Note) {
 
 /** 开始一份全新的空草稿（「＋新建笔记」与 ?new=1 的 watcher 共用，保证两个入口口径一致） */
 function startNewDraft(subjectId: string) {
+  search.value = ''
   draft.value = { subjectId, title: '', content: '', tags: [] }
   dirty.value = false
   previewMode.value = 'edit'
@@ -125,7 +126,9 @@ function doSave(silent = false, navigate = true): string | null {
   // 把新建出来的 id 写回草稿：此后这份草稿是「已保存」态，再点保存只会更新同一篇
   // （不回填就会再走一次新建，同一份内容落成两条笔记）
   draft.value.id = savedId
+  draft.value.title = store.notes.find((n) => n.id === savedId)?.title || '未命名'
   dirty.value = false
+  if (created) search.value = ''
   if (created && navigate) router.replace({ path: '/notes', query: { id: savedId } })
   if (!silent) toast('笔记已保存')
   return savedId
@@ -153,7 +156,14 @@ watch(
     flushIfDirty()
     if (id) {
       const n = store.notes.find((x) => x.id === id)
-      draft.value = n ? { ...n, content: n.type === 'pdf' ? '' : getNoteBody(n.id), tags: [...n.tags] } : null
+      draft.value = n
+        ? {
+            ...n,
+            title: n.title.trim() || '未命名',
+            content: n.type === 'pdf' ? '' : getNoteBody(n.id),
+            tags: [...n.tags]
+          }
+        : null
     } else if (route.query.new !== '1') {
       draft.value = null
     }
@@ -427,7 +437,7 @@ onUnmounted(() => {
             <div class="notes-list-item-title">
               <SubjectIcon v-if="subjectOf(n)?.icon" :icon="subjectOf(n)?.icon" class="notes-subject-icon" />
               <FileText v-else :size="16" class="notes-subject-icon" aria-hidden="true" />
-              <span>{{ n.title || '未命名' }}</span>
+              <span>{{ n.title.trim() || '未命名' }}</span>
             </div>
             <p class="notes-excerpt">{{ n.type === 'pdf' ? 'PDF 文档' : noteBodyExcerpt(n.id, 50) || '暂无正文' }}</p>
             <div class="notes-list-item-meta">
@@ -655,8 +665,11 @@ onUnmounted(() => {
   color: var(--muted);
   font-size: 12px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 .notes-list-item-meta {
   display: flex;

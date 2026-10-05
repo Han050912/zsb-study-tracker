@@ -40,7 +40,7 @@ async function handleKick() {
 <template>
   <Modal :show="!!member" title="踢出成员" @close="emit('close')">
     <p class="text-sm text-slate-500 dark:text-slate-400">
-      确认将「{{ member?.userName }}」踢出小组？其将被移出并收到通知。
+      确认将「{{ member?.userName }}」踢出小队？其将被移出并收到通知。
     </p>
     <template #footer>
       <button class="btn-ghost" @click="emit('close')">取消</button>

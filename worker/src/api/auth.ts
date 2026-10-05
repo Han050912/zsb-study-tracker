@@ -7,6 +7,7 @@ import { rateLimit } from '../middleware/rateLimit'
 import { authCookieHeader, clearAuthCookieHeader, extractToken } from '../middleware/auth'
 import { assertCleanAsync } from './sensitive'
 import type { Env } from '../index'
+import { defaultDisplayName } from '../userDisplayName'
 
 const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
 
@@ -16,8 +17,14 @@ async function verifyTurnstile(token: string, secret: string): Promise<boolean> 
   form.set('response', token)
   // 不传 remoteip：由 Cloudflare 按 siteverify 请求来源 IP 自动匹配。
   // 手动传 remoteip 在用户 IP 变化（移动网络切换 / IPv6 隧道 / 代理）时反而会导致校验失败。
-  const res = await fetch(TURNSTILE_VERIFY_URL, { method: 'POST', body: form })
-  const data = (await res.json()) as { success: boolean; 'error-codes'?: string[] }
+  let data: { success: boolean; 'error-codes'?: string[] }
+  try {
+    const res = await fetch(TURNSTILE_VERIFY_URL, { method: 'POST', body: form, signal: AbortSignal.timeout(10_000) })
+    if (!res.ok) throw new Error(`Siteverify ${res.status}`)
+    data = (await res.json()) as typeof data
+  } catch {
+    throw new HttpError(503, '人机验证服务暂时不可用，请检查网络后重新验证并重试')
+  }
   if (!data.success) {
     console.error('[Turnstile] 验证失败', {
       'error-codes': data['error-codes'],
@@ -113,8 +120,11 @@ export function registerAuthRoutes() {
       ctx.env.DB.prepare(
         'INSERT INTO users (id, user_code, username, password_hash, created_at) VALUES (?, ?, ?, ?, ?)'
       ).bind(row.id, row.user_code, row.username, row.password_hash, row.created_at),
-      // 初始化用户设置与游戏化数据（昵称取登录用户名，其余默认值由表结构兜底）
-      ctx.env.DB.prepare('INSERT INTO user_settings (user_id, user_name) VALUES (?, ?)').bind(row.id, row.username),
+      // 默认昵称带唯一用户 ID，其余默认值由表结构兜底。
+      ctx.env.DB.prepare('INSERT INTO user_settings (user_id, user_name) VALUES (?, ?)').bind(
+        row.id,
+        defaultDisplayName(userCode, row.id)
+      ),
       ctx.env.DB.prepare('INSERT INTO gamification (user_id) VALUES (?)').bind(row.id)
     ])
     const token = await signToken(row.id, ctx.env.JWT_SECRET, row.role || 'user')
@@ -128,7 +138,7 @@ export function registerAuthRoutes() {
   on('POST', '/api/auth/login', false, async (ctx) => {
     await rateLimit(ctx, 'login', 10) // 每 IP 每分钟最多 10 次登录尝试
     await requireTurnstile(ctx.request, ctx.env)
-    const { username, password } = await parseBody(ctx.request, loginSchema)
+    const { username, password, remember } = await parseBody(ctx.request, loginSchema)
     // loginSchema 不做 trim：登录页已 trim，容忍历史空白
     const row = await first<UserRow>(ctx.env, 'SELECT * FROM users WHERE username = ?', username.trim())
     if (!row || !(await verifyPassword(password, row.password_hash))) {
@@ -152,7 +162,7 @@ export function registerAuthRoutes() {
     await recordSession(ctx.env, token, row.id)
     return Response.json(
       { token, user: toUser(row) },
-      { headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } }
+      { headers: { 'Set-Cookie': authCookieHeader(token, ctx.request, remember) } }
     )
   })
 
@@ -161,12 +171,13 @@ export function registerAuthRoutes() {
     // 与登录同属「凭证校验」端点，沿用同一套限流 + 人机验证
     await rateLimit(ctx, 'change-password', 5) // 每 IP 每分钟最多 5 次改密尝试
     await requireTurnstile(ctx.request, ctx.env)
-    const { oldPassword, newPassword } = await parseBody(
+    const { oldPassword, newPassword, remember } = await parseBody(
       ctx.request,
       z.object({
         oldPassword: z.string().min(1, '请输入当前密码'),
         // 复用注册的密码策略（schemas.ts passwordSchema），不在改密处另立一套口径
-        newPassword: passwordSchema
+        newPassword: passwordSchema,
+        remember: z.boolean().optional().default(true)
       })
     )
     const row = await first<UserRow>(ctx.env, 'SELECT * FROM users WHERE id = ?', ctx.userId)
@@ -197,7 +208,10 @@ export function registerAuthRoutes() {
     // 为本次会话换发新 token：执行改密的设备无需重新登录，其余设备的会话已全部失效
     const token = await signToken(ctx.userId, ctx.env.JWT_SECRET, row.role || 'user')
     await recordSession(ctx.env, token, ctx.userId)
-    return Response.json({ ok: true, token }, { headers: { 'Set-Cookie': authCookieHeader(token, ctx.request) } })
+    return Response.json(
+      { ok: true, token },
+      { headers: { 'Set-Cookie': authCookieHeader(token, ctx.request, remember) } }
+    )
   })
 
   on('GET', '/api/auth/me', true, async (ctx) => {

@@ -340,6 +340,7 @@ async function addPartner(userId: string) {
             <UserAvatar :name="s.userName" :avatar="s.userAvatar" size="sm" />
             <div class="min-w-0">
               <div class="font-medium truncate group-hover:text-action">{{ s.userName }}</div>
+              <div v-if="s.userCode" class="text-xs text-muted break-all">ID：{{ s.userCode }}</div>
               <div class="text-xs text-slate-400 dark:text-slate-500 truncate">
                 {{ s.reasons.join(' · ') || '也在准备专升本' }}
               </div>

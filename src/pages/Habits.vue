@@ -69,7 +69,7 @@ function record(h: Habit, value: number | string) {
   // 积分奖励/回收逻辑已内聚在 store.recordHabit 中（达标口径与 habitDone 一致）
   store.recordHabit(h.id, today(), normalized)
   if (h.bad) {
-    toast('已记录本次发生次数')
+    toast('已更新今日发生记录')
     return
   }
   const met = habitDone(h, h.records[today()])
@@ -82,10 +82,46 @@ function record(h: Habit, value: number | string) {
   else toast('已记录')
 }
 
+const confirmingCheckin = ref(false)
+async function toggleHabit(h: Habit) {
+  if (confirmingCheckin.value) return
+  const date = today()
+  if (!h.records[date]) {
+    record(h, 1)
+    return
+  }
+  confirmingCheckin.value = true
+  try {
+    if (!(await confirm('取消今日打卡？对应的打卡积分也会收回。', { danger: true }))) return
+    if (date !== today()) return toast('日期已切换，请确认今天的打卡状态后重试')
+    if (h.records[date]) record(h, 0)
+  } finally {
+    confirmingCheckin.value = false
+  }
+}
+
 // ---- 坏习惯「每日克制打卡」 ----
-function toggleCheckin(h: Habit) {
-  store.toggleBadHabitCheckin(h.id, today())
-  toast(h.checkins?.[today()] ? '今日已打卡' : '已取消今日克制打卡')
+async function toggleCheckin(h: Habit) {
+  if (confirmingCheckin.value) return
+  const date = today()
+  const checked = !!h.checkins?.[date]
+  const value = h.records[date]
+  confirmingCheckin.value = true
+  try {
+    if (checked && !(await confirm('取消今日克制打卡？', { danger: true }))) return
+    if (
+      !checked &&
+      Number(value) > 0 &&
+      !(await confirm('今日已有发生记录，克制打卡会清除这些次数，确定更改？', { danger: true }))
+    )
+      return
+    if (date !== today()) return toast('日期已切换，请确认今天的打卡状态后重试')
+    if (!!h.checkins?.[date] !== checked || h.records[date] !== value) return toast('打卡记录已更新，请重新确认')
+    store.toggleBadHabitCheckin(h.id, date)
+    toast(h.checkins?.[date] ? '今日已打卡' : '已取消今日克制打卡')
+  } finally {
+    confirmingCheckin.value = false
+  }
 }
 
 // ---- 习惯目标编辑（「每日背单词」「每日做题」与设置页每日目标双向同步） ----
@@ -160,6 +196,17 @@ async function removeHabit(id: string) {
       <button class="btn-primary" @click="showModal = true">添加习惯</button>
     </div>
 
+    <details class="card text-sm">
+      <summary class="cursor-pointer font-medium">习惯积分规则</summary>
+      <div class="mt-2 space-y-1 text-muted">
+        <p>好习惯当天首次达标获得 2 积分，每个习惯每天只奖励一次。</p>
+        <p>所有学习奖励合计每天最多 300 积分，接近上限时可能只获得部分积分，以同步后的积分为准。</p>
+        <p>次数或时长需达到每日目标；未达标会保存进度，不给积分，也不按比例给分。</p>
+        <p>勾选打卡或记录时刻即为达标。取消打卡或把完成量改为未达标，会收回对应积分。</p>
+        <p>补记历史日期、克制打卡和记录坏习惯发生次数不奖励积分。</p>
+      </div>
+    </details>
+
     <EmptyState
       v-if="!goodHabits.length && !badHabits.length"
       class="card"
@@ -208,7 +255,7 @@ async function removeHabit(id: string) {
             v-if="h.type === 'checkbox'"
             class="btn w-full"
             :class="h.records[today()] ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
-            @click="record(h, h.records[today()] ? 0 : 1)"
+            @click="toggleHabit(h)"
           >
             {{ h.records[today()] ? '今日已打卡' : '打卡' }}
           </button>
@@ -282,10 +329,14 @@ async function removeHabit(id: string) {
           >
             {{ h.checkins?.[today()] ? '✓ 今日已克制' : '今日克制打卡' }}
           </button>
-          <div class="flex items-center gap-3">
-            <button class="btn-danger" @click="record(h, (Number(h.records[today()]) || 0) + 1)">+1 次</button>
+          <p class="study-note mb-2">克制打卡表示今天没有发生；记录发生会取消今日克制标记，不增加积分。</p>
+          <div class="flex items-center gap-3 flex-wrap">
+            <button class="btn-danger" @click="record(h, (Number(h.records[today()]) || 0) + 1)">
+              记录发生 +1 {{ h.type === 'minutes' ? '分钟' : '次' }}
+            </button>
             <span class="text-sm"
-              >今日：<b class="text-correction">{{ h.records[today()] || 0 }}</b> 次</span
+              >今日发生：<b class="text-correction">{{ h.records[today()] || 0 }}</b>
+              {{ h.type === 'minutes' ? '分钟' : '次' }}</span
             >
             <button
               v-if="Number(h.records[today()]) > 0"

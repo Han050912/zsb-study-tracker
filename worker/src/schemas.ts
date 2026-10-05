@@ -60,7 +60,8 @@ export const registerSchema = z.object({
 
 export const loginSchema = z.object({
   username: z.string().min(1, '请输入用户名和密码'),
-  password: z.string().min(1, '请输入用户名和密码')
+  password: z.string().min(1, '请输入用户名和密码'),
+  remember: z.boolean().optional().default(true)
 })
 
 // ---------- 社区枚举常量（唯一来源，community.ts 后续任务改为从这里 import） ----------

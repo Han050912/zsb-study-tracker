@@ -3,6 +3,8 @@
 /** 学习搭子推荐条目 */
 export interface PartnerSuggestion {
   userId: string
+  /** 稳定的对外用户 ID，用于区分同名用户。 */
+  userCode?: string
   userName: string
   verified: boolean
   /** 自定义头像相对 URL（未设置 = undefined） */

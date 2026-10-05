@@ -4,7 +4,8 @@
  */
 
 import type { AppStoreThis } from './this-type'
-import { uid } from '../../utils/date'
+import { today, uid } from '../../utils/date'
+import { nextErrorReviewDate } from '../../utils/errorReview'
 import { stageDelete } from '../../services/syncOutbox'
 import { touchRecord } from './staging'
 import { ERROR_IMAGE_PREFIX, dataUrlToBytes, uploadErrorImage } from '../../api/errorImages'
@@ -21,7 +22,14 @@ type ErrorsActionsShape = {
 
 export const errorsActions: ErrorsActionsShape = {
   addErrorQuestion(this: AppStoreThis, q: Omit<ErrorQuestion, 'id' | 'createdAt' | 'reviewCount' | 'mastered'>) {
-    const question: ErrorQuestion = { ...q, id: uid(), createdAt: Date.now(), reviewCount: 0, mastered: false }
+    const question: ErrorQuestion = {
+      ...q,
+      id: uid(),
+      createdAt: Date.now(),
+      reviewCount: 0,
+      mastered: false,
+      nextReviewDate: today()
+    }
     this.errorQuestions.push(question)
     touchRecord('errorQuestions', question)
     this.save()
@@ -39,6 +47,8 @@ export const errorsActions: ErrorsActionsShape = {
     if (!q) return false
     const firstReview = q.reviewCount === 0
     q.reviewCount++
+    q.lastReviewedAt = Date.now()
+    q.nextReviewDate = nextErrorReviewDate(q.reviewCount, q.mastered, q.lastReviewedAt)
     touchRecord('errorQuestions', q)
     if (firstReview) this.addPoints(2, '复习错题', `error:${id}`)
     this.save()
@@ -49,6 +59,7 @@ export const errorsActions: ErrorsActionsShape = {
     const q = this.errorQuestions.find((e) => e.id === id)
     if (q) {
       q.mastered = !q.mastered
+      q.nextReviewDate = q.mastered ? nextErrorReviewDate(q.reviewCount, true) : today()
       touchRecord('errorQuestions', q)
       this.save()
     }
