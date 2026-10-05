@@ -12,6 +12,7 @@ import type { Todo } from '../../types'
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type TodosActionsShape = {
   addTodo(text: string, schedule?: { startAt?: number; dueAt?: number }): void
+  updateTodo(id: string, text: string): void
   setTodoSchedule(id: string, schedule: { startAt?: number | null; dueAt?: number | null }): void
   markTodosNotified(ids: string[], kind: 'start' | 'due'): void
   toggleTodo(id: string): void
@@ -22,11 +23,24 @@ type TodosActionsShape = {
 export const todosActions: TodosActionsShape = {
   /** 新增待办；可同时指定开始时间与最晚截止时间（时间戳），到点由提醒调度器弹通知 */
   addTodo(this: AppStoreThis, text: string, schedule?: { startAt?: number; dueAt?: number }) {
+    const title = text.trim()
+    if (!title) throw new Error('请填写任务内容')
     const maxOrder = Math.max(0, ...this.todayTodos.map((t) => t.order))
-    const todo: Todo = { id: uid(), date: today(), text, done: false, order: maxOrder + 1 }
+    const todo: Todo = { id: uid(), date: today(), text: title, done: false, order: maxOrder + 1 }
     if (schedule?.startAt) todo.startAt = schedule.startAt
     if (schedule?.dueAt) todo.dueAt = schedule.dueAt
     this.todos.push(todo)
+    touchRecord('todos', todo)
+    this.save()
+  },
+
+  /** 只修改任务内容，保留完成状态、提醒时间与排序。 */
+  updateTodo(this: AppStoreThis, id: string, text: string) {
+    const title = text.trim()
+    if (!title) throw new Error('请填写任务内容')
+    const todo = this.todos.find((t) => t.id === id)
+    if (!todo || todo.text === title) return
+    todo.text = title
     touchRecord('todos', todo)
     this.save()
   },

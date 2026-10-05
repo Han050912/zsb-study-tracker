@@ -2,6 +2,7 @@
 import EmptyState from '../shared/components/EmptyState.vue'
 import { computed, onUnmounted, ref } from 'vue'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { useAppStore } from '../stores/app'
 import { formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
@@ -11,7 +12,7 @@ import ExamAnswerStrip from '../components/ExamAnswerStrip.vue'
 import DashboardCompanions from '../components/DashboardCompanions.vue'
 import NavIcon from '../components/NavIcon.vue'
 import { masteryOverview } from '../utils/studyOverview'
-import { Play, GripVertical, Trash2, ChevronUp, ChevronDown, ArrowRight } from '@lucide/vue'
+import { Play, GripVertical, Pencil, Trash2, ChevronUp, ChevronDown, ArrowRight } from '@lucide/vue'
 import SubjectIcon from '../components/SubjectIcon.vue'
 import Modal from '../components/Modal.vue'
 import TodoTimeFields from '../components/TodoTimeFields.vue'
@@ -23,6 +24,7 @@ import dayjs from 'dayjs'
 
 const store = useAppStore()
 const toast = useToast()
+const confirm = useConfirm()
 
 const quote = computed(() => {
   const list = store.settings.quotes.length ? store.settings.quotes : DEFAULT_QUOTES
@@ -58,6 +60,36 @@ function moveTodo(id: string, direction: number) {
 function toggleTodo(todo: Todo) {
   store.toggleTodo(todo.id)
   toast(todo.done ? '任务已完成' : '任务已恢复')
+}
+
+async function deleteTodo(todo: Todo) {
+  if (!(await confirm(`删除任务「${todo.text}」？删除后无法恢复。`, { danger: true }))) return
+  store.deleteTodo(todo.id)
+  toast('任务已删除')
+}
+
+// ---- 修改任务内容；取消编辑不写入任务，提醒和完成记录由 store 保留 ----
+const titleEditId = ref('')
+const editTitle = ref('')
+const titleEditError = ref('')
+function openTitleEdit(todo: Todo) {
+  titleEditId.value = todo.id
+  editTitle.value = todo.text
+  titleEditError.value = ''
+}
+function saveTodoTitle() {
+  const title = editTitle.value.trim()
+  if (!title) {
+    titleEditError.value = '请填写任务内容'
+    return
+  }
+  if (!store.todos.some((todo) => todo.id === titleEditId.value)) {
+    titleEditError.value = '任务已不存在，请关闭弹窗后重试'
+    return
+  }
+  store.updateTodo(titleEditId.value, title)
+  titleEditId.value = ''
+  toast('任务内容已更新')
 }
 
 // ---- 快捷入口折叠 ----
@@ -354,7 +386,21 @@ onUnmounted(() => {
                 }}{{ isOverdue(t) ? ' · 已超时' : '' }}
               </button>
             </div>
-            <button class="icon-button shrink-0" :aria-label="`删除任务：${t.text}`" @click="store.deleteTodo(t.id)">
+            <button
+              type="button"
+              class="icon-button shrink-0"
+              :aria-label="`编辑任务：${t.text}`"
+              title="编辑任务"
+              @click="openTitleEdit(t)"
+            >
+              <Pencil :size="15" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              class="icon-button shrink-0"
+              :aria-label="`删除任务：${t.text}`"
+              @click="deleteTodo(t)"
+            >
               <Trash2 :size="15" aria-hidden="true" />
             </button>
           </div>
@@ -469,6 +515,34 @@ onUnmounted(() => {
         </RouterLink>
       </div>
     </div>
+
+    <Modal title="编辑任务" :show="!!titleEditId" @close="titleEditId = ''">
+      <form id="todo-title-form" @submit.prevent="saveTodoTitle">
+        <label for="todo-title" class="label">任务内容</label>
+        <input
+          id="todo-title"
+          v-model="editTitle"
+          class="input"
+          data-autofocus
+          :aria-invalid="!!titleEditError"
+          aria-describedby="todo-title-error"
+          @input="titleEditError = ''"
+        />
+        <p
+          id="todo-title-error"
+          role="alert"
+          aria-atomic="true"
+          class="text-sm text-correction"
+          :class="{ 'mt-2': titleEditError }"
+        >
+          {{ titleEditError }}
+        </p>
+      </form>
+      <template #footer>
+        <button type="button" class="btn-ghost" @click="titleEditId = ''">取消</button>
+        <button type="submit" form="todo-title-form" class="btn-primary">保存</button>
+      </template>
+    </Modal>
 
     <!-- 热力图当日学习明细弹窗 -->
     <!-- 新增任务：开始 / 最晚截止时间选择器（仅时:分，日期固定为当日）-->
