@@ -28,13 +28,13 @@ async function isRevoked(env: Env, jti: string): Promise<boolean> {
 }
 
 /** 会话 Cookie：HttpOnly；https 下 SameSite=None（支持跨站 Web 前端），本地 http 回退 Lax */
-export function authCookieHeader(token: string, request: Request): string {
+export function authCookieHeader(token: string, request: Request, remember = true): string {
   const secure = new URL(request.url).protocol === 'https:'
   const parts = [
     `${AUTH_COOKIE}=${encodeURIComponent(token)}`,
     'HttpOnly',
     'Path=/',
-    `Max-Age=${JWT_TTL_SECONDS}`,
+    ...(remember ? [`Max-Age=${JWT_TTL_SECONDS}`] : []),
     `SameSite=${secure ? 'None' : 'Lax'}`
   ]
   if (secure) parts.push('Secure')

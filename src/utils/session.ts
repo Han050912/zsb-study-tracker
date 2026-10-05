@@ -8,6 +8,14 @@
  */
 export const TOKEN_KEY = 'jwt_token'
 export const SESSION_FLAG = 'auth_logged_in'
+export const SESSION_PERSISTENCE_KEY = 'auth_keep_login'
+
+/** 旧客户端默认保持登录；未勾选时仅在本次浏览器/桌面会话中保留凭据。 */
+export function keepsSession(): boolean {
+  // 桌面窗口的临时 JWT 优先于共享偏好，其它窗口登录不能把它升级成持久会话。
+  if (__DESKTOP_BUILD__ && sessionStorage.getItem(TOKEN_KEY)) return false
+  return localStorage.getItem(SESSION_PERSISTENCE_KEY) !== '0'
+}
 
 /**
  * 本标签页内存中的登录态。
@@ -18,14 +26,14 @@ let memorySession = false
 let sessionVersion = 0
 export const getSessionVersion = () => sessionVersion
 
-/** 桌面端从 localStorage 取 JWT（Web 端不落地 token） */
+/** 桌面端按保持登录选择读取会话/持久 JWT（Web 端不落地 token） */
 export function getToken(): string | null {
-  return __DESKTOP_BUILD__ ? localStorage.getItem(TOKEN_KEY) : null
+  return __DESKTOP_BUILD__ ? sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY) : null
 }
 
 /** 是否存在持久化会话凭据（桌面端看 token，Web 端看登录标记） */
 export function hasSession(): boolean {
-  return __DESKTOP_BUILD__ ? !!localStorage.getItem(TOKEN_KEY) : localStorage.getItem(SESSION_FLAG) === '1'
+  return __DESKTOP_BUILD__ ? !!getToken() : localStorage.getItem(SESSION_FLAG) === '1'
 }
 
 /** 本标签页是否仍持有登录态：内存登录态或持久化凭据任一存在 */
@@ -44,6 +52,7 @@ export function clearSession(): void {
   sessionVersion++
   memorySession = false
   localStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(SESSION_FLAG)
 }
 

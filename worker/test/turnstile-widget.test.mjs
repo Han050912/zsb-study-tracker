@@ -125,7 +125,7 @@ function mount() {
   return { app, token, errors, instance, reset: () => instance.exposed.reset() }
 }
 
-test('render waits for SDK readiness and recovers token state after errors, expiration and reset', async () => {
+test('render waits for SDK readiness, preserves synchronous reset tokens and retries errors through a new mount', async () => {
   const cloud = sdk()
   window.turnstile = cloud.api
   const page = mount()
@@ -134,40 +134,48 @@ test('render waits for SDK readiness and recovers token state after errors, expi
   cloud.ready.shift()()
   await settle()
   const options = cloud.rendered[0].options
-  assert.equal(options.retry, 'auto')
+  assert.equal(options.retry, 'never')
   assert.equal(options['refresh-expired'], 'auto')
-  assert.equal(options['refresh-timeout'], 'auto')
+  assert.equal(options['refresh-timeout'], 'manual')
   options.callback('first')
   await nextTick()
   assert.equal(page.token.value, 'first')
-  assert.equal(options['error-callback'](), false)
-  await nextTick()
-  assert.equal(page.token.value, '')
-  assert.equal(page.errors.length, 1)
-  options.callback('recovered')
-  await nextTick()
-  assert.equal(page.token.value, 'recovered')
-  assert.equal(page.instance.setupState.status, 'ready')
   options['expired-callback']()
-  await nextTick()
-  assert.equal(page.token.value, '')
-  options.callback('before-timeout')
-  await nextTick()
-  options['timeout-callback']()
   await nextTick()
   assert.equal(page.token.value, '')
   cloud.api.reset = () => options.callback('synchronous-fresh-token')
   page.reset()
   await nextTick()
   assert.equal(page.token.value, 'synchronous-fresh-token', 'reset must not erase a replacement token')
-  page.app.unmount()
-  const errorCount = page.errors.length
-  options.callback('late')
-  options['error-callback']()
+  assert.equal(options['error-callback']('200500'), true)
   await nextTick()
-  assert.equal(page.token.value, 'synchronous-fresh-token')
-  assert.equal(page.errors.length, errorCount)
-  assert.deepEqual(cloud.removed, ['widget-1'])
+  assert.equal(page.token.value, '')
+  assert.equal(page.errors.length, 1)
+  options.callback('late-recovery')
+  await nextTick()
+  assert.equal(page.token.value, '', 'failed widgets cannot silently resume')
+  assert.equal(page.instance.setupState.status, 'error')
+  page.app.unmount()
+
+  // The login retry action increments its key: a fresh widget can recover without reloading the page.
+  const retry = mount()
+  await settle()
+  cloud.ready.shift()()
+  await settle()
+  assert.equal(cloud.rendered.length, 2)
+  const retryOptions = cloud.rendered[1].options
+  retryOptions.callback('recovered')
+  await nextTick()
+  assert.equal(retry.token.value, 'recovered')
+  assert.equal(retry.instance.setupState.status, 'ready')
+  assert.equal(retry.errors.length, 0)
+  retry.app.unmount()
+  retryOptions.callback('after-unmount')
+  retryOptions['error-callback']('200500')
+  await nextTick()
+  assert.equal(retry.token.value, 'recovered')
+  assert.equal(retry.errors.length, 0)
+  assert.deepEqual(cloud.removed, ['widget-1', 'widget-2'])
 })
 
 test('concurrent mounts share SDK load retries and an unmounted widget never renders', async () => {
@@ -259,4 +267,51 @@ test('unmounting while SDK readiness is pending ignores late success and removes
   assert.equal(cloud.rendered.length, 0)
   assert.equal(page.errors.length, 0)
   assert.deepEqual(cloud.removed, [])
+})
+
+test('synchronous render callbacks retain success and cleanup failures cannot suppress error recovery', async () => {
+  const cloud = sdk()
+  window.turnstile = cloud.api
+  cloud.api.render = (_container, options) => {
+    options.callback('synchronous-render-token')
+    return 'sync-success'
+  }
+  const first = mount()
+  await settle()
+  cloud.ready.shift()()
+  await settle()
+  assert.equal(first.token.value, 'synchronous-render-token')
+  assert.equal(first.instance.setupState.status, 'ready')
+  first.app.unmount()
+
+  let removals = 0,
+    cleared = 0,
+    failedOptions
+  cloud.api.remove = () => {
+    removals++
+    throw new Error('SDK cleanup unavailable')
+  }
+  cloud.api.render = (_container, options) => {
+    failedOptions = options
+    options['error-callback']('200500')
+    return 'sync-failure'
+  }
+  const next = mount()
+  next.instance.setupState.container = {
+    replaceChildren() {
+      cleared++
+    }
+  }
+  await settle()
+  cloud.ready.shift()()
+  await settle()
+  assert.equal(next.errors.length, 1)
+  assert.equal(next.instance.setupState.status, 'error')
+  assert.equal(removals, 1)
+  assert.equal(cleared, 1)
+  failedOptions.callback('late-token')
+  await nextTick()
+  assert.equal(next.token.value, '')
+  next.app.unmount()
+  assert.equal(removals, 1, 'failed SDK removal must not be attempted again on unmount')
 })

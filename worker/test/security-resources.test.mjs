@@ -164,6 +164,56 @@ async function seedPrivateCache(bearer) {
   return hash
 }
 
+test('review schedule survives sync push, pull and legacy database migration with account isolation', async () => {
+  db.exec(
+    'ALTER TABLE error_questions DROP COLUMN last_reviewed_at; ALTER TABLE error_questions DROP COLUMN next_review_date'
+  )
+  db.exec(
+    "INSERT INTO error_questions (id,user_id,subject_id,date,type,content,created_at,review_count) VALUES ('legacy','me','math','2026-10-05','选择','旧题',1,2)"
+  )
+  db.exec(await readFile(new URL('../migrations/0009_error_review_schedule.sql', import.meta.url), 'utf8'))
+  assert.equal(
+    db.prepare("SELECT next_review_date FROM error_questions WHERE id='legacy'").get().next_review_date,
+    null
+  )
+  const value = {
+    id: 'scheduled',
+    subjectId: 'math',
+    date: '2026-10-05',
+    type: '选择',
+    content: '排期题',
+    reviewCount: 2,
+    mastered: true,
+    createdAt: 1,
+    lastReviewedAt: 1791217800000,
+    nextReviewDate: '2026-10-13'
+  }
+  const pushed = await api('/api/data/push', {
+    method: 'POST',
+    body: JSON.stringify({
+      domains: { errorQuestions: { upserts: [{ ...value, updatedAt: Date.now() }], deletes: [] } }
+    })
+  })
+  assert.equal(pushed.status, 200, await pushed.clone().text())
+  const persisted = db
+    .prepare("SELECT last_reviewed_at,next_review_date FROM error_questions WHERE id='scheduled' AND user_id='me'")
+    .get()
+  assert.equal(persisted.last_reviewed_at, value.lastReviewedAt)
+  assert.equal(persisted.next_review_date, value.nextReviewDate)
+  const errors = await (await api('/api/errors')).json()
+  assert.equal(errors.find((question) => question.id === 'scheduled').nextReviewDate, value.nextReviewDate)
+  assert.equal(errors.find((question) => question.id === 'legacy').nextReviewDate, undefined)
+  const pulled = await (await api('/api/data/pull', { method: 'POST', body: JSON.stringify({ full: true }) })).json()
+  assert.equal(
+    pulled.changes.errorQuestions.upserts.find((item) => item.id === value.id).lastReviewedAt,
+    value.lastReviewedAt
+  )
+  db.exec(
+    "INSERT INTO users (id,username,password_hash,created_at) VALUES ('schedule-other','schedule-other','unused',1)"
+  )
+  assert.deepEqual(await (await api('/api/errors', {}, await signToken('schedule-other', env.JWT_SECRET))).json(), [])
+})
+
 test('私有响应始终鉴权：过期 JWT 和匿名缓存键不能读取历史私有缓存', async () => {
   const expired = expiredToken()
   const hash = await seedPrivateCache(expired)
@@ -182,7 +232,9 @@ test('私有 GET 与错误响应禁止浏览器保存，切号和写入后不复
   assert.equal((await response.json()).userName, 'updated fixture')
   db.exec("INSERT INTO users (id, username, password_hash, created_at) VALUES ('other', 'other-user', 'unused', 1)")
   const other = await signToken('other', env.JWT_SECRET)
-  assert.equal((await (await api('/api/settings', {}, other)).json()).userName, '')
+  const otherSettings = await (await api('/api/settings', {}, other)).json()
+  assert.equal(otherSettings.userName, '升本人-other')
+  assert.notEqual(otherSettings.userName, 'updated fixture')
   assert.equal((await api('/api/settings', {}, null)).headers.get('Cache-Control'), 'private, no-store')
 })
 
@@ -218,6 +270,62 @@ test('登出后另一数据中心的旧未吊销标记不能放行任何私有�
       ),
     (error) => error.status === 401
   )
+})
+
+test('保持登录控制 Cookie 生命周期，任何选项的退出均吊销 JWT 并清 Cookie', async () => {
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword('Password123'), 'me')
+  for (const remember of [true, false, undefined]) {
+    const response = await api(
+      '/api/auth/login',
+      {
+        method: 'POST',
+        headers: { 'X-Desktop-Token': env.DESKTOP_TOKEN },
+        body: JSON.stringify({ username: 'review-user', password: 'Password123', remember })
+      },
+      null
+    )
+    assert.equal(response.status, 200)
+    const cookie = response.headers.get('Set-Cookie')
+    assert.equal(cookie.includes('Max-Age=259200'), remember !== false)
+    assert.match(cookie, /HttpOnly.*SameSite=None.*Secure/)
+    const issued = (await response.json()).token
+    const logout = await api('/api/auth/logout', { method: 'POST' }, issued)
+    assert.equal(logout.status, 200)
+    assert.match(logout.headers.get('Set-Cookie'), /Max-Age=0/)
+    assert.equal((await api('/api/auth/me', {}, issued)).status, 401)
+  }
+})
+
+test('Siteverify 网络/服务故障返回可重试提示且不能签发登录会话', async (t) => {
+  env.TURNSTILE_SECRET = 'turnstile-fixture'
+  const headers = { 'X-CF-Turnstile-Response': 'test-verification' }
+  let timeoutMs
+  const controller = new AbortController()
+  t.mock.method(AbortSignal, 'timeout', (value) => {
+    timeoutMs = value
+    return controller.signal
+  })
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    assert.equal(options.signal, controller.signal)
+    throw new TypeError('verification unavailable')
+  })
+  for (const failure of ['network', 'http', 'invalid-json']) {
+    if (failure === 'http') globalThis.fetch = async () => new Response('unavailable', { status: 503 })
+    if (failure === 'invalid-json') globalThis.fetch = async () => new Response('not-json')
+    const response = await api(
+      '/api/auth/login',
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ username: 'review-user', password: 'password1' })
+      },
+      null
+    )
+    assert.equal(response.status, 503)
+    assert.match((await response.json()).message, /人机验证服务暂时不可用/)
+  }
+  assert.equal(timeoutMs, 10_000)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM user_sessions').get().n, 0)
 })
 
 test('修改密码吊销其它已登记会话，新 token 继续有效', async () => {

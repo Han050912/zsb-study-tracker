@@ -16,6 +16,7 @@ const showPassword = ref(false)
 const showConfirmPassword = ref(false)
 const errorMsg = ref('')
 const loading = ref(false)
+const rememberMe = ref(true)
 // 忘记密码说明面板：账号无邮箱/手机号绑定，无自助找回渠道，面板给出可行路径
 const showForgotHint = ref(false)
 const registrationPasswordError = computed(() =>
@@ -37,15 +38,19 @@ const TurnstileWidget = isDesktop ? null : defineAsyncComponent(() => import('..
 const turnstileWidget = ref<{ reset: () => void } | null>(null)
 const turnstileToken = ref('')
 const turnstileKey = ref(0) // 递增以强制重新挂载 TurnstileWidget
-const turnstileError = ref(false) // Turnstile 加载失败的独立状态
+const turnstileError = ref('') // SDK 与验证挑战失败均给出可操作的原因。
+function onTurnstileError(message?: string) {
+  turnstileError.value = message || '人机验证未能加载。请检查网络连接后重新加载验证。'
+}
 watch(turnstileToken, (token) => {
   if (!token) return
-  turnstileError.value = false
-  if (errorMsg.value === '请先完成人机验证') errorMsg.value = ''
+  if (errorMsg.value === '请先完成人机验证' || errorMsg.value === turnstileError.value) errorMsg.value = ''
+  turnstileError.value = ''
 })
 
 function retryTurnstile() {
-  turnstileError.value = false
+  turnstileError.value = ''
+  errorMsg.value = ''
   turnstileToken.value = ''
   turnstileKey.value++
 }
@@ -86,13 +91,13 @@ async function submit() {
   }
   // 未完成验证或令牌过期（expired-callback 清空 token）时按钮仍可点，统一在提交时给出明确提示
   if (!isDesktop && !turnstileToken.value) {
-    errorMsg.value = '请先完成人机验证'
+    errorMsg.value = turnstileError.value || '请先完成人机验证'
     return
   }
   loading.value = true
   try {
     if (mode.value === 'login') {
-      await login(username.value.trim(), password.value, turnstileToken.value)
+      await login(username.value.trim(), password.value, turnstileToken.value, rememberMe.value)
     } else {
       await register(username.value.trim(), password.value, turnstileToken.value)
     }
@@ -255,17 +260,24 @@ async function submit() {
           </div>
 
           <!-- Turnstile 人机验证（仅 Web 端渲染，桌面端产物不含此组件） -->
+          <label v-if="mode === 'login'" class="login-remember">
+            <input v-model="rememberMe" type="checkbox" :disabled="loading" aria-describedby="login-session-hint" />
+            <span>保持登录（最长 3 天）</span>
+          </label>
+          <p v-if="mode === 'login'" id="login-session-hint" class="login-field-hint !mt-0">
+            取消勾选后仅本次会话有效；退出登录会立即结束会话。
+          </p>
           <TurnstileWidget
             v-if="!isDesktop"
             :key="turnstileKey"
             ref="turnstileWidget"
             v-model:token="turnstileToken"
-            @load-error="turnstileError = true"
+            @load-error="onTurnstileError"
           />
 
           <!-- Turnstile 加载失败（含手动重试） -->
           <div v-if="turnstileError" class="login-error" role="alert">
-            <p>人机验证未能加载。请检查网络或刷新页面，再重试验证。</p>
+            <p>{{ turnstileError }}</p>
             <button type="button" class="login-retry" @click="retryTurnstile">
               重新加载验证 <ArrowRight :size="16" aria-hidden="true" />
             </button>
@@ -496,6 +508,20 @@ async function submit() {
   width: 100%;
   min-height: 46px;
   margin-top: 4px;
+}
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.login-remember input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--action);
 }
 .login-recovery {
   margin-top: 8px;

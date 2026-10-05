@@ -4,6 +4,9 @@ import { expireSession, loginRedirectPath } from '../api/client'
 import {
   TOKEN_KEY,
   SESSION_FLAG,
+  SESSION_PERSISTENCE_KEY,
+  getToken,
+  keepsSession,
   hasSession,
   hasActiveSession,
   clearSession,
@@ -14,7 +17,7 @@ import {
  * 认证服务：注册 / 登录 / 退出 / 会话持久化。
  * - 密码由 Worker 端 bcryptjs(cost=10) 哈希存储，前端不接触哈希细节
  * - Web 端：登录成功由服务端 Set-Cookie 下发 HttpOnly 会话（本地仅存非敏感登录标志）
- * - 桌面端：登录成功获得 HS256 JWT，存 localStorage 供 client.ts 携带
+ * - 桌面端：HS256 JWT 按保持登录选择存 localStorage 或 sessionStorage
  */
 
 const GUEST_FLAG = 'auth_guest_mode'
@@ -52,10 +55,18 @@ export function exitGuestMode(): void {
 }
 
 /** 建立/清空会话的唯一入口：同步 currentUser、内存登录态标记与持久化凭据（其余地方不要直接写 currentUser） */
-function setSession(user: SessionUser | null, token?: string) {
+function setSession(user: SessionUser | null, token?: string, remember = keepsSession()) {
   currentUser.value = user
   if (user) {
-    if (isDesktop && token) localStorage.setItem(TOKEN_KEY, token)
+    localStorage.setItem(SESSION_PERSISTENCE_KEY, remember ? '1' : '0')
+    if (isDesktop && token) {
+      sessionStorage.removeItem(TOKEN_KEY)
+      if (remember) localStorage.setItem(TOKEN_KEY, token)
+      else {
+        localStorage.removeItem(TOKEN_KEY)
+        sessionStorage.setItem(TOKEN_KEY, token)
+      }
+    }
     localStorage.setItem(SESSION_FLAG, '1')
     markSessionActive()
     exitGuestMode() // 建立登录会话即结束访客浏览
@@ -103,17 +114,22 @@ export async function register(username: string, password: string, cfTurnstileTo
   if (policyError) throw new Error(policyError)
   if (logoutFlight) await logoutFlight
   const { token, user } = await authApi.register(username, password, cfTurnstileToken)
-  setSession(user, token)
+  setSession(user, token, true)
   return user
 }
 
 // ---------- 登录 ----------
-export async function login(username: string, password: string, cfTurnstileToken = ''): Promise<SessionUser> {
+export async function login(
+  username: string,
+  password: string,
+  cfTurnstileToken = '',
+  remember = true
+): Promise<SessionUser> {
   username = username.trim()
   if (!username || !password) throw new Error('请输入用户名和密码')
   if (logoutFlight) await logoutFlight
-  const { token, user } = await authApi.login(username, password, cfTurnstileToken)
-  setSession(user, token)
+  const { token, user } = await authApi.login(username, password, cfTurnstileToken, remember)
+  setSession(user, token, remember)
   return user
 }
 
@@ -127,7 +143,7 @@ export async function changePassword(oldPassword: string, newPassword: string, c
   if (!oldPassword) throw new Error('请输入当前密码')
   const policyError = passwordPolicyError(newPassword)
   if (policyError) throw new Error(policyError)
-  const { token } = await authApi.changePassword(oldPassword, newPassword, cfTurnstileToken)
+  const { token } = await authApi.changePassword(oldPassword, newPassword, cfTurnstileToken, keepsSession())
   // 复用唯一会话入口：同步内存登录态，并按平台落盘/忽略新 token
   setSession(currentUser.value, token)
 }
@@ -148,10 +164,11 @@ export function logout(): void {
     exitGuestMode()
     return
   }
+  const logoutToken = getToken()
   setSession(null) // 先清本地会话（立即生效）
   exitGuestMode() // 退出登录同时清除访客模式，防止多标签页下 guestMode 残留绕过登录页入口
   clearApiCaches() // 清掉缓存里的私有 API 响应，避免换账号后串数据
-  const request = authApi.logout().then(
+  const request = authApi.logout(logoutToken ?? undefined).then(
     () => {},
     () => {}
   )

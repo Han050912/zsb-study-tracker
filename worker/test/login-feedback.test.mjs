@@ -91,7 +91,8 @@ const built = await build({
               contents: 'export const expireSession = () => {}; export const loginRedirectPath = () => "/login";'
             }
           return {
-            contents: `export const TOKEN_KEY = 'token', SESSION_FLAG = 'session';
+            contents: `export const TOKEN_KEY = 'token', SESSION_FLAG = 'session', SESSION_PERSISTENCE_KEY = 'remember';
+          export const getToken = () => null, keepsSession = () => true;
           export const hasSession = () => false, hasActiveSession = () => false;
           export const clearSession = () => {}, markSessionActive = () => {};`
           }
@@ -282,7 +283,7 @@ test('switching modes clears registration feedback without applying its policy t
   await type(page.input('password'), 'abc')
   await click(page.button('verify'))
   await page.submit()
-  assert.deepEqual(globalThis.__loginFeedback.calls, [['login', 'existing-user', 'abc', 'first-verification']])
+  assert.deepEqual(globalThis.__loginFeedback.calls, [['login', 'existing-user', 'abc', 'first-verification', true]])
   await click(page.button('注册'))
   assert.equal(page.input('password').value, '')
   assert.equal(page.input('password').props['aria-invalid'], false)
@@ -312,7 +313,7 @@ test('client validation preserves an unused Turnstile token; a failed request re
   await click(page.button('verify'))
   await page.submit()
   assert.deepEqual(
-    globalThis.__loginFeedback.calls.map((call) => call.at(-1)),
+    globalThis.__loginFeedback.calls.map((call) => call[3]),
     ['first-verification', 'fresh-verification']
   )
 })
@@ -349,7 +350,22 @@ test('successful verification clears a transient SDK failure and obsolete verifi
   await type(page.input('username'), 'existing-user')
   await type(page.input('password'), 'password1')
   await page.submit()
-  assert.equal(text(page.alert()), '请先完成人机验证')
+  assert.match(text(page.alert()), /人机验证未能加载/)
   await click(page.button('verify'))
   assert.equal(text(page.alert()), '')
+  assert.equal(globalThis.__loginFeedback.calls.length, 0)
+  await page.submit()
+  assert.equal(globalThis.__loginFeedback.calls.length, 1)
+})
+
+test('保持登录选项默认开启，取消勾选后提交本次会话策略', async () => {
+  const page = await mount()
+  const checkbox = find(page.root, (element) => element.tag === 'input' && element.props.type === 'checkbox')
+  assert.ok(checkbox)
+  await checkbox.props['onUpdate:modelValue'](false)
+  await type(page.input('username'), 'existing-user')
+  await type(page.input('password'), 'password1')
+  await click(page.button('verify'))
+  await page.submit()
+  assert.equal(globalThis.__loginFeedback.calls.at(-1).at(-1), false)
 })
