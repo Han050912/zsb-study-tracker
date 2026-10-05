@@ -1,3 +1,8 @@
+<script lang="ts">
+// 同时挂载或手动重试复用正在加载的 SDK，避免重复插入脚本。
+let sdkLoadFlight: Promise<void> | null = null
+</script>
+
 <script setup lang="ts">
 /**
  * Cloudflare Turnstile 人机验证组件（仅 Web 端使用）
@@ -18,14 +23,23 @@ const TURNSTILE_SITEKEY = import.meta.env.DEV ? '1x00000000000000000000AA' : '0x
 const LOAD_TIMEOUT_MS = 10_000
 const MAX_RETRIES = 2
 
+type TurnstileSdk = {
+  ready(callback: () => void): void
+  render(container: HTMLElement, options: Record<string, unknown>): string
+  reset(id: string): void
+  remove(id: string): void
+}
+const getSdk = () => (window as Window & { turnstile?: TurnstileSdk }).turnstile
+
 const container = ref<HTMLDivElement>()
 const status = ref<'loading' | 'rendering' | 'ready' | 'error'>('loading')
 let widgetId = ''
+let disposed = false
 
 /** 单次加载 Turnstile JS SDK，附带超时保护 */
 function loadScriptOnce(): Promise<void> {
   return new Promise((resolve, reject) => {
-    if ((window as any).turnstile) {
+    if (getSdk()) {
       resolve()
       return
     }
@@ -53,7 +67,7 @@ function loadScriptOnce(): Promise<void> {
 }
 
 /** 带重试的脚本加载（指数退避） */
-async function loadScript(): Promise<void> {
+async function loadScriptWithRetries(): Promise<void> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       await loadScriptOnce()
@@ -67,52 +81,81 @@ async function loadScript(): Promise<void> {
   throw new Error(`重试 ${MAX_RETRIES} 次后仍无法加载验证组件`)
 }
 
+function loadScript(): Promise<void> {
+  if (!sdkLoadFlight) {
+    sdkLoadFlight = loadScriptWithRetries().finally(() => {
+      sdkLoadFlight = null
+    })
+  }
+  return sdkLoadFlight
+}
+
 onMounted(async () => {
-  // 1. 加载 SDK（含超时 + 重试）
   try {
     await loadScript()
+    if (disposed) return
+    await nextTick()
+    const sdk = getSdk()
+    if (!sdk) throw new Error('验证组件未就绪')
+    await new Promise<void>((resolve, reject) => {
+      const timeoutId = setTimeout(() => reject(new Error('验证组件初始化超时')), LOAD_TIMEOUT_MS)
+      sdk.ready(() => {
+        clearTimeout(timeoutId)
+        resolve()
+      })
+    })
+    if (disposed) return
+    if (!container.value) throw new Error('验证容器未就绪')
+    status.value = 'rendering'
+    widgetId = sdk.render(container.value, {
+      sitekey: TURNSTILE_SITEKEY,
+      theme: 'auto',
+      // 标准尺寸为 300 × 65px；表单布局为原生 iframe 保留完整宽度。
+      size: 'normal',
+      retry: 'auto',
+      'refresh-expired': 'auto',
+      'refresh-timeout': 'auto',
+      callback: (t: string) => {
+        if (disposed) return
+        token.value = t
+        status.value = 'ready'
+      },
+      'error-callback': () => {
+        if (disposed) return false
+        token.value = ''
+        emit('load-error')
+        status.value = 'error'
+        return false // 让 Turnstile 继续自动重试；成功后的 token 会清除页面失败提示。
+      },
+      'expired-callback': () => {
+        if (disposed) return
+        token.value = ''
+        status.value = 'rendering'
+      },
+      'timeout-callback': () => {
+        if (disposed) return
+        token.value = ''
+        status.value = 'rendering'
+      }
+    })
   } catch {
+    if (disposed) return
+    token.value = ''
     status.value = 'error'
     emit('load-error')
-    return
   }
-
-  // 2. 渲染验证组件
-  await nextTick()
-  if (!container.value || !(window as any).turnstile) {
-    status.value = 'error'
-    emit('load-error')
-    return
-  }
-
-  status.value = 'rendering'
-  widgetId = (window as any).turnstile.render(container.value, {
-    sitekey: TURNSTILE_SITEKEY,
-    theme: 'auto',
-    // 标准尺寸为 300 × 65px；表单布局为原生 iframe 保留完整宽度。
-    size: 'normal',
-    callback: (t: string) => {
-      token.value = t
-      status.value = 'ready'
-    },
-    'error-callback': () => {
-      emit('load-error')
-      status.value = 'error'
-    },
-    'expired-callback': () => {
-      token.value = ''
-    }
-  })
 })
 
 onUnmounted(() => {
-  if (widgetId) (window as any).turnstile.remove(widgetId)
+  disposed = true
+  if (widgetId) getSdk()?.remove(widgetId)
 })
 
 function reset() {
-  if (widgetId) {
-    ;(window as any).turnstile.reset(widgetId)
+  if (!disposed && widgetId) {
     token.value = ''
+    status.value = 'rendering'
+    getSdk()?.reset(widgetId)
   }
 }
 

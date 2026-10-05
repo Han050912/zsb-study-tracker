@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import IconAction from '../shared/components/IconAction.vue'
 import LoadingState from '../shared/components/LoadingState.vue'
-import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useToast } from '../composables/useToast'
 import { ChevronDown, ChevronUp, ArrowRight } from '@lucide/vue'
 import { useAppStore } from '../stores/app'
@@ -78,6 +78,11 @@ const turnstileWidget = ref<{ reset: () => void } | null>(null)
 const turnstileToken = ref('')
 const turnstileKey = ref(0) // 递增以强制重新挂载 TurnstileWidget
 const turnstileError = ref(false)
+watch(turnstileToken, (token) => {
+  if (!token) return
+  turnstileError.value = false
+  if (pwError.value === '请先完成人机验证') pwError.value = ''
+})
 
 function retryTurnstile() {
   turnstileError.value = false

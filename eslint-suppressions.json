@@ -9,11 +9,6 @@
       "count": 2
     }
   },
-  "src/components/TurnstileWidget.vue": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 5
-    }
-  },
   "src/components/UpdateDialog.vue": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
