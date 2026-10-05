@@ -6,7 +6,7 @@ import path from 'node:path'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  // API 域名单一来源：.env 的 VITE_API_BASE（process.env 优先，供 CI 覆盖）
+  // API 地址读取本地环境配置（CI 从 .env.example 复制；process.env 优先）
   const apiBase = process.env.VITE_API_BASE || env.VITE_API_BASE || ''
   // 桌面端认证令牌：与旧 __DESKTOP_TOKEN__ define 同一来源（仅 --mode desktop 写入产物）。
   // 不再内联进前端 JS bundle，而是落进 dist/api-base.json 由 Electron 主进程运行时读取——
@@ -33,9 +33,6 @@ export default defineConfig(({ mode }) => {
           // 且笔记正文存 IndexedDB 不过期，若渲染器按需缓存（30 天过期）会出现「正文读得到、渲染不了」的错配
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
           globIgnores: [
-            // 截图/捐赠目录：仅 README 用，体积大且与运行无关
-            '**/screenshots/**',
-            '**/donate/**',
             // 懒加载大件不预缓存（首装省 ~670KB 传输，gzip 口径）：统计图表/PDF 阅读器/分享图/KaTeX 字体
             // 均为「非首次必用」重件，首次使用后经 runtimeCaching 离线可用
             'assets/echarts-*.js',

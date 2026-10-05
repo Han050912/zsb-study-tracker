@@ -18,7 +18,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
   build:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +38,9 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
 
       - name: Build
-        run: npm run build
+        run: |
+          cp .env.example .env
+          npm run build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

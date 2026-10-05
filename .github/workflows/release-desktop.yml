@@ -14,7 +14,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
   release:
+    needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -27,6 +30,7 @@ jobs:
 
       # 防止 tag 与 package.json 版本错位导致 latest.yml 版本混乱
       - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           PKG=$(node -p "require('./package.json').version")
@@ -36,22 +40,30 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npm ci --prefix worker
 
-      - name: Lint
-        run: npm run lint
+      # 桌面版没有可用的 Turnstile 回退界面，缺少凭据时必须在生成安装包前失败。
+      - name: Verify desktop authentication configuration
+        run: |
+          if [ -z "$DESKTOP_TOKEN" ]; then
+            echo "::error::DESKTOP_TOKEN 未配置，桌面登录不可用"
+            exit 1
+          fi
+        env:
+          DESKTOP_TOKEN: ${{ secrets.DESKTOP_TOKEN }}
 
-      - name: Unit tests
-        run: npm test
-
-      # mac 不进 CI：无签名 + 无更新通道（见 docs/superpowers/specs/2026-09-13-cleanup-batch-design.md）
+      # mac 不进 CI：无签名 + 无更新通道
       # electron-builder 不执行 vite build，渲染层需显式先构建
-      # DESKTOP_TOKEN 在渲染层构建期被消费（vite.config.ts 编译为 __DESKTOP_TOKEN__），
+      # DESKTOP_TOKEN 在构建期写入 dist/api-base.json，供主进程读取，
       # 必须挂在 build:desktop 步骤；electron-builder 不读取该变量
       - name: Build renderer
-        run: npm run build:desktop
+        run: |
+          cp .env.example .env
+          npm run build:desktop
         env:
-          # 桌面端共享令牌：未配置 secret 时桌面端回退人机验证（fail-closed，不阻塞发版）
+          # 上一步已验证存在；不在日志中输出令牌值。
           DESKTOP_TOKEN: ${{ secrets.DESKTOP_TOKEN }}
 
       # 桌面端运行时（electron/main.cjs）依赖该产物读取 API 地址：缺失或为空直接中断发版

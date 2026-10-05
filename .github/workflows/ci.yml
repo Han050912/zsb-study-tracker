@@ -1,15 +1,20 @@
 name: CI
 
-# 开发分支与主分支的 push 都跑，PR 同样跑；与部署流程完全解耦
+# 常规检查与部署共用同一门禁，部署工作流通过 workflow_call 等待本次提交的检查。
 on:
+  workflow_call:
   push:
     branches: [development, master]
   pull_request:
 
 # 同一分支的新提交取消上一次未完成的检查，避免排队堆积
 concurrency:
-  group: ci-${{ github.ref }}
+  # 被调用时 github.workflow 为调用方名称，避免不同部署/独立 CI 互相取消。
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   web:
@@ -44,7 +49,9 @@ jobs:
           npm test
 
       - name: Build
-        run: npx vite build
+        run: |
+          cp .env.example .env
+          npx vite build
 
   typecheck-worker:
     name: Typecheck (worker)
