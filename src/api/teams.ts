@@ -1,7 +1,7 @@
 import { request } from './client'
 import type { StudyTeam, TeamDetail, ChallengeType, TeamJoinRequest, TeamChallenge } from '../types'
 
-/** 获取公开小组列表或我加入的小组 */
+/** 获取公开小队列表或我加入的小队 */
 export interface SquadQuery {
   filter: 'my' | 'public'
   keyword: string
@@ -20,7 +20,7 @@ export function getTeams(query: SquadQuery, cursor?: string | null) {
   return request<{ teams: StudyTeam[]; nextCursor: string | null }>(`/api/teams?${params}`)
 }
 
-/** 创建学习小组 */
+/** 创建学习小队 */
 export async function createTeam(data: {
   name: string
   description?: string
@@ -33,7 +33,7 @@ export async function createTeam(data: {
   })
 }
 
-/** 获取小组详情（私密小组需携带有效邀请码方可读，用于邀请码申请入口） */
+/** 获取小队详情（私密小队需携带有效邀请码方可读，用于邀请码申请入口） */
 export async function getTeamDetail(
   teamId: string,
   inviteCode?: string,
@@ -46,19 +46,19 @@ export async function getTeamDetail(
   return request<TeamDetail>(`/api/teams/${teamId}${query}`)
 }
 
-/** 加入小组 */
+/** 加入小队 */
 export async function joinTeam(teamId: string): Promise<void> {
   await request(`/api/teams/${teamId}/join`, { method: 'POST' })
 }
 
-/** 按邀请码查询私密小组 */
+/** 按邀请码查询私密小队 */
 export async function getTeamByInvite(
   code: string
 ): Promise<{ id: string; name: string; description: string; memberCount: number; maxMembers: number }> {
   return request(`/api/teams/by-invite?code=${encodeURIComponent(code)}`)
 }
 
-/** 通过邀请码申请加入私密小组 */
+/** 通过邀请码申请加入私密小队 */
 export async function applyTeam(teamId: string, inviteCode: string): Promise<void> {
   await request(`/api/teams/${teamId}/apply`, {
     method: 'POST',
@@ -96,10 +96,10 @@ export async function resetInviteCode(teamId: string): Promise<{ inviteCode: str
   })
 }
 
-/** 编辑小组信息（名称/描述/人数上限，仅队长） */
+/** 编辑小队信息（名称/描述/人数上限，仅队长） */
 export async function updateTeam(
   teamId: string,
-  data: { name: string; description?: string; maxMembers: number }
+  data: { name: string; description?: string; maxMembers: number; isPublic?: boolean }
 ): Promise<void> {
   await request(`/api/teams/${teamId}`, {
     method: 'PUT',
@@ -107,7 +107,7 @@ export async function updateTeam(
   })
 }
 
-/** 退出小组 */
+/** 退出小队 */
 export async function leaveTeam(teamId: string): Promise<void> {
   await request(`/api/teams/${teamId}/leave`, { method: 'POST' })
 }
@@ -157,7 +157,7 @@ export async function removeTeamMember(teamId: string, userId: string): Promise<
   })
 }
 
-/** 解散小组 */
+/** 解散小队 */
 export async function disbandTeam(teamId: string): Promise<void> {
   await request(`/api/teams/${teamId}/disband`, { method: 'POST' })
 }

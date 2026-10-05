@@ -70,12 +70,12 @@ export function useSquadDetail() {
 
   async function handleLeave() {
     if (!team.value || leaveSubmitting.value) return
-    if (!(await confirm('确认退出该小组？'))) return
+    if (!(await confirm('确认退出该小队？'))) return
     leaveSubmitting.value = true
     try {
       await leaveTeam(teamId)
-      toast('已退出小组')
-      // 退出后私密小组详情已不可读，直接回列表；不再请求已无权限的详情接口
+      toast('已退出小队')
+      // 退出后私密小队详情已不可读，直接回列表；不再请求已无权限的详情接口
       router.replace({ name: 'teams' })
     } catch (e) {
       toast(getErrorMessage(e, '退出失败'))
@@ -84,7 +84,7 @@ export function useSquadDetail() {
     }
   }
 
-  /** 撤回申请成功后同样失去私密小组详情读取权限，与退出统一走回列表 */
+  /** 撤回申请成功后同样失去私密小队详情读取权限，与退出统一走回列表 */
   function handleWithdrawn() {
     router.replace({ name: 'teams' })
   }
@@ -114,10 +114,10 @@ export function useSquadDetail() {
     try {
       if (payload.mode === 'disband') {
         await disbandTeam(teamId)
-        toast('小组已解散')
+        toast('小队已解散')
       } else {
         await transferAndLeave(teamId, payload.targetId)
-        toast('已退出小组')
+        toast('已退出小队')
       }
       router.replace({ name: 'teams' })
     } catch (e) {

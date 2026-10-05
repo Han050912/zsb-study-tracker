@@ -178,15 +178,37 @@ function restoreSoloState() {
 
 // ---- 控制按钮自动隐藏 ----
 const controlsVisible = ref(true)
+const CONTROLS_HINT_KEY = `zsb-pomodoro-controls-hint-v1:${soloOwner}`
+const controlsHintVisible = ref(true)
+try {
+  controlsHintVisible.value = localStorage.getItem(CONTROLS_HINT_KEY) !== '1'
+} catch {
+  /* 存储不可用仍展示引导。 */
+}
+function dismissControlsHint() {
+  controlsHintVisible.value = false
+  try {
+    localStorage.setItem(CONTROLS_HINT_KEY, '1')
+  } catch {
+    /* 本次已读状态仍保留在内存。 */
+  }
+}
 let hideControlsTimer: ReturnType<typeof setTimeout> | null = null
+function revealControls() {
+  controlsVisible.value = true
+  if (hideControlsTimer) clearTimeout(hideControlsTimer)
+  hideControlsTimer = null
+}
+function hideControls() {
+  hideControlsTimer = null
+  if (!document.activeElement?.closest('.timer-controls')) controlsVisible.value = false
+}
 
 /** 显示控制按钮并在 ms 毫秒后自动隐藏（鼠标滑到页面底部会重新唤起） */
 function scheduleControlsHide(ms: number) {
   controlsVisible.value = true
   if (hideControlsTimer) clearTimeout(hideControlsTimer)
-  hideControlsTimer = setTimeout(() => {
-    controlsVisible.value = false
-  }, ms)
+  hideControlsTimer = setTimeout(hideControls, ms)
 }
 
 function handleMouseMove(e: MouseEvent) {
@@ -198,17 +220,11 @@ function handleMouseMove(e: MouseEvent) {
   const threshold = 100
   if (e.clientY > window.innerHeight - threshold) {
     // 鼠标在底部区域：显示按钮并取消隐藏定时器
-    controlsVisible.value = true
-    if (hideControlsTimer) {
-      clearTimeout(hideControlsTimer)
-      hideControlsTimer = null
-    }
+    revealControls()
   } else if (controlsVisible.value) {
     // 鼠标离开底部区域：启动 3 秒后隐藏
     if (!hideControlsTimer) {
-      hideControlsTimer = setTimeout(() => {
-        controlsVisible.value = false
-      }, 3000)
+      hideControlsTimer = setTimeout(hideControls, 3000)
     }
   }
 }
@@ -708,11 +724,17 @@ function cancelEdit() {
           <p class="text-sm italic leading-relaxed opacity-85">「{{ quote.text }}」</p>
           <p v-if="quote.author" class="text-xs mt-1 opacity-80">—— {{ quote.author }}</p>
         </button>
+        <div v-if="controlsHintVisible" class="mt-6 text-xs opacity-85" role="status">
+          <p>移动鼠标至底部，或按 Tab 显示暂停和结束按钮。</p>
+          <button class="mt-2 underline underline-offset-4" @click="dismissControlsHint">知道了</button>
+        </div>
       </div>
 
       <!-- 控制按钮（底部，低干扰，鼠标滑至底部自动唤起） -->
       <div
         class="timer-controls absolute bottom-8 inset-x-0 flex flex-wrap gap-3 justify-center px-4 transition-opacity duration-200"
+        @focusin="revealControls"
+        @focusout="scheduleControlsHide(3000)"
         :class="
           controlsVisible
             ? 'opacity-100 translate-y-0 pointer-events-auto'

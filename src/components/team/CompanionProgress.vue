@@ -23,12 +23,16 @@ const teamProgress = computed(() =>
       <div v-if="showMine">
         <div class="flex justify-between text-xs mb-2">
           <span>{{ challenge.myCompleted ? '我已达标' : '我的进度' }}</span
-          ><span class="font-data">{{ challenge.myProgress }} / {{ challenge.target }}</span>
+          ><span class="font-data"
+            >{{ challenge.myProgress }} / {{ challenge.target }} {{ TYPE_UNIT[challenge.type] }} ·
+            {{ Math.round(progress) }}%</span
+          >
         </div>
         <div
           role="progressbar"
           aria-label="我的挑战进度"
           :aria-valuenow="Math.round(progress)"
+          :aria-valuetext="`${challenge.myProgress} / ${challenge.target} ${TYPE_UNIT[challenge.type]}，完成 ${Math.round(progress)}%`"
           :aria-valuemin="0"
           :aria-valuemax="100"
           class="h-2 rounded-full bg-slate-100 dark:bg-slate-700"

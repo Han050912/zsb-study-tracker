@@ -62,8 +62,9 @@ async function handleReject() {
 </script>
 
 <template>
-  <div v-if="myRole === 'leader' && requests.length" class="card">
-    <div class="label !mb-2">待审核申请（{{ requests.length }}）</div>
+  <div v-if="myRole === 'leader'" class="card">
+    <h2 class="label !mb-2">加队审批（{{ requests.length }}）</h2>
+    <p v-if="!requests.length" class="text-sm text-slate-500 dark:text-slate-400">暂无待审核的加队申请</p>
     <div class="divide-y divide-slate-100 dark:divide-slate-700">
       <div v-for="r in requests" :key="r.userId" class="flex items-center gap-3 py-2">
         <UserAvatar :name="r.userName" :avatar="r.userAvatar" size="sm" />
