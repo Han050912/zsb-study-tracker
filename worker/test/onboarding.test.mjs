@@ -182,6 +182,35 @@ after(async () => {
   for (const file of files) await unlink(file)
 })
 
+test('每日提醒开关在立即刷新与云端同步后的冷启动都保留', async () => {
+  const cloud = server()
+  const first = await tab()
+  first.app.syncApi.pullChanges = (options) => cloud.request('/api/data/pull', options)
+  first.app.syncApi.pushChanges = (payload) => cloud.request('/api/data/push', payload)
+  try {
+    await first.store.hydrate()
+    first.store.updateSettings({ reminderEnabled: true, reminderTime: '09:30' })
+    // 刷新发生在 800ms 防抖请求前：从本地 outbox 恢复尚未上传的偏好。
+    first.store.resetState()
+    const reload = await tab()
+    reload.app.syncApi.pullChanges = (options) => cloud.request('/api/data/pull', options)
+    reload.app.syncApi.pushChanges = (payload) => cloud.request('/api/data/push', payload)
+    await reload.store.hydrate()
+    assert.equal(reload.store.settings.reminderEnabled, true)
+    assert.equal(reload.store.settings.reminderTime, '09:30')
+    assert.equal(await reload.store.saveAsync(), true)
+    assert.equal((await getSettings(cloud.env, 'user-a')).reminderEnabled, true)
+    data.clear()
+    const other = await tab()
+    other.app.syncApi.pullChanges = (options) => cloud.request('/api/data/pull', options)
+    await other.store.hydrate()
+    assert.equal(other.store.settings.reminderEnabled, true)
+    assert.equal(other.store.settings.reminderTime, '09:30')
+  } finally {
+    cloud.db.close()
+  }
+})
+
 test('skip persists after logout/login even when a newer cloud settings row has false', async () => {
   const { app, store } = await tab()
   app.syncApi.pullChanges = async () => remoteSettings({ onboarded: false, theme: 'light' })
