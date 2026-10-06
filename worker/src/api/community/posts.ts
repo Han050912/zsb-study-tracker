@@ -25,8 +25,7 @@ import {
   parseCursor,
   postCascadeStatements,
   commentCascadeStatements,
-  MAX_PAGE,
-  escapeLike
+  MAX_PAGE
 } from './shared'
 
 /**
@@ -111,8 +110,8 @@ export function registerPostsRoutes() {
     const where: string[] = []
     const params: unknown[] = [ctx.userId, ctx.userId]
     if (keyword) {
-      where.push("p.content LIKE ? ESCAPE '\\'")
-      params.push('%' + escapeLike(keyword) + '%')
+      where.push('instr(lower(p.content), lower(?)) > 0')
+      params.push(keyword)
     }
     if (!admin) {
       where.push('p.is_hidden = 0 AND (p.is_flagged = 0 OR p.user_id = ?)')
@@ -123,8 +122,10 @@ export function registerPostsRoutes() {
       params.push(type)
     }
     if (tag) {
-      where.push(`p.tags LIKE ? ESCAPE '\\'`)
-      params.push(`%"${escapeLike(tag)}"%`)
+      where.push(
+        "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(p.tags) THEN p.tags ELSE '[]' END) WHERE value = ?)"
+      )
+      params.push(tag)
     }
     if (featured) where.push('p.is_featured = 1')
     // 关注流：仅展示我关注的作者的帖子（子查询走 user_follows 主键索引）
@@ -176,18 +177,37 @@ export function registerPostsRoutes() {
       return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor, hasMore })
     }
 
-    const c = cursor ? parseCursor(cursor) : null
+    // 新游标包含完整排序键；旧游标从仍存在的末行补齐置顶状态。
+    let c: { pinned: number; ts: number; id: string } | null = null
+    if (cursor.startsWith('latest:')) {
+      const parts = cursor.split(':')
+      const pinned = Number(parts[1])
+      const ts = Number(parts[2])
+      if (parts.length === 4 && (pinned === 0 || pinned === 1) && Number.isInteger(ts) && ts > 0 && parts[3])
+        c = { pinned, ts, id: parts[3] }
+    } else if (cursor) {
+      const legacy = parseCursor(cursor)
+      if (legacy) {
+        const last = await first<{ is_pinned: number }>(
+          ctx.env,
+          'SELECT is_pinned FROM community_posts WHERE id = ? AND created_at = ?',
+          legacy.id,
+          legacy.ts
+        )
+        if (last) c = { ...legacy, pinned: last.is_pinned }
+      }
+    }
     if (cursor && !c) throw new HttpError(400, '分页游标无效，请刷新后重试')
     if (c) {
-      where.push('(p.created_at < ? OR (p.created_at = ? AND p.id < ?))')
-      params.push(c.ts, c.ts, c.id)
+      where.push('(p.is_pinned, p.created_at, p.id) < (?, ?, ?)')
+      params.push(c.pinned, c.ts, c.id)
     }
     const sql = `${POST_SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY p.is_pinned DESC, p.created_at DESC, p.id DESC LIMIT ?`
     const rows = await all(ctx.env, sql, ...params, limit + 1)
     hasMore = rows.length > limit
     if (hasMore) {
       const last = rows[limit - 1] as any
-      nextCursor = `${last.created_at}_${last.id}`
+      nextCursor = `latest:${last.is_pinned}:${last.created_at}:${last.id}`
     }
     return Response.json({ posts: rows.slice(0, limit).map(mapPost), nextCursor, hasMore })
   })

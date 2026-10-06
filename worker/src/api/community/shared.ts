@@ -384,39 +384,41 @@ export async function commentCascadeStatements(
   commentId: string,
   postId: string
 ): Promise<{ statements: D1PreparedStatement[]; removedIds: string[]; imageIds: string[] }> {
-  const replies = await all<{ id: string }>(env, 'SELECT id FROM community_comments WHERE parent_id = ?', commentId)
-  const removedIds = [commentId, ...replies.map((r) => r.id)]
-  const ph = removedIds.map(() => '?').join(',')
-  const imgRows = await all<{ image_urls: string }>(
+  const scope = 'SELECT id FROM community_comments WHERE id = ? OR parent_id = ?'
+  const rows = await all<{ id: string; image_urls: string }>(
     env,
-    `SELECT image_urls FROM community_comments WHERE id IN (${ph})`,
-    ...removedIds
+    'SELECT id, image_urls FROM community_comments WHERE id = ? OR parent_id = ?',
+    commentId,
+    commentId
   )
-  const imageIds = imgRows.flatMap((r) => uploadIdsOf(r.image_urls))
+  const removedIds = rows.map((r) => r.id)
+  const imageIds = rows.flatMap((r) => uploadIdsOf(r.image_urls))
   return {
     removedIds,
     imageIds,
     statements: [
       // 清理这些评论触发的通知（被评论/被回复/被赞评论），避免通知指向已删除内容
-      env.DB.prepare(`DELETE FROM community_notifications WHERE comment_id IN (${ph})`).bind(...removedIds),
-      env.DB.prepare(`DELETE FROM community_likes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(
-        ...removedIds
+      env.DB.prepare(`DELETE FROM community_notifications WHERE comment_id IN (${scope})`).bind(commentId, commentId),
+      env.DB.prepare(`DELETE FROM community_likes WHERE target_type = 'comment' AND target_id IN (${scope})`).bind(
+        commentId,
+        commentId
       ),
-      env.DB.prepare(`DELETE FROM community_dislikes WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(
-        ...removedIds
+      env.DB.prepare(`DELETE FROM community_dislikes WHERE target_type = 'comment' AND target_id IN (${scope})`).bind(
+        commentId,
+        commentId
       ),
-      env.DB.prepare(`DELETE FROM community_reports WHERE target_type = 'comment' AND target_id IN (${ph})`).bind(
-        ...removedIds
+      env.DB.prepare(`DELETE FROM community_reports WHERE target_type = 'comment' AND target_id IN (${scope})`).bind(
+        commentId,
+        commentId
       ),
-      env.DB.prepare(`DELETE FROM community_comments WHERE id IN (${ph})`).bind(...removedIds),
-      env.DB.prepare('UPDATE community_posts SET comments_count = MAX(comments_count - ?, 0) WHERE id = ?').bind(
-        removedIds.length,
-        postId
-      ),
+      env.DB.prepare(
+        `UPDATE community_posts SET comments_count = MAX(comments_count - (SELECT COUNT(*) FROM community_comments WHERE id = ? OR parent_id = ?), 0) WHERE id = ?`
+      ).bind(commentId, commentId, postId),
       // 被删评论若为最佳答案：解除采纳并回退为待解答（采纳积分回收由调用方按需执行）
       env.DB.prepare(
         'UPDATE community_posts SET accepted_answer_id = NULL, is_resolved = 0 WHERE id = ? AND accepted_answer_id = ?'
-      ).bind(postId, commentId)
+      ).bind(postId, commentId),
+      env.DB.prepare('DELETE FROM community_comments WHERE id = ? OR parent_id = ?').bind(commentId, commentId)
     ]
   }
 }

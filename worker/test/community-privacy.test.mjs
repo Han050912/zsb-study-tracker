@@ -244,6 +244,22 @@ test('旧库应用学习隐私迁移后已有昵称保留且所有账号默认�
   }
 })
 
+test('推荐关注对象的积分遵守学习公开和主页可见性', async () => {
+  const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
+  db.prepare(
+    "INSERT INTO study_records(user_id,id,subject_id,date,minutes,created_at,updated_at) VALUES('owner','recent','math',?,30,1,1)"
+  ).run(today)
+  let recommended = (await (await api('/api/community/recommend')).json()).users
+  assert.equal(recommended[0].userId, 'owner')
+  assert.equal('totalPoints' in recommended[0], false)
+  db.exec("UPDATE user_settings SET share_learning_stats=1 WHERE user_id='owner'")
+  recommended = (await (await api('/api/community/recommend')).json()).users
+  assert.equal(recommended[0].totalPoints, 32)
+  db.exec("UPDATE user_settings SET profile_visibility='private' WHERE user_id='owner'")
+  recommended = (await (await api('/api/community/recommend')).json()).users
+  assert.equal('totalPoints' in recommended[0], false)
+})
+
 test('打卡榜不绕过学习隐私，公开且允许访问主页的用户才上榜', async () => {
   const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10)
   db.prepare("UPDATE gamification SET last_checkin=? WHERE user_id='owner'").run(today)

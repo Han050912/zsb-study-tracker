@@ -1,13 +1,45 @@
 import { on, body } from '../../router'
-import { first, batch, HttpError } from '../../db'
+import { first, batch, HttpError, utc8Today } from '../../db'
+import type { Env } from '../../index'
 import { rateLimit } from '../../middleware/rateLimit'
 import { badgeAwardStatements } from '../badges'
-import { nowSec, awardStatements, revokeStatements, notifyStatement, displayName, assertCircleReadable } from './shared'
+import { nowSec, notifyStatement, displayName, assertCircleReadable } from './shared'
+
+/** 在事务内读取流水再回收，重复取消不会重复扣分，也能清理历史重复发奖。 */
+function removeLikeStatements(env: Env, userId: string, targetType: 'post' | 'comment', targetId: string) {
+  const refId = `srv:like:${userId}:${targetType}:${targetId}`
+  return [
+    env.DB.prepare('DELETE FROM community_likes WHERE user_id = ? AND target_type = ? AND target_id = ?').bind(
+      userId,
+      targetType,
+      targetId
+    ),
+    env.DB.prepare(
+      `UPDATE gamification SET points = MAX(points - COALESCE(
+         (SELECT SUM(points) FROM points_log WHERE ref_id = ? AND user_id = gamification.user_id), 0), 0)
+       WHERE user_id IN (SELECT user_id FROM points_log WHERE ref_id = ?)`
+    ).bind(refId, refId),
+    env.DB.prepare('DELETE FROM points_log WHERE ref_id = ?').bind(refId),
+    env.DB.prepare(
+      `DELETE FROM community_notifications WHERE type = 'like' AND actor_id = ? AND
+       ${targetType === 'post' ? 'post_id = ? AND comment_id IS NULL' : 'comment_id = ?'}`
+    ).bind(userId, targetId)
+  ]
+}
+
+/** 按事务内真实投票行重算两种计数，取消与赞踩互斥均不依赖请求前的快照。 */
+function recountStatement(env: Env, targetType: 'post' | 'comment', targetId: string) {
+  const table = targetType === 'post' ? 'community_posts' : 'community_comments'
+  return env.DB.prepare(
+    `UPDATE ${table} SET
+     likes_count = (SELECT COUNT(*) FROM community_likes WHERE target_type = ? AND target_id = ?),
+     dislikes_count = (SELECT COUNT(*) FROM community_dislikes WHERE target_type = ? AND target_id = ?) WHERE id = ?`
+  ).bind(targetType, targetId, targetType, targetId, targetId)
+}
 
 /**
  * 社区广场点赞/点踩域路由：赞 / 踩（均 toggle 幂等，赞踩互斥）。
  * 由 community/index.ts 的 registerCommunityRoutes 聚合注册。
- * 零逻辑改动：on(...) 块从原 community.ts 逐字搬迁，仅调整 import 路径与包一层 registerLikesRoutes()。
  */
 export function registerLikesRoutes() {
   // 点赞/取消点赞（toggle，幂等）
@@ -17,7 +49,6 @@ export function registerLikesRoutes() {
     const targetType = b?.targetType === 'comment' ? 'comment' : b?.targetType === 'post' ? 'post' : null
     const targetId = typeof b?.targetId === 'string' ? b.targetId : ''
     if (!targetType || !targetId) throw new HttpError(400, '参数错误')
-    const table = targetType === 'post' ? 'community_posts' : 'community_comments'
 
     const existing = await first(
       ctx.env,
@@ -28,17 +59,9 @@ export function registerLikesRoutes() {
     )
     if (existing) {
       // 取消点赞：同时回收本次点赞产生的「获赞」积分流水并撤回点赞通知，防止反复点赞/取消刷分
-      const unlikeStmts: D1PreparedStatement[] = [
-        ctx.env.DB.prepare('DELETE FROM community_likes WHERE user_id = ? AND target_type = ? AND target_id = ?').bind(
-          ctx.userId,
-          targetType,
-          targetId
-        ),
-        ctx.env.DB.prepare(`UPDATE ${table} SET likes_count = MAX(likes_count - 1, 0) WHERE id = ?`).bind(targetId),
-        ctx.env.DB.prepare(
-          `DELETE FROM community_notifications WHERE type = 'like' AND actor_id = ? AND ${targetType === 'post' ? 'post_id' : 'comment_id'} = ?`
-        ).bind(ctx.userId, targetId),
-        ...(await revokeStatements(ctx.env, `srv:like:${ctx.userId}:${targetType}:${targetId}`))
+      const unlikeStmts = [
+        ...removeLikeStatements(ctx.env, ctx.userId, targetType, targetId),
+        recountStatement(ctx.env, targetType, targetId)
       ]
       await batch(ctx.env, unlikeStmts)
       return Response.json({ liked: false })
@@ -58,53 +81,55 @@ export function registerLikesRoutes() {
     // 圈子内容：仅可读者可点赞（与详情/评论同一口径）
     if (target.circle_id) await assertCircleReadable(ctx, target.circle_id)
 
-    // 与踩互斥：若已踩则取消踩（删记录 + 计数-1），保证赞/踩二选一，避免同时点亮的状态矛盾
-    const disliked = await first(
-      ctx.env,
-      'SELECT 1 AS x FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?',
-      ctx.userId,
-      targetType,
-      targetId
-    )
+    // 与踩互斥：在事务内取消踩，包含请求预读后新增的踩。
     // 点赞行 / 计数 / 积分流水 / 通知必须同一 batch 原子提交：任一句失败整体回滚，用户重试可自愈，
     // 消除原「先 run 提交点赞行、再另一批提交计数/积分/通知」导致的永久不一致（点赞行在但计数为 0、积分未发）。
-    const stmts: D1PreparedStatement[] = []
-    // 与踩互斥的取消踩语句并入同一批：取消踩与点赞要么都生效、要么都不生效
-    if (disliked) {
-      stmts.push(
-        ctx.env.DB.prepare(
-          'DELETE FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?'
-        ).bind(ctx.userId, targetType, targetId),
-        ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = MAX(dislikes_count - 1, 0) WHERE id = ?`).bind(
-          targetId
-        )
+    const stmts: D1PreparedStatement[] = [
+      ctx.env.DB.prepare('DELETE FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?').bind(
+        ctx.userId,
+        targetType,
+        targetId
       )
-    }
+    ]
     // 点赞行占位（INSERT OR IGNORE 幂等，消除并发双击导致的「主键冲突 500」）；
-    // 紧随其后的计数自增以 changes() = 1 门控：仅本次真正插入点赞行时才计数，保持原「抢占成功才生效」语义
+    // 紧随其后的积分和通知使用 changes() 门控，计数随后按真实投票行重算。
     stmts.push(
       ctx.env.DB.prepare(
         'INSERT OR IGNORE INTO community_likes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)'
-      ).bind(ctx.userId, targetType, targetId, nowSec()),
-      ctx.env.DB.prepare(`UPDATE ${table} SET likes_count = likes_count + 1 WHERE id = ? AND changes() = 1`).bind(
-        targetId
-      )
+      ).bind(ctx.userId, targetType, targetId, nowSec())
     )
     // 被赞 +1 积分 + 通知（自己赞自己不加、不通知）；refId 编码点赞者身份，取消点赞时可精确回收
     if (target.user_id !== ctx.userId) {
       const myName = await displayName(ctx.env, ctx.userId)
-      stmts.push(...awardStatements(ctx.env, target.user_id, 1, '获赞', `like:${ctx.userId}:${targetType}:${targetId}`))
+      const refId = `srv:like:${ctx.userId}:${targetType}:${targetId}`
+      // 连续的 changes() 门控链：仅实际插入点赞且首次写入此业务流水时发奖和通知。
       stmts.push(
-        notifyStatement(ctx.env, {
-          userId: target.user_id,
-          type: 'like',
-          actorId: ctx.userId,
-          postId: targetType === 'post' ? targetId : target.post_id,
-          commentId: targetType === 'comment' ? targetId : undefined,
-          content: `${myName} 赞了你的${targetType === 'post' ? '帖子' : '评论'}`
-        })
+        ctx.env.DB.prepare(
+          `INSERT INTO points_log (user_id, date, points, reason, ref_id)
+           SELECT ?, ?, 1, '获赞', ? WHERE changes() > 0
+           AND NOT EXISTS (SELECT 1 FROM points_log WHERE ref_id = ?)`
+        ).bind(target.user_id, utc8Today(), refId, refId),
+        ctx.env.DB.prepare(
+          `INSERT INTO gamification (user_id, points) SELECT ?, 1 WHERE changes() > 0
+           ON CONFLICT(user_id) DO UPDATE SET points = points + excluded.points`
+        ).bind(target.user_id)
+      )
+      stmts.push(
+        notifyStatement(
+          ctx.env,
+          {
+            userId: target.user_id,
+            type: 'like',
+            actorId: ctx.userId,
+            postId: targetType === 'post' ? targetId : target.post_id,
+            commentId: targetType === 'comment' ? targetId : undefined,
+            content: `${myName} 赞了你的${targetType === 'post' ? '帖子' : '评论'}`
+          },
+          { ifPreviousChanged: true }
+        )
       )
     }
+    stmts.push(recountStatement(ctx.env, targetType, targetId))
     if (target.user_id !== ctx.userId)
       stmts.push(
         ...badgeAwardStatements(
@@ -127,7 +152,6 @@ export function registerLikesRoutes() {
     const targetType = b?.targetType === 'comment' ? 'comment' : b?.targetType === 'post' ? 'post' : null
     const targetId = typeof b?.targetId === 'string' ? b.targetId : ''
     if (!targetType || !targetId) throw new HttpError(400, '参数错误')
-    const table = targetType === 'post' ? 'community_posts' : 'community_comments'
 
     const existing = await first(
       ctx.env,
@@ -141,9 +165,7 @@ export function registerLikesRoutes() {
         ctx.env.DB.prepare(
           'DELETE FROM community_dislikes WHERE user_id = ? AND target_type = ? AND target_id = ?'
         ).bind(ctx.userId, targetType, targetId),
-        ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = MAX(dislikes_count - 1, 0) WHERE id = ?`).bind(
-          targetId
-        )
+        recountStatement(ctx.env, targetType, targetId)
       ])
       return Response.json({ disliked: false })
     }
@@ -161,42 +183,16 @@ export function registerLikesRoutes() {
     if (!target) throw new HttpError(404, '内容不存在')
     if (target.circle_id) await assertCircleReadable(ctx, target.circle_id)
 
-    // 与赞互斥：若已赞，完整取消赞（删记录 + 计数-1 + 撤通知 + 回收积分）
-    const liked = await first(
-      ctx.env,
-      'SELECT 1 AS x FROM community_likes WHERE user_id = ? AND target_type = ? AND target_id = ?',
-      ctx.userId,
-      targetType,
-      targetId
-    )
-    // 取消赞（与赞互斥）与踩记录写入同一 batch 原子提交：二者要么都生效、要么都不生效，
-    // 消除原「先 batch 取消赞、再 run 占踩、再 batch 加计数」的多段提交不一致
-    const likeRevoked = !!liked
-    const stmts: D1PreparedStatement[] = []
-    if (liked) {
-      stmts.push(
-        ctx.env.DB.prepare('DELETE FROM community_likes WHERE user_id = ? AND target_type = ? AND target_id = ?').bind(
-          ctx.userId,
-          targetType,
-          targetId
-        ),
-        ctx.env.DB.prepare(`UPDATE ${table} SET likes_count = MAX(likes_count - 1, 0) WHERE id = ?`).bind(targetId),
-        ctx.env.DB.prepare(
-          `DELETE FROM community_notifications WHERE type = 'like' AND actor_id = ? AND ${targetType === 'post' ? 'post_id' : 'comment_id'} = ?`
-        ).bind(ctx.userId, targetId),
-        ...(await revokeStatements(ctx.env, `srv:like:${ctx.userId}:${targetType}:${targetId}`))
-      )
-    }
-    // 踩记录占位（INSERT OR IGNORE 幂等，防并发双击 500）；计数自增以 changes() = 1 门控，避免并发重复加踩
+    // 无条件在事务内取消赞，避免预读未赞时遗漏并发新增的赞与积分。
+    const stmts = removeLikeStatements(ctx.env, ctx.userId, targetType, targetId)
+    // 踩记录占位并重算真实计数，防止并发重复加踩。
     stmts.push(
       ctx.env.DB.prepare(
         'INSERT OR IGNORE INTO community_dislikes (user_id, target_type, target_id, created_at) VALUES (?, ?, ?, ?)'
       ).bind(ctx.userId, targetType, targetId, nowSec()),
-      ctx.env.DB.prepare(`UPDATE ${table} SET dislikes_count = dislikes_count + 1 WHERE id = ? AND changes() = 1`).bind(
-        targetId
-      )
+      recountStatement(ctx.env, targetType, targetId)
     )
-    await batch(ctx.env, stmts)
-    return Response.json({ disliked: true, likeRevoked })
+    const results = await batch(ctx.env, stmts)
+    return Response.json({ disliked: true, likeRevoked: !!results?.[0].meta.changes })
   })
 }
