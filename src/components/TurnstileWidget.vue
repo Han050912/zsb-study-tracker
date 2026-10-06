@@ -25,15 +25,19 @@ const MAX_RETRIES = 2
 const CHALLENGE_TIMEOUT_MS = 30_000
 
 type TurnstileSdk = {
-  ready(callback: () => void): void
   render(container: HTMLElement, options: Record<string, unknown>): string
   reset(id: string): void
   remove(id: string): void
 }
-const getSdk = () => (window as Window & { turnstile?: TurnstileSdk }).turnstile
+const getSdk = (): TurnstileSdk | undefined => {
+  const sdk = (window as Window & { turnstile?: TurnstileSdk }).turnstile
+  return sdk && typeof sdk.render === 'function' && typeof sdk.reset === 'function' && typeof sdk.remove === 'function'
+    ? sdk
+    : undefined
+}
 
 const container = ref<HTMLDivElement>()
-const status = ref<'loading' | 'rendering' | 'ready' | 'error'>('loading')
+const status = ref<'loading' | 'rendering' | 'interactive' | 'ready' | 'error'>('loading')
 let widgetId = ''
 let disposed = false
 let challengeTimer: ReturnType<typeof setTimeout> | null = null
@@ -81,22 +85,28 @@ function loadScriptOnce(): Promise<void> {
     const script = document.createElement('script')
     script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
     script.async = true
-
-    const timeoutId = setTimeout(() => {
-      script.remove()
-      reject(new Error('加载超时'))
-    }, LOAD_TIMEOUT_MS)
-
-    script.onload = () => {
+    let settled = false
+    const finish = (error?: Error) => {
+      if (settled) return
+      settled = true
       clearTimeout(timeoutId)
-      resolve()
+      script.onload = null
+      script.onerror = null
+      if (error) {
+        script.remove()
+        reject(error)
+      } else {
+        resolve()
+      }
     }
-    script.onerror = () => {
-      clearTimeout(timeoutId)
-      script.remove()
-      reject(new Error('网络错误'))
+    const timeoutId = setTimeout(() => finish(new Error('加载超时')), LOAD_TIMEOUT_MS)
+    script.onload = () => finish(getSdk() ? undefined : new Error('验证组件未就绪'))
+    script.onerror = () => finish(new Error('网络错误'))
+    try {
+      document.head.appendChild(script)
+    } catch {
+      finish(new Error('无法加载验证组件'))
     }
-    document.head.appendChild(script)
   })
 }
 
@@ -129,16 +139,10 @@ onMounted(async () => {
     await loadScript()
     if (disposed) return
     await nextTick()
+    if (disposed) return
     const sdk = getSdk()
     if (!sdk) throw new Error('验证组件未就绪')
-    await new Promise<void>((resolve, reject) => {
-      const timeoutId = setTimeout(() => reject(new Error('验证组件初始化超时')), LOAD_TIMEOUT_MS)
-      sdk.ready(() => {
-        clearTimeout(timeoutId)
-        resolve()
-      })
-    })
-    if (disposed) return
+    // async 脚本执行完毕后可直接 render；官方 ready() 不支持 async/defer 加载。
     if (!container.value) throw new Error('验证容器未就绪')
     startChallengeTimer()
     widgetId = sdk.render(container.value, {
@@ -167,6 +171,16 @@ onMounted(async () => {
       'expired-callback': () => {
         if (disposed || status.value === 'error') return
         token.value = ''
+        startChallengeTimer()
+      },
+      'before-interactive-callback': () => {
+        if (disposed || status.value === 'error' || status.value === 'ready') return
+        // 人工操作的期限由 SDK 的 timeout-callback 管理，避免 30 秒加载检测中断用户。
+        clearChallengeTimer()
+        status.value = 'interactive'
+      },
+      'after-interactive-callback': () => {
+        if (disposed || status.value === 'error' || status.value === 'ready') return
         startChallengeTimer()
       },
       'timeout-callback': () => {
@@ -202,7 +216,11 @@ defineExpose({ reset })
 
 <template>
   <div class="flex flex-col items-center my-1">
-    <p v-if="status === 'loading' || status === 'rendering'" class="text-sm text-muted mb-2" role="status">
+    <p
+      v-if="status === 'loading' || status === 'rendering' || status === 'interactive'"
+      class="text-sm text-muted mb-2"
+      role="status"
+    >
       {{ status === 'loading' ? '正在加载人机验证组件…' : '正在验证，请完成下方的人机验证…' }}
     </p>
     <div ref="container" class="flex justify-center"></div>
