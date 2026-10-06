@@ -6,6 +6,7 @@ import { useChart, chartTextColor, chartColor } from '../composables/useChart'
 import { formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import { focusMinutesOn } from '../utils/studyTime'
+import { escapeHtml } from '../utils/html'
 import { MOODS } from '../data/defaults'
 import { PROBLEM_TYPE_LABELS } from '../data/problemTypes'
 import ChartFallback from '../components/ChartFallback.vue'
@@ -104,7 +105,7 @@ const {
           if (focus) lines.push(`番茄专注（未分科目）：${formatMinutes(focus)}`)
           lines.push(`合计：${formatMinutes(total)}`)
         }
-        return lines.join('<br>')
+        return lines.map(escapeHtml).join('<br>')
       }
     }
   }),
@@ -144,7 +145,7 @@ const {
         data: subjectMinutes.value
       }
     ],
-    tooltip: { trigger: 'item', formatter: (p: any) => `${p.name}：${formatMinutes(p.value)}` }
+    tooltip: { trigger: 'item', formatter: (p: any) => escapeHtml(`${p.name}：${formatMinutes(p.value)}`) }
   }),
   [subjectMinutes]
 )
@@ -310,7 +311,8 @@ const {
     ],
     tooltip: {
       trigger: 'axis',
-      formatter: (p: any) => `${days.value[p[0].dataIndex]}<br>心情：${labels[p[0].dataIndex] || '未记录'}`
+      formatter: (p: any) =>
+        `${escapeHtml(days.value[p[0].dataIndex])}<br>心情：${escapeHtml(labels[p[0].dataIndex] || '未记录')}`
     }
   }
 }, [days, computed(() => days.value.map((d) => store.summaries[d]?.mood))])

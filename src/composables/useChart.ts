@@ -49,7 +49,7 @@ export function useChart(
     // 隐藏的标签面板没有尺寸，等 ResizeObserver 收到真实尺寸后再初始化。
     if (!el.value.clientWidth || !el.value.clientHeight) return
     if (!chart) {
-      chart = echartsModule.init(el.value)
+      chart = echartsModule.init(el.value, 'v5')
       if (onClick) chart.on('click', onClick)
     }
     const option = optionFn()

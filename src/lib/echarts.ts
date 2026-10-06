@@ -2,6 +2,7 @@ import * as echarts from 'echarts/core'
 import { LineChart, BarChart, PieChart, RadarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, LegendComponent, RadarComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import 'echarts/theme/v5.js'
 
 /**
  * echarts 按需注册（唯一入口）：全仓 11 处 useChart 调用仅用到
