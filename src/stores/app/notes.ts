@@ -54,16 +54,17 @@ export const notesActions: NotesActionsShape = {
     if (note.id) {
       const n = this.notes.find((x) => x.id === note.id)
       if (n) {
+        const updatedAt = Math.max(now, n.updatedAt + 1, n.bodyUpdatedAt + 1)
         const bodyChanged = n.type !== 'pdf' && note.content !== undefined && note.content !== getNoteBody(n.id)
-        if (bodyChanged) queueNoteBody(n.id, note.content!, now)
+        if (bodyChanged) queueNoteBody(n.id, note.content!, updatedAt)
         Object.assign(n, {
           subjectId: note.subjectId,
           title: (note.title ?? n.title).trim() || '未命名',
           tags: note.tags ?? n.tags,
           type: note.type,
-          bodyUpdatedAt: bodyChanged ? now : n.bodyUpdatedAt
+          bodyUpdatedAt: bodyChanged ? updatedAt : n.bodyUpdatedAt
         })
-        touchRecord('notes', n, now)
+        touchRecord('notes', n, updatedAt)
         this.save()
         return n.id
       }

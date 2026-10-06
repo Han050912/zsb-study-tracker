@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS users (
   user_code TEXT,                        -- 对外唯一用户 ID（8 位随机短码，去掉 0/O/1/I）
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
+  session_version INTEGER NOT NULL DEFAULT 0, -- 改密递增；鉴权实时校验凭证版本
   role TEXT NOT NULL DEFAULT 'user',   -- 'user' | 'admin'
   verified INTEGER NOT NULL DEFAULT 0, -- 专家认证标记（蓝 V），管理员后台授予
   expertise TEXT NOT NULL DEFAULT '',  -- 专长领域（如 "高等数学,英语"）
@@ -396,6 +397,10 @@ CREATE TABLE IF NOT EXISTS pomodoro_daily (
   interruptions INTEGER DEFAULT 0,
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  legacy_count INTEGER NOT NULL DEFAULT 0,
+  legacy_minutes REAL NOT NULL DEFAULT 0,
+  legacy_interruptions INTEGER NOT NULL DEFAULT 0,
+  legacy_updated_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, date)
 );
 
@@ -406,8 +411,11 @@ CREATE TABLE IF NOT EXISTS pomodoro_interruptions (
   reason TEXT NOT NULL,
   time INTEGER NOT NULL,
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
-  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  event_id TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pomodoro_interruption_event ON pomodoro_interruptions(user_id, event_id);
 
 CREATE TABLE IF NOT EXISTS pomodoro_records (
   id TEXT NOT NULL,
@@ -579,6 +587,8 @@ CREATE TABLE IF NOT EXISTS community_reports (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_pending_reporter
+  ON community_reports(reporter_id, target_type, target_id) WHERE status = 'pending';
 
 -- 好友关注关系：复合主键保证仅关注一次；关注流 = 筛选关注作者的帖子
 CREATE TABLE IF NOT EXISTS user_follows (
@@ -703,7 +713,7 @@ CREATE TABLE IF NOT EXISTS jwt_blacklist (
 
 -- 已签发会话登记（每签发一次 token 登记一行，登出即删除）：
 -- 吊销只能按 jti 精确命中，其它设备的 jti 服务端无从得知，故签发时留档；
--- 修改密码时按 user_id 取出全部 jti 一次性写入 jwt_blacklist，使其它会话立即失效。
+-- 修改密码时在事务内按 user_id 将全部登记 jti 写入黑名单；session_version 同时吊销未登记的旧凭证。
 -- 过期行由 api/auth.ts 的 cleanupExpiredTokens（每周 cron）清理。
 CREATE TABLE IF NOT EXISTS user_sessions (
   jti TEXT PRIMARY KEY,
@@ -813,9 +823,8 @@ CREATE TABLE IF NOT EXISTS weekly_report_push_log (
 );
 
 -- ========== 周报推送失败批次续跑记录（P4-05：cron 不重试，失败批次落此表供下次运行补推） ==========
--- cron 按批推送周报，某批失败时把该批未完成的关系行写到这里；下次运行（下周 cron / 同周重跑）
--- 只补推这些行。week_key 记录周报归属周（跨周续跑时据此还原统计区间）；
--- 与 push_log 互斥：进入本表 ⇒ 该项未推送（标记与通知同批失败时整体回滚，push_log 不会有残留）。
+-- cron 先一次性持久化本周全部授权方向，再按批发送；下周 cron / 同周重跑继续处理未完成方向。
+-- week_key 记录周报归属周（跨周续跑时据此还原统计区间）；通知与push_log写入、pending出队同批原子。
 CREATE TABLE IF NOT EXISTS weekly_report_push_pending (
   week_key TEXT NOT NULL,          -- 周报归属周的周一日期 YYYY-MM-DD（UTC+8）
   from_id TEXT NOT NULL,           -- 周报数据主人

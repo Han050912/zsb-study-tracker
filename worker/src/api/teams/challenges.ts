@@ -45,6 +45,11 @@ async function syncProgress(ctx: Ctx, challenge: ChallengeRow) {
       AND EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = c.team_id AND m.user_id = p.user_id))`
   const stmts: D1PreparedStatement[] = [
     ctx.env.DB.prepare(
+      `INSERT OR IGNORE INTO team_challenge_progress (challenge_id, user_id, current_value, is_completed)
+       SELECT c.id, m.user_id, 0, 0 FROM team_challenges c JOIN team_members m ON m.team_id = c.team_id
+       WHERE c.id = ? AND c.is_cancelled = 0 AND c.is_completed = 0 AND c.start_date <= ? AND c.end_date >= ?`
+    ).bind(challengeId, today, today),
+    ctx.env.DB.prepare(
       `UPDATE team_challenge_progress AS p SET current_value = (
       SELECT CASE c.type
         WHEN 'streak' THEN (SELECT COALESCE(MAX(g.streak), 0) FROM gamification g WHERE g.user_id = p.user_id)
@@ -174,13 +179,6 @@ export function registerChallengeRoutes() {
     const challengeId = uid()
     const now = nowSec()
 
-    // 获取所有成员并初始化进度
-    const members = await all<{ user_id: string }>(
-      ctx.env,
-      'SELECT user_id FROM team_members WHERE team_id = ?',
-      teamId
-    )
-
     const stmts: D1PreparedStatement[] = [
       ctx.env.DB.prepare(
         'INSERT INTO team_challenges (id, team_id, type, target, duration_days, start_date, end_date, completed_count, is_completed, created_at) ' +
@@ -188,15 +186,13 @@ export function registerChallengeRoutes() {
       ).bind(challengeId, teamId, type, target, durationDays, startDate, endDate, now)
     ]
 
-    // 为所有成员初始化进度
-    for (const m of members) {
-      stmts.push(
-        ctx.env.DB.prepare(
-          'INSERT INTO team_challenge_progress (challenge_id, user_id, current_value, is_completed) ' +
-            'VALUES (?, ?, 0, 0)'
-        ).bind(challengeId, m.user_id)
-      )
-    }
+    // 当前成员快照在提交事务内读取，与并发加入共享同一原子边界。
+    stmts.push(
+      ctx.env.DB.prepare(
+        'INSERT OR IGNORE INTO team_challenge_progress (challenge_id, user_id, current_value, is_completed) ' +
+          'SELECT ?, user_id, 0, 0 FROM team_members WHERE team_id = ?'
+      ).bind(challengeId, teamId)
+    )
 
     await batch(ctx.env, stmts)
 

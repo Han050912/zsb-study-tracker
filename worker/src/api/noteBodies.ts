@@ -2,7 +2,7 @@ import { on, body } from '../router'
 import { all, batch, first, HttpError, readBodyBytes } from '../db'
 import { rateLimit } from '../middleware/rateLimit'
 import type { Env } from '../index'
-import { withUserTransaction } from '../syncTransaction'
+import { domainVersionStatement, withUserTransaction } from '../syncTransaction'
 
 /**
  * Markdown 正文独立通道：正文不进入 notes 元数据同步；按 UTF-8 字节分片存 D1。
@@ -106,14 +106,40 @@ export function registerNoteBodyRoutes() {
       await batch(ctx.env, writes)
       // 删除旧版本与晋升临时分片位于同一 D1 batch。若并发请求已写入相同或更新版本，
       // 第一条不会删除它，第二条也因目标仍存在而不会晋升旧临时分片。
-      await withUserTransaction(ctx.env, ctx.userId, async () => {
+      const rejectedAt = await withUserTransaction<number | null>(ctx.env, ctx.userId, async (versions) => {
         const deletion = await first<{ deleted_at: number }>(
           ctx.env,
           "SELECT deleted_at FROM sync_deletions WHERE user_id = ? AND domain = 'notes' AND record_key = ?",
           ctx.userId,
           noteId
         )
-        if (deletion && deletion.deleted_at >= updatedAt) throw new HttpError(409, '笔记已在另一设备删除，请重新同步')
+        if (deletion && deletion.deleted_at >= updatedAt)
+          return {
+            statements: [
+              ctx.env.DB.prepare('DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ?').bind(
+                ctx.userId,
+                tmpId
+              )
+            ],
+            value: Number(deletion.deleted_at)
+          }
+        const current = await first<{ updated_at: number }>(
+          ctx.env,
+          'SELECT MAX(updated_at) AS updated_at FROM note_body_chunks WHERE user_id = ? AND note_id = ?',
+          ctx.userId,
+          noteId
+        )
+        if (Number(current?.updated_at ?? 0) >= updatedAt)
+          return {
+            statements: [
+              ctx.env.DB.prepare('DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ?').bind(
+                ctx.userId,
+                tmpId
+              )
+            ],
+            value: null
+          }
+        const seq = (versions.notes ?? 0) + 1
         return {
           statements: [
             ctx.env.DB.prepare(
@@ -126,12 +152,18 @@ export function registerNoteBodyRoutes() {
                SELECT 1 FROM note_body_chunks WHERE user_id = ? AND note_id = ?
              )`
             ).bind(noteId, ctx.userId, tmpId, ctx.userId, noteId),
+            domainVersionStatement(ctx.env, ctx.userId, 'notes', seq),
+            // 正文版本独立于标题的 LWW：只推进正文发现版本，不改变元数据编辑时间。
+            ctx.env.DB.prepare(
+              'UPDATE notes SET body_updated_at = MAX(body_updated_at, ?), server_seq = ? WHERE user_id = ? AND id = ? AND type IS NULL'
+            ).bind(updatedAt, seq, ctx.userId, noteId),
             // 并发竞争失败的临时分片也在同一原子 batch 内清掉；晋升成功时此语句自然删除 0 行。
             ctx.env.DB.prepare('DELETE FROM note_body_chunks WHERE user_id = ? AND note_id = ?').bind(ctx.userId, tmpId)
           ],
-          value: undefined
+          value: null
         }
       })
+      if (rejectedAt !== null) return Response.json({ applied: false, updatedAt: rejectedAt, clamped })
       const final = await first<{ updated_at: number }>(
         ctx.env,
         'SELECT MAX(updated_at) AS updated_at FROM note_body_chunks WHERE user_id = ? AND note_id = ?',

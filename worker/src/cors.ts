@@ -25,7 +25,7 @@ export function corsHeaders(origin: string | null, allowLocal: boolean): Record<
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers':
-      'Content-Type, Authorization, X-CF-Turnstile-Response, X-Desktop-Token, X-Updated-At',
+      'Content-Type, Authorization, X-CF-Turnstile-Response, X-Desktop-Token, X-Updated-At, X-Expected-User-Id',
     'Access-Control-Max-Age': '86400',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',

@@ -15,6 +15,7 @@ import {
   clearSession,
   desktopAuthHeaders,
   ensureDesktopToken,
+  expectedUserHeaders,
   getSessionVersion
 } from '../utils/session'
 import { isNetworkError } from '../utils/error'
@@ -163,8 +164,8 @@ export function loginRedirectPath(): string {
  * 会话失效的统一收尾：清理本地会话、通知应用清空内存中的用户数据、回登录页。
  * 供 401 全局处理与多标签页登出同步（services/auth.ts 的 storage 监听）复用。
  */
-export function expireSession(): void {
-  clearSession()
+export function expireSession(clearShared = true): void {
+  clearSession(clearShared)
   window.dispatchEvent(new CustomEvent('auth:expired'))
   // 与 goLogin() 同一 redirect 逻辑：重新登录后回到原页面，不丢用户正在编辑的页面
   window.location.hash = `#${loginRedirectPath()}`
@@ -208,6 +209,7 @@ export async function authFetch(
   // 退出请求显式携带已清除的旧 JWT；其它窗口迟到的新凭据不能覆盖它并吊销新会话。
   if (headers.Authorization) delete desktopHeaders.Authorization
   Object.assign(headers, desktopHeaders)
+  if (!CREDENTIAL_PATHS.includes(path)) Object.assign(headers, expectedUserHeaders())
   // 只重试幂等的 GET；调用方自传 signal（取消上传/下载）时同样不重试，避免把取消变成重复请求
   const isRetryable = (options.method ?? 'GET').toUpperCase() === 'GET' && !options.signal
   const maxRetries = isRetryable ? GET_MAX_RETRIES : 0
@@ -289,6 +291,7 @@ export function requestKeepalive(path: string, body: unknown, method: 'POST' | '
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   // 卸载兜底必须同步发出，无法 await IPC：桌面令牌由 session.ts 模块加载时预热进内存缓存
   Object.assign(headers, desktopAuthHeaders())
+  Object.assign(headers, expectedUserHeaders())
   const payload = JSON.stringify(body)
   const payloadBytes = new TextEncoder().encode(payload).byteLength
   if (payloadBytes > KEEPALIVE_MAX_BYTES) {

@@ -9,6 +9,8 @@ interface CachedNoteBody {
   content: string
   updatedAt: number
   dirty: boolean
+  /** 恢复备份的内容在冲突时保留，直到正文和元数据均被确认。 */
+  restorationPending?: boolean
   /**
    * 已知永远不会被服务端接受的原因（超过上限等）；null = 可推送。
    * 这类正文不再重试（重试只会重复被拒），但只要正文被改动就会重新判定。
@@ -170,7 +172,12 @@ export function noteBodyExcerpt(noteId: string, length = 80): string {
   return (cache.get(noteId)?.content ?? '').replace(/\$+/g, '').slice(0, length)
 }
 
-export function queueNoteBody(noteId: string, content: string, updatedAt: number): void {
+export function queueNoteBody(
+  noteId: string,
+  content: string,
+  updatedAt: number,
+  restorationPending = cache.get(noteId)?.restorationPending ?? false
+): void {
   if (!activeUserId) throw new Error('尚未选择笔记正文账号')
   setCached({
     key: cacheKey(activeUserId, noteId),
@@ -179,9 +186,19 @@ export function queueNoteBody(noteId: string, content: string, updatedAt: number
     content,
     updatedAt,
     dirty: true,
+    restorationPending,
     // 保存时就按服务端上限判定：超限正文当场标记为不可推送，界面立即可见，不必等一次失败的推送
     unsyncable: noteBodyOversizeMessage(content)
   })
+}
+
+export function isNoteRestorePending(noteId: string): boolean {
+  return !!cache.get(noteId)?.restorationPending
+}
+
+export function finishNoteRestore(noteId: string): void {
+  const row = cache.get(noteId)
+  if (row?.restorationPending && !row.dirty) setCached({ ...row, restorationPending: false })
 }
 
 /**
@@ -244,8 +261,18 @@ export async function flushPendingNoteBodies(): Promise<NoteBodyFlushResult> {
       const latest = cache.get(current.noteId)
       if (!latest || latest.updatedAt !== current.updatedAt || latest.content !== current.content) continue
       if (!result.applied) {
+        if (latest.restorationPending) {
+          const updatedAt = Math.max(Date.now(), current.updatedAt + 1, result.updatedAt + 1)
+          setCached({ ...latest, updatedAt })
+          revisions.set(current.noteId, { from: current.updatedAt, to: updatedAt })
+          failures.push({ noteId: current.noteId, reason: '备份正文被服务器拒绝，已保留待重试', permanent: false })
+          continue
+        }
         const remote = (await pullNoteBodies([current.noteId]))[0]
         if (generation !== userGeneration || activeUserId !== userId) return { revisions, failures }
+        // 回拉期间可能再次保存或删除；迟到的远端正文只能替换原提交版本。
+        const afterPull = cache.get(current.noteId)
+        if (!afterPull || afterPull !== latest || !afterPull.dirty) continue
         if (!remote) throw new Error(`服务端拒绝笔记正文 ${current.noteId}，但未返回权威正文`)
         setCached({
           key: cacheKey(userId, remote.id),
@@ -302,7 +329,7 @@ export async function reconcileNoteBodies(notes: Note[]): Promise<void> {
 
   const stale = markdown.filter((note) => {
     const local = cache.get(note.id)
-    if (local?.dirty && local.updatedAt >= note.bodyUpdatedAt) return false
+    if (local?.restorationPending || (local?.dirty && local.updatedAt >= note.bodyUpdatedAt)) return false
     return note.bodyUpdatedAt > 0 && (!local || local.updatedAt < note.bodyUpdatedAt)
   })
   for (let start = 0; start < stale.length; start += PULL_BATCH) {
@@ -310,7 +337,7 @@ export async function reconcileNoteBodies(notes: Note[]): Promise<void> {
     if (generation !== userGeneration || activeUserId !== userId) return
     for (const body of bodies) {
       const local = cache.get(body.id)
-      if (local?.dirty && local.updatedAt >= body.updatedAt) continue
+      if (local?.restorationPending || (local?.dirty && local.updatedAt >= body.updatedAt)) continue
       setCached({
         key: cacheKey(userId, body.id),
         userId,

@@ -1,4 +1,5 @@
-import { authFetch } from './client'
+import { ApiError, authFetch } from './client'
+import { getSessionVersion } from '../utils/session'
 
 /**
  * PDF 原文云端存储（Worker + D1 分片）：
@@ -18,6 +19,7 @@ async function ensureOk(res: Response, action: string): Promise<void> {
 
 /** 上传 PDF 原文（覆盖同 id 对象）。超限时抛出带服务端提示的 Error */
 export async function uploadPdf(id: string, file: File): Promise<void> {
+  const version = getSessionVersion()
   // 上传与下载同口径 300s 超时：30MB 文件在弱网下超过默认 30s 属常态
   const res = await authFetch(
     `/api/pdfs/${id}`,
@@ -30,11 +32,15 @@ export async function uploadPdf(id: string, file: File): Promise<void> {
     300_000
   )
   await ensureOk(res, '上传')
+  if (version !== getSessionVersion()) throw new ApiError('登录状态已改变，请重试', 409)
 }
 
 /** 按 note id 拉取 PDF 字节 */
 export async function fetchPdf(id: string): Promise<Uint8Array> {
+  const version = getSessionVersion()
   const res = await authFetch(`/api/pdfs/${id}`, {}, undefined, 300_000)
   await ensureOk(res, '加载 PDF')
-  return new Uint8Array(await res.arrayBuffer())
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  if (version !== getSessionVersion()) throw new ApiError('登录状态已改变，请重试', 409)
+  return bytes
 }

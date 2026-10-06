@@ -374,7 +374,8 @@ export function registerBoardsRoutes() {
       ctx.env,
       `
       SELECT r.user_id, COALESCE(s.user_name, u.username) AS user_name, u.verified,
-        s.avatar AS user_avatar, COALESCE(g.points, 0) AS total_points, SUM(r.minutes) AS minutes
+        s.avatar AS user_avatar, COALESCE(g.points, 0) AS total_points,
+        s.share_learning_stats, s.profile_visibility, SUM(r.minutes) AS minutes
       FROM study_records r
       JOIN users u ON u.id = r.user_id
       LEFT JOIN user_settings s ON s.user_id = r.user_id
@@ -413,7 +414,7 @@ export function registerBoardsRoutes() {
         userName: u.user_name || '升本人',
         verified: !!u.verified,
         userAvatar: u.user_avatar ?? undefined,
-        totalPoints: u.total_points,
+        ...(u.share_learning_stats === 1 && u.profile_visibility !== 'private' ? { totalPoints: u.total_points } : {}),
         reason: overlap ? '与你有相同的薄弱科目' : '近一周学习活跃'
       }
     })

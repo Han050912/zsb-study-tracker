@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { on } from '../router'
 import { hashPassword, verifyPassword, needsRehash, signToken, verifyTokenFull } from '../auth'
-import { first, all, run, batch, uid, randomCode, HttpError } from '../db'
+import { first, run, batch, uid, randomCode, HttpError } from '../db'
 import { parseBody, registerSchema, loginSchema, passwordSchema, timingSafeEqual } from '../schemas'
 import { rateLimit } from '../middleware/rateLimit'
 import { authCookieHeader, clearAuthCookieHeader, extractToken } from '../middleware/auth'
@@ -58,6 +58,7 @@ interface UserRow {
   password_hash: string
   role: string
   created_at: number
+  session_version: number
 }
 
 function toUser(row: UserRow) {
@@ -72,20 +73,22 @@ function toUser(row: UserRow) {
 
 /**
  * 登记本次签发的会话（jti ↔ user_id）。
- * 吊销只能按 jti 精确命中（middleware/auth.ts 查 jwt_blacklist），而其它设备的 jti 服务端无从得知，
- * 故在签发处留档：修改密码时据此把该用户全部 token 一次性写入黑名单，实现「改密即让其它会话下线」。
+ * 注册与签发绑定同一凭证版本；旧密码校验后若发生改密，禁止登记和返回旧版本会话。
  */
 async function recordSession(env: Env, token: string, userId: string): Promise<void> {
   const payload = await verifyTokenFull(token, env.JWT_SECRET)
-  if (!payload) return
-  await run(
+  if (!payload) throw new HttpError(401, '登录已失效，请重新登录')
+  const result = await run(
     env,
-    'INSERT OR REPLACE INTO user_sessions (jti, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)',
+    `INSERT INTO user_sessions (jti, user_id, expires_at, created_at)
+     SELECT ?, id, ?, ? FROM users WHERE id = ? AND session_version = ?`,
     payload.jti,
-    userId,
     payload.exp,
-    Math.floor(Date.now() / 1000)
+    Math.floor(Date.now() / 1000),
+    userId,
+    payload.sessionVersion
   )
+  if (!result.meta.changes) throw new HttpError(401, '登录已失效，请重新登录')
 }
 
 /** 生成唯一对外用户 ID：随机 8 位短码（32^8 空间，不可枚举），查重冲突重试，唯一性由 UNIQUE 索引兜底 */
@@ -113,7 +116,8 @@ export function registerAuthRoutes() {
       username,
       password_hash: await hashPassword(password),
       role: 'user',
-      created_at: Date.now()
+      created_at: Date.now(),
+      session_version: 0
     }
     // 三条写入合并为一次 batch：D1 保证全成功或全失败，避免半注册状态（顺序不变：users 第一）
     await batch(ctx.env, [
@@ -152,13 +156,14 @@ export function registerAuthRoutes() {
     if (needsRehash(row.password_hash)) {
       await run(
         ctx.env,
-        'UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?',
+        'UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ? AND session_version = ?',
         await hashPassword(password),
         row.id,
-        row.password_hash
+        row.password_hash,
+        row.session_version
       )
     }
-    const token = await signToken(row.id, ctx.env.JWT_SECRET, row.role || 'user')
+    const token = await signToken(row.id, ctx.env.JWT_SECRET, row.role || 'user', row.session_version)
     await recordSession(ctx.env, token, row.id)
     return Response.json(
       { token, user: toUser(row) },
@@ -186,27 +191,26 @@ export function registerAuthRoutes() {
     // 这里只是表单校验失败，不该把用户踢下线（CREDENTIAL_PATHS 在 client.ts，不在本次改动范围）
     if (!(await verifyPassword(oldPassword, row.password_hash))) throw new HttpError(400, '当前密码错误')
 
-    const sessions = await all<{ jti: string; expires_at: number }>(
-      ctx.env,
-      'SELECT jti, expires_at FROM user_sessions WHERE user_id = ?',
-      ctx.userId
-    )
-    // 改密 + 清空会话登记 + 旧 jti 全部入黑名单：同一 batch 原子完成
-    await batch(ctx.env, [
-      ctx.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(
-        await hashPassword(newPassword),
-        ctx.userId
-      ),
-      ctx.env.DB.prepare('DELETE FROM user_sessions WHERE user_id = ?').bind(ctx.userId),
-      ...sessions.map((s) =>
-        ctx.env.DB.prepare('INSERT OR IGNORE INTO jwt_blacklist (jti, expires_at) VALUES (?, ?)').bind(
-          s.jti,
-          s.expires_at
-        )
-      )
+    const newHash = await hashPassword(newPassword)
+    const newVersion = row.session_version + 1
+    // CAS 避免两个改密请求用相同旧凭证覆盖彼此；其余语句仅随本次成功的改密执行。
+    const results = await batch(ctx.env, [
+      ctx.env.DB.prepare(
+        'UPDATE users SET password_hash = ?, session_version = ? WHERE id = ? AND password_hash = ? AND session_version = ?'
+      ).bind(newHash, newVersion, ctx.userId, row.password_hash, row.session_version),
+      ctx.env.DB.prepare(
+        `INSERT OR IGNORE INTO jwt_blacklist (jti, expires_at)
+         SELECT jti, expires_at FROM user_sessions WHERE user_id = ? AND EXISTS (
+           SELECT 1 FROM users WHERE id = ? AND password_hash = ? AND session_version = ?)`
+      ).bind(ctx.userId, ctx.userId, newHash, newVersion),
+      ctx.env.DB.prepare(
+        `DELETE FROM user_sessions WHERE user_id = ? AND EXISTS (
+           SELECT 1 FROM users WHERE id = ? AND password_hash = ? AND session_version = ?)`
+      ).bind(ctx.userId, ctx.userId, newHash, newVersion)
     ])
+    if (!results?.[0].meta.changes) throw new HttpError(409, '密码已更改，请重新登录后重试')
     // 为本次会话换发新 token：执行改密的设备无需重新登录，其余设备的会话已全部失效
-    const token = await signToken(ctx.userId, ctx.env.JWT_SECRET, row.role || 'user')
+    const token = await signToken(ctx.userId, ctx.env.JWT_SECRET, row.role || 'user', newVersion)
     await recordSession(ctx.env, token, ctx.userId)
     return Response.json(
       { ok: true, token },
@@ -226,6 +230,10 @@ export function registerAuthRoutes() {
     if (ext) {
       const payload = await verifyTokenFull(ext.token, ctx.env.JWT_SECRET)
       if (payload?.jti) {
+        const expectedUserId = ctx.request.headers.get('X-Expected-User-Id')
+        if (expectedUserId && expectedUserId !== payload.userId) {
+          throw new HttpError(409, '登录账号已改变，请刷新后重试')
+        }
         await run(
           ctx.env,
           'INSERT OR IGNORE INTO jwt_blacklist (jti, expires_at) VALUES (?, ?)',

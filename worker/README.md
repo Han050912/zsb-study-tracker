@@ -75,11 +75,11 @@ npm run dev
 npm run init:local
 ```
 
-当前快照已包含 `0001`–`0003` 的结构和 `0005` 的 `pomodoro_records.completed` 列，六张表的列顺序也已符合 `0006`；`0004` 修复历史团队冠军奖励，新库没有需修复的历史数据。确认快照全部执行成功后，登记这六项为新库的迁移基线：
+当前快照包含 `0001`–`0011` 的结构与索引；数据修复迁移在空库中没有历史数据需要处理。确认快照全部执行成功后，用随快照维护的 `schema-baseline.sql` 登记这十一项为新库迁移基线：
 
 ```powershell
-npx wrangler d1 execute zsb-study-db --local --command "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"
-npx wrangler d1 execute zsb-study-db --local --command "INSERT OR IGNORE INTO d1_migrations (name) VALUES ('0001_maintenance_cursors.sql'), ('0002_r2_cleanup_jobs.sql'), ('0003_study_reward_daily_usage.sql'), ('0004_repair_team_champion_awards.sql'), ('0005_pomodoro_completed.sql'), ('0006_align_schema_column_order.sql')"
+node scripts/check-migration-baseline.mjs
+npx wrangler d1 execute zsb-study-db --local --file=./schema-baseline.sql
 npx wrangler d1 migrations list zsb-study-db --local
 ```
 
@@ -87,7 +87,7 @@ npx wrangler d1 migrations list zsb-study-db --local
 
 ### 已有数据库
 
-先核查现有结构、备份和迁移登记；确认迁移所需的前置表、列已经具备后，应用所有尚未登记的迁移，再运行依赖新结构的 Worker。如果 `completed` 已存在，但 `0005` 尚未登记，先按下文的单项登记流程处理，再运行 `migrations apply`。
+先核查现有结构、备份和迁移登记；确认迁移所需的前置表、列已经具备后，按迁移与 Worker 的兼容要求安排升级。`0011` 必须与新版 Worker 切换一并进行，执行期间暂停番茄写入；不能迁移后继续使用旧 Worker。其他迁移完成后，再运行依赖新结构的 Worker。如果 `completed` 已存在，但 `0005` 尚未登记，先按下文的单项登记流程处理，再运行 `migrations apply`。
 
 ```powershell
 npx wrangler d1 migrations list zsb-study-db --local
@@ -103,6 +103,11 @@ npx wrangler d1 migrations apply zsb-study-db --local
 | `0004_repair_team_champion_awards.sql` | 为符合历史条件的挑战参与者补齐团队冠军徽章、通知和动态。               |
 | `0005_pomodoro_completed.sql`          | 为番茄记录增加完成状态。                                               |
 | `0006_align_schema_column_order.sql`   | 重建六张表，使列顺序与 `schema.sql` 完全一致，并保留现有值和 `rowid`。 |
+| `0007_profile_learning_privacy.sql`   | 保存学习公开许可（默认关闭）。                                       |
+| `0008_material_favorites.sql`         | 保存资料收藏状态。                                                   |
+| `0009_error_review_schedule.sql`      | 保存错题复习日期与间隔。                                             |
+| `0010_auth_sessions_reports.sql`      | 增加服务端会话版本、去重历史 pending 举报并建立唯一约束。             |
+| `0011_data_integrity.sql`             | 保留缺失明细的旧番茄汇总基数，建立唯一打断事件，并重算日统计。         |
 
 `0006` 重建 `community_posts`、`community_comments`、`community_messages`、`community_notifications`、`partner_study_sessions` 和 `pomodoro_records`，按列名复制所有现有值和 `rowid`，并重建原有索引。帖子和评论先复制到临时表，临时评论的外键指向临时帖子，避免删除旧帖子表时触发级联删除而丢失评论。该迁移以 `0001`–`0005` 完成后的结构为前提；旧库应通过 `migrations apply` 按顺序应用所有待执行迁移。
 
@@ -126,6 +131,8 @@ npx wrangler d1 migrations apply zsb-study-db --local
 ```
 
 线上升级将 `--local` 换为 `--remote`。使用自定义本地持久目录时，所有初始化、查询、登记、迁移与 `wrangler dev` 命令都要追加同一个 `--persist-to`，否则会操作不同的本地数据库。
+
+旧库若由快照或手工命令提前加入 `0007`–`0011` 的列/索引，同样要先核实每项结构与数据修复语义后逐项登记；不要使用新库的整批基线。`0011` 保留旧日汇总中没有明细支撑的部分，现有专注记录与每一条历史打断记录继续保留。旧打断记录没有事件身份，即使日期、时间、原因相同也不能据此删除；迁移按原行 ID 分配独立的 `legacy:<id>`，日统计其余部分由明细派生。迁移单调推进日汇总、事件列表的更新时间与域游标，同时保留 legacy 快照截止时间，确保已登录设备能够合并修复结果。旧 Worker 覆盖日汇总时不会更新 legacy 基数，重写打断列表时也不会保留事件 ID，因此 `0011` 不能独立提前上线。升级前备份，并在有数据的隔离副本上核查数据行数、汇总、同步游标和外键，再与新版 Worker 一并切换。`node scripts/check-migration-baseline.mjs` 使用内存数据库检查当前快照、基线名单及新增列/索引；它不会修改本地或远程用户数据库。
 
 ## 冒烟测试
 

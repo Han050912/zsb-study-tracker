@@ -26,6 +26,8 @@ import {
   hasPendingNoteBodies,
   reconcileNoteBodies,
   setNoteBodyUser,
+  isNoteRestorePending,
+  finishNoteRestore,
   type NoteBodyPushFailure
 } from '../../services/noteBodies'
 import type { AppState, Note, Settings } from '../../types'
@@ -269,6 +271,7 @@ export const syncActions: SyncActionsShape = {
       const remaining = new Set(takeForFlush()?.receipt?.keys ?? [])
       let appliedTotal = 0,
         rejectedTotal = 0
+      let restoreRejected = false
       while (remaining.size) {
         const snapshot = takeForFlush({ keys: remaining, maxChanges: PUSH_BATCH_CHANGES, maxBytes: PUSH_BATCH_BYTES })
         // Another tab may already have confirmed the remaining operations.
@@ -302,7 +305,25 @@ export const syncActions: SyncActionsShape = {
             userId
           )
           if (!isCurrentSync(generation, userId)) return cancelled
+          const rejectedRestores = new Map<string, Note>()
+          for (const rejection of res.rejected ?? []) {
+            if (rejection.domain !== 'notes' || !isNoteRestorePending(rejection.key)) continue
+            const entry = takeForFlush()?.upserts.notes?.[rejection.key]
+            if (!entry) continue
+            const note = { ...(entry.value as Note), updatedAt: Math.max(Date.now(), entry.updatedAt + 1) }
+            rejectedRestores.set(rejection.key, note)
+            // 新操作不在旧 receipt 内；即使后续权威回拉失败，恢复内容仍持久保留。
+            stageUpsert('notes', note.id, note, note.updatedAt)
+            restoreRejected = true
+          }
           confirm()
+          for (const id of Object.keys(snapshot.upserts.notes ?? {})) {
+            if (
+              !res.rejected?.some((item) => item.domain === 'notes' && item.key === id) &&
+              !takeForFlush()?.upserts.notes?.[id]
+            )
+              finishNoteRestore(id)
+          }
           if (res.gamification) this.$patch({ gamification: res.gamification })
           const rejected = res.rejected?.length ?? 0
           rejectedTotal += rejected
@@ -311,6 +332,21 @@ export const syncActions: SyncActionsShape = {
             const remote = await withConflictRetry(() => syncApi.pullChanges({ full: true }), generation, userId)
             if (!isCurrentSync(generation, userId)) return cancelled
             this.applyPull(remote, true)
+            for (const [id, note] of rejectedRestores) {
+              const pending = takeForFlush()?.upserts.notes?.[id]
+              // 回拉期间的新编辑或删除优先于本次恢复；不得重排迟到的旧恢复意图。
+              if (!pending) continue
+              const latestIntent = { ...(pending.value as Note) }
+              const current = this.notes.find((item) => item.id === id)
+              const tombstone = remote.changes.notes?.deletes.find((item) => item.key === id)?.deletedAt ?? 0
+              latestIntent.updatedAt = Math.max(
+                latestIntent.updatedAt,
+                note.updatedAt,
+                (current?.updatedAt ?? 0) + 1,
+                tombstone + 1
+              )
+              stageUpsert('notes', id, latestIntent, latestIntent.updatedAt)
+            }
             restorePendingState(this.$state, takeForFlush(), remote)
             restoreSyncedOnboarding(userId, this.settings)
             await reconcileNoteBodies(this.notes)
@@ -327,7 +363,15 @@ export const syncActions: SyncActionsShape = {
           return { ok: false, applied: appliedTotal, rejected: rejectedTotal }
         }
       }
-      return { ok: !failures.length && !outboxIssue.value, applied: appliedTotal, rejected: rejectedTotal }
+      if (restoreRejected) {
+        const message = '备份笔记被服务器拒绝，恢复内容已保留，请立即同步重试'
+        pushIssue.value = pushIssue.value ? `${pushIssue.value}；${message}` : message
+      }
+      return {
+        ok: !failures.length && !restoreRejected && !outboxIssue.value,
+        applied: appliedTotal,
+        rejected: rejectedTotal
+      }
     }
     const flight = { generation, userId, promise: run() }
     flushFlight = flight

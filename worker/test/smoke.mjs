@@ -62,6 +62,10 @@ function check(name, cond, extra = '') {
 async function api(path, { method = 'GET', token, body } = {}) {
   // 本地冒烟无人机验证环节，与桌面端一样通过共享令牌跳过 Turnstile
   const headers = { 'Content-Type': 'application/json', Origin: ORIGIN, 'X-Desktop-Token': DESKTOP_TOKEN }
+  // 隔离本地冒烟客户端，避免同时进行的浏览器验收占用匿名注册限流窗口。
+  // 线上连接层会覆盖此头；这里只在明确的本地配置中传入测试地址。
+  if (process.env.SMOKE_CLIENT_IP && ['localhost', '127.0.0.1', '[::1]'].includes(new URL(BASE).hostname))
+    headers['CF-Connecting-IP'] = process.env.SMOKE_CLIENT_IP
   if (token) headers.Authorization = `Bearer ${token}`
   const res = await fetchRetry(`${BASE}${path}`, {
     method,
@@ -358,8 +362,8 @@ async function main() {
   check('注册 A 返回 201 + token', regA.status === 201 && !!regA.data?.token, JSON.stringify(regA.data))
   const adminUserId = regA.data?.user?.id
   check(
-    '注册即初始化 settings（昵称取登录用户名）',
-    (await api('/api/settings', { token: regA.data.token })).data?.userName === userA.username
+    '注册即初始化 settings（默认昵称不暴露登录用户名）',
+    (await api('/api/settings', { token: regA.data.token })).data?.userName === `升本人-${regA.data.user.userCode}`
   )
 
   const regDup = await api('/api/auth/register', { method: 'POST', body: userA })
@@ -386,7 +390,7 @@ async function main() {
   const tokenB = regB.data?.token
   const uidB = regB.data?.user?.id
 
-  // ---- 密码策略（8-64 位 + 字母和数字）----
+  // ---- 密码策略（8-14 位 + 字母和数字）----
   // 注册限流 3 次/分，regA/regDup/regB 已用满窗口：先等窗口滑动，3 个非法密码打满本窗口额度
   console.log('  … 等待 61s 让注册限流窗口滑动')
   await waitForRateLimitWindow()
@@ -783,7 +787,10 @@ async function main() {
   check('B 用户拉取不到 A 的笔记', (dIsoB.notes ?? []).length === 0)
   check('B 用户游戏化为默认值', dIsoB.gamification?.points === 0)
   const bSettings = await api('/api/settings', { token: tokenB })
-  check('B 用户昵称取注册用户名（不受 A 影响）', bSettings.data?.userName === userB.username)
+  check(
+    'B 用户默认昵称使用自己的公开编号（不受 A 影响）',
+    bSettings.data?.userName === `升本人-${regB.data.user.userCode}`
+  )
 
   // B 的积分基线同样直接种入本地 D1 流水（黄金档 ≥1500 无发帖冷却）
   seedPointsBaseline(uidB)
@@ -1615,6 +1622,18 @@ async function main() {
 
   // ---- 每日打卡榜 ----
   console.log('[每日打卡榜]')
+  const privateBoard = await api('/api/community/leaderboard', { token: tokenA })
+  check(
+    '默认不公开学习时，A/B均不出现在打卡和连续学习榜',
+    ['today', 'streak'].every(
+      (key) => !(privateBoard.data?.[key] ?? []).some((entry) => entry.userId === uidA || entry.userId === uidB)
+    )
+  )
+  for (const token of [tokenA, tokenB]) {
+    const settings = (await api('/api/settings', { token })).data
+    const shared = await pushDomains(token, { settings: { ...settings, shareLearningStats: true } })
+    check('明确开启学习公开后同步成功', shared.status === 200 && !shared.data?.rejected?.settings?.length)
+  }
   const lb = await api('/api/community/leaderboard', { token: tokenA })
   check('榜单返回结构完整', lb.status === 200 && Array.isArray(lb.data?.today) && Array.isArray(lb.data?.streak))
   const boardA = lb.data.today?.find((entry) => entry.userId === uidA)
@@ -1667,8 +1686,22 @@ async function main() {
     (await api('/api/community/users/nouser000000000/profile', { token: tokenA })).status === 404
   )
 
-  // 百赞达人：d1 把新帖 likes_count 调到 99，B 真实点赞凑满 100
-  d1(`UPDATE community_posts SET likes_count = 99 WHERE id = '${newPostA.data.id}'`)
+  // 百赞达人：种入 99 个真实历史点赞者/点赞行并对齐投影，B 真实点赞凑满 100。
+  // 点赞事务按真实投票行重算，不能只改 likes_count 制造不存在的历史赞。
+  const historicalLikePrefix = `smoke_badge_${newPostA.data.id}_`
+  d1(
+    `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<99)
+     INSERT INTO users (id, username, password_hash, created_at)
+     SELECT '${historicalLikePrefix}' || x, '${historicalLikePrefix}' || x, 'historical-fixture', 1755000000 FROM c`
+  )
+  d1(
+    `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<99)
+     INSERT INTO community_likes (user_id, target_type, target_id, created_at)
+     SELECT '${historicalLikePrefix}' || x, 'post', '${newPostA.data.id}', 1755000000 FROM c`
+  )
+  d1(
+    `UPDATE community_posts SET likes_count = (SELECT COUNT(*) FROM community_likes WHERE target_type = 'post' AND target_id = '${newPostA.data.id}') WHERE id = '${newPostA.data.id}'`
+  )
   await api('/api/community/likes', {
     method: 'POST',
     token: tokenB,
@@ -2535,7 +2568,9 @@ async function main() {
   const notifBPriv = await api('/api/community/notifications', { token: tokenB })
   check(
     '申请人收到入组通知',
-    (notifBPriv.data?.items ?? []).some((n) => n.type === 'system' && (n.content || '').includes('已加入小组')),
+    (notifBPriv.data?.items ?? []).some(
+      (n) => n.type === 'system' && n.targetId === invTeamId && (n.content || '').includes('已加入小队')
+    ),
     JSON.stringify(notifBPriv.data)
   )
 
@@ -2579,7 +2614,9 @@ async function main() {
   const notifyA = await api('/api/community/notifications', { token: tokenA })
   check(
     '被踢者 A 收到 system 通知',
-    (notifyA.data?.items ?? []).some((n) => n.type === 'system' && (n.content || '').includes('移出小组')),
+    (notifyA.data?.items ?? []).some(
+      (n) => n.type === 'system' && n.targetId === teamId && (n.content || '').includes('移出小队')
+    ),
     JSON.stringify(notifyA.data)
   )
   check('解散小组', (await api(`/api/teams/${teamId}/disband`, { method: 'POST', token: tokenB })).status === 200)
@@ -2916,7 +2953,10 @@ async function main() {
     stats.data?.heatmap?.some((h) => h.date === todayUtc8 && h.minutes === 70),
     JSON.stringify(stats.data?.heatmap?.filter((h) => h.minutes > 0))
   )
-  check('总学习时长与天数正确', stats.data?.totalStudy?.minutes === 70 && stats.data?.totalStudy?.days === 1)
+  check(
+    '总学习时长含手工记录70分钟和番茄专注75分钟',
+    stats.data?.totalStudy?.minutes === 145 && stats.data?.totalStudy?.days === 2
+  )
   check(
     '做题统计与正确率正确',
     stats.data?.problems?.total === 20 && stats.data?.problems?.correct === 15 && stats.data?.problems?.accuracy === 75

@@ -185,10 +185,10 @@ export async function assertPartner(env: Env, userId: string, partnerId: string)
 async function topHours(env: Env, userId: string): Promise<number[]> {
   const rows = await all<{ h: number }>(
     env,
-    `SELECT CAST(((created_at + 28800) % 86400) / 3600 AS INTEGER) AS h
+    `SELECT CAST(((created_at + 28800000) % 86400000) / 3600000 AS INTEGER) AS h
      FROM study_records WHERE user_id = ? AND created_at >= ? GROUP BY h ORDER BY SUM(minutes) DESC LIMIT 3`,
     userId,
-    nowSec() - 30 * 86400
+    Date.now() - 30 * 86400_000
   )
   return rows.map((r) => r.h)
 }
@@ -240,7 +240,9 @@ export function registerPartnerRoutes() {
       ctx.env,
       `
       SELECT u.id, u.user_code, u.verified, s.user_name,
-        s.avatar, s.exam_date, COALESCE(g.points, 0) AS total_points
+        s.avatar, s.exam_date,
+        CASE WHEN s.share_learning_stats = 1 AND s.profile_visibility IN ('public', 'login')
+          THEN COALESCE(g.points, 0) END AS total_points
       FROM users u
       LEFT JOIN user_settings s ON s.user_id = u.id
       LEFT JOIN gamification g ON g.user_id = u.id
@@ -288,11 +290,11 @@ export function registerPartnerRoutes() {
     const hourRows = candIds.length
       ? await all<{ user_id: string; h: number }>(
           ctx.env,
-          `SELECT user_id, CAST(((created_at + 28800) % 86400) / 3600 AS INTEGER) AS h
+          `SELECT user_id, CAST(((created_at + 28800000) % 86400000) / 3600000 AS INTEGER) AS h
            FROM study_records WHERE user_id IN (${candIds.map(() => '?').join(',')}) AND created_at >= ?
            GROUP BY user_id, h ORDER BY user_id, SUM(minutes) DESC`,
           ...candIds,
-          nowSec() - 30 * 86400
+          Date.now() - 30 * 86400_000
         )
       : []
     const candHours = new Map<string, number[]>()
@@ -319,7 +321,7 @@ export function registerPartnerRoutes() {
         userName: userDisplayName(c.user_name, c.user_code, c.id),
         verified: !!c.verified,
         userAvatar: c.avatar ?? undefined,
-        totalPoints: c.total_points,
+        totalPoints: c.total_points ?? undefined,
         score: exam + weak + hours,
         reasons
       })
@@ -335,7 +337,9 @@ export function registerPartnerRoutes() {
         ctx.env,
         `
       SELECT sp.id AS reqId, sp.updated_at, u.id AS userId, u.username, u.verified,
-        COALESCE(s.user_name, u.username) AS userName, s.avatar AS userAvatar, COALESCE(g.points, 0) AS totalPoints
+        COALESCE(s.user_name, u.username) AS userName, s.avatar AS userAvatar,
+        CASE WHEN s.share_learning_stats = 1 AND s.profile_visibility IN ('public', 'login')
+          THEN COALESCE(g.points, 0) END AS totalPoints
       FROM study_partners sp
       JOIN users u ON u.id = CASE WHEN sp.from_id = ? THEN sp.to_id ELSE sp.from_id END
       LEFT JOIN user_settings s ON s.user_id = u.id
@@ -346,13 +350,15 @@ export function registerPartnerRoutes() {
         ctx.userId,
         ctx.userId
       )
-    ).map((r: any) => ({ ...r, verified: !!r.verified }))
+    ).map((r: any) => ({ ...r, totalPoints: r.totalPoints ?? undefined, verified: !!r.verified }))
     const incoming = (
       await all<any>(
         ctx.env,
         `
       SELECT sp.id AS reqId, sp.created_at, u.id AS userId, u.username, u.verified,
-        COALESCE(s.user_name, u.username) AS userName, s.avatar AS userAvatar, COALESCE(g.points, 0) AS totalPoints
+        COALESCE(s.user_name, u.username) AS userName, s.avatar AS userAvatar,
+        CASE WHEN s.share_learning_stats = 1 AND s.profile_visibility IN ('public', 'login')
+          THEN COALESCE(g.points, 0) END AS totalPoints
       FROM study_partners sp
       JOIN users u ON u.id = sp.from_id
       LEFT JOIN user_settings s ON s.user_id = u.id
@@ -361,7 +367,7 @@ export function registerPartnerRoutes() {
       ORDER BY sp.created_at DESC`,
         ctx.userId
       )
-    ).map((r: any) => ({ ...r, verified: !!r.verified }))
+    ).map((r: any) => ({ ...r, totalPoints: r.totalPoints ?? undefined, verified: !!r.verified }))
     return Response.json({ partners, incoming })
   })
 
@@ -631,66 +637,59 @@ function weekRangeOf(weekKey: string): { weekStart: string; weekEnd: string } {
 
 /**
  * 按批推送待推送项（每项 = push_log 去重标记 + 通知，同批原子；P4-05 失败可重入的核心）。
- * cleanupPending 为 true（续跑路径）时每项额外携带一条「清理续跑记录」语句：
- * 推送成功则该 pending 行同批删除（成功即出队），失败则整体回滚、记录保留供下次运行重试。
- * 某批失败时：把该批未完成项持久化到 weekly_report_push_pending（尽力而为）后原样抛出——
- * Cloudflare Cron 不重试，下次运行经 resumePendingPushes 只补推这些失败项；
- * 已成功项因 push_log 已落库、下周 cron 换新 week_key 也不影响，天然不会重复推送。
+ * 全部任务已经入队；发送时在事务内复查共享许可和 accepted 关系。
+ * 通知仅随本次成功写入的去重标记产生；失去许可的任务同批出队。
  */
 async function pushChunked(
   env: Env,
   weekKey: string,
   items: WeeklyPushItem[],
-  contentOf: (item: WeeklyPushItem) => string,
-  cleanupPending = false
+  contentOf: (item: WeeklyPushItem) => string
 ): Promise<void> {
   const stmtsOf = (item: WeeklyPushItem): D1PreparedStatement[] => {
     const stmts: D1PreparedStatement[] = [
       env.DB.prepare(
-        `INSERT OR IGNORE INTO weekly_report_push_log (week_key, from_id, to_id, created_at) VALUES (?, ?, ?, ?)`
-      ).bind(weekKey, item.fromId, item.toId, nowSec()),
-      notifyStatement(env, {
-        userId: item.toId,
-        type: 'partner',
-        actorId: item.fromId,
-        targetType: 'partner_weekly',
-        targetId: item.fromId,
-        content: contentOf(item)
-      })
-    ]
-    if (cleanupPending) {
-      stmts.push(
-        env.DB.prepare(`DELETE FROM weekly_report_push_pending WHERE week_key = ? AND from_id = ? AND to_id = ?`).bind(
-          weekKey,
-          item.fromId,
-          item.toId
-        )
+        `INSERT OR IGNORE INTO weekly_report_push_log (week_key, from_id, to_id, created_at)
+         SELECT ?, ?, ?, ? WHERE EXISTS (
+           SELECT 1 FROM user_settings s JOIN users recipient ON recipient.id = ?
+           WHERE s.user_id = ? AND s.partner_share_enabled = 1
+             AND EXISTS (SELECT 1 FROM study_partners sp WHERE sp.status = 'accepted'
+               AND ((sp.from_id = ? AND sp.to_id = ?) OR (sp.from_id = ? AND sp.to_id = ?))))`
+      ).bind(
+        weekKey,
+        item.fromId,
+        item.toId,
+        nowSec(),
+        item.toId,
+        item.fromId,
+        item.fromId,
+        item.toId,
+        item.toId,
+        item.fromId
+      ),
+      notifyStatement(
+        env,
+        {
+          userId: item.toId,
+          type: 'partner',
+          actorId: item.fromId,
+          targetType: 'partner_weekly',
+          targetId: item.fromId,
+          content: contentOf(item)
+        },
+        { ifPreviousChanged: true }
+      ),
+      env.DB.prepare(`DELETE FROM weekly_report_push_pending WHERE week_key = ? AND from_id = ? AND to_id = ?`).bind(
+        weekKey,
+        item.fromId,
+        item.toId
       )
-    }
+    ]
     return stmts
   }
-  const stmtsPerItem = cleanupPending ? 3 : 2
-  const chunkSize = Math.floor(PUSH_STMTS_PER_BATCH / stmtsPerItem)
+  const chunkSize = Math.floor(PUSH_STMTS_PER_BATCH / 3)
   for (let i = 0; i < items.length; i += chunkSize) {
-    const chunk = items.slice(i, i + chunkSize)
-    try {
-      await batch(env, chunk.flatMap(stmtsOf))
-    } catch (e) {
-      // 失败批次持久化供下次续跑（尽力而为：持久化自身失败时保留原错误上抛，cron 告警仍可见）
-      try {
-        await batch(
-          env,
-          chunk.map((item) =>
-            env.DB.prepare(
-              `INSERT OR IGNORE INTO weekly_report_push_pending (week_key, from_id, to_id, created_at) VALUES (?, ?, ?, ?)`
-            ).bind(weekKey, item.fromId, item.toId, nowSec())
-          )
-        )
-      } catch (persistErr) {
-        console.error('[cron] 周报失败批次持久化失败', persistErr)
-      }
-      throw e
-    }
+    await batch(env, items.slice(i, i + chunkSize).flatMap(stmtsOf))
   }
 }
 
@@ -699,37 +698,23 @@ async function pushChunked(
  * 每项「push_log 标记 + 通知 + 清理续跑记录」同批原子，成功即出队，失败项留在表内等下次运行。
  */
 async function resumePendingPushes(env: Env): Promise<void> {
-  const rows = await all<{ week_key: string; from_id: string; to_id: string; orphan: number }>(
+  // 入队后解绑、关闭共享或删除账号的历史任务无需再读取学习统计。
+  await run(
     env,
-    // LEFT JOIN users 标记孤儿行（入队后用户被注销等）：通知 INSERT 撞 FK 永远失败会让该批永续跑不完，
-    // 孤儿行直接出队，其余行按周分组续跑
-    `SELECT p.week_key, p.from_id, p.to_id, (u1.id IS NULL OR u2.id IS NULL) AS orphan
-     FROM weekly_report_push_pending p
-     LEFT JOIN users u1 ON u1.id = p.from_id
-     LEFT JOIN users u2 ON u2.id = p.to_id
-     ORDER BY p.week_key`
+    `DELETE FROM weekly_report_push_pending AS p WHERE NOT EXISTS (
+    SELECT 1 FROM users owner JOIN users recipient ON recipient.id = p.to_id
+    JOIN user_settings s ON s.user_id = owner.id
+    WHERE owner.id = p.from_id AND s.partner_share_enabled = 1 AND EXISTS (
+      SELECT 1 FROM study_partners sp WHERE sp.status = 'accepted'
+      AND ((sp.from_id = p.from_id AND sp.to_id = p.to_id) OR (sp.from_id = p.to_id AND sp.to_id = p.from_id))))`
+  )
+  const rows = await all<{ week_key: string; from_id: string; to_id: string }>(
+    env,
+    `SELECT week_key, from_id, to_id FROM weekly_report_push_pending ORDER BY week_key`
   )
   if (!rows.length) return
 
-  // 孤儿行清理不阻塞续跑（失败则下次运行重试，无害）
-  const orphans = rows.filter((r) => r.orphan)
-  if (orphans.length) {
-    try {
-      await batch(
-        env,
-        orphans.map((r) =>
-          env.DB.prepare(
-            `DELETE FROM weekly_report_push_pending WHERE week_key = ? AND from_id = ? AND to_id = ?`
-          ).bind(r.week_key, r.from_id, r.to_id)
-        )
-      )
-    } catch (e) {
-      console.error('[cron] 周报续跑孤儿行清理失败', e)
-    }
-  }
-
-  const items = rows.filter((r) => !r.orphan).map((r) => ({ fromId: r.from_id, toId: r.to_id, weekKey: r.week_key }))
-  if (!items.length) return
+  const items = rows.map((r) => ({ fromId: r.from_id, toId: r.to_id, weekKey: r.week_key }))
 
   // 按 week_key 分组：不同失败批可能属于不同周，统计区间需各自还原
   const byWeek = new Map<string, WeeklyPushItem[]>()
@@ -738,6 +723,7 @@ async function resumePendingPushes(env: Env): Promise<void> {
     list.push({ fromId: it.fromId, toId: it.toId })
     byWeek.set(it.weekKey, list)
   }
+  let failure: unknown
   for (const [weekKey, weekItems] of byWeek) {
     const { weekStart, weekEnd } = weekRangeOf(weekKey)
     const uids = [...new Set(weekItems.flatMap((it) => [it.fromId, it.toId]))]
@@ -745,65 +731,40 @@ async function resumePendingPushes(env: Env): Promise<void> {
       displayNamesBatch(env, uids),
       weeklyStatsBatch(env, uids, weekStart, weekEnd)
     ])
-    // cleanupPending：标记 + 通知 + 清理 pending 行同批原子；失败时未完成项原样落回 pending，直接上抛交由下次运行重试
-    await pushChunked(
-      env,
-      weekKey,
-      weekItems,
-      (it) => weeklyReportContent(names.get(it.fromId) ?? '升本人', stats.get(it.fromId) ?? EMPTY_STATS),
-      true
-    )
+    try {
+      await pushChunked(env, weekKey, weekItems, (it) =>
+        weeklyReportContent(names.get(it.fromId) ?? '升本人', stats.get(it.fromId) ?? EMPTY_STATS)
+      )
+    } catch (error) {
+      // 历史某周失败不阻断本周；所有未处理方向已持久化，仍可跨周恢复。
+      failure ??= error
+    }
   }
+  if (failure) throw failure
 }
 
 /** 每周一 cron 触发：双向推送上周学习周报通知（去重 INSERT 与通知 INSERT 同批原子写入，避免标记与落库脱节）。
  *  查询已批量化（原为逐关系 12 次查询：随搭子关系数线性增长，大规模时会撞 Workers 单次调用查询上限）：
- *  已推送标记 1 次、展示名与四项周统计按涉及用户去重后分块 GROUP BY。
- *  P4-05 失败可重入：先续跑历史失败批次（跨周），再推本周；任一批失败时该批关系行落入
- *  weekly_report_push_pending，下次运行只补推未完成项，已推送项经 push_log 去重不重复推送。 */
+ *  展示名与四项周统计按涉及用户去重后分块 GROUP BY。
+ *  先持久化全部本周任务，再续跑各周未完成方向；已推送项经 push_log 去重不重复推送。 */
 export async function pushWeeklyReports(env: Env): Promise<void> {
-  // 先续跑历史失败批次（跨周重入）；续跑未完成不阻塞本周推送，残留项留给下次运行继续补推
-  try {
-    await resumePendingPushes(env)
-  } catch (e) {
-    console.error('[cron] 周报续跑未完成（残留项下次运行继续补推）', e)
-  }
-
-  const { weekStart, weekEnd, weekKey } = lastWeekRange()
-  const rels = await all<{ from_id: string; to_id: string }>(
+  const { weekKey } = lastWeekRange()
+  // 全周所有授权方向一次性入队，再开始发送；任何首批失败都不会丢失后续批。
+  await run(
     env,
-    // JOIN users 过滤双方均已不存在的关系行（人工改库等留下的孤儿行）：否则单条孤儿关系会让
-    // 通知 INSERT 撞 FK，整批失败、所有用户的周报一起推不出去
-    `SELECT sp.from_id, sp.to_id FROM study_partners sp
-     JOIN users u1 ON u1.id = sp.from_id
-     JOIN users u2 ON u2.id = sp.to_id
-     WHERE sp.status = 'accepted'`
-  )
-  if (!rels.length) return
-
-  // 本周已推送标记（一次查询替代逐关系 2 次存在性查询）
-  const pushedRows = await all<{ from_id: string; to_id: string }>(
-    env,
-    `SELECT from_id, to_id FROM weekly_report_push_log WHERE week_key = ?`,
+    `INSERT OR IGNORE INTO weekly_report_push_pending (week_key, from_id, to_id, created_at)
+     SELECT ?, direction.from_id, direction.to_id, ? FROM (
+       SELECT from_id, to_id FROM study_partners WHERE status = 'accepted'
+       UNION ALL SELECT to_id AS from_id, from_id AS to_id FROM study_partners WHERE status = 'accepted'
+     ) direction JOIN users owner ON owner.id = direction.from_id
+     JOIN users recipient ON recipient.id = direction.to_id
+     JOIN user_settings s ON s.user_id = direction.from_id
+     WHERE s.partner_share_enabled = 1 AND NOT EXISTS (
+       SELECT 1 FROM weekly_report_push_log l WHERE l.week_key = ?
+       AND l.from_id = direction.from_id AND l.to_id = direction.to_id)`,
+    weekKey,
+    nowSec(),
     weekKey
   )
-  const pushed = new Set(pushedRows.map((r) => `${r.from_id}:${r.to_id}`))
-
-  const items: WeeklyPushItem[] = []
-  for (const r of rels) {
-    // 我的周报 → 推给搭子；搭子的周报 → 推给我（已推送方向跳过，保证同 week_key 重跑幂等）
-    if (!pushed.has(`${r.from_id}:${r.to_id}`)) items.push({ fromId: r.from_id, toId: r.to_id })
-    if (!pushed.has(`${r.to_id}:${r.from_id}`)) items.push({ fromId: r.to_id, toId: r.from_id })
-  }
-  if (!items.length) return
-
-  // 涉及用户去重后批量取展示名与周统计
-  const uids = [...new Set(items.flatMap((it) => [it.fromId, it.toId]))]
-  const [names, stats] = await Promise.all([
-    displayNamesBatch(env, uids),
-    weeklyStatsBatch(env, uids, weekStart, weekEnd)
-  ])
-  await pushChunked(env, weekKey, items, (it) =>
-    weeklyReportContent(names.get(it.fromId) ?? '升本人', stats.get(it.fromId) ?? EMPTY_STATS)
-  )
+  await resumePendingPushes(env)
 }

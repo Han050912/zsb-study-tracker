@@ -65,12 +65,17 @@ function serializeUpsert(domain: string, key: string, entry: OutboxUpsert): unkn
     return { ...(entry.value as Record<string, unknown>), updatedAt: entry.updatedAt }
   }
   if (domain === 'pomodoro' && key.startsWith('itr:')) {
-    // 该键代表「某一天的全部打断」：单条元素只需 { reason, time }（日期由键承载）；
+    // 日期由键承载，保留唯一事件 id；旧条目缺 id 时服务端生成稳定的历史身份。
     // 空列表不参与传输（前端打断列表只增不减，不存在「该日列表被清空」的语义）
     const items = Array.isArray(entry.value) ? (entry.value as Record<string, unknown>[]) : []
     const list = items
       .filter((it) => it && typeof it.reason === 'string' && Number.isInteger(it.time))
-      .map((it) => ({ reason: it.reason, time: it.time }))
+      .map((it) => ({
+        ...(typeof it.id === 'string' && it.id ? { id: it.id } : {}),
+        ...(it.independent === true ? { independent: true } : {}),
+        reason: it.reason,
+        time: it.time
+      }))
     if (!list.length) return null
     return { key, value: list, updatedAt: entry.updatedAt }
   }
@@ -261,7 +266,15 @@ function applyPomodoro(state: AppState, changes: DomainChanges): number {
       if (hasLocal && local !== 0 && updatedAt <= local) continue
       const others = pomodoro.interruptions.filter((it) => it.date !== rest)
       const items = (Array.isArray(item.value) ? (item.value as Record<string, unknown>[]) : []).map((it) =>
-        stamped({ date: rest, reason: String(it.reason ?? ''), time: Number(it.time) }, updatedAt)
+        stamped(
+          {
+            ...(typeof it.id === 'string' && it.id ? { id: it.id } : {}),
+            date: rest,
+            reason: String(it.reason ?? ''),
+            time: Number(it.time)
+          },
+          updatedAt
+        )
       )
       pomodoro.interruptions = [...others, ...items]
       changed++
@@ -318,11 +331,29 @@ function applyPomodoro(state: AppState, changes: DomainChanges): number {
  */
 export function applyChanges(domain: string, state: AppState, changes: DomainChanges): number {
   switch (domain) {
+    case 'notes': {
+      // 正文发现版本与标题编辑版本独立；较新的本地标题不能吞掉已提交的新正文。
+      const incoming = changes.upserts as AppState['notes']
+      const metadata = incoming.map((note) => {
+        const local = state.notes.find((item) => item.id === note.id)
+        return local && local.type !== 'pdf' && note.type !== 'pdf'
+          ? { ...note, bodyUpdatedAt: Math.max(local.bodyUpdatedAt ?? 0, note.bodyUpdatedAt ?? 0) }
+          : note
+      })
+      let changed = mergeArrayById(state.notes, metadata, changes.deletes)
+      for (const note of incoming) {
+        const local = state.notes.find((item) => item.id === note.id)
+        if (local && local.type !== 'pdf' && note.type !== 'pdf' && note.bodyUpdatedAt > local.bodyUpdatedAt) {
+          local.bodyUpdatedAt = note.bodyUpdatedAt
+          changed++
+        }
+      }
+      return changed
+    }
     case 'records':
     case 'problemSessions':
     case 'errorQuestions':
     case 'exams':
-    case 'notes':
     case 'materials':
     case 'todos':
       return mergeArrayById(state[domain] as unknown[], changes.upserts, changes.deletes)

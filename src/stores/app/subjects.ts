@@ -101,6 +101,7 @@ export const subjectsActions: SubjectsActionsShape = {
           this.revokePointsByRef(l.id, true)
           stageDelete('english', `listening:${l.id}`, now)
         }
+      for (const t of this.english.templates) stageDelete('english', `template:${t.id}`, now)
       this.english = { vocab: [], reading: [], listening: [], templates: [] }
     }
     // 先收集受影响记录再过滤（stage 墓碑需要原对象的 id）

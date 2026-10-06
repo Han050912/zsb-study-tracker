@@ -18,7 +18,9 @@ import {
   pomodoroDailyStatement,
   pomodoroInterruptionsStatements,
   pomodoroRecordFromRow,
-  pomodoroRecordStatement
+  pomodoroRecordStatement,
+  consumePomodoroLegacyRecord,
+  reconcilePomodoroDay
 } from './pomodoro'
 import { recordsMapping } from './records'
 import { problemsMapping } from './problems'
@@ -297,7 +299,11 @@ function singleRowUpsert(
   const values = keys.map(() => '?').join(', ')
   const updates = keys
     .filter((k) => k !== 'id' && k !== 'user_id')
-    .map((k) => `"${k}" = excluded."${k}"`)
+    .map((k) =>
+      mapping.table === 'notes' && k === 'body_updated_at'
+        ? '"body_updated_at" = MAX(notes.body_updated_at, excluded.body_updated_at)'
+        : `"${k}" = excluded."${k}"`
+    )
     .join(', ')
   return env.DB.prepare(
     `INSERT INTO ${mapping.table} (${columns}) VALUES (${values}) ON CONFLICT(user_id, id) DO UPDATE SET ${updates}`
@@ -314,9 +320,19 @@ function singleTableStrategy(mapping: CrudMapping): DomainStrategy {
       if (value !== undefined) assertMappingBody(mapping, value)
     },
     storedUpdatedAt: (env, userId, keys) => storedByColumn(env, mapping.table, 'id', userId, keys),
-    upsertStatements: async (env, userId, item, seq) => [
-      singleRowUpsert(env, mapping, userId, item.value, item.key, item.updatedAt, seq)
-    ],
+    upsertStatements: async (env, userId, item, seq) => {
+      let value = item.value
+      if (mapping.table === 'notes' && value.type !== 'pdf') {
+        const body = await first<{ stamp: number }>(
+          env,
+          'SELECT MAX(updated_at) AS stamp FROM note_body_chunks WHERE user_id = ? AND note_id = ?',
+          userId,
+          item.key
+        )
+        value = { ...value, bodyUpdatedAt: Number(body?.stamp ?? 0) }
+      }
+      return [singleRowUpsert(env, mapping, userId, value, item.key, item.updatedAt, seq)]
+    },
     deleteStatements: (env, userId, key) => [
       env.DB.prepare(`DELETE FROM ${mapping.table} WHERE user_id = ? AND id = ?`).bind(userId, key)
     ],
@@ -587,6 +603,7 @@ const pomodoroStrategy: DomainStrategy = {
           typeof it !== 'object' ||
           Array.isArray(it) ||
           typeof it.reason !== 'string' ||
+          (it.id !== undefined && (typeof it.id !== 'string' || !it.id)) ||
           !Number.isInteger(it.time)
         )
           throw new HttpError(400, `域 pomodoro 的 itr: 条目必须为 { reason: string, time: number }（key: ${key}）`)
@@ -636,7 +653,10 @@ const pomodoroStrategy: DomainStrategy = {
     const stamp = { updatedAt: item.updatedAt, seq }
     if (kind === 'day') return [pomodoroDailyStatement(env, userId, rest, item.value, stamp)]
     if (kind === 'itr') return pomodoroInterruptionsStatements(env, userId, rest, item.value, stamp)
-    return [pomodoroRecordStatement(env, userId, rest, item.value, stamp)]
+    return [
+      consumePomodoroLegacyRecord(env, userId, rest, item.value),
+      pomodoroRecordStatement(env, userId, rest, item.value, stamp)
+    ]
   },
   deleteStatements: (env, userId, key) => {
     const { kind, rest } = splitPomodoroKey(key)
@@ -666,15 +686,18 @@ const pomodoroStrategy: DomainStrategy = {
     const wItr = seqWindow('server_seq', cursor, upper)
     const itrRows = await all<any>(
       env,
-      `SELECT date, reason, time, updated_at, server_seq FROM pomodoro_interruptions WHERE user_id = ?${wItr.sql} ORDER BY date, id`,
+      `SELECT date, event_id, reason, time, updated_at, server_seq FROM pomodoro_interruptions WHERE user_id = ?${wItr.sql} ORDER BY date, id`,
       userId,
       ...wItr.params
     )
     // 同一 date 的多行取该组 updated_at / server_seq 的最大值作为整组时间戳与游标序号
-    const byDate = new Map<string, { items: { reason: string; time: number }[]; updatedAt: number; seq: number }>()
+    const byDate = new Map<
+      string,
+      { items: { id?: string; reason: string; time: number }[]; updatedAt: number; seq: number }
+    >()
     for (const r of itrRows) {
       const group = byDate.get(r.date) ?? { items: [], updatedAt: 0, seq: 0 }
-      group.items.push({ reason: r.reason, time: r.time })
+      group.items.push({ id: r.event_id || undefined, reason: r.reason, time: r.time })
       group.updatedAt = Math.max(group.updatedAt, Number(r.updated_at))
       group.seq = Math.max(group.seq, Number(r.server_seq))
       byDate.set(r.date, group)
@@ -1154,8 +1177,40 @@ async function decideDomain(
     strategy.storedUpdatedAt(env, userId, keys),
     readTombstones(env, userId, domain, keys)
   ])
+  const interruptionRows =
+    domain === 'pomodoro'
+      ? await allByKeys<{ id: number; date: string; event_id: string | null; reason: string; time: number }>(
+          env,
+          (ph) =>
+            `SELECT id, date, event_id, reason, time FROM pomodoro_interruptions WHERE user_id = ? AND date IN (${ph})`,
+          userId,
+          upserts.filter((item) => item.key.startsWith('itr:')).map((item) => item.key.slice(4))
+        )
+      : []
+  const interruptionIds = new Set(interruptionRows.map((row) => row.event_id || `legacy:${row.id}`))
+  const legacyInterruptionIds = new Map(
+    interruptionRows.map((row) => [
+      JSON.stringify([row.date, row.time, row.reason]),
+      row.event_id || `legacy:${row.id}`
+    ])
+  )
 
-  for (const item of upserts) {
+  for (const incoming of upserts) {
+    let item = incoming
+    if (domain === 'pomodoro' && item.key.startsWith('itr:')) {
+      const date = item.key.slice(4)
+      const items = item.value as { id?: string; reason: string; time: number }[]
+      item = {
+        ...item,
+        value: items.map((value) => {
+          if (value.id) return value
+          const tuple = JSON.stringify([date, value.time, value.reason])
+          const id = legacyInterruptionIds.get(tuple) || `legacy:${crypto.randomUUID()}`
+          legacyInterruptionIds.set(tuple, id)
+          return { ...value, id }
+        })
+      }
+    }
     const tomb = tombstoned.get(item.key)
     if (tomb !== undefined) {
       // 有墓碑：编辑时间新于删除时刻才复活，否则判负（避免旧设备复活已删记录）
@@ -1164,7 +1219,18 @@ async function decideDomain(
       continue
     }
     const storedAt = stored.get(item.key)
-    if (storedAt !== undefined && item.updatedAt <= storedAt) {
+    if (domain === 'pomodoro' && item.key.startsWith('itr:')) {
+      const items = item.value as { id?: string; time: number; reason: string }[]
+      if (!items.some((value) => !interruptionIds.has(value.id ?? ''))) {
+        decision.rejected.push({ domain, key: item.key, reason: 'older' })
+        continue
+      }
+    }
+    if (
+      storedAt !== undefined &&
+      item.updatedAt <= storedAt &&
+      !(domain === 'pomodoro' && item.key.startsWith('itr:'))
+    ) {
       // 幂等重放安全：同时间戳或更旧的编辑不覆盖服务端
       decision.rejected.push({ domain, key: item.key, reason: 'older' })
       continue
@@ -1203,6 +1269,145 @@ function removeTombstoneStatement(env: Env, userId: string, domain: string, key:
     domain,
     key
   )
+}
+
+/** 删除科目以服务端当前记录为准；同一 CAS 快照生成关联域墓碑、资源清理与积分撤销。 */
+async function expandSubjectChanges(
+  env: Env,
+  userId: string,
+  entries: { domain: string; strategy: DomainStrategy; upserts: ChangeItem[]; deletes: DeleteInput[] }[],
+  decisions: Decision[]
+) {
+  const subjectIndex = entries.findIndex((entry) => entry.domain === 'subjects')
+  const removed = new Map(
+    (subjectIndex < 0 ? [] : decisions[subjectIndex].deletes).map((item) => [item.key, item.deletedAt])
+  )
+  const revived = new Set((subjectIndex < 0 ? [] : decisions[subjectIndex].upserts).map((op) => op.item.key))
+  const blocked = new Set(
+    (
+      await all<{ record_key: string }>(
+        env,
+        "SELECT record_key FROM sync_deletions WHERE user_id = ? AND domain = 'subjects'",
+        userId
+      )
+    )
+      .map((row) => row.record_key)
+      .filter((id) => !revived.has(id))
+  )
+  for (const id of removed.keys()) blocked.add(id)
+  const linkedDomains = ['records', 'problemSessions', 'errorQuestions', 'exams', 'notes']
+  for (let i = 0; i < entries.length; i++) {
+    const domain = entries[i].domain
+    decisions[i].upserts = decisions[i].upserts.filter((op) => {
+      const subjectId = domain === 'english' ? 'english' : op.item.value?.subjectId
+      if (!blocked.has(subjectId)) return true
+      if (domain === 'materials') {
+        op.item = { ...op.item, value: { ...op.item.value, subjectId: undefined } }
+        return true
+      }
+      if (!linkedDomains.includes(domain) && domain !== 'english') return true
+      decisions[i].rejected.push({ domain, key: op.item.key, reason: 'deleted' })
+      return false
+    })
+  }
+  const ensure = (domain: string) => {
+    let index = entries.findIndex((entry) => entry.domain === domain)
+    if (index < 0) {
+      index = entries.length
+      entries.push({ domain, strategy: DOMAIN_STRATEGIES[domain], upserts: [], deletes: [] })
+      decisions.push({ upserts: [], deletes: [], rejected: [] })
+    }
+    return decisions[index]
+  }
+  for (const [subjectId, deletedAt] of removed) {
+    for (const domain of linkedDomains) {
+      const rows = await all<{ id: string; updated_at: number }>(
+        env,
+        `SELECT id, updated_at FROM ${ARRAY_DOMAIN_MAPPINGS[domain].table} WHERE user_id = ? AND subject_id = ?`,
+        userId,
+        subjectId
+      )
+      if (!rows.length) continue
+      const decision = ensure(domain)
+      for (const row of rows) {
+        const stamp = Math.max(deletedAt, Number(row.updated_at) + 1)
+        const existing = decision.deletes.find((item) => item.key === row.id)
+        if (existing) existing.deletedAt = Math.max(existing.deletedAt, stamp)
+        else decision.deletes.push({ key: row.id, deletedAt: stamp })
+      }
+    }
+    // 资料沿用前端语义：解除科目关联，保留文件本身。
+    const materials = await all<{ id: string; updated_at: number; [key: string]: unknown }>(
+      env,
+      'SELECT * FROM materials WHERE user_id = ? AND subject_id = ?',
+      userId,
+      subjectId
+    )
+    for (const row of materials) {
+      const decision = ensure('materials')
+      if (decision.deletes.some((item) => item.key === row.id)) continue
+      const existing = decision.upserts.find((op) => op.item.key === row.id)
+      if (existing) existing.item.value = { ...existing.item.value, subjectId: undefined }
+      else
+        decision.upserts.push({
+          revive: false,
+          item: {
+            key: row.id,
+            value: { ...materialsMapping.mapping.fromRow(row), subjectId: undefined },
+            updatedAt: Math.max(deletedAt, Number(row.updated_at) + 1)
+          }
+        })
+    }
+    if (subjectId === 'english')
+      for (const [prefix, mapping] of Object.entries(ENGLISH_TABLES)) {
+        const rows = await all<{ id: string; updated_at: number }>(
+          env,
+          `SELECT id, updated_at FROM ${mapping.table} WHERE user_id = ?`,
+          userId
+        )
+        if (!rows.length) continue
+        const decision = ensure('english')
+        for (const row of rows) {
+          const key = `${prefix}:${row.id}`
+          const stamp = Math.max(deletedAt, Number(row.updated_at) + 1)
+          const existing = decision.deletes.find((item) => item.key === key)
+          if (existing) existing.deletedAt = Math.max(existing.deletedAt, stamp)
+          else decision.deletes.push({ key, deletedAt: stamp })
+        }
+      }
+  }
+}
+
+/** Record edits can move dates; both their old and new days must be rebuilt. */
+async function pomodoroDays(env: Env, userId: string, decision: Decision) {
+  const days = new Map<string, number>()
+  const add = (date: string, stamp: number) => days.set(date, Math.max(days.get(date) ?? 0, stamp))
+  for (const op of decision.upserts) {
+    const { kind, rest } = splitPomodoroKey(op.item.key)
+    add(kind === 'rec' ? op.item.value.date : rest, op.item.updatedAt)
+  }
+  const recordKeys = [...decision.upserts.map((op) => op.item.key), ...decision.deletes.map((item) => item.key)]
+    .filter((key) => key.startsWith('rec:'))
+    .map((key) => key.slice(4))
+  const oldRecords = await allByKeys<{ date: string }>(
+    env,
+    (ph) => `SELECT date FROM pomodoro_records WHERE user_id = ? AND id IN (${ph})`,
+    userId,
+    recordKeys
+  )
+  const latest = Math.max(
+    0,
+    ...decision.upserts.map((op) => op.item.updatedAt),
+    ...decision.deletes.map((item) => item.deletedAt)
+  )
+  for (const row of oldRecords) add(row.date, latest)
+  for (const deletion of decision.deletes) {
+    const { kind, rest } = splitPomodoroKey(deletion.key)
+    if (kind === 'itr') add(rest, deletion.deletedAt)
+  }
+  // Explicit whole-day deletion should remain a tombstone when no new record/day is supplied.
+  for (const deletion of decision.deletes) if (deletion.key.startsWith('day:')) days.delete(deletion.key.slice(4))
+  return days
 }
 
 /** 拉取某域的墓碑变更（cursor === null 为全量）；seq 供计算该域游标 */
@@ -1377,9 +1582,38 @@ export function registerSyncRoutes() {
       // A CAS retry captures the day again with its fresh source state.
       const rewardDay = utc8Today()
       // Decisions and version allocation are retried together when another writer commits.
+      const planned = validated.map((entry) => {
+        const modernDays = new Set(
+          entry.domain === 'pomodoro'
+            ? entry.upserts
+                .filter((item) => item.key.startsWith('day:') && item.value.derived)
+                .map((item) => item.key.slice(4))
+            : []
+        )
+        return {
+          ...entry,
+          upserts: entry.upserts.map((item) => {
+            if (entry.domain !== 'pomodoro') return item
+            if (item.key.startsWith('rec:') && modernDays.has(item.value.date))
+              return { ...item, value: { ...item.value, independent: true } }
+            if (item.key.startsWith('itr:') && modernDays.has(item.key.slice(4))) {
+              const items = item.value as { id?: string; reason: string; time: number; independent?: boolean }[]
+              return {
+                ...item,
+                value: items.map((value) => ({
+                  ...value,
+                  independent: value.independent ?? (!!value.id && !value.id.startsWith('legacy:'))
+                }))
+              }
+            }
+            return item
+          })
+        }
+      })
       const decisions = await Promise.all(
-        validated.map((v) => decideDomain(ctx.env, ctx.userId, v.domain, v.strategy, v.upserts, v.deletes))
+        planned.map((v) => decideDomain(ctx.env, ctx.userId, v.domain, v.strategy, v.upserts, v.deletes))
       )
+      await expandSubjectChanges(ctx.env, ctx.userId, planned, decisions)
 
       // 域版本与业务数据同批提交；CAS冲突时重新裁决与分配，不预留可被越过的序号。
       const statements: D1PreparedStatement[] = []
@@ -1391,17 +1625,22 @@ export function registerSyncRoutes() {
       const pdfPurgeIds = new Set<string>()
 
       const rejected: RejectedItem[] = []
-      for (let i = 0; i < validated.length; i++) {
-        const { domain, strategy } = validated[i]
+      for (let i = 0; i < planned.length; i++) {
+        const { domain, strategy } = planned[i]
         const d = decisions[i]
         rejected.push(...d.rejected)
         if (!d.upserts.length && !d.deletes.length) continue
 
         const seq = (snapshotVersions[domain] ?? 0) + 1
         statements.push(domainVersionStatement(ctx.env, ctx.userId, domain, seq))
+        const affectedDays =
+          domain === 'pomodoro' ? await pomodoroDays(ctx.env, ctx.userId, d) : new Map<string, number>()
+        const dayUpserts: D1PreparedStatement[] = []
         for (const op of d.upserts) {
           rewardChanges.push({ domain, key: op.item.key, operation: 'upsert' })
-          statements.push(...(await strategy.upsertStatements(ctx.env, ctx.userId, op.item, seq)))
+          const writes = await strategy.upsertStatements(ctx.env, ctx.userId, op.item, seq)
+          if (domain === 'pomodoro' && op.item.key.startsWith('day:')) dayUpserts.push(...writes)
+          else statements.push(...writes)
           if (op.revive) statements.push(removeTombstoneStatement(ctx.env, ctx.userId, domain, op.item.key))
         }
         const deletedKeys: string[] = []
@@ -1411,6 +1650,12 @@ export function registerSyncRoutes() {
           statements.push(tombstoneStatement(ctx.env, ctx.userId, domain, item.key, item.deletedAt, seq))
           deletedKeys.push(item.key)
         }
+        // Daily legacy baselines are compared with the final unique records, never the pre-write snapshot.
+        statements.push(...dayUpserts)
+        for (const [date, updatedAt] of affectedDays) {
+          statements.push(...reconcilePomodoroDay(ctx.env, ctx.userId, date, { updatedAt, seq }))
+          statements.push(removeTombstoneStatement(ctx.env, ctx.userId, 'pomodoro', `day:${date}`))
+        }
         // 删除驱动的孤儿清理（notes → pdf_chunks；errorQuestions → error_images + R2）
         statements.push(...(await orphanCleanupStatements(ctx.env, ctx.userId, domain, deletedKeys, pdfPurgeIds)))
         versions[domain] = seq
@@ -1419,7 +1664,7 @@ export function registerSyncRoutes() {
       }
 
       // 5. 服务端权威派生（今日学习时长 / streak / 里程碑徽章）：与记录写入同一 batch
-      const recordsIndex = validated.findIndex((v) => v.domain === 'records')
+      const recordsIndex = planned.findIndex((v) => v.domain === 'records')
       const derived = await deriveServerAwards(
         ctx.env,
         ctx.userId,

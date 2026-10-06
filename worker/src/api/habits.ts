@@ -29,7 +29,7 @@ export const habitBodySchema = z
         !Number.isInteger(value)
       const valid =
         h.type === 'time'
-          ? typeof value === 'string' && (!value || /^([01]\d|2[0-3]):[0-5]\d$/.test(value))
+          ? value === 0 || (typeof value === 'string' && (!value || /^([01]\d|2[0-3]):[0-5]\d$/.test(value)))
           : typeof value === 'number' &&
             Number.isFinite(value) &&
             value >= 0 &&
@@ -74,8 +74,11 @@ export async function getHabits(env: Env, userId: string): Promise<HabitFull[]> 
     for (const r of byHabit.get(h.id) ?? []) {
       if (r.checkin) checkins[r.date] = 1
       else if (r.value !== null && r.value !== undefined) {
-        const n = Number(r.value)
-        recs[r.date] = Number.isNaN(n) ? r.value : n
+        if (h.type === 'time') recs[r.date] = r.value === '0' ? '' : String(r.value)
+        else {
+          const n = Number(r.value)
+          recs[r.date] = Number.isNaN(n) ? r.value : n
+        }
       }
     }
     return {
@@ -112,7 +115,7 @@ export function habitUpsertStatements(
     stmts.push(
       env.DB.prepare(
         'INSERT OR REPLACE INTO habit_records (user_id, habit_id, date, value, checkin, updated_at, server_seq) VALUES (?, ?, ?, ?, 0, ?, ?)'
-      ).bind(userId, id, date, String(value), stamp.updatedAt, stamp.seq)
+      ).bind(userId, id, date, h.type === 'time' && value === 0 ? '' : String(value), stamp.updatedAt, stamp.seq)
     )
   }
   for (const date of Object.keys(h.checkins ?? {})) {

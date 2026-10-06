@@ -51,7 +51,8 @@ const frontend = await compile({
             contents: `export const setNoteBodyUser=async()=>{}; export const reconcileNoteBodies=async()=>{};
               export const flushPendingNoteBodies=async()=>({revisions:new Map(),failures:[]});
               export const hasPendingNoteBodies=()=>false; export const getNoteBody=()=>'';
-              export const queueNoteBody=()=>{}; export const clearAllNoteBodies=()=>{};`
+              export const queueNoteBody=()=>{}; export const clearAllNoteBodies=()=>{};
+              export const isNoteRestorePending=()=>false; export const finishNoteRestore=()=>{};`
           }
         })
       }

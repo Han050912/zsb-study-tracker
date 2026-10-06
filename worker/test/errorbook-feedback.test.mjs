@@ -52,6 +52,7 @@ const built = await build({
   format: 'esm',
   platform: 'node',
   write: false,
+  define: { __DESKTOP_BUILD__: 'false' },
   external: ['vue'],
   plugins: [
     {

@@ -513,6 +513,24 @@ test('资料及习惯服务端拒绝非法新写，合法空字段和时间仍�
   )
 })
 
+test('统计HTML提示框转义自定义科目名称，保留换行和分钟显示', async (t) => {
+  await load('src/pages/Statistics.vue', ['days'], t)
+  const store = globalThis.__studyStore
+  const name = '<img src=x onerror="window.__auditXss=1"> & 数学'
+  store.subjects[0].name = name
+  store.records = [{ id: 'r', subjectId: 'math', date: store.todayKey, minutes: 30 }]
+  const charts = globalThis.__studyCharts
+  const timeTooltip = charts[0].option().tooltip.formatter([{ dataIndex: 6 }])
+  const pieTooltip = charts[1].option().tooltip.formatter({ name, value: 30 })
+  for (const html of [timeTooltip, pieTooltip]) {
+    assert.equal(html.includes('<img'), false)
+    assert.ok(html.includes('&lt;img'))
+    assert.ok(html.includes('&amp;'))
+    assert.ok(html.includes('30'))
+  }
+  assert.ok(timeTooltip.includes('<br>'))
+})
+
 test('提前结束计入每次专注平均，空中断原因不会记账且保存防重', async (t) => {
   const app = await load(
     'src/pages/Pomodoro.vue',

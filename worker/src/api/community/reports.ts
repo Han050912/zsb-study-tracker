@@ -8,7 +8,6 @@ import { notifyStatement, nowSec } from './shared'
 /**
  * 社区广场举报域路由：举报帖子/评论/私信。
  * 由 community/index.ts 的 registerCommunityRoutes 聚合注册。
- * 零逻辑改动：on(...) 块从原 community.ts 逐字搬迁，仅调整 import 路径与包一层 registerReportsRoutes()。
  */
 export function registerReportsRoutes() {
   // 举报帖子/评论/私信（举报人匿名，仅管理员可见；同一内容重复举报去重）
@@ -64,43 +63,44 @@ export function registerReportsRoutes() {
       targetId
     )
     if (dup) throw new HttpError(400, '你已举报过该内容，请等待处理')
-    // 举报记录与「达阈值自动隐藏」并入同一 batch 原子提交：任一句失败整体回滚，用户重试可自愈，
-    // 消除原「先 run 提交举报、再另一批隐藏」的半提交状态（举报在但未隐藏 / 反复 500）。
-    let autoHide: D1PreparedStatement[] = []
+    // 唯一索引去重，阈值在插入后的事务内按不同举报人计算。
+    const reportId = uid()
+    const stmts = [
+      ctx.env.DB.prepare(
+        `INSERT OR IGNORE INTO community_reports
+         (id, reporter_id, target_type, target_id, reason, detail, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`
+      ).bind(reportId, ctx.userId, targetType, targetId, reason, detail, nowSec())
+    ]
     if (targetType !== 'message') {
-      const cnt = await first<{ n: number }>(
-        ctx.env,
-        "SELECT COUNT(*) AS n FROM community_reports WHERE target_type = ? AND target_id = ? AND status = 'pending'",
-        targetType,
-        targetId
-      )
-      // 举报达阈值自动隐藏（≥5 个不同举报人）：减轻管理员负担；「一人一内容仅一次 pending 举报」已去重防刷，
-      // 故插入后 pending 数 = 当前数 + 1，可在插入前判定阈值
-      if ((cnt?.n ?? 0) + 1 >= 5) {
-        const table = targetType === 'post' ? 'community_posts' : 'community_comments'
-        autoHide = [
-          ctx.env.DB.prepare(`UPDATE ${table} SET is_hidden = 1 WHERE id = ? AND is_hidden = 0`).bind(targetId),
-          ctx.env.DB.prepare(
-            "UPDATE community_reports SET status = 'resolved' WHERE target_type = ? AND target_id = ? AND status = 'pending'"
-          ).bind(targetType, targetId),
-          // admin_id 可空：NULL 表示系统动作（无对应管理员），非空为真实管理员 id
-          ctx.env.DB.prepare(
-            'INSERT INTO community_moderation_log (id, admin_id, action, target_type, target_id, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-          ).bind(uid(), null, 'auto-hide', targetType, targetId, '举报达阈值自动隐藏', nowSec()),
-          notifyStatement(ctx.env, {
+      const table = targetType === 'post' ? 'community_posts' : 'community_comments'
+      stmts.push(
+        ctx.env.DB.prepare(
+          `UPDATE ${table} SET is_hidden = 1 WHERE id = ? AND is_hidden = 0 AND
+           (SELECT COUNT(DISTINCT reporter_id) FROM community_reports
+            WHERE target_type = ? AND target_id = ? AND status = 'pending') >= 5`
+        ).bind(targetId, targetType, targetId),
+        ctx.env.DB.prepare(
+          `INSERT INTO community_moderation_log (id, admin_id, action, target_type, target_id, reason, created_at)
+           SELECT ?, NULL, 'auto-hide', ?, ?, ?, ? WHERE changes() > 0`
+        ).bind(uid(), targetType, targetId, '举报达阈值自动隐藏', nowSec()),
+        notifyStatement(
+          ctx.env,
+          {
             userId: targetUserId,
             type: 'system',
             content: `你的${targetType === 'post' ? '帖子' : '评论'}因多次被举报已被系统自动隐藏，如有异议可联系管理员`
-          })
-        ]
-      }
+          },
+          { ifPreviousChanged: true }
+        ),
+        ctx.env.DB.prepare(
+          `UPDATE community_reports SET status = 'resolved' WHERE target_type = ? AND target_id = ?
+           AND status = 'pending' AND EXISTS (SELECT 1 FROM ${table} WHERE id = ? AND is_hidden = 1)`
+        ).bind(targetType, targetId, targetId)
+      )
     }
-    await batch(ctx.env, [
-      ctx.env.DB.prepare(
-        "INSERT INTO community_reports (id, reporter_id, target_type, target_id, reason, detail, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)"
-      ).bind(uid(), ctx.userId, targetType, targetId, reason, detail, nowSec()),
-      ...autoHide
-    ])
+    const results = await batch(ctx.env, stmts)
+    if (!results?.[0].meta.changes) throw new HttpError(400, '你已举报过该内容，请等待处理')
     return Response.json({ ok: true }, { status: 201 })
   })
 }
