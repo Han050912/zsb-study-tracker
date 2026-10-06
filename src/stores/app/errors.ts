@@ -10,6 +10,8 @@ import { stageDelete } from '../../services/syncOutbox'
 import { touchRecord } from './staging'
 import { ERROR_IMAGE_PREFIX, dataUrlToBytes, uploadErrorImage } from '../../api/errorImages'
 import type { ErrorQuestion } from '../../types'
+import { sessionUser } from '../../services/auth'
+import { getSessionVersion } from '../../utils/session'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type ErrorsActionsShape = {
@@ -82,21 +84,30 @@ export const errorsActions: ErrorsActionsShape = {
    * - 单条失败只记日志，不影响其余条目，下次 hydrate 重试。
    */
   async migrateErrorImages(this: AppStoreThis) {
+    const userId = sessionUser.value?.id
+    const generation = getSessionVersion()
+    const isCurrent = () => !!userId && sessionUser.value?.id === userId && generation === getSessionVersion()
+    if (!isCurrent()) return
     const targets = this.errorQuestions.filter((q) => q.image?.startsWith('data:'))
     if (!targets.length) return
     let changed = false
     for (const q of targets) {
+      if (!isCurrent()) return
       try {
+        const originalImage = q.image
         const bytes = dataUrlToBytes(q.image!)
         const id = await uploadErrorImage(bytes)
+        if (!isCurrent()) return
+        if (!this.errorQuestions.includes(q) || q.image !== originalImage) continue
         q.image = ERROR_IMAGE_PREFIX + id
         // 被改写的记录逐条打点进 outbox（hydrate 后随 flushOutbox 上行）
         touchRecord('errorQuestions', q)
         changed = true
       } catch (e) {
+        if (!isCurrent()) return
         console.error('错题图片迁移失败', q.id, e)
       }
     }
-    if (changed) this.save()
+    if (changed && isCurrent()) this.save()
   }
 }

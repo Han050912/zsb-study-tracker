@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs'
 import { SignJWT, jwtVerify } from 'jose'
+import type { Env } from './index'
 
 /** PBKDF2 迭代次数（登录热路径 CPU 成本与安全性的权衡值） */
 const PBKDF2_ITERATIONS = 100_000
@@ -68,9 +69,9 @@ function secretKey(secret: string): Uint8Array {
 /** 签发 HS256 JWT，payload 含 user_id（sub）、jti（吊销标识）与 role（可选）。
  *  role 只是签发时快照（签发后无法随 DB 撤销），仅可用于「非 admin 即拒绝」的快速否定；
  *  管理员判定必须回查 DB（middleware/auth.ts 的 isDbAdmin） */
-export async function signToken(userId: string, secret: string, role?: string): Promise<string> {
+export async function signToken(userId: string, secret: string, role?: string, sessionVersion = 0): Promise<string> {
   // jose v6 无 setClaim，任意 claim 经构造器 payload 传入；role 为空时不写入（旧客户端兼容）
-  return new SignJWT(role ? { role } : {})
+  return new SignJWT({ sessionVersion, ...(role ? { role } : {}) })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(userId)
     .setJti(crypto.randomUUID())
@@ -83,6 +84,8 @@ export interface TokenPayload {
   userId: string
   jti: string
   exp: number
+  /** 改密时递增的服务端凭证版本；迁移前签发的 JWT 视为版本 0 */
+  sessionVersion: number
   /** 角色快照（签发时值，不可撤销）；不可作为授权依据，旧 token 无此字段（undefined） */
   role?: string
 }
@@ -92,14 +95,25 @@ export async function verifyTokenFull(token: string, secret: string): Promise<To
   try {
     const { payload } = await jwtVerify(token, secretKey(secret))
     if (!payload.sub || !payload.jti || typeof payload.exp !== 'number') return null
+    const sessionVersion = payload.sessionVersion ?? 0
+    if (typeof sessionVersion !== 'number' || !Number.isSafeInteger(sessionVersion) || sessionVersion < 0) return null
     return {
       userId: payload.sub,
       jti: payload.jti,
       exp: payload.exp,
+      sessionVersion,
       // 仅当 claim 是字符串才带出，防伪造类型
       ...(typeof payload.role === 'string' ? { role: payload.role } : {})
     }
   } catch {
     return null
   }
+}
+
+/** 每次鉴权实时核对凭证版本，包含未登记及改密期间并发签发的旧 JWT。 */
+export async function isSessionCurrent(env: Env, payload: TokenPayload): Promise<boolean> {
+  const row = await env.DB.prepare('SELECT session_version FROM users WHERE id = ?').bind(payload.userId).first<{
+    session_version: number
+  }>()
+  return row?.session_version === payload.sessionVersion
 }

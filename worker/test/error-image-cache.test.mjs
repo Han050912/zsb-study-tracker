@@ -40,13 +40,15 @@ async function imageFixture(t) {
     format: 'esm',
     platform: 'node',
     write: false,
+    define: { __DESKTOP_BUILD__: 'false' },
     plugins: [
       {
         name: 'image-fetch-boundary',
         setup(b) {
           b.onResolve({ filter: /^\.\/client$/ }, () => ({ path: 'client', namespace: 'mock' }))
           b.onLoad({ filter: /.*/, namespace: 'mock' }, () => ({
-            contents: 'export const authFetch=(...a)=>globalThis.__imageFetch(...a);'
+            contents: `export const authFetch=(...a)=>globalThis.__imageFetch(...a);
+              export class ApiError extends Error { constructor(message,status){super(message);this.status=status} }`
           }))
         }
       }

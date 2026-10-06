@@ -1,5 +1,5 @@
 import { authFetch, API_BASE, handleUnauthorized, ApiError } from './client'
-import { desktopAuthHeaders, getSessionVersion } from '../utils/session'
+import { desktopAuthHeaders, expectedUserHeaders, getSessionVersion } from '../utils/session'
 import { compressImage } from '../utils/imageCompress'
 
 /** 单张图片上限 5MB，与 worker/src/api/uploads.ts 保持一致 */
@@ -40,6 +40,7 @@ interface UploadResult {
  * onProgress 收到 0-1 的进度值；失败抛出带服务端提示的 Error。
  */
 export function uploadImage(file: File, onProgress?: (ratio: number) => void): Promise<UploadResult> {
+  const version = getSessionVersion()
   return new Promise((resolve, reject) => {
     void (async () => {
       // 前端压缩：full（原图 WebP/GIF）+ thumb（640 缩略图 WebP）
@@ -54,10 +55,15 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
       }
 
       const postBlob = (url: string, blob: Blob, onDone: (data: any) => void) => {
+        if (version !== getSessionVersion()) {
+          reject(new ApiError('登录状态已改变，请重试', 409))
+          return
+        }
         const xhr = new XMLHttpRequest()
         xhr.open('POST', url)
         // Web 端会话在 HttpOnly Cookie（withCredentials），桌面端走 Authorization Bearer + 桌面令牌
-        const authHeaders = desktopAuthHeaders()
+        const authHeaders = { ...desktopAuthHeaders(), ...expectedUserHeaders() }
+        if (!__DESKTOP_BUILD__) xhr.withCredentials = true
         if (Object.keys(authHeaders).length) {
           for (const [k, v] of Object.entries(authHeaders)) xhr.setRequestHeader(k, v)
         } else {
@@ -71,6 +77,10 @@ export function uploadImage(file: File, onProgress?: (ratio: number) => void): P
           if (e.lengthComputable) onProgress?.(Math.min(1, e.loaded / e.total))
         }
         xhr.onload = () => {
+          if (version !== getSessionVersion()) {
+            reject(new ApiError('登录状态已改变，请重试', 409))
+            return
+          }
           let data: any = null
           try {
             data = JSON.parse(xhr.responseText)

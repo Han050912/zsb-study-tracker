@@ -1,5 +1,5 @@
 import type { Env } from '../index'
-import { verifyTokenFull, JWT_TTL_SECONDS } from '../auth'
+import { verifyTokenFull, JWT_TTL_SECONDS, isSessionCurrent } from '../auth'
 import { first, HttpError } from '../db'
 import { isAllowedOrigin, isLocalHost } from '../cors'
 
@@ -66,6 +66,11 @@ async function resolveUser(request: Request, env: Env): Promise<{ userId: string
   const payload = await verifyTokenFull(ext.token, env.JWT_SECRET)
   if (!payload) throw new HttpError(401, '未登录或登录已过期')
   if (await isRevoked(env, payload.jti)) throw new HttpError(401, '登录已失效，请重新登录')
+  if (!(await isSessionCurrent(env, payload))) throw new HttpError(401, '登录已失效，请重新登录')
+  const expectedUserId = request.headers.get('X-Expected-User-Id')
+  if (expectedUserId && expectedUserId !== payload.userId) {
+    throw new HttpError(409, '登录账号已改变，请刷新后重试')
+  }
   return { userId: payload.userId, role: payload.role ?? '' }
 }
 

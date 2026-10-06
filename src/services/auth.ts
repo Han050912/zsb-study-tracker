@@ -5,10 +5,12 @@ import {
   TOKEN_KEY,
   SESSION_FLAG,
   SESSION_PERSISTENCE_KEY,
+  SESSION_IDENTITY_KEY,
   getToken,
   keepsSession,
   hasSession,
   hasActiveSession,
+  hasSessionIdentityChanged,
   clearSession,
   markSessionActive
 } from '../utils/session'
@@ -55,9 +57,11 @@ export function exitGuestMode(): void {
 }
 
 /** 建立/清空会话的唯一入口：同步 currentUser、内存登录态标记与持久化凭据（其余地方不要直接写 currentUser） */
-function setSession(user: SessionUser | null, token?: string, remember = keepsSession()) {
+function setSession(user: SessionUser | null, token?: string, remember = keepsSession(), publish = true) {
   currentUser.value = user
   if (user) {
+    // 先广播新代际，再改共享凭据；旧标签处理 TOKEN 删除时不能清掉新会话。
+    markSessionActive(user.id, publish)
     localStorage.setItem(SESSION_PERSISTENCE_KEY, remember ? '1' : '0')
     if (isDesktop && token) {
       sessionStorage.removeItem(TOKEN_KEY)
@@ -68,7 +72,6 @@ function setSession(user: SessionUser | null, token?: string, remember = keepsSe
       }
     }
     localStorage.setItem(SESSION_FLAG, '1')
-    markSessionActive()
     exitGuestMode() // 建立登录会话即结束访客浏览
   } else {
     clearSession()
@@ -82,7 +85,7 @@ export async function restoreSession(): Promise<SessionUser | null> {
   try {
     const { user } = await authApi.me()
     // 复用 setSession：同步内存登录态标记（401 处理要用），并结束访客模式保持两者互斥
-    setSession(user)
+    setSession(user, undefined, keepsSession(), false)
     return user
   } catch (e) {
     if ((e as { status?: number } | null)?.status === 401) {
@@ -165,10 +168,11 @@ export function logout(): void {
     return
   }
   const logoutToken = getToken()
+  const logoutUserId = currentUser.value?.id
   setSession(null) // 先清本地会话（立即生效）
   exitGuestMode() // 退出登录同时清除访客模式，防止多标签页下 guestMode 残留绕过登录页入口
   clearApiCaches() // 清掉缓存里的私有 API 响应，避免换账号后串数据
-  const request = authApi.logout(logoutToken ?? undefined).then(
+  const request = authApi.logout(logoutToken ?? undefined, logoutUserId).then(
     () => {},
     () => {}
   )
@@ -183,15 +187,38 @@ export function logout(): void {
 //（isLoggedIn 为 true，路由守卫放行），此后每个请求都因 Cookie 已清而 401，却停留在登录态界面。
 // storage 事件只在「其它标签页」改动 localStorage 时触发，正是需要同步的场景。
 window.addEventListener('storage', (e) => {
+  if (e.key === SESSION_IDENTITY_KEY && currentUser.value) {
+    // 已排队的旧 storage 事件可能在本标签重新登录之后才送达。
+    if (!hasSessionIdentityChanged()) return
+    // 账号或代际改变均中止旧标签的私有状态；保持新账号的共享 Cookie 和凭据。
+    expireSession(false)
+    return
+  }
   // 只处理「登录标记被移除」：另一标签页登录（写入标记）不应把本标签页登出
   if (e.newValue !== null) return
   // e.key 为 null 表示整库被清空（localStorage.clear()）
   if (e.key !== null && e.key !== SESSION_FLAG && e.key !== TOKEN_KEY) return
+  if (
+    (e.key === null || e.key === TOKEN_KEY) &&
+    localStorage.getItem(SESSION_IDENTITY_KEY) &&
+    !hasSessionIdentityChanged()
+  )
+    return
+  if (e.key === SESSION_FLAG && localStorage.getItem(SESSION_FLAG) !== null) return
+  if (e.key === TOKEN_KEY && localStorage.getItem(TOKEN_KEY) !== null) return
   // 本标签页本就无登录态（未登录的访客）时无需处理
   if (!hasActiveSession()) return
   // 与 401 同一条收尾路径：清会话 + 通知清空内存数据 + 回登录页
   expireSession()
 })
+
+/** 会话失效的本地收尾；不再向可能已经换号的共享 Cookie 发送 logout。 */
+export function forgetSession(): void {
+  currentUser.value = null
+  exitGuestMode()
+  clearApiCaches()
+}
+window.addEventListener('auth:expired', forgetSession)
 
 /** 跳转登录页并携带回跳地址（当前 hash 路由，登录成功后返回原页面） */
 export function goLogin(router: { push: (p: string) => void }) {

@@ -31,9 +31,12 @@ export const authApi = {
       ...(cfTurnstileToken ? { headers: { 'X-CF-Turnstile-Response': cfTurnstileToken } } : {})
     }),
   me: () => request<{ user: AuthUser }>('/api/auth/me'),
-  logout: (token?: string) =>
+  logout: (token?: string, expectedUserId?: string) =>
     request<{ ok: boolean }>('/api/auth/logout', {
       method: 'POST',
-      ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {})
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(expectedUserId ? { 'X-Expected-User-Id': expectedUserId } : {})
+      }
     })
 }

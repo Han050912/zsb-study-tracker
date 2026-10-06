@@ -109,7 +109,6 @@ onMounted(() => {
 // （logout 置空 currentUser → isLoggedIn 变 false → 触发未读轮询停止）
 // 命名函数：App 卸载时需按同一引用成对移除
 function onAuthExpired() {
-  logout()
   store.resetState()
   usePartnerStore().resetState()
   useSquadStore().resetState()

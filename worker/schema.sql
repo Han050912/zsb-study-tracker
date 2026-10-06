@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS users (
   user_code TEXT,                        -- 对外唯一用户 ID（8 位随机短码，去掉 0/O/1/I）
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
+  session_version INTEGER NOT NULL DEFAULT 0, -- 改密递增；鉴权实时校验凭证版本
   role TEXT NOT NULL DEFAULT 'user',   -- 'user' | 'admin'
   verified INTEGER NOT NULL DEFAULT 0, -- 专家认证标记（蓝 V），管理员后台授予
   expertise TEXT NOT NULL DEFAULT '',  -- 专长领域（如 "高等数学,英语"）
@@ -703,7 +704,7 @@ CREATE TABLE IF NOT EXISTS jwt_blacklist (
 
 -- 已签发会话登记（每签发一次 token 登记一行，登出即删除）：
 -- 吊销只能按 jti 精确命中，其它设备的 jti 服务端无从得知，故签发时留档；
--- 修改密码时按 user_id 取出全部 jti 一次性写入 jwt_blacklist，使其它会话立即失效。
+-- 修改密码时在事务内按 user_id 将全部登记 jti 写入黑名单；session_version 同时吊销未登记的旧凭证。
 -- 过期行由 api/auth.ts 的 cleanupExpiredTokens（每周 cron）清理。
 CREATE TABLE IF NOT EXISTS user_sessions (
   jti TEXT PRIMARY KEY,

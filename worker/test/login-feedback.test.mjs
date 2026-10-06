@@ -91,9 +91,10 @@ const built = await build({
               contents: 'export const expireSession = () => {}; export const loginRedirectPath = () => "/login";'
             }
           return {
-            contents: `export const TOKEN_KEY = 'token', SESSION_FLAG = 'session', SESSION_PERSISTENCE_KEY = 'remember';
+            contents: `export const TOKEN_KEY = 'token', SESSION_FLAG = 'session', SESSION_PERSISTENCE_KEY = 'remember', SESSION_IDENTITY_KEY = 'identity';
           export const getToken = () => null, keepsSession = () => true;
           export const hasSession = () => false, hasActiveSession = () => false;
+          export const hasSessionIdentityChanged = () => false;
           export const clearSession = () => {}, markSessionActive = () => {};`
           }
         })

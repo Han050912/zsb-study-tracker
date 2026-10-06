@@ -9,6 +9,8 @@
 export const TOKEN_KEY = 'jwt_token'
 export const SESSION_FLAG = 'auth_logged_in'
 export const SESSION_PERSISTENCE_KEY = 'auth_keep_login'
+/** 共享 Cookie 的账号及代际；storage 事件向其他标签广播会话变化。 */
+export const SESSION_IDENTITY_KEY = 'auth_session_identity'
 
 /** 旧客户端默认保持登录；未勾选时仅在本次浏览器/桌面会话中保留凭据。 */
 export function keepsSession(): boolean {
@@ -24,7 +26,31 @@ export function keepsSession(): boolean {
  */
 let memorySession = false
 let sessionVersion = 0
-export const getSessionVersion = () => sessionVersion
+let sessionUserId: string | null = null
+function sharedIdentity(): string | null {
+  try {
+    return localStorage.getItem(SESSION_IDENTITY_KEY)
+  } catch {
+    return null
+  }
+}
+let observedIdentity = sharedIdentity()
+let activeIdentity = observedIdentity
+let locallyExpired = false
+export const getExpectedUserId = () => sessionUserId
+export const hasSessionIdentityChanged = () => activeIdentity !== sharedIdentity()
+export const getSessionVersion = () => {
+  const identity = sharedIdentity()
+  if (identity !== observedIdentity) {
+    observedIdentity = identity
+    sessionVersion++
+  }
+  return sessionVersion
+}
+
+export function expectedUserHeaders(): Record<string, string> {
+  return sessionUserId ? { 'X-Expected-User-Id': sessionUserId } : {}
+}
 
 /** 桌面端按保持登录选择读取会话/持久 JWT（Web 端不落地 token） */
 export function getToken(): string | null {
@@ -33,6 +59,7 @@ export function getToken(): string | null {
 
 /** 是否存在持久化会话凭据（桌面端看 token，Web 端看登录标记） */
 export function hasSession(): boolean {
+  if (locallyExpired) return false
   return __DESKTOP_BUILD__ ? !!getToken() : localStorage.getItem(SESSION_FLAG) === '1'
 }
 
@@ -42,18 +69,38 @@ export function hasActiveSession(): boolean {
 }
 
 /** 标记本标签页已建立会话（登录 / 注册 / 会话恢复成功时调用） */
-export function markSessionActive(): void {
+export function markSessionActive(userId?: string, publish = true): void {
   sessionVersion++
   memorySession = true
+  locallyExpired = false
+  if (userId) {
+    sessionUserId = userId
+    if (publish) {
+      localStorage.setItem(
+        SESSION_IDENTITY_KEY,
+        JSON.stringify({ userId, generation: `${Date.now()}:${Math.random()}` })
+      )
+    }
+  }
+  observedIdentity = sharedIdentity()
+  activeIdentity = observedIdentity
 }
 
 /** 清空会话：内存登录态 + 持久化凭据（登出、会话过期时调用） */
-export function clearSession(): void {
+export function clearSession(clearShared = true): void {
   sessionVersion++
   memorySession = false
-  localStorage.removeItem(TOKEN_KEY)
+  // 旧标签页失效只清本地状态，不得删除另一标签页刚建立的会话。
+  if (clearShared && sessionUserId && hasSessionIdentityChanged()) clearShared = false
+  locallyExpired = !clearShared
   sessionStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(SESSION_FLAG)
+  if (clearShared) {
+    sessionUserId = null
+    localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(SESSION_FLAG)
+    localStorage.removeItem(SESSION_IDENTITY_KEY)
+  }
+  observedIdentity = sharedIdentity()
 }
 
 // ---------- 桌面端认证令牌（经 IPC 从主进程换取，仅存内存） ----------
