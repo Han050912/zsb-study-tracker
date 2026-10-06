@@ -9,7 +9,8 @@ export interface PartnerSuggestion {
   verified: boolean
   /** 自定义头像相对 URL（未设置 = undefined） */
   userAvatar?: string
-  totalPoints: number
+  /** 仅在对方允许公开学习统计时返回。 */
+  totalPoints?: number
   score: number
   reasons: string[]
 }
@@ -22,7 +23,8 @@ export interface PartnerItem {
   verified: boolean
   /** 自定义头像相对 URL（未设置 = undefined） */
   userAvatar?: string
-  totalPoints: number
+  /** 仅在对方允许公开学习统计时返回。 */
+  totalPoints?: number
 }
 
 // ========== 学习搭子协作 ==========

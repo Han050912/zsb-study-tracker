@@ -587,6 +587,8 @@ CREATE TABLE IF NOT EXISTS community_reports (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reports_status ON community_reports(status, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_pending_reporter
+  ON community_reports(reporter_id, target_type, target_id) WHERE status = 'pending';
 
 -- 好友关注关系：复合主键保证仅关注一次；关注流 = 筛选关注作者的帖子
 CREATE TABLE IF NOT EXISTS user_follows (
@@ -821,9 +823,8 @@ CREATE TABLE IF NOT EXISTS weekly_report_push_log (
 );
 
 -- ========== 周报推送失败批次续跑记录（P4-05：cron 不重试，失败批次落此表供下次运行补推） ==========
--- cron 按批推送周报，某批失败时把该批未完成的关系行写到这里；下次运行（下周 cron / 同周重跑）
--- 只补推这些行。week_key 记录周报归属周（跨周续跑时据此还原统计区间）；
--- 与 push_log 互斥：进入本表 ⇒ 该项未推送（标记与通知同批失败时整体回滚，push_log 不会有残留）。
+-- cron 先一次性持久化本周全部授权方向，再按批发送；下周 cron / 同周重跑继续处理未完成方向。
+-- week_key 记录周报归属周（跨周续跑时据此还原统计区间）；通知与push_log写入、pending出队同批原子。
 CREATE TABLE IF NOT EXISTS weekly_report_push_pending (
   week_key TEXT NOT NULL,          -- 周报归属周的周一日期 YYYY-MM-DD（UTC+8）
   from_id TEXT NOT NULL,           -- 周报数据主人
