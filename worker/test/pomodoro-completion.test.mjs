@@ -76,3 +76,22 @@ test('不足一分钟和非有限时长不生成记录、日计数、奖励或�
   assert.equal(globalThis.__pomodoroUpserts.length, 0)
   assert.equal(app.saves, 0)
 })
+
+test('two interruptions at the same millisecond keep distinct identities on the actual outgoing payload', () => {
+  const app = store()
+  const originalNow = Date.now
+  Date.now = () => 100
+  try {
+    pomodoroActions.recordInterruption.call(app, 'phone')
+    pomodoroActions.recordInterruption.call(app, 'phone')
+    assert.notEqual(app.pomodoro.interruptions[0].id, app.pomodoro.interruptions[1].id)
+    const entries = globalThis.__pomodoroUpserts.filter((row) => row[1].startsWith('itr:'))
+    assert.deepEqual(
+      entries.at(-1)[2].map((item) => item.id),
+      app.pomodoro.interruptions.map((item) => item.id)
+    )
+    assert.equal(globalThis.__pomodoroUpserts.find((row) => row[1].startsWith('day:'))[2].derived, true)
+  } finally {
+    Date.now = originalNow
+  }
+})

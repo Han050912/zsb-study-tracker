@@ -23,7 +23,7 @@ export interface PomodoroStat {
   /** 日统计条目；updatedAt 为 `day:<date>` 键的 LWW 时间戳 */
   daily: Record<string, PomodoroDailyStat>
   /** 打断列表：updatedAt 为运行时字段（T5 约定：`itr:<date>` 键的 LWW 时间戳 = 当日各行最大 updatedAt），类型上不声明 */
-  interruptions: { date: string; reason: string; time: number }[]
+  interruptions: { id?: string; date: string; reason: string; time: number }[]
   records: PomodoroRecord[]
 }
 

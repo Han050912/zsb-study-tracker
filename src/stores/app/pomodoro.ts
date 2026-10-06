@@ -80,16 +80,21 @@ export const pomodoroActions: PomodoroActionsShape = {
     if (!this.pomodoro.daily[t]) this.pomodoro.daily[t] = { count: 0, minutes: 0, interruptions: 0 }
     this.pomodoro.daily[t].interruptions++
     // 打断条目在运行时打 updatedAt（T5 约定：itr:<date> 键的 LWW 时间戳 = 当日各行最大 updatedAt；类型上不声明）
-    this.pomodoro.interruptions.push(Object.assign({ date: t, reason, time: now }, { updatedAt: now }))
-    // itr:<date>：该日打断列表**整体** stage（值 [{reason,time}]，整体替换语义，设计 §4.2）
+    this.pomodoro.interruptions.push(Object.assign({ id: uid(), date: t, reason, time: now }, { updatedAt: now }))
+    // 按日发送已知打断列表，服务端按唯一事件合并，回拉仍提供当日完整列表。
     const dayItems = this.pomodoro.interruptions.filter((it) => it.date === t)
     stageUpsert(
       'pomodoro',
       `itr:${t}`,
-      dayItems.map((it) => ({ reason: it.reason, time: it.time })),
+      dayItems.map((it) => ({
+        id: it.id,
+        reason: it.reason,
+        time: it.time,
+        independent: !!it.id && !it.id.startsWith('legacy:')
+      })),
       now
     )
-    // 日统计的 interruptions 计数同步变化 → 一并 stage day:<date>（服务端写 itr 不联动 pomodoro_daily）
+    // 乐观日统计一并 stage；服务端根据唯一打断事件重新派生权威数量。
     touchPomodoroDay(this.pomodoro.daily, t, now)
     this.save()
   }

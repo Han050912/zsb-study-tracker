@@ -64,13 +64,13 @@ export function touchPomodoroDay(daily: PomodoroStat['daily'], date: string, ts 
   const stat = daily[date]
   if (!stat) return
   stat.updatedAt = ts
-  stageUpsert('pomodoro', `day:${date}`, stat, ts)
+  stageUpsert('pomodoro', `day:${date}`, { ...stat, derived: true }, ts)
 }
 
 /** 番茄单条记录打点（`rec:<id>`） */
 export function touchPomodoroRecord(record: PomodoroRecord, ts = Date.now()): void {
   record.updatedAt = ts
-  stageUpsert('pomodoro', `rec:${record.id}`, record, ts)
+  stageUpsert('pomodoro', `rec:${record.id}`, { ...record, independent: true }, ts)
 }
 
 /**
@@ -125,8 +125,8 @@ export function stageAllUpserts(state: AppState, ts: number): void {
     stageUpsert('exams', e.id, e, ts)
   }
   for (const n of state.notes) {
-    // Note.updatedAt 是业务字段（编辑时间）：保留导入值，缺省才打当前时间戳
-    n.updatedAt = n.updatedAt || ts
+    // 恢复是一次新修改，旧备份时间不能越过云端新版或删除墓碑。
+    n.updatedAt = Math.max(n.updatedAt || 0, ts)
     stageUpsert('notes', n.id, n, n.updatedAt)
   }
   for (const m of state.materials) {
@@ -166,12 +166,12 @@ export function stageAllUpserts(state: AppState, ts: number): void {
   }
   for (const [date, d] of Object.entries(state.pomodoro.daily)) {
     d.updatedAt = ts
-    stageUpsert('pomodoro', `day:${date}`, d, ts)
+    stageUpsert('pomodoro', `day:${date}`, { ...d, replace: true }, ts)
   }
-  const itrByDate = new Map<string, { reason: string; time: number }[]>()
+  const itrByDate = new Map<string, { id?: string; reason: string; time: number }[]>()
   for (const it of state.pomodoro.interruptions) {
     const list = itrByDate.get(it.date) ?? []
-    list.push({ reason: it.reason, time: it.time })
+    list.push({ id: it.id, reason: it.reason, time: it.time })
     itrByDate.set(it.date, list)
   }
   for (const [date, items] of itrByDate) stageUpsert('pomodoro', `itr:${date}`, items, ts)

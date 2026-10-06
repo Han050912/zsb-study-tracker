@@ -68,7 +68,8 @@ const result = await build({
             contents: `export const bodyHooks={reconcile:async()=>{},flush:async()=>({revisions:new Map(),failures:[]})};
         export const setNoteBodyUser=async()=>{}; export const reconcileNoteBodies=(notes)=>bodyHooks.reconcile(notes);
         export const flushPendingNoteBodies=()=>bodyHooks.flush(); export const hasPendingNoteBodies=()=>false;
-        export const getNoteBody=()=>'';export const queueNoteBody=()=>{};export const clearAllNoteBodies=()=>{};`
+        export const getNoteBody=()=>'';export const queueNoteBody=()=>{};export const clearAllNoteBodies=()=>{};
+        export const isNoteRestorePending=()=>false; export const finishNoteRestore=()=>{};`
           }
         })
       }

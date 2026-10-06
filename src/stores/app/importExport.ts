@@ -395,7 +395,7 @@ export const importExportActions: ImportExportActionsShape = {
     for (const note of this.notes) {
       if (note.type === 'pdf') continue
       const content = getNoteBody(note.id)
-      if (content) bodies[note.id] = { content, updatedAt: note.bodyUpdatedAt }
+      bodies[note.id] = { content, updatedAt: note.bodyUpdatedAt }
     }
     return JSON.stringify({ ...this.$state, noteBodies: bodies }, null, 2)
   },
@@ -406,6 +406,7 @@ export const importExportActions: ImportExportActionsShape = {
     if (!data) return false
     try {
       const now = Date.now()
+      const previousNotes = new Map(this.notes.map((note) => [note.id, { ...note }]))
       // 记录级协议没有整域替换：旧状态中被整批覆盖的记录逐条 stage 删除墓碑
       stageAllDeletes(this.$state, now)
       // 备份中的积分仅供本地暂时展示；服务端从恢复的业务记录重新计算，绝不重放备份奖励。
@@ -414,17 +415,25 @@ export const importExportActions: ImportExportActionsShape = {
       restoreOnboarding(sessionUser.value?.id ?? null, this.settings)
       this.migrateLegacyData()
       // 恢复笔记正文：新备份单独携带 noteBodies；旧版备份退回 Note.content 内联字段。
-      // 缺少 bodyUpdatedAt 的旧笔记恢复正文时前移时间戳，保证正文上传与服务端 LWW 判定必胜
+      // 恢复作为新修改，统一推进 metadata/body 版本；空字符串也是需明确恢复的正文。
       for (const note of this.notes) {
+        const previous = previousNotes.get(note.id)
+        const restoredAt =
+          Math.max(
+            now,
+            note.updatedAt || 0,
+            note.bodyUpdatedAt || 0,
+            previous?.updatedAt || 0,
+            previous?.bodyUpdatedAt || 0,
+            data.noteBodies?.[note.id]?.updatedAt || 0
+          ) + 1
+        note.updatedAt = restoredAt
         if (note.type === 'pdf') continue
         const body = data.noteBodies?.[note.id]
         const content = body?.content ?? (note as { content?: string }).content
-        if (!content) continue
-        if (!note.bodyUpdatedAt) {
-          note.updatedAt = Math.max(note.updatedAt + 1, now)
-          note.bodyUpdatedAt = note.updatedAt
-        }
-        queueNoteBody(note.id, content, note.bodyUpdatedAt)
+        if (content === undefined) continue
+        note.bodyUpdatedAt = restoredAt
+        queueNoteBody(note.id, content, restoredAt, true)
       }
       // 导入后的全部记录逐条打点上行（migrateLegacyData 已补打其改写的记录与流水事件）
       stageAllUpserts(this.$state, now)

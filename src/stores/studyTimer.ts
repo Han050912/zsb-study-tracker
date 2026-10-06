@@ -152,7 +152,20 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
   /** 正计时「完成专注」：主动结算当前已进行时长 */
   async function finishFocus() {
     if (phase.value !== 'focus') return
+    if (session.value?.mode !== 'countup' && seconds.value < phaseSeconds.value) return
     await completePhase()
+  }
+
+  /** 主动或队友提前结束均按实际已进行时长结算，倒计时达到目标才算完成。 */
+  function recordRemainingFocus() {
+    if (phase.value !== 'focus' || !session.value) return
+    stopTimer()
+    if (seconds.value < 60) return
+    const completed = session.value.mode === 'countup' || seconds.value >= phaseSeconds.value
+    const minutes =
+      completed && session.value.mode !== 'countup' ? session.value.focusMinutes : Math.round(seconds.value / 60)
+    appStore.recordPomodoro(minutes, currentDescription(), 'party', session.value.partnerName, completed)
+    phase.value = 'done'
   }
 
   function syncState(_state: Phase): Promise<void> {
@@ -183,13 +196,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
           partnerRunning: res.session.partnerRunning
         })
         if (res.session.status === 'done') {
-          if (phase.value === 'focus')
-            appStore.recordPomodoro(
-              Math.round(seconds.value / 60),
-              currentDescription(),
-              'party',
-              session.value.partnerName
-            )
+          recordRemainingFocus()
           sessionCompleted.value++
           finishSession()
         }
@@ -259,10 +266,7 @@ export const useStudyTimerStore = defineStore('studyTimer', () => {
     try {
       await partnersApi.endStudySession(s.id)
       if (sessionGeneration !== generation || session.value?.id !== s.id) return true
-      if (phase.value === 'focus' && seconds.value >= 60) {
-        appStore.recordPomodoro(Math.round(seconds.value / 60), currentDescription(), 'party', s.partnerName)
-        phase.value = 'done'
-      }
+      recordRemainingFocus()
       finishSession()
       return true
     } catch (e) {

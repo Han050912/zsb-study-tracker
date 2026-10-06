@@ -397,6 +397,10 @@ CREATE TABLE IF NOT EXISTS pomodoro_daily (
   interruptions INTEGER DEFAULT 0,
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  legacy_count INTEGER NOT NULL DEFAULT 0,
+  legacy_minutes REAL NOT NULL DEFAULT 0,
+  legacy_interruptions INTEGER NOT NULL DEFAULT 0,
+  legacy_updated_at INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, date)
 );
 
@@ -407,8 +411,11 @@ CREATE TABLE IF NOT EXISTS pomodoro_interruptions (
   reason TEXT NOT NULL,
   time INTEGER NOT NULL,
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
-  server_seq INTEGER NOT NULL DEFAULT 0 -- 服务端单调序号，拉取游标
+  server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  event_id TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pomodoro_interruption_event ON pomodoro_interruptions(user_id, event_id);
 
 CREATE TABLE IF NOT EXISTS pomodoro_records (
   id TEXT NOT NULL,

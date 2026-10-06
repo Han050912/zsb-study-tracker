@@ -1,4 +1,5 @@
-import { authFetch } from './client'
+import { ApiError, authFetch } from './client'
+import { getSessionVersion } from '../utils/session'
 
 /**
  * 错题图片对象存储客户端：
@@ -15,6 +16,7 @@ function errorImageRefOf(image: string): string {
 
 /** 上传错题图片字节（幂等：相同内容 → 服务端算出的同一 id），返回服务端计算的 id */
 export async function uploadErrorImage(bytes: ArrayBuffer): Promise<string> {
+  const version = getSessionVersion()
   const res = await authFetch(
     '/api/error-images',
     {
@@ -30,18 +32,22 @@ export async function uploadErrorImage(bytes: ArrayBuffer): Promise<string> {
     throw Object.assign(new Error(err.message || `图片上传失败（HTTP ${res.status}）`), { status: res.status })
   }
   const data = (await res.json()) as { id?: string }
+  if (version !== getSessionVersion()) throw new ApiError('登录状态已改变，请重试', 409)
   if (!data?.id) throw new Error('图片上传响应缺少 id')
   return data.id
 }
 
 /** 按内容 id 拉取错题图片字节 */
 async function fetchErrorImage(id: string): Promise<Blob> {
+  const version = getSessionVersion()
   const res = await authFetch(`/api/error-images/${id}`)
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: '' }))
     throw Object.assign(new Error(err.message || `图片加载失败（HTTP ${res.status}）`), { status: res.status })
   }
-  return res.blob()
+  const blob = await res.blob()
+  if (version !== getSessionVersion()) throw new ApiError('登录状态已改变，请重试', 409)
+  return blob
 }
 
 /** 会话级 blob URL 缓存（同一 id 只拉一次，跨组件复用） */
