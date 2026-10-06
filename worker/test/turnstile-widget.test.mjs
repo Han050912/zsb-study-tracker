@@ -90,12 +90,14 @@ function fireTimer(delay) {
   entry[1].callback()
 }
 function sdk() {
-  const ready = [],
-    rendered = [],
+  const rendered = [],
     removed = [],
     resets = []
   const api = {
-    ready: (callback) => ready.push(callback),
+    // The real API rejects ready() whenever its script was async/defer, even after onload.
+    ready() {
+      throw new Error('[Cloudflare Turnstile] Remove async/defer before using ready(). (3857)')
+    },
     render: (container, options) => {
       rendered.push({ container, options })
       return `widget-${rendered.length}`
@@ -103,7 +105,7 @@ function sdk() {
     reset: (id) => resets.push(id),
     remove: (id) => removed.push(id)
   }
-  return { api, ready, rendered, removed, resets }
+  return { api, rendered, removed, resets }
 }
 function mount() {
   const token = ref(''),
@@ -125,13 +127,14 @@ function mount() {
   return { app, token, errors, instance, reset: () => instance.exposed.reset() }
 }
 
-test('render waits for SDK readiness, preserves synchronous reset tokens and retries errors through a new mount', async () => {
+test('async SDK renders after script onload without calling unsupported ready, and a fresh mount recovers errors', async () => {
   const cloud = sdk()
-  window.turnstile = cloud.api
   const page = mount()
   await settle()
   assert.equal(cloud.rendered.length, 0)
-  cloud.ready.shift()()
+  assert.equal(scripts[0].async, true)
+  window.turnstile = cloud.api
+  scripts[0].onload()
   await settle()
   const options = cloud.rendered[0].options
   assert.equal(options.retry, 'never')
@@ -160,8 +163,7 @@ test('render waits for SDK readiness, preserves synchronous reset tokens and ret
   // The login retry action increments its key: a fresh widget can recover without reloading the page.
   const retry = mount()
   await settle()
-  cloud.ready.shift()()
-  await settle()
+  assert.equal(scripts.length, 1, 'a complete SDK is reused on remount')
   assert.equal(cloud.rendered.length, 2)
   const retryOptions = cloud.rendered[1].options
   retryOptions.callback('recovered')
@@ -194,9 +196,6 @@ test('concurrent mounts share SDK load retries and an unmounted widget never ren
   window.turnstile = cloud.api
   scripts[1].onload()
   await settle()
-  assert.equal(cloud.ready.length, 1)
-  cloud.ready.shift()()
-  await settle()
   assert.equal(cloud.rendered.length, 1)
   assert.equal(first.errors.length, 0)
   assert.equal(second.errors.length, 0)
@@ -227,42 +226,44 @@ test('SDK load exhausts bounded retries, reports failure once and permits a fres
   window.turnstile = cloud.api
   scripts[3].onload()
   await settle()
-  cloud.ready.shift()()
-  await settle()
   assert.equal(cloud.rendered.length, 1)
   assert.equal(next.errors.length, 0)
 })
 
-test('a stuck ready callback or thrown render gives recoverable feedback without late widget creation', async () => {
+test('script onload with an incomplete API retries and a thrown render gives recoverable feedback', async () => {
   const cloud = sdk()
-  window.turnstile = cloud.api
   const page = mount()
   await settle()
-  fireTimer(10000)
+  window.turnstile = { render: cloud.api.render }
+  scripts[0].onload()
   await settle()
-  assert.equal(page.errors.length, 1)
-  cloud.ready.shift()()
+  assert.equal(cloud.rendered.length, 0, 'partial globals are not usable SDKs')
+  assert.equal(scripts[0].removed, true)
+  fireTimer(2000)
   await settle()
-  assert.equal(cloud.rendered.length, 0)
+  assert.equal(scripts.length, 2)
+  window.turnstile = cloud.api
+  scripts[1].onload()
+  await settle()
+  assert.equal(cloud.rendered.length, 1)
+  assert.equal(page.errors.length, 0)
   page.app.unmount()
   cloud.api.render = () => {
     throw new Error('SDK initialization failed')
   }
   const next = mount()
   await settle()
-  cloud.ready.shift()()
-  await settle()
   assert.equal(next.errors.length, 1)
   assert.equal(next.token.value, '')
 })
 
-test('unmounting while SDK readiness is pending ignores late success and removes no nonexistent widget', async () => {
+test('unmounting before SDK onload ignores late success and removes no nonexistent widget', async () => {
   const cloud = sdk()
-  window.turnstile = cloud.api
   const page = mount()
   await settle()
   page.app.unmount()
-  cloud.ready.shift()()
+  window.turnstile = cloud.api
+  scripts[0].onload()
   await settle()
   assert.equal(cloud.rendered.length, 0)
   assert.equal(page.errors.length, 0)
@@ -277,8 +278,6 @@ test('synchronous render callbacks retain success and cleanup failures cannot su
     return 'sync-success'
   }
   const first = mount()
-  await settle()
-  cloud.ready.shift()()
   await settle()
   assert.equal(first.token.value, 'synchronous-render-token')
   assert.equal(first.instance.setupState.status, 'ready')
@@ -303,8 +302,6 @@ test('synchronous render callbacks retain success and cleanup failures cannot su
     }
   }
   await settle()
-  cloud.ready.shift()()
-  await settle()
   assert.equal(next.errors.length, 1)
   assert.equal(next.instance.setupState.status, 'error')
   assert.equal(removals, 1)
@@ -314,4 +311,29 @@ test('synchronous render callbacks retain success and cleanup failures cannot su
   assert.equal(next.token.value, '')
   next.app.unmount()
   assert.equal(removals, 1, 'failed SDK removal must not be attempted again on unmount')
+})
+
+test('a timed out script detaches handlers and its late events cannot settle the shared retry', async () => {
+  const page = mount()
+  await settle()
+  const staleLoad = scripts[0].onload,
+    staleError = scripts[0].onerror
+  fireTimer(10000)
+  await settle()
+  assert.equal(scripts[0].onload, null)
+  assert.equal(scripts[0].onerror, null)
+  assert.equal(scripts[0].removed, true)
+  fireTimer(2000)
+  await settle()
+  const cloud = sdk()
+  window.turnstile = cloud.api
+  staleLoad()
+  staleError()
+  await settle()
+  assert.equal(cloud.rendered.length, 0, 'the current attempt still needs its own onload')
+  assert.equal(page.errors.length, 0)
+  scripts[1].onload()
+  await settle()
+  assert.equal(cloud.rendered.length, 1)
+  assert.equal(page.errors.length, 0)
 })

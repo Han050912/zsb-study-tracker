@@ -202,7 +202,11 @@ test('成功验证清理计时器，过期重新等待，reset 与卸载清理�
   assert.equal(tokens.at(-1), '')
   page.app.unmount()
   apps.splice(apps.indexOf(page.app), 1)
-  t.mock.timers.tick(30_000)
+  options['before-interactive-callback']()
+  options['after-interactive-callback']()
+  options['expired-callback']()
+  options['timeout-callback']()
+  t.mock.timers.tick(60_000)
   options.callback('after-unmount')
   assert.deepEqual(errors, [])
   assert.equal(tokens.at(-1), '')
@@ -236,16 +240,71 @@ test('SDK 加载失败有限重试；新挂载可以重新加载并验证成功'
   assert.equal(tokens.at(-1), 'recovered-token')
 })
 
-test('SDK 就绪但未返回 ready 回调时结束加载并提供错误', async (t) => {
+test('异步 SDK 的 ready 抛出官方 3857 时仍可直接 render 并获取 token', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
-  window.turnstile.ready = () => {}
+  let readyCalls = 0
+  window.turnstile.ready = () => {
+    readyCalls++
+    throw new Error('Remove async/defer before using ready(). (3857)')
+  }
+  const errors = [],
+    tokens = []
+  mount(TurnstileWidget, {
+    onLoadError: (message) => errors.push(message),
+    'onUpdate:token': (token) => tokens.push(token)
+  })
+  await settle()
+  assert.equal(readyCalls, 0)
+  assert.ok(options)
+  options.callback('verified-token')
+  t.mock.timers.tick(60_000)
+  assert.equal(tokens.at(-1), 'verified-token')
+  assert.deepEqual(errors, [])
+})
+
+test('人工验证期间暂停加载超时，完成交互后恢复检测，SDK 超时只报告一次', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const errors = [],
+    tokens = []
+  const page = mount(TurnstileWidget, {
+    onLoadError: (message) => errors.push(message),
+    'onUpdate:token': (token) => tokens.push(token)
+  })
+  await settle()
+  options['before-interactive-callback']()
+  t.mock.timers.tick(60_000)
+  await nextTick()
+  assert.match(text(page.root), /请完成下方的人机验证/)
+  assert.deepEqual(errors, [], '用户人工操作不会被 30 秒加载检测中断')
+  options['after-interactive-callback']()
+  options.callback('after-interaction-token')
+  options['after-interactive-callback']()
+  t.mock.timers.tick(60_000)
+  assert.equal(tokens.at(-1), 'after-interaction-token')
+  assert.deepEqual(errors, [], '成功之后迟到的交互结束不能重新启动超时')
+  options['expired-callback']()
+  options['before-interactive-callback']()
+  options['timeout-callback']()
+  options['after-interactive-callback']()
+  options['timeout-callback']()
+  t.mock.timers.tick(60_000)
+  assert.equal(tokens.at(-1), '')
+  assert.equal(errors.length, 1)
+  assert.match(errors[0], /超时/)
+  assert.deepEqual(removed, ['widget-1'])
+})
+
+test('人工交互完成后尚未取得 token 的挑战仍有超时保护', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const errors = []
   mount(TurnstileWidget, { onLoadError: (message) => errors.push(message) })
   await settle()
-  t.mock.timers.tick(10_000)
-  await settle()
-  assert.equal(options, null)
-  assert.match(errors[0], /未能加载/)
+  options['before-interactive-callback']()
+  t.mock.timers.tick(60_000)
+  options['after-interactive-callback']()
+  t.mock.timers.tick(30_000)
+  assert.equal(errors.length, 1)
+  assert.match(errors[0], /超时/)
 })
 
 test('每日提醒保存不依赖系统权限，拒绝/未授权/权限接口异常均有应用内提醒', async () => {
