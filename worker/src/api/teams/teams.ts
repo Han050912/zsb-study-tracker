@@ -76,7 +76,7 @@ async function validateTeamFields(
 /**
  * 将成员写入小队（公开 join 与审批同意复用）：
  * 占位判定与入组同批提交，计数在批内按成员表重算，批失败一起回滚（消除抢占成功但插入失败导致计数虚增的窗口）；
- * 挑战进度初始化保持独立批次（INSERT OR IGNORE 幂等，满员抛错路径不落任何进度行）。
+ * 挑战进度在同批按当前成员/挑战初始化，失败时成员和进度一起回滚。
  */
 async function addMember(env: Env, teamId: string, userId: string): Promise<void> {
   const results = await batch(env, [
@@ -93,30 +93,14 @@ async function addMember(env: Env, teamId: string, userId: string): Promise<void
     env.DB.prepare(
       'DELETE FROM team_join_requests WHERE team_id = ? AND user_id = ? ' +
         'AND EXISTS (SELECT 1 FROM team_members WHERE team_id = ? AND user_id = ?)'
-    ).bind(teamId, userId, teamId, userId)
+    ).bind(teamId, userId, teamId, userId),
+    env.DB.prepare(
+      `INSERT OR IGNORE INTO team_challenge_progress (challenge_id, user_id, current_value, is_completed)
+       SELECT c.id, m.user_id, 0, 0 FROM team_challenges c JOIN team_members m ON m.team_id = c.team_id
+       WHERE c.team_id = ? AND m.user_id = ? AND c.end_date >= ? AND c.is_cancelled = 0 AND c.is_completed = 0`
+    ).bind(teamId, userId, utc8Today())
   ])
   if (!results?.[0]?.meta.changes) throw new HttpError(400, '小队人数已满')
-
-  const activeChallenges = await all<{ id: string }>(
-    env,
-    `
-    SELECT id FROM team_challenges WHERE team_id = ? AND end_date >= ? AND is_cancelled = 0
-  `,
-    teamId,
-    utc8Today()
-  )
-
-  if (activeChallenges.length > 0) {
-    await batch(
-      env,
-      activeChallenges.map((c) =>
-        env.DB.prepare(
-          'INSERT OR IGNORE INTO team_challenge_progress (challenge_id, user_id, current_value, is_completed) ' +
-            'VALUES (?, ?, 0, 0)'
-        ).bind(c.id, userId)
-      )
-    )
-  }
 }
 
 /** 移除成员（自退或踢出）共用的清理语句：删成员 + 减计数 + 清未完成挑战进度 + 重算达标数 + 可选通知 */
