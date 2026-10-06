@@ -18,8 +18,12 @@ jobs:
     uses: ./.github/workflows/ci.yml
   release:
     needs: checks
-    runs-on: ubuntu-latest
+    # NSIS Windows 安装包在原生 Windows runner 上构建，避免 Linux runner 依赖未预装的 Wine。
+    runs-on: windows-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -67,7 +71,7 @@ jobs:
           DESKTOP_TOKEN: ${{ secrets.DESKTOP_TOKEN }}
 
       # 桌面端运行时（electron/main.cjs）依赖该产物读取 API 地址：缺失或为空直接中断发版
-      # runner 为 ubuntu-latest，默认 shell 为 bash，test -s 即可覆盖「不存在 / 空文件」
+      # runner 为 Windows，显式使用 bash；test -s 可覆盖「不存在 / 空文件」
       - name: Verify api-base.json artifact
         run: |
           if [ ! -s dist/api-base.json ]; then
