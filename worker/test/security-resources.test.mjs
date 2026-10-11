@@ -296,6 +296,26 @@ test('保持登录控制 Cookie 生命周期，任何选项的退出均吊销 JW
   }
 })
 
+test('Cookie 写请求缺少或伪造 Origin 时拒绝，可信 Origin 才能继续', async () => {
+  const cookie = `zsb_session=${encodeURIComponent(token)}`
+  const missingOrigin = await api('/api/auth/logout', { method: 'POST', headers: { Cookie: cookie } }, null)
+  assert.equal(missingOrigin.status, 403)
+
+  const untrustedOrigin = await api(
+    '/api/auth/logout',
+    { method: 'POST', headers: { Cookie: cookie, Origin: 'https://evil.example' } },
+    null
+  )
+  assert.equal(untrustedOrigin.status, 403)
+
+  const trustedOrigin = await api(
+    '/api/auth/logout',
+    { method: 'POST', headers: { Cookie: cookie, Origin: 'https://zsb-study-tracker.sryze.cc' } },
+    null
+  )
+  assert.equal(trustedOrigin.status, 200)
+})
+
 test('Siteverify 网络/服务故障返回可重试提示且不能签发登录会话', async (t) => {
   env.TURNSTILE_SECRET = 'turnstile-fixture'
   const headers = { 'X-CF-Turnstile-Response': 'test-verification' }

@@ -12,7 +12,8 @@ import { localD1 as d1 } from './local-d1.mjs'
 
 const BASE = process.argv[2] || 'http://localhost:8787'
 const ORIGIN = 'http://localhost:5173'
-const DESKTOP_TOKEN = process.env.SMOKE_DESKTOP_TOKEN || 'zsb-desktop-v2'
+const DESKTOP_TOKEN = process.env.SMOKE_DESKTOP_TOKEN
+if (!DESKTOP_TOKEN) throw new Error('SMOKE_DESKTOP_TOKEN 必须显式配置；测试脚本不再使用历史默认令牌')
 
 /** 取 D1 查询结果行数组 */
 function d1Rows(sql) {

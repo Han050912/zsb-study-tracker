@@ -17,7 +17,8 @@ const BASE = process.argv[2] || 'http://localhost:8787'
 const ORIGIN = 'http://localhost:5173'
 // 桌面端共享令牌：默认仅适配历史 .dev.vars，实际值可经 SMOKE_DESKTOP_TOKEN 注入，全文件统一引用
 // SMOKE_DESKTOP_TOKEN 必须与 worker/.dev.vars 的 DESKTOP_TOKEN 一致，否则注册/登录用例将因 Turnstile 校验全量失败
-const DESKTOP_TOKEN = process.env.SMOKE_DESKTOP_TOKEN || 'zsb-desktop-v2'
+const DESKTOP_TOKEN = process.env.SMOKE_DESKTOP_TOKEN
+if (!DESKTOP_TOKEN) throw new Error('SMOKE_DESKTOP_TOKEN 必须显式配置；测试脚本不再使用历史默认令牌')
 const noRateLimitBindings = process.env.SMOKE_NO_RATE_LIMIT_BINDINGS === '1'
 if (noRateLimitBindings && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(BASE).hostname)) {
   throw new Error('SMOKE_NO_RATE_LIMIT_BINDINGS 仅允许用于本地隔离 Worker')
