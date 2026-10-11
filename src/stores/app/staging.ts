@@ -103,10 +103,10 @@ export function stageAllDeletes(state: AppState, ts: number): void {
  * 整批替换场景（导入/清空）：把一份状态里的全部记录逐条 stage 为 upsert。
  * 缺 id 的旧记录跳过（migrateLegacyData 会补齐 id，补齐后由其自身打点上行）。
  */
-export function stageAllUpserts(state: AppState, ts: number): void {
+export function stageAllUpserts(state: AppState, ts: number, restoration = false): void {
   for (const s of state.subjects) {
     s.updatedAt = ts
-    stageUpsert('subjects', s.id, s, ts)
+    stageUpsert('subjects', s.id, s, ts, restoration)
   }
   for (const r of state.records) {
     r.updatedAt = ts
@@ -118,7 +118,7 @@ export function stageAllUpserts(state: AppState, ts: number): void {
   }
   for (const q of state.errorQuestions) {
     q.updatedAt = ts
-    stageUpsert('errorQuestions', q.id, q, ts)
+    stageUpsert('errorQuestions', q.id, q, ts, restoration && !!q.image?.startsWith('r2:'))
   }
   for (const e of state.exams) {
     e.updatedAt = ts

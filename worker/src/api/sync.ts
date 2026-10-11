@@ -322,6 +322,17 @@ function singleTableStrategy(mapping: CrudMapping): DomainStrategy {
     storedUpdatedAt: (env, userId, keys) => storedByColumn(env, mapping.table, 'id', userId, keys),
     upsertStatements: async (env, userId, item, seq) => {
       let value = item.value
+      if (mapping.table === 'error_questions' && typeof value.image === 'string' && value.image.startsWith('r2:')) {
+        // Run inside the user transaction's CAS snapshot. A concurrent delete
+        // invalidates this read and rebuilds the plan before any writes commit.
+        const image = await first<{ id: string }>(
+          env,
+          'SELECT id FROM error_images WHERE user_id = ? AND id = ?',
+          userId,
+          value.image.slice(3)
+        )
+        if (!image) throw new HttpError(422, '错题图片不存在或已删除，请重新选择原完整备份恢复，或重新上传图片')
+      }
       if (mapping.table === 'notes' && value.type !== 'pdf') {
         const body = await first<{ stamp: number }>(
           env,
