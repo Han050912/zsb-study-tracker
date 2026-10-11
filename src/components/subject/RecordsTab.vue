@@ -5,6 +5,7 @@ import { useToast } from '../../composables/useToast'
 import { useAppStore } from '../../stores/app'
 import { today } from '../../utils/date'
 import { studyMinutesError } from '../../utils/studyValidation'
+import { attributedFocusRecords } from '../../utils/studyTime'
 
 const props = defineProps<{ subjectId: string }>()
 const store = useAppStore()
@@ -13,10 +14,10 @@ const toast = useToast()
 const subject = computed(() => store.subjectMap[props.subjectId])
 
 const subjectRecords = computed(() =>
-  store.records
+  [...store.records, ...Object.keys(store.pomodoro.daily).flatMap((date) => attributedFocusRecords(store, date))]
     .filter((r) => r.subjectId === props.subjectId)
     .slice()
-    .reverse()
+    .sort((a, b) => b.createdAt - a.createdAt)
 )
 
 // ---- 学习记录（含计时器） ----
@@ -148,8 +149,11 @@ onUnmounted(() => {
       <div v-for="r in subjectRecords" :key="r.id" class="flex items-center gap-2 text-sm group">
         <span class="text-xs text-slate-400 w-20 shrink-0">{{ r.date }}</span>
         <span class="font-medium w-16 shrink-0" :style="{ color: subject.color }">{{ r.minutes }}分钟</span>
-        <span class="flex-1 text-slate-500 truncate text-xs">{{ r.note || '—' }}</span>
-        <button class="record-action text-correction text-xs" @click="store.deleteRecord(r.id)">删除</button>
+        <span class="flex-1 text-slate-500 truncate text-xs"
+          >{{ r.id.startsWith('focus:') ? '番茄专注 · ' : '' }}{{ r.note || '—' }}</span
+        >
+        <RouterLink v-if="r.id.startsWith('focus:')" to="/pomodoro" class="study-link text-xs">专注记录</RouterLink>
+        <button v-else class="record-action text-correction text-xs" @click="store.deleteRecord(r.id)">删除</button>
       </div>
     </div>
   </div>

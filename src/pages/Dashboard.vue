@@ -12,6 +12,7 @@ import ExamAnswerStrip from '../components/ExamAnswerStrip.vue'
 import DashboardCompanions from '../components/DashboardCompanions.vue'
 import NavIcon from '../components/NavIcon.vue'
 import { masteryOverview } from '../utils/studyOverview'
+import { isErrorDue } from '../utils/errorReview'
 import {
   Play,
   GripVertical,
@@ -28,9 +29,10 @@ import Modal from '../components/Modal.vue'
 import TodoTimeFields from '../components/TodoTimeFields.vue'
 import PostComposer from '../components/community/PostComposer.vue'
 import LearningPathCard from '../components/LearningPathCard.vue'
+import SetupChecklist from '../components/SetupChecklist.vue'
 import { notifyPermission, requestNotifyPermission } from '../services/notify'
 import { isValidTodoTime, isValidTodoDate, todoTimeOnDateTs } from '../utils/todoTime'
-import { focusMinutesOn, studyMinutesOn } from '../utils/studyTime'
+import { studyMinutesOn, subjectStudyRecordsOn, unassignedFocusMinutesOn } from '../utils/studyTime'
 import type { Todo } from '../types'
 import dayjs from 'dayjs'
 
@@ -67,6 +69,7 @@ const subjectOverviews = computed(() =>
     subject,
     ...masteryOverview(subject),
     pendingErrors: store.errorQuestions.filter((q) => q.subjectId === subject.id && !q.mastered).length,
+    dueErrors: store.errorQuestions.filter((q) => q.subjectId === subject.id && isErrorDue(q, store.todayKey)).length,
     lastExam: store.exams
       .filter((exam) => exam.subjectId === subject.id)
       .sort((a, b) => b.date.localeCompare(a.date))[0]
@@ -102,10 +105,14 @@ async function deleteTodo(todo: Todo) {
 // ---- 修改任务内容；取消编辑不写入任务，提醒和完成记录由 store 保留 ----
 const titleEditId = ref('')
 const editTitle = ref('')
+const editSubjectId = ref('')
+const editChapterId = ref('')
 const titleEditError = ref('')
 function openTitleEdit(todo: Todo) {
   titleEditId.value = todo.id
   editTitle.value = todo.text
+  editSubjectId.value = todo.subjectId || ''
+  editChapterId.value = todo.chapterId || ''
   titleEditError.value = ''
 }
 function saveTodoTitle() {
@@ -118,7 +125,7 @@ function saveTodoTitle() {
     titleEditError.value = '任务已不存在，请关闭弹窗后重试'
     return
   }
-  store.updateTodo(titleEditId.value, title)
+  store.updateTodo(titleEditId.value, title, { subjectId: editSubjectId.value, chapterId: editChapterId.value })
   titleEditId.value = ''
   toast('任务内容已更新')
 }
@@ -132,12 +139,25 @@ const showAddSchedule = ref(false)
 const addStart = ref('')
 const addDue = ref('')
 const addTodoDate = ref('')
+const addSubjectId = ref('')
+const addChapterId = ref('')
+
+function todoDirection(todo: Todo) {
+  if (!todo.subjectId) return ''
+  const subject = store.subjectMap[todo.subjectId]
+  const chapter = subject?.chapters.find((item) => item.id === todo.chapterId)
+  return [subjectLabel(subject, '已删除科目'), chapter?.name || (todo.chapterId ? '原章节已删除' : '')]
+    .filter(Boolean)
+    .join(' · ')
+}
 
 function openAddSchedule() {
   if (!newTodo.value.trim()) return toast('请先输入任务内容')
   addTodoDate.value = taskDate.value
   addStart.value = ''
   addDue.value = ''
+  addSubjectId.value = ''
+  addChapterId.value = ''
   showAddSchedule.value = true
 }
 function confirmAddTodo() {
@@ -147,7 +167,10 @@ function confirmAddTodo() {
   const dueAt = todoTimeOnDateTs(addDue.value, addTodoDate.value)
   if (startAt && dueAt && dueAt < startAt) return toast('最晚截止时间不能早于开始时间')
   ensureNotifyPermission(!!startAt || !!dueAt)
-  store.addTodo(newTodo.value.trim(), { startAt, dueAt }, addTodoDate.value)
+  store.addTodo(newTodo.value.trim(), { startAt, dueAt }, addTodoDate.value, {
+    subjectId: addSubjectId.value,
+    chapterId: addChapterId.value
+  })
   newTodo.value = ''
   showAddSchedule.value = false
   // 两个时间都没填：提示可能无法收到提醒，但仍正常添加（均为可选项）
@@ -212,7 +235,8 @@ function openCheckinShare() {
     return
   }
   const bySubject: Record<string, number> = {}
-  for (const r of store.todayRecords) bySubject[r.subjectId] = (bySubject[r.subjectId] || 0) + r.minutes
+  for (const r of subjectStudyRecordsOn(store, store.todayKey))
+    bySubject[r.subjectId] = (bySubject[r.subjectId] || 0) + r.minutes
   const subjectParts = Object.entries(bySubject)
     .map(([sid, min]) => `${store.subjectMap[sid]?.name || '未知科目'} ${formatMinutes(min)}`)
     .join('、')
@@ -228,8 +252,8 @@ function openCheckinShare() {
 
 // ---- 热力图点击：当日学习总时长明细 ----
 const heatDate = ref('')
-const heatRecords = computed(() => store.records.filter((r) => r.date === heatDate.value))
-const heatFocusMinutes = computed(() => focusMinutesOn(store, heatDate.value))
+const heatRecords = computed(() => subjectStudyRecordsOn(store, heatDate.value))
+const heatFocusMinutes = computed(() => unassignedFocusMinutesOn(store, heatDate.value))
 const heatTotal = computed(() => studyMinutesOn(store, heatDate.value))
 
 /** 任务完成时间格式化（HH:mm） */
@@ -336,6 +360,7 @@ onUnmounted(() => {
       <button class="btn-ghost" @click="openCheckinShare">分享打卡</button>
     </header>
 
+    <SetupChecklist />
     <section class="dashboard-next" aria-labelledby="next-task-title">
       <div class="min-w-0">
         <h2 id="next-task-title" class="dashboard-next-title">
@@ -358,7 +383,7 @@ onUnmounted(() => {
         </p>
       </div>
       <RouterLink
-        :to="{ path: '/pomodoro', query: nextTodo ? { task: nextTodo.text.slice(0, 50) } : {} }"
+        :to="{ path: '/pomodoro', query: nextTodo ? { todoId: nextTodo.id, task: nextTodo.text.slice(0, 50) } : {} }"
         class="btn-primary shrink-0"
         ><Play :size="16" aria-hidden="true" />开始番茄钟</RouterLink
       >
@@ -427,15 +452,18 @@ onUnmounted(() => {
             >
               <GripVertical :size="16" aria-hidden="true" />
             </button>
-            <input
-              :id="`todo-${t.id}`"
-              type="checkbox"
-              :checked="t.done"
-              class="w-5 h-5 shrink-0"
-              @change="toggleTodo(t)"
-            />
-            <div class="flex-1 min-w-0">
+            <label :for="`todo-${t.id}`" class="today-task-check">
+              <input
+                :id="`todo-${t.id}`"
+                type="checkbox"
+                :checked="t.done"
+                class="w-5 h-5 shrink-0"
+                @change="toggleTodo(t)"
+              />
+            </label>
+            <div class="today-task-content flex-1 min-w-0">
               <label :for="`todo-${t.id}`" class="today-task-label">{{ t.text }}</label>
+              <p v-if="t.subjectId" class="text-xs text-muted">{{ todoDirection(t) }}</p>
               <p v-if="t.done && t.completedAt" class="text-xs text-muted">
                 完成于 {{ fmtCompletedAt(t.completedAt) }}
               </p>
@@ -445,23 +473,34 @@ onUnmounted(() => {
                 }}{{ isOverdue(t) ? ' · 已超时' : '' }}
               </button>
             </div>
-            <button
-              type="button"
-              class="icon-button shrink-0"
-              :aria-label="`编辑任务：${t.text}`"
-              title="编辑任务"
-              @click="openTitleEdit(t)"
-            >
-              <Pencil :size="15" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              class="icon-button shrink-0"
-              :aria-label="`删除任务：${t.text}`"
-              @click="deleteTodo(t)"
-            >
-              <Trash2 :size="15" aria-hidden="true" />
-            </button>
+            <div class="today-task-actions">
+              <RouterLink
+                v-if="!t.done"
+                :to="{ path: '/pomodoro', query: { todoId: t.id } }"
+                class="icon-button shrink-0"
+                :aria-label="`开始专注：${t.text}`"
+                title="开始专注"
+              >
+                <Play :size="16" aria-hidden="true" />
+              </RouterLink>
+              <button
+                type="button"
+                class="icon-button shrink-0"
+                :aria-label="`编辑任务：${t.text}`"
+                title="编辑任务"
+                @click="openTitleEdit(t)"
+              >
+                <Pencil :size="15" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="icon-button shrink-0"
+                :aria-label="`删除任务：${t.text}`"
+                @click="deleteTodo(t)"
+              >
+                <Trash2 :size="15" aria-hidden="true" />
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -473,19 +512,20 @@ onUnmounted(() => {
           /></RouterLink>
         </div>
         <p class="text-xs text-muted mb-2">自评反映你的判断；真题成绩单独记录。</p>
-        <RouterLink
-          v-for="item in subjectOverviews"
-          :key="item.subject.id"
-          :to="subjectRoute(item.subject.id)"
-          class="subject-review-row"
-        >
+        <div v-for="item in subjectOverviews" :key="item.subject.id" class="subject-review-row">
           <div class="dashboard-subject-line">
-            <span class="font-bold text-sm"
-              ><SubjectIcon :icon="item.subject.icon" class="mr-1" />{{ item.subject.name }}</span
+            <RouterLink :to="subjectRoute(item.subject.id)" class="font-bold text-sm study-link"
+              ><SubjectIcon :icon="item.subject.icon" class="mr-1" />{{ item.subject.name }}</RouterLink
             ><span class="text-xs" :class="item.pendingErrors ? 'text-correction' : 'text-muted'">{{
-              item.pendingErrors ? `${item.pendingErrors} 道错题待复习` : '没有待复习错题'
+              item.pendingErrors ? `${item.pendingErrors} 道尚未掌握` : '暂无未掌握错题'
             }}</span>
           </div>
+          <RouterLink
+            v-if="item.dueErrors"
+            :to="{ path: '/error-book', query: { review: 'due', subject: item.subject.id } }"
+            class="study-link text-xs mt-1"
+            >今天到期 {{ item.dueErrors }} 道 · 开始复习</RouterLink
+          >
           <p class="text-xs text-muted mt-1">
             {{
               !item.total
@@ -499,7 +539,7 @@ onUnmounted(() => {
             最近真题 {{ item.lastExam.score }}/{{ item.lastExam.totalScore }} 分
             <span class="text-muted">· {{ item.lastExam.date.slice(5) }}</span>
           </p>
-        </RouterLink>
+        </div>
         <RouterLink v-if="!subjectOverviews.length" to="/settings" class="text-sm arrow-link"
           >先添加考试科目 <ArrowRight class="arrow-inline" :size="16" aria-hidden="true"
         /></RouterLink>
@@ -587,6 +627,27 @@ onUnmounted(() => {
           aria-describedby="todo-title-error"
           @input="titleEditError = ''"
         />
+        <div class="grid grid-cols-2 gap-3 mt-3">
+          <div>
+            <label for="edit-todo-subject" class="label">科目（选填）</label>
+            <select id="edit-todo-subject" v-model="editSubjectId" class="input" @change="editChapterId = ''">
+              <option value="">未分科目</option>
+              <option v-if="editSubjectId && !store.subjectMap[editSubjectId]" :value="editSubjectId">
+                已删除科目
+              </option>
+              <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
+            </select>
+          </div>
+          <div>
+            <label for="edit-todo-chapter" class="label">章节（选填）</label>
+            <select id="edit-todo-chapter" v-model="editChapterId" class="input" :disabled="!editSubjectId">
+              <option value="">不限章节</option>
+              <option v-for="ch in store.subjectMap[editSubjectId]?.chapters || []" :key="ch.id" :value="ch.id">
+                {{ ch.name }}
+              </option>
+            </select>
+          </div>
+        </div>
         <p
           id="todo-title-error"
           role="alert"
@@ -605,7 +666,25 @@ onUnmounted(() => {
 
     <!-- 热力图当日学习明细弹窗 -->
     <!-- 新增任务：时间与弹窗中明确显示的日期一致 -->
-    <Modal title="设定任务时间" :show="showAddSchedule" @close="showAddSchedule = false">
+    <Modal title="安排任务" :show="showAddSchedule" @close="showAddSchedule = false">
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div>
+          <label for="add-todo-subject" class="label">科目（选填）</label>
+          <select id="add-todo-subject" v-model="addSubjectId" class="input" @change="addChapterId = ''">
+            <option value="">未分科目</option>
+            <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
+          </select>
+        </div>
+        <div>
+          <label for="add-todo-chapter" class="label">章节（选填）</label>
+          <select id="add-todo-chapter" v-model="addChapterId" class="input" :disabled="!addSubjectId">
+            <option value="">不限章节</option>
+            <option v-for="ch in store.subjectMap[addSubjectId]?.chapters || []" :key="ch.id" :value="ch.id">
+              {{ ch.name }}
+            </option>
+          </select>
+        </div>
+      </div>
       <TodoTimeFields
         v-model:start="addStart"
         v-model:due="addDue"
@@ -752,6 +831,19 @@ onUnmounted(() => {
 .today-task {
   min-height: 76px;
 }
+.today-task-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.today-task-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
 .today-task-label {
   font-size: 15px;
 }
@@ -877,11 +969,26 @@ onUnmounted(() => {
     font-size: 13px;
   }
   .today-task {
+    display: grid;
+    grid-template-columns: 44px 44px minmax(0, 1fr);
+    align-items: start;
     gap: 6px;
+    padding-block: 8px;
   }
   .today-task [data-drag-handle] {
-    width: 32px;
-    min-width: 32px;
+    width: 44px;
+    min-width: 44px;
+  }
+  .today-task-check {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .today-task-content {
+    padding-top: 10px;
+  }
+  .today-task-actions {
+    grid-column: 1 / -1;
+    justify-self: end;
   }
 }
 </style>

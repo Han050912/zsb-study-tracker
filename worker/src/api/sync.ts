@@ -617,6 +617,12 @@ const pomodoroStrategy: DomainStrategy = {
       throw new HttpError(400, `域 pomodoro 的 rec: 记录必须含 date 与 time（key: ${key}）`)
     if (kind === 'rec' && rec.completed !== undefined && typeof rec.completed !== 'boolean')
       throw new HttpError(400, `域 pomodoro 的 rec: completed 必须是布尔值（key: ${key}）`)
+    if (kind === 'rec') {
+      for (const field of ['todoId', 'subjectId', 'chapterId']) {
+        if (rec[field] !== undefined && (typeof rec[field] !== 'string' || (rec[field] as string).length > 200))
+          throw new HttpError(400, `专注记录的 ${field} 必须是 200 字以内的文本`)
+      }
+    }
   },
   storedUpdatedAt: async (env, userId, keys) => {
     const dates: string[] = []

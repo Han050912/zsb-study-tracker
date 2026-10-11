@@ -2,6 +2,7 @@
 import { ChevronUp, ChevronDown } from '@lucide/vue'
 import IconAction from '../shared/components/IconAction.vue'
 import { computed, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
@@ -9,7 +10,8 @@ import { useAppStore } from '../stores/app'
 import { businessDate, today } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
 import { problemTypesFor, PROBLEM_TYPE_LABELS } from '../data/problemTypes'
-import type { ErrorQuestion } from '../types'
+import type { ErrorQuestion, ErrorReviewResult } from '../types'
+import { isErrorDue, REVIEW_RESULT_LABELS } from '../utils/errorReview'
 import Modal from '../components/Modal.vue'
 import PartnerShareModal from '../components/partner/PartnerShareModal.vue'
 import RemoteImage from '../components/RemoteImage.vue'
@@ -19,12 +21,22 @@ import { sessionUser } from '../services/auth'
 const store = useAppStore()
 const toast = useToast()
 const confirm = useConfirm()
+let pageActive = true
 
 // ---- 分享给搭子（目标错题 id，空 = 关闭弹窗） ----
 const shareTarget = ref('')
 
-const filterSubject = ref('')
+const route = useRoute()
+const filterSubject = ref(typeof route?.query.subject === 'string' ? route.query.subject : '')
+const reviewFilter = ref<'all' | 'due' | 'overdue'>(
+  route?.query.review === 'due' || route?.query.review === 'overdue' ? route.query.review : 'all'
+)
 const showOnlyUnmastered = ref(false)
+const dueQuestions = computed(() =>
+  store.errorQuestions
+    .filter((q) => (!filterSubject.value || q.subjectId === filterSubject.value) && isErrorDue(q, store.todayKey))
+    .sort((a, b) => (a.nextReviewDate || a.date).localeCompare(b.nextReviewDate || b.date))
+)
 
 const list = computed(() => {
   let l = store.errorQuestions
@@ -32,10 +44,14 @@ const list = computed(() => {
     .sort((a, b) => Number(a.mastered) - Number(b.mastered) || b.date.localeCompare(a.date))
   if (filterSubject.value) l = l.filter((e) => e.subjectId === filterSubject.value)
   if (showOnlyUnmastered.value) l = l.filter((e) => !e.mastered)
+  if (reviewFilter.value === 'due') l = l.filter((q) => isErrorDue(q, store.todayKey))
+  if (reviewFilter.value === 'overdue') l = l.filter((q) => q.nextReviewDate && q.nextReviewDate < store.todayKey)
+  if (reviewFilter.value !== 'all')
+    l.sort((a, b) => (a.nextReviewDate || a.date).localeCompare(b.nextReviewDate || b.date))
   return l
 })
 
-const hasFilter = computed(() => !!filterSubject.value || showOnlyUnmastered.value)
+const hasFilter = computed(() => !!filterSubject.value || showOnlyUnmastered.value || reviewFilter.value !== 'all')
 
 function questionSubject(question: ErrorQuestion) {
   return store.subjects.find((subject) => subject.id === question.subjectId)
@@ -64,6 +80,7 @@ function questionChapterLabel(question: ErrorQuestion): string {
 function clearFilters() {
   filterSubject.value = ''
   showOnlyUnmastered.value = false
+  reviewFilter.value = 'all'
 }
 
 const showModal = ref(false)
@@ -207,10 +224,66 @@ async function add() {
 const expandedAnswer = ref<Record<string, boolean>>({})
 const reviewCount = computed(() => store.errorQuestions.reduce((s, e) => s + e.reviewCount, 0))
 
-/** 复习立即记录；奖励受每日额度限制，实际积分等待服务端确认。 */
+const reviewing = ref(false)
+const reviewIds = ref<string[]>([])
+const reviewedIds = ref<string[]>([])
+const revealAnswer = ref(false)
+let reviewOwner: string | undefined
+const reviewSnapshot = new Map<string, ErrorQuestion>()
+const currentReview = computed(() =>
+  reviewIds.value
+    .filter((id) => !reviewedIds.value.includes(id))
+    .map((id) => store.errorQuestions.find((q) => q.id === id && q === reviewSnapshot.get(id)))
+    .find(Boolean)
+)
+function closeReview() {
+  reviewing.value = false
+  reviewIds.value = []
+  reviewedIds.value = []
+  revealAnswer.value = false
+  reviewSnapshot.clear()
+  reviewOwner = undefined
+}
+watch(() => sessionUser.value?.id, closeReview, { flush: 'sync' })
+watch(
+  () => currentReview.value?.id,
+  () => {
+    revealAnswer.value = false
+  },
+  { flush: 'sync' }
+)
+watch(
+  [() => route.query.subject, () => route.query.review],
+  ([subject, review]) => {
+    filterSubject.value = typeof subject === 'string' ? subject : ''
+    reviewFilter.value = review === 'due' || review === 'overdue' ? review : 'all'
+    closeReview()
+  },
+  { flush: 'sync' }
+)
+function startReview(limit: number, id?: string) {
+  closeReview()
+  if (!pageActive || !sessionUser.value?.id) return
+  reviewOwner = sessionUser.value.id
+  const questions = id ? store.errorQuestions.filter((q) => q.id === id) : dueQuestions.value.slice(0, limit)
+  for (const question of questions) reviewSnapshot.set(question.id, question)
+  reviewIds.value = questions.map((q) => q.id)
+  reviewing.value = reviewIds.value.length > 0
+}
 function onReview(id: string) {
-  store.reviewError(id)
-  toast('已复习一次')
+  startReview(1, id)
+}
+function rateReview(result: ErrorReviewResult) {
+  if (!pageActive || !reviewOwner || reviewOwner !== sessionUser.value?.id) {
+    closeReview()
+    return
+  }
+  const question = currentReview.value
+  if (!question || !revealAnswer.value) return
+  store.reviewError(question.id, result)
+  reviewedIds.value.push(question.id)
+  revealAnswer.value = false
+  toast(`已记录${REVIEW_RESULT_LABELS[result]}，下次复习 ${question.nextReviewDate}`)
 }
 
 // 图片灯箱：点击错题图片全屏放大查看，点击任意处或按 Esc 关闭
@@ -225,9 +298,9 @@ function closeZoom() {
 // 不会多层同时响应）；点击任意处关闭保留原有交互，不使用遮罩自点击判定
 const zoomPanelRef = ref<HTMLElement | null>(null)
 useOverlayDismiss(closeZoom, { show: () => !!zoomImage.value, panel: () => zoomPanelRef.value })
-let pageActive = true
 onUnmounted(() => {
   pageActive = false
+  closeReview()
   clearPendingImage()
 })
 
@@ -263,7 +336,7 @@ async function removeError(id: string) {
 
     <dl class="study-metrics">
       <div>
-        <dt>待复习错题</dt>
+        <dt>未掌握错题</dt>
         <dd class="text-correction">
           {{ store.errorQuestions.filter((q) => !q.mastered).length }} <span class="text-xs font-normal">道</span>
         </dd>
@@ -281,10 +354,27 @@ async function removeError(id: string) {
       </div>
     </dl>
     <p class="text-xs text-muted">
-      累计复习统计当前保留的错题。间隔复习依次安排在复习后的 1、2、4、7、15、30 天，已掌握题目至少间隔 7 天。
+      累计复习统计当前保留的错题。不会的题 1 天后重做，勉强做对的题 2 天后重做；连续独立做对才逐步延长间隔。
     </p>
 
+    <section class="card space-y-3" aria-labelledby="review-queue-title">
+      <h2 id="review-queue-title" class="section-title !mb-0">今天的复习</h2>
+      <p class="text-sm text-muted">
+        {{ filterSubject ? subjectLabel(store.subjects.find((s) => s.id === filterSubject)) : '全部科目' }} ·
+        {{ dueQuestions.length }} 道到期或尚未排期，优先复习最早到期的题。
+      </p>
+      <div class="flex flex-wrap gap-2">
+        <button class="btn-primary" :disabled="!dueQuestions.length" @click="startReview(5)">复习 5 题</button>
+        <button class="btn-ghost" :disabled="!dueQuestions.length" @click="startReview(10)">复习 10 题</button>
+      </div>
+    </section>
+
     <div class="page-toolbar">
+      <select v-model="reviewFilter" class="input !w-auto" aria-label="筛选复习时间">
+        <option value="all">全部错题</option>
+        <option value="due">今日待复习</option>
+        <option value="overdue">已逾期</option>
+      </select>
       <select aria-label="筛选错题科目" v-model="filterSubject" class="input !w-auto">
         <option value="">全部科目</option>
         <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
@@ -323,6 +413,7 @@ async function removeError(id: string) {
             >
           </template>
           <template v-else>尚未排期，复习一次后生成下次复习日期。</template>
+          <span v-if="q.lastReviewResult"> · 上次{{ REVIEW_RESULT_LABELS[q.lastReviewResult] }}</span>
         </p>
         <RemoteImage
           v-if="q.image"
@@ -364,6 +455,43 @@ async function removeError(id: string) {
         </div>
       </div>
     </div>
+
+    <Modal title="错题复习" :show="reviewing" @close="closeReview">
+      <div v-if="currentReview" class="space-y-4">
+        <p class="text-sm text-muted" role="status">
+          第 {{ reviewedIds.length + 1 }} / {{ reviewIds.length }} 题 · {{ questionChapterLabel(currentReview) }}
+        </p>
+        <p class="whitespace-pre-wrap break-words">{{ currentReview.content }}</p>
+        <RemoteImage
+          v-if="currentReview.image"
+          :image="currentReview.image"
+          img-class="max-h-64 max-w-full rounded-lg"
+          alt="复习题目图片"
+          @open="openZoom"
+        />
+        <p class="text-sm text-muted">先独立作答，再查看解析并记录结果。</p>
+        <button v-if="!revealAnswer" class="btn-primary" @click="revealAnswer = true">查看解析并评价</button>
+        <template v-else>
+          <p class="whitespace-pre-wrap break-words">
+            {{ currentReview.answer || '这道题还没有解析，请根据自己的作答情况评价。' }}
+          </p>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="(label, result) in REVIEW_RESULT_LABELS"
+              :key="result"
+              class="btn-ghost"
+              @click="rateReview(result)"
+            >
+              {{ label }}
+            </button>
+          </div>
+        </template>
+      </div>
+      <div v-else class="space-y-3">
+        <p role="status">本轮已复习 {{ reviewedIds.length }} 道题，下次复习日期已更新。</p>
+        <button class="btn-primary" @click="closeReview">完成本轮复习</button>
+      </div>
+    </Modal>
 
     <Modal title="收录错题" :show="showModal" @close="closeModal">
       <div class="space-y-3">

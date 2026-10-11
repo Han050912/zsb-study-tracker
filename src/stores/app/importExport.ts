@@ -112,6 +112,8 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         typeof q.mastered === 'boolean' &&
         optional(q.lastReviewedAt, count) &&
         optional(q.nextReviewDate, isCalendarDate) &&
+        optional(q.lastReviewResult, (v) => ['again', 'hard', 'good'].includes(String(v))) &&
+        optional(q.reviewStreak, count) &&
         ['image', 'answer', 'chapter'].every((k) => optional(q[k], text))
     )
   )
@@ -158,6 +160,7 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         text(t.text) &&
         typeof t.done === 'boolean' &&
         validNumber(t.order) &&
+        ['subjectId', 'chapterId'].every((k) => optional(t[k], text)) &&
         ['startAt', 'dueAt', 'completedAt'].every((k) => optional(t[k], count))
     )
   )
@@ -293,6 +296,7 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         text(r.description) &&
         ['solo', 'party'].includes(String(r.source)) &&
         optional(r.partnerName, text) &&
+        ['todoId', 'subjectId', 'chapterId'].every((k) => optional(r[k], text)) &&
         optional(r.completed, (v) => typeof v === 'boolean')
     )
   )

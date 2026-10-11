@@ -23,7 +23,7 @@ const modules = {
 }
 const result = await build({
   stdin: {
-    contents: `${script}\nexport {start,tick,giveUp,stopTimer,focusMinutes,breakMinutes,phase};`,
+    contents: `${script}\nexport {start,tick,giveUp,stopTimer,focusMinutes,breakMinutes,phase,pause,restoreSoloState,todoId,subjectId,chapterId,settlement,confirmTaskComplete};`,
     resolveDir: `${process.cwd()}/src/pages`,
     loader: 'ts'
   },
@@ -71,9 +71,15 @@ test('one-minute countdown settles on focus completion, without waiting for the 
     subjectMap: {},
     todayPomodoro: { count: 0, minutes: 0 },
     pomodoro: { records: [], interruptions: [] },
+    todos: [{ id: 'todo-1', text: '极限练习', done: false, subjectId: 'math', chapterId: 'limits' }],
+    toggles: 0,
+    toggleTodo(id) {
+      this.todos.find((todo) => todo.id === id).done = true
+      this.toggles++
+    },
     completed: [],
-    recordPomodoro(minutes, description) {
-      this.completed.push({ minutes, description })
+    recordPomodoro(minutes, description, source, partnerName, completed, links) {
+      this.completed.push({ minutes, description, completed, links: structuredClone(links) })
       return true
     }
   }
@@ -96,6 +102,43 @@ test('one-minute countdown settles on focus completion, without waiting for the 
     assert.equal(globalThis.__timerTestStore.completed.length, 1)
     timer.giveUp()
     assert.equal(globalThis.__timerTestStore.completed.length, 1)
+
+    // Restore a paused task-linked focus, then finish it after wall-clock waiting.
+    timer.todoId.value = 'todo-1'
+    timer.subjectId.value = 'math'
+    timer.chapterId.value = 'limits'
+    timer.start()
+    time += 30000
+    timer.pause()
+    assert.equal(JSON.parse(data.get('zsb-pomodoro-solo-v1:timer-user')).activeLinks.todoId, 'todo-1')
+    timer.subjectId.value = 'english'
+    timer.chapterId.value = 'reading'
+    timer.restoreSoloState()
+    assert.equal(timer.subjectId.value, 'math')
+    time += 120000 // Paused waiting is not part of recorded focus.
+    timer.start()
+    time += 30000
+    timer.tick()
+    const linked = globalThis.__timerTestStore.completed.at(-1)
+    assert.deepEqual(linked.links, { todoId: 'todo-1', subjectId: 'math', chapterId: 'limits' })
+    assert.equal(linked.minutes, 1)
+    assert.equal(globalThis.__timerTestStore.todos[0].done, false)
+    assert.equal(timer.settlement.value.todoId, 'todo-1')
+    timer.confirmTaskComplete()
+    timer.confirmTaskComplete()
+    assert.equal(globalThis.__timerTestStore.toggles, 1, 'only explicit confirmation completes the task, once')
+    assert.equal(globalThis.__timerTestStore.completed.length, 2, 'confirmation does not write duration again')
+    timer.giveUp() // End the break, without another learning record.
+
+    timer.focusMinutes.value = 25
+    timer.start()
+    time += 120000
+    timer.giveUp()
+    const early = globalThis.__timerTestStore.completed.at(-1)
+    assert.equal(early.minutes, 2)
+    assert.equal(early.completed, false)
+    assert.equal(early.links.todoId, 'todo-1')
+    assert.equal(globalThis.__timerTestStore.toggles, 1)
   } finally {
     timer.stopTimer()
     Date.now = originalNow

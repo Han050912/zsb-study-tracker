@@ -13,6 +13,7 @@ import { businessDate, formatMinutes } from '../utils/date'
 import Modal from '../components/Modal.vue'
 import type { PomodoroRecord } from '../types'
 import { sessionUser } from '../services/auth'
+import { subjectLabel } from '../utils/subject'
 
 const store = useAppStore()
 const toast = useToast()
@@ -48,8 +49,46 @@ let startTimestamp = 0
 /** 暂停前已累计的秒数，恢复计时后与新的时间差累加 */
 let pausedElapsed = 0
 /** 本次专注的任务描述（选填，maxlength 50）；开始番茄时捕获锁定 */
-const initialTask = useRoute().query.task
-const taskDescription = ref(typeof initialTask === 'string' ? initialTask.slice(0, 50) : '')
+const route = useRoute()
+const initialTask = route.query.task
+const todoId = ref(typeof route.query.todoId === 'string' ? route.query.todoId : '')
+const linkedTodo = computed(() => store.todos?.find((todo) => todo.id === todoId.value))
+const taskDescription = ref(
+  linkedTodo.value?.text.slice(0, 50) || (typeof initialTask === 'string' ? initialTask.slice(0, 50) : '')
+)
+const subjectId = ref(linkedTodo.value?.subjectId || '')
+const chapterId = ref(linkedTodo.value?.chapterId || '')
+type FocusLinks = Pick<PomodoroRecord, 'todoId' | 'subjectId' | 'chapterId'>
+let activeLinks: FocusLinks = {}
+type FocusSettlement = FocusLinks & { minutes: number; description: string }
+const settlement = ref<FocusSettlement | null>(null)
+const settlementTodo = computed(() => store.todos?.find((todo) => todo.id === settlement.value?.todoId))
+function focusDirection(links: FocusLinks) {
+  if (!links.subjectId) return '未分科目'
+  const subject = store.subjectMap[links.subjectId]
+  const chapter = subject?.chapters.find((item) => item.id === links.chapterId)
+  return [subjectLabel(subject, '已删除科目'), chapter?.name || (links.chapterId ? '原章节已删除' : '')]
+    .filter(Boolean)
+    .join(' · ')
+}
+function confirmTaskComplete() {
+  const todo = settlementTodo.value
+  if (todo && !todo.done) {
+    store.toggleTodo(todo.id)
+    toast('已完成关联任务，专注时长已保留')
+  }
+  settlement.value = null
+  syncSoloState()
+}
+function dismissSettlement() {
+  settlement.value = null
+  syncSoloState()
+}
+function recordFocus(minutes: number, completed = true) {
+  const recorded = store.recordPomodoro(minutes, activeDescription, 'solo', undefined, completed, activeLinks)
+  if (recorded) settlement.value = { ...activeLinks, minutes, description: activeDescription }
+  return recorded
+}
 /** 当前番茄锁定后的描述快照（开始后修改输入框不影响本番茄） */
 let activeDescription = ''
 
@@ -75,6 +114,8 @@ interface PersistedSoloState {
   startTimestamp: number
   /** 本次专注锁定的任务描述快照 */
   activeDescription: string
+  activeLinks?: FocusLinks
+  settlement?: FocusSettlement | null
   /** 落盘时刻 */
   savedAt: number
 }
@@ -109,6 +150,8 @@ function syncSoloState() {
     running: running.value,
     startTimestamp,
     activeDescription,
+    activeLinks,
+    settlement: settlement.value,
     savedAt: Date.now()
   }
   try {
@@ -160,6 +203,16 @@ function restoreSoloState() {
   breakMinutes.value = positiveOr(saved.breakMinutes, 5)
   phase.value = saved.phase
   activeDescription = saved.activeDescription || ''
+  const savedLinks = saved.activeLinks || {}
+  activeLinks = Object.fromEntries(
+    ['todoId', 'subjectId', 'chapterId']
+      .filter((key) => typeof savedLinks[key as keyof FocusLinks] === 'string')
+      .map((key) => [key, savedLinks[key as keyof FocusLinks]])
+  )
+  todoId.value = activeLinks.todoId || ''
+  subjectId.value = activeLinks.subjectId || ''
+  chapterId.value = activeLinks.chapterId || ''
+  settlement.value = saved.settlement && Number.isFinite(saved.settlement.minutes) ? saved.settlement : null
   taskDescription.value = activeDescription
   pausedElapsed = Number.isFinite(saved.pausedElapsed) && saved.pausedElapsed > 0 ? Math.floor(saved.pausedElapsed) : 0
   if (saved.running) {
@@ -288,6 +341,12 @@ function start() {
     }
     phase.value = 'focus'
     activeDescription = taskDescription.value.trim().slice(0, 50)
+    activeLinks = {
+      todoId: linkedTodo.value?.id,
+      subjectId: subjectId.value || undefined,
+      chapterId: subjectId.value ? chapterId.value || undefined : undefined
+    }
+    settlement.value = null
     seconds.value = 0
     pausedElapsed = 0
     document.documentElement.requestFullscreen?.().catch(() => {})
@@ -311,7 +370,7 @@ function completePhase() {
   stopTimer()
   if (phase.value === 'focus') {
     // 仅在实际记录成功后提示完成；积分由服务端按每日额度确认。
-    const recorded = store.recordPomodoro(focusMinutes.value, activeDescription)
+    const recorded = recordFocus(focusMinutes.value)
     if (recorded) toast('番茄钟已完成')
     phase.value = 'break'
     seconds.value = 0
@@ -340,7 +399,7 @@ function giveUp() {
     // 达标口径：正计时以「结束」为完成；倒计时须已累计到设定时长。未达标只记真实时长，不发完成奖励
     const completed = mode.value === 'countup' || elapsed >= focusMinutes.value * 60
     // P2-03：recordPomodoro 返回是否实际记录（minutes < 1 时不记录），提示与实际保持一致
-    const recorded = store.recordPomodoro(minutes, activeDescription, 'solo', undefined, completed)
+    const recorded = recordFocus(minutes, completed)
     if (recorded) {
       toast(
         completed ? '番茄钟已完成' : `已记录 ${minutes} 分钟专注（未满 ${focusMinutes.value} 分钟，不计入完成番茄）`
@@ -606,6 +665,29 @@ function cancelEdit() {
             placeholder="本次专注的任务，如：复习高数第三章"
           />
         </div>
+        <p v-if="linkedTodo" class="text-xs text-muted">
+          关联任务：{{ linkedTodo.text }}{{ linkedTodo.done ? '（已完成）' : '' }}
+        </p>
+        <p v-else-if="todoId" class="text-xs text-muted">原任务已删除，本次专注仍可记录。</p>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label for="pomo-subject" class="label">计入科目（选填）</label>
+            <select id="pomo-subject" v-model="subjectId" class="input" @change="chapterId = ''">
+              <option value="">未分科目</option>
+              <option v-if="subjectId && !store.subjectMap[subjectId]" :value="subjectId">已删除科目</option>
+              <option v-for="s in store.subjects" :key="s.id" :value="s.id">{{ subjectLabel(s) }}</option>
+            </select>
+          </div>
+          <div>
+            <label for="pomo-chapter" class="label">章节（选填）</label>
+            <select id="pomo-chapter" v-model="chapterId" class="input" :disabled="!subjectId">
+              <option value="">不限章节</option>
+              <option v-for="ch in store.subjectMap[subjectId]?.chapters || []" :key="ch.id" :value="ch.id">
+                {{ ch.name }}
+              </option>
+            </select>
+          </div>
+        </div>
         <button
           class="btn-primary w-full !py-3 text-base disabled:opacity-50 disabled:cursor-not-allowed"
           :disabled="partyActive"
@@ -669,6 +751,9 @@ function cancelEdit() {
             </template>
             <template v-else>
               <span class="opacity-60 whitespace-nowrap">{{ fmtClock(r.time) }}</span>
+              <span v-if="r.subjectId" class="text-xs" :title="focusDirection(r)">{{
+                subjectLabel(store.subjectMap[r.subjectId], '已删除科目')
+              }}</span>
               <span class="flex-1 truncate" :class="r.description ? '' : 'italic opacity-50'">{{
                 r.description || '未命名'
               }}</span>
@@ -770,6 +855,29 @@ function cancelEdit() {
     </div>
 
     <!-- 中断原因弹窗 -->
+    <Modal :show="!!settlement" title="本次专注已记录" @close="dismissSettlement">
+      <div v-if="settlement" class="space-y-3">
+        <p class="text-lg font-semibold">{{ formatMinutes(settlement.minutes) }} · {{ focusDirection(settlement) }}</p>
+        <p v-if="settlement.description" class="text-sm">{{ settlement.description }}</p>
+        <p class="text-sm text-muted">
+          时长已计入学习统计，无需再手动记录。{{ phase === 'break' ? '休息计时正在继续。' : '' }}
+        </p>
+        <p v-if="settlementTodo && !settlementTodo.done" class="text-sm">
+          任务「{{ settlementTodo.text }}」也完成了吗？
+        </p>
+        <p v-else-if="settlement.todoId" class="text-sm text-muted">
+          {{ settlementTodo ? '关联任务已经完成。' : '原任务已删除，专注记录仍保留。' }}
+        </p>
+      </div>
+      <template #footer>
+        <button class="btn-ghost" @click="dismissSettlement">
+          {{ settlementTodo && !settlementTodo.done ? '任务还需继续' : '知道了' }}
+        </button>
+        <button v-if="settlementTodo && !settlementTodo.done" class="btn-primary" @click="confirmTaskComplete">
+          任务已完成
+        </button>
+      </template>
+    </Modal>
     <Modal :show="showInterrupt" title="记录中断原因" @close="showInterrupt = false">
       <input
         v-model="interruptReason"

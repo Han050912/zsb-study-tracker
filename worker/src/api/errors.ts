@@ -17,6 +17,8 @@ const errorBodySchema = z
     mastered: z.boolean().optional(),
     lastReviewedAt: z.number().int().nonnegative().optional(),
     nextReviewDate: z.iso.date().optional(),
+    lastReviewResult: z.enum(['again', 'hard', 'good']).optional(),
+    reviewStreak: z.number().int().nonnegative().optional(),
     createdAt: z.number().optional()
   })
   .passthrough()
@@ -39,6 +41,8 @@ export const errorsMapping = crudHandlers({
     mastered: b.mastered ? 1 : 0,
     last_reviewed_at: b.lastReviewedAt ?? null,
     next_review_date: b.nextReviewDate ?? null,
+    last_review_result: b.lastReviewResult ?? null,
+    review_streak: b.reviewStreak ?? 0,
     created_at: b.createdAt ?? Date.now()
   }),
   fromRow: (r) => ({
@@ -54,6 +58,8 @@ export const errorsMapping = crudHandlers({
     mastered: !!r.mastered,
     lastReviewedAt: r.last_reviewed_at ?? undefined,
     nextReviewDate: r.next_review_date ?? undefined,
+    lastReviewResult: r.last_review_result ?? undefined,
+    reviewStreak: r.review_streak ?? 0,
     createdAt: r.created_at
   })
 })

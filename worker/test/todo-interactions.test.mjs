@@ -149,6 +149,19 @@ function node(tag, text = '') {
     children: [],
     parent: null,
     value: '',
+    selected: false,
+    multiple: false,
+    get options() {
+      return this.children.flatMap((child) => (child.tag === 'option' ? [child] : child.options))
+    },
+    get selectedIndex() {
+      return this.options.findIndex((option) => option.selected)
+    },
+    set selectedIndex(index) {
+      this.options.forEach((option, optionIndex) => {
+        option.selected = optionIndex === index
+      })
+    },
     listeners: {},
     focus() {
       document.activeElement = this
@@ -188,6 +201,8 @@ const renderer = createRenderer({
   },
   patchProp: (element, key, _previous, value) => {
     element.props[key] = value
+    if (key === 'value') element._value = value
+    if (key === 'multiple') element.multiple = value != null && value !== false
   },
   insert(element, parent, anchor = null) {
     // Native DOM insertion can blur a focused descendant while Vue moves a keyed task row.
@@ -260,7 +275,9 @@ function originalTodo() {
     updatedAt: 1
   }
 }
-beforeEach(() => {
+beforeEach((t) => {
+  // A failed render must not leave Dashboard's clock alive after the test ends.
+  t.mock.timers.enable({ apis: ['setInterval'] })
   data.clear()
   setOutboxUser('todo-user')
   const state = (globalThis.__todoFeedback = {
@@ -553,7 +570,7 @@ test('adding a future task and editing its reminders preserves the viewed task d
     (element) => element.tag === 'form' && element.props.class === 'dashboard-add-task'
   ).props.onSubmit({ preventDefault() {} })
   await nextTick()
-  let dialog = find(page.root, (element) => element.props['data-title'] === '设定任务时间')
+  let dialog = find(page.root, (element) => element.props['data-title'] === '安排任务')
   assert.match(text(dialog), new RegExp(date))
   await type(
     find(dialog, (element) => element.props['aria-label'] === '开始时间'),

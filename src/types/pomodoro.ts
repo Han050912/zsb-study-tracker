@@ -10,6 +10,10 @@ export interface PomodoroRecord {
   /** 是否完成设定专注时长；旧记录缺字段时沿用已完成语义 */
   completed?: boolean
   description: string
+  /** 专注开始时锁定的任务与学习方向，不额外创建学习时长记录。 */
+  todoId?: string
+  subjectId?: string
+  chapterId?: string
   /** 'solo' 单人 | 'party' 双人开黑 */
   source: 'solo' | 'party'
   /** 开黑搭子昵称快照（source='party' 时有值） */
