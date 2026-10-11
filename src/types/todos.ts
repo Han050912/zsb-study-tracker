@@ -7,6 +7,9 @@ export interface Todo {
   text: string
   done: boolean
   order: number
+  /** 学习任务归属；未填写或科目被删除时仍可完成任务。 */
+  subjectId?: string
+  chapterId?: string
   /** 标记完成的具体时间（时间戳），随待办永久保存；未完成/取消完成时该字段不存在 */
   completedAt?: number
   /** 计划开始时间（时间戳）：到点提醒任务已开始；未设置则不提醒 */

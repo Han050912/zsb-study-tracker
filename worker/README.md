@@ -75,7 +75,7 @@ npm run dev
 npm run init:local
 ```
 
-当前快照包含 `0001`–`0011` 的结构与索引；数据修复迁移在空库中没有历史数据需要处理。确认快照全部执行成功后，用随快照维护的 `schema-baseline.sql` 登记这十一项为新库迁移基线：
+当前快照包含 `0001`–`0013` 的结构与索引；数据修复迁移在空库中没有历史数据需要处理。确认快照全部执行成功后，用随快照维护的 `schema-baseline.sql` 登记这十三项为新库迁移基线：
 
 ```powershell
 node scripts/check-migration-baseline.mjs
@@ -103,11 +103,15 @@ npx wrangler d1 migrations apply zsb-study-db --local
 | `0004_repair_team_champion_awards.sql` | 为符合历史条件的挑战参与者补齐团队冠军徽章、通知和动态。               |
 | `0005_pomodoro_completed.sql`          | 为番茄记录增加完成状态。                                               |
 | `0006_align_schema_column_order.sql`   | 重建六张表，使列顺序与 `schema.sql` 完全一致，并保留现有值和 `rowid`。 |
-| `0007_profile_learning_privacy.sql`   | 保存学习公开许可（默认关闭）。                                       |
-| `0008_material_favorites.sql`         | 保存资料收藏状态。                                                   |
-| `0009_error_review_schedule.sql`      | 保存错题复习日期与间隔。                                             |
-| `0010_auth_sessions_reports.sql`      | 增加服务端会话版本、去重历史 pending 举报并建立唯一约束。             |
-| `0011_data_integrity.sql`             | 保留缺失明细的旧番茄汇总基数，建立唯一打断事件，并重算日统计。         |
+| `0007_profile_learning_privacy.sql`    | 保存学习公开许可（默认关闭）。                                         |
+| `0008_material_favorites.sql`          | 保存资料收藏状态。                                                     |
+| `0009_error_review_schedule.sql`       | 保存错题复习日期与间隔。                                               |
+| `0010_auth_sessions_reports.sql`       | 增加服务端会话版本、去重历史 pending 举报并建立唯一约束。              |
+| `0011_data_integrity.sql`              | 保留缺失明细的旧番茄汇总基数，建立唯一打断事件，并重算日统计。         |
+| `0012_focus_task_links.sql`            | 为待办与专注记录增加可选任务、科目和章节关联；时长仍只计入一次。       |
+| `0013_error_review_feedback.sql`       | 记录错题作答反馈和连续独立做对次数；旧复习次数不会被当作答对次数。     |
+
+`0012`、`0013` 需在启动本版 Worker 前完成；旧数据的关联和作答反馈保持为空，连续答对次数从 0 开始。
 
 `0006` 重建 `community_posts`、`community_comments`、`community_messages`、`community_notifications`、`partner_study_sessions` 和 `pomodoro_records`，按列名复制所有现有值和 `rowid`，并重建原有索引。帖子和评论先复制到临时表，临时评论的外键指向临时帖子，避免删除旧帖子表时触发级联删除而丢失评论。该迁移以 `0001`–`0005` 完成后的结构为前提；旧库应通过 `migrations apply` 按顺序应用所有待执行迁移。
 

@@ -17,7 +17,8 @@ type PomodoroActionsShape = {
     description?: string,
     source?: 'solo' | 'party',
     partnerName?: string,
-    completed?: boolean
+    completed?: boolean,
+    links?: Pick<PomodoroRecord, 'todoId' | 'subjectId' | 'chapterId'>
   ): boolean
   updatePomodoroRecordDescription(id: string, text: string): void
   recordInterruption(reason: string): void
@@ -34,7 +35,8 @@ export const pomodoroActions: PomodoroActionsShape = {
     description = '',
     source: 'solo' | 'party' = 'solo',
     partnerName?: string,
-    completed = true
+    completed = true,
+    links?: Pick<PomodoroRecord, 'todoId' | 'subjectId' | 'chapterId'>
   ): boolean {
     if (!Number.isFinite(minutes) || minutes < 1) return false
     const t = today()
@@ -54,6 +56,9 @@ export const pomodoroActions: PomodoroActionsShape = {
       partnerName,
       completed
     }
+    if (links?.todoId) record.todoId = links.todoId
+    if (links?.subjectId) record.subjectId = links.subjectId
+    if (links?.subjectId && links.chapterId) record.chapterId = links.chapterId
     this.pomodoro.records.push(record)
     // 积分 refId = 本次番茄记录 id（每次完成必新建记录，天然确定性幂等）；仅达标番茄发奖励
     if (completed) this.addPoints(5, '完成番茄钟', record.id)

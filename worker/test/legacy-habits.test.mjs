@@ -24,6 +24,7 @@ const compiled = await build({
   platform: 'node',
   external: ['vue'],
   write: false,
+  define: { __DESKTOP_BUILD__: 'false', 'import.meta.env': '{"VITE_API_BASE":"https://test.invalid"}' },
   plugins: [
     {
       name: 'browser-and-auth-boundaries',

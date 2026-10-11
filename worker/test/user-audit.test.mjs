@@ -64,6 +64,8 @@ const result = await build({
         export const reconcileNoteBodies = async () => {};
         export const hasPendingNoteBodies = () => false;
         export const isNoteRestorePending=()=>false; export const finishNoteRestore=()=>{};
+        export const noteBodyStorageIssue={value:null}; export const hasVolatileNoteBodies=()=>false;
+        export const exportNoteBody=async note=>({content:'',updatedAt:note.bodyUpdatedAt||0});
         export const flushPendingNoteBodies = () => globalThis.__auditApi.bodies();`
           }
         })

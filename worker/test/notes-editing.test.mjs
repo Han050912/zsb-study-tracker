@@ -6,6 +6,10 @@ import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
 import { createRenderer, nextTick, reactive } from 'vue'
+import { noteStorageFixture } from './note-storage-fixture.mjs'
+
+const noteStorage = noteStorageFixture()
+globalThis.indexedDB = noteStorage.indexedDB
 
 const notesSource = await readFile('src/pages/Notes.vue', 'utf8')
 const tabSource = await readFile('src/components/subject/NotesTab.vue', 'utf8')
@@ -40,7 +44,8 @@ function compileComponent(source, filename, templateSource) {
 
 globalThis.Document = class Document {}
 globalThis.document = Object.assign(new Document(), { activeElement: null })
-globalThis.window = { addEventListener() {}, removeEventListener() {} }
+globalThis.window = new EventTarget()
+globalThis.__notesSession = { value: { id: 'notes-user' } }
 globalThis.ResizeObserver = class {
   observe() {}
   disconnect() {}
@@ -99,7 +104,7 @@ const built = await build({
           if (path.endsWith('stores/app'))
             return { contents: 'export const useAppStore = () => globalThis.__notesFixture.store;' }
           if (path.endsWith('services/auth'))
-            return { contents: `export const sessionUser = { value: { id: 'notes-user' } };` }
+            return { contents: `export const sessionUser = globalThis.__notesSession;` }
           if (path.endsWith('syncOutbox'))
             return {
               contents: `export const stageUpsert = (...args) => globalThis.__notesFixture.upserts.push(JSON.parse(JSON.stringify(args)));
@@ -109,7 +114,10 @@ const built = await build({
             return {
               contents: 'export const useToast = () => (message) => globalThis.__notesFixture.toasts.push(message);'
             }
-          if (path.endsWith('useConfirm')) return { contents: 'export const useConfirm = () => async () => true;' }
+          if (path.endsWith('useConfirm'))
+            return {
+              contents: 'export const useConfirm = () => (...args) => globalThis.__notesFixture.confirm(...args);'
+            }
           if (path.endsWith('api/pdfs'))
             return {
               contents:
@@ -151,6 +159,11 @@ const {
   getNoteBody,
   flushPendingNoteBodies,
   reconcileNoteBodies,
+  hasVolatileNoteBodies,
+  noteBodySaveState,
+  retryNoteBodyStorage,
+  noteConflicts,
+  queueNoteBody,
   renderMarkdown
 } = await import(pathToFileURL(resolve(filename)).href)
 after(() => unlink(filename))
@@ -246,11 +259,15 @@ async function click(element) {
   await nextTick()
 }
 beforeEach(async () => {
+  globalThis.__notesSession.value = { id: 'notes-user' }
+  noteStorage.failWrite = false
+  noteStorage.rows.clear()
   globalThis.__notesFixture = {
     route: reactive({ query: {} }),
     upserts: [],
     remote: new Map(),
     toasts: [],
+    confirm: async () => true,
     store: reactive({
       notes: [],
       materials: [],
@@ -264,7 +281,71 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   for (const app of apps.splice(0)) app.unmount()
+  noteStorage.failWrite = false
+  await retryNoteBodyStorage()
   await setNoteBodyUser(null)
+})
+
+test('session-expiry draft flush retains unsaved text and old-account metadata even when IndexedDB fails', async () => {
+  const { store, upserts } = globalThis.__notesFixture
+  const page = await mount()
+  await click(page.button('新建笔记'))
+  await type(page.title(), '过期前的草稿')
+  await type(page.body(), '尚未点保存的私有正文')
+  noteStorage.failWrite = true
+  // forgetSession emits this synchronously while the old account still owns the editor.
+  window.dispatchEvent(new Event('zsb:flush-note-drafts'))
+  const id = store.notes[0].id
+  globalThis.__notesSession.value = null
+  store.notes = []
+  apps.splice(0).forEach((app) => app.unmount())
+  await setNoteBodyUser(null)
+  assert.ok(upserts.some((entry) => entry[1] === id))
+  assert.equal(hasVolatileNoteBodies(true), true)
+  await setNoteBodyUser('other-account')
+  assert.equal(getNoteBody(id), '')
+  assert.equal(hasVolatileNoteBodies(), false)
+  await setNoteBodyUser('notes-user')
+  assert.equal(getNoteBody(id), '尚未点保存的私有正文')
+  assert.equal(noteBodySaveState(id), 'memory')
+  noteStorage.failWrite = false
+  assert.equal(await retryNoteBodyStorage(), true)
+  assert.equal(noteBodySaveState(id), 'local')
+})
+
+test('a pending delete confirmation cannot delete a same-id note in the next account', async () => {
+  const { store, route } = globalThis.__notesFixture
+  const id = store.saveNote({ title: 'A 的笔记', content: 'A 的正文', subjectId: 'math' })
+  route.query = { id }
+  const page = await mount()
+  let resolveConfirm
+  globalThis.__notesFixture.confirm = () =>
+    new Promise((resolve) => {
+      resolveConfirm = resolve
+    })
+  const pending = page.state.removeNote()
+  globalThis.__notesSession.value = { id: 'different-account' }
+  store.notes = [{ id, title: 'B 的笔记', subjectId: 'math', tags: [], updatedAt: 100, bodyUpdatedAt: 100 }]
+  resolveConfirm(true)
+  await pending
+  assert.equal(store.notes.length, 1)
+  assert.equal(store.notes[0].title, 'B 的笔记')
+})
+
+test('a remote winner preserves the overwritten local body as an account-scoped recoverable conflict', async () => {
+  queueNoteBody('conflicted', '原本机正文', 100)
+  globalThis.__notesFixture.remote.set('conflicted', { id: 'conflicted', content: '远端新正文', updatedAt: 200 })
+  await reconcileNoteBodies([
+    { id: 'conflicted', title: '冲突笔记', subjectId: 'math', tags: [], updatedAt: 200, bodyUpdatedAt: 200 }
+  ])
+  assert.equal(getNoteBody('conflicted'), '远端新正文')
+  assert.equal(noteConflicts.value.length, 1)
+  assert.equal(noteConflicts.value[0].content, '原本机正文')
+  assert.equal(noteConflicts.value[0].persisted, true)
+  await setNoteBodyUser('other-account')
+  assert.equal(noteConflicts.value.length, 0)
+  await setNoteBodyUser('notes-user')
+  assert.equal(noteConflicts.value[0].content, '原本机正文')
 })
 
 test('title normalization applies to create, edit, import, and the authoritative server mapping', () => {
@@ -341,6 +422,7 @@ test('saving appended Markdown preserves newlines through editor, cache, push/pu
   assert.deepEqual((await flushPendingNoteBodies()).failures, [])
   assert.equal(globalThis.__notesFixture.remote.get(id).content, appended)
   await setNoteBodyUser(null)
+  noteStorage.rows.clear() // Simulate another device without an existing IndexedDB cache.
   await setNoteBodyUser('notes-user')
   assert.equal(getNoteBody(id), '')
   await reconcileNoteBodies(store.notes)

@@ -5,6 +5,7 @@ import { mkdir, writeFile, unlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createPinia, setActivePinia } from 'pinia'
+import { noteStorageFixture } from './note-storage-fixture.mjs'
 
 const data = new Map()
 globalThis.localStorage = {
@@ -84,6 +85,7 @@ function deferred() {
 }
 async function fixture() {
   data.clear()
+  globalThis.indexedDB = noteStorageFixture().indexedDB
   globalThis.__frontendFix = {
     user: { value: { id: 'A' } },
     uploadJson: async () => ({ id: 'image-id' }),

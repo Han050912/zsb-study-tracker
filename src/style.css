@@ -791,6 +791,7 @@
   }
   .app-brand {
     display: flex;
+    position: relative;
     align-items: center;
     min-height: 80px;
     gap: 10px;
@@ -799,6 +800,47 @@
     font-size: 20px;
     font-weight: 700;
     white-space: nowrap;
+  }
+  .brand-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+  }
+  .update-new-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 31px;
+    height: 17px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--base-correction);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    box-shadow: 0 0 0 2px var(--shell);
+    border: 0;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .update-new-badge:hover,
+  .update-new-badge:focus-visible {
+    filter: brightness(1.08);
+    outline: 2px solid color-mix(in srgb, var(--base-correction) 45%, transparent);
+    outline-offset: 2px;
+  }
+  .update-new-badge-collapsed {
+    position: absolute;
+    top: 13px;
+    right: 4px;
+    min-width: 27px;
+    height: 15px;
+    padding-inline: 3px;
+    font-size: 8px;
+    box-shadow: 0 0 0 2px var(--shell);
   }
   .app-brand:hover {
     color: var(--on-shell-muted);

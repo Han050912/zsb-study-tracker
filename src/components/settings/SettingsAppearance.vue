@@ -4,17 +4,36 @@ import { computed, ref } from 'vue'
 import { useToast } from '../../composables/useToast'
 import { useAppStore } from '../../stores/app'
 import { isDesktopNotify, notifyPermission, requestNotifyPermission } from '../../services/notify'
-import type { NotificationType } from '../../types'
+import type { NotificationType, Settings } from '../../types'
+import { autoUpdateEnabled, readAutoUpdatePreference, setAutoUpdateEnabled } from '../../composables/useUpdateState'
 
 const store = useAppStore()
 const toast = useToast()
 const s = computed(() => store.settings)
 
-function update(key: string, value: any) {
-  store.updateSettings({ [key]: value })
+const updater = typeof window !== 'undefined' ? window.updater : undefined
+/** 更新检查偏好按设备保存，避免在另一台设备上突然弹出桌面更新弹窗。 */
+const storedAutoUpdate = readAutoUpdatePreference()
+const autoUpdateCheck = ref(
+  store.settings.autoUpdateCheck === false ? false : (storedAutoUpdate ?? autoUpdateEnabled.value)
+)
+if (storedAutoUpdate === null && store.settings.autoUpdateCheck === false) setAutoUpdateEnabled(false)
+
+function update<K extends keyof Settings>(key: K, value: Settings[K]) {
+  store.updateSettings({ [key]: value } as Partial<Settings>)
 }
 
-function applyTheme(t: string) {
+function toggleAutoUpdateCheck(value: boolean) {
+  autoUpdateCheck.value = value
+  setAutoUpdateEnabled(value)
+  // Keep the preference in the settings snapshot for older clients and sync,
+  // while localStorage remains the device-level source of truth.
+  update('autoUpdateCheck', value)
+  window.dispatchEvent(new CustomEvent('update:auto-preference', { detail: value }))
+  toast(value ? '已开启自动检查更新' : '已关闭自动检查更新，将通过导航栏 NEW 提示新版本')
+}
+
+function applyTheme(t: Settings['theme']) {
   update('theme', t)
   const dark = t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)
   document.documentElement.classList.toggle('dark', dark)
@@ -113,6 +132,22 @@ function toggleMutedType(t: NotificationType) {
           {{ s.reminderEnabled ? '已开启' : '已关闭' }}
         </button>
       </div>
+    </div>
+    <div v-if="updater" class="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-line">
+      <div>
+        <span class="text-sm">自动检测更新</span>
+        <p class="text-xs text-slate-400 mt-0.5">关闭后不自动弹出更新窗口；有新版本时在导航栏显示 NEW，点击即可查看</p>
+      </div>
+      <button
+        class="btn !text-xs shrink-0 min-w-16 whitespace-nowrap"
+        :class="autoUpdateCheck ? 'bg-action text-on-action' : 'bg-slate-100 dark:bg-slate-700'"
+        role="switch"
+        :aria-checked="autoUpdateCheck"
+        aria-label="自动检测更新"
+        @click="toggleAutoUpdateCheck(!autoUpdateCheck)"
+      >
+        {{ autoUpdateCheck ? '已开启' : '已关闭' }}
+      </button>
     </div>
   </div>
   <div class="card space-y-4">

@@ -214,6 +214,9 @@ window.addEventListener('storage', (e) => {
 
 /** 会话失效的本地收尾；不再向可能已经换号的共享 Cookie 发送 logout。 */
 export function forgetSession(): void {
+  // 401 / 其他标签切号也可能发生在输入期间。此时旧账号身份与正文缓存仍可用于
+  // 本地保存；先通知编辑器，再清身份并让 App 重置数据，不能等卸载时才补救。
+  if (currentUser.value) window.dispatchEvent(new Event('zsb:flush-note-drafts'))
   currentUser.value = null
   exitGuestMode()
   clearApiCaches()

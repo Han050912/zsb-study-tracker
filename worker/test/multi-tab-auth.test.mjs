@@ -136,6 +136,20 @@ test('another tab login expires old account state and generation without clearin
   assert.equal(browser.logoutCalls(), 0)
 })
 
+test('cross-tab account change flushes editor drafts while the old identity is still available', async () => {
+  const browser = browsers(),
+    a = browser.tab(),
+    b = browser.tab()
+  await a.api.login('A', 'abc12345')
+  const owners = []
+  a.listeners.set('zsb:flush-note-drafts', [() => owners.push(a.api.sessionUser.value?.id)])
+  await b.api.login('B', 'abc12345')
+  assert.deepEqual(owners, ['A'])
+  assert.equal(a.api.sessionUser.value, null)
+  assert.equal(b.api.sessionUser.value.id, 'B')
+  assert.equal(browser.writes.length, 0, 'draft protection does not issue requests through the new cookie')
+})
+
 test('before storage delivery, private fetch and unload writes still carry the old expected account', async () => {
   const browser = browsers(false),
     a = browser.tab(),

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useAppStore } from '../stores/app'
 import { formatMinutes } from '../utils/date'
 import { masteryOverview } from '../utils/studyOverview'
+import { attributedFocusRecords } from '../utils/studyTime'
 import ChapterTree from './subject/ChapterTree.vue'
 import RecordsTab from './subject/RecordsTab.vue'
 import ProblemsTab from './subject/ProblemsTab.vue'
@@ -20,7 +21,7 @@ function selectTab(value: string) {
 }
 
 const subjectRecords = computed(() =>
-  store.records
+  [...store.records, ...Object.keys(store.pomodoro.daily).flatMap((date) => attributedFocusRecords(store, date))]
     .filter((r) => r.subjectId === props.subjectId)
     .slice()
     .reverse()

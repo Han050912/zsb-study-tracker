@@ -8,7 +8,8 @@ const {
   isAllowedExternalUrl,
   isInternalAppUrl,
   resolveNotificationIconUrl,
-  resolveAppPath
+  resolveAppPath,
+  resolveDevServerUrl
 } = require('./security.cjs')
 
 const AVATAR = '/api/avatar/0123456789abcdef.png'
@@ -183,4 +184,11 @@ test('resolveAppPath: 非法百分号编码返回 400', () => {
   assert.equal(resolveAppPath('/%zz', DIST_ROOT).status, 400)
   assert.equal(resolveAppPath('/assets/%', DIST_ROOT).status, 400)
   assert.equal(resolveAppPath(undefined, DIST_ROOT).status, 400)
+})
+
+test('resolveDevServerUrl: 开发 preload 只允许回环地址', () => {
+  assert.equal(resolveDevServerUrl('http://localhost:5173'), 'http://localhost:5173/')
+  assert.equal(resolveDevServerUrl('https://127.0.0.1:8443/vite'), 'https://127.0.0.1:8443/vite')
+  assert.equal(resolveDevServerUrl('https://attacker.example/'), 'http://localhost:5173')
+  assert.equal(resolveDevServerUrl('file:///tmp/evil'), 'http://localhost:5173')
 })

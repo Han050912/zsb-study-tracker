@@ -88,6 +88,19 @@ async function authFixture(t, desktop = false) {
   }
 }
 
+test('401 expiry flushes the editor before clearing the account or notifying application reset', async (t) => {
+  const { auth } = await authFixture(t)
+  await auth.login('原账号', 'abc12345')
+  const order = []
+  window.addEventListener('zsb:flush-note-drafts', () => order.push(['draft', auth.sessionUser.value?.id]))
+  window.addEventListener('auth:expired', () => order.push(['reset', auth.sessionUser.value?.id ?? null]))
+  window.dispatchEvent(new CustomEvent('auth:expired'))
+  assert.deepEqual(order, [
+    ['draft', 'u-1'],
+    ['reset', null]
+  ])
+})
+
 test('在途退出的迟到 Set-Cookie 不会清除刚建立的新登录会话', async (t) => {
   const fixture = await authFixture(t)
   await fixture.auth.login('原账号', 'abc12345')

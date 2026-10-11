@@ -26,6 +26,7 @@ const frontend = await compile({
     resolveDir: root
   },
   external: ['vue'],
+  define: { __DESKTOP_BUILD__: 'false', 'import.meta.env': '{}' },
   plugins: [
     {
       name: 'frontend-boundaries',
@@ -52,7 +53,9 @@ const frontend = await compile({
               export const flushPendingNoteBodies=async()=>({revisions:new Map(),failures:[]});
               export const hasPendingNoteBodies=()=>false; export const getNoteBody=()=>'';
               export const queueNoteBody=()=>{}; export const clearAllNoteBodies=()=>{};
-              export const isNoteRestorePending=()=>false; export const finishNoteRestore=()=>{};`
+              export const isNoteRestorePending=()=>false; export const finishNoteRestore=()=>{};
+              export const noteBodyStorageIssue={value:null}; export const hasVolatileNoteBodies=()=>false;
+              export const exportNoteBody=async note=>({content:'',updatedAt:note.bodyUpdatedAt||0});`
           }
         })
       }

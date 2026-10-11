@@ -5,18 +5,18 @@
 
 import type { AppStoreThis } from './this-type'
 import { today, uid } from '../../utils/date'
-import { nextErrorReviewDate } from '../../utils/errorReview'
+import { nextErrorReviewDate, reviewSchedule } from '../../utils/errorReview'
 import { stageDelete } from '../../services/syncOutbox'
 import { touchRecord } from './staging'
 import { ERROR_IMAGE_PREFIX, dataUrlToBytes, uploadErrorImage } from '../../api/errorImages'
-import type { ErrorQuestion } from '../../types'
+import type { ErrorQuestion, ErrorReviewResult } from '../../types'
 import { sessionUser } from '../../services/auth'
 import { getSessionVersion } from '../../utils/session'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type ErrorsActionsShape = {
   addErrorQuestion(q: Omit<ErrorQuestion, 'id' | 'createdAt' | 'reviewCount' | 'mastered'>): void
-  reviewError(id: string): boolean
+  reviewError(id: string, result?: ErrorReviewResult): boolean
   toggleErrorMastered(id: string): void
   deleteError(id: string): void
   migrateErrorImages(): Promise<void>
@@ -44,13 +44,17 @@ export const errorsActions: ErrorsActionsShape = {
    * 本地 +2 又被权威快照抹掉的「先跳后落」（issue #32）。
    * @returns 本次是否发放了积分（true=首次复习），供 UI 对齐提示文案使「提示 == 实际到账」。
    */
-  reviewError(this: AppStoreThis, id: string): boolean {
+  reviewError(this: AppStoreThis, id: string, result?: ErrorReviewResult): boolean {
     const q = this.errorQuestions.find((e) => e.id === id)
     if (!q) return false
     const firstReview = q.reviewCount === 0
     q.reviewCount++
-    q.lastReviewedAt = Date.now()
-    q.nextReviewDate = nextErrorReviewDate(q.reviewCount, q.mastered, q.lastReviewedAt)
+    if (result) Object.assign(q, reviewSchedule(q, result))
+    else {
+      // 保留旧调用方的日期语义；新界面始终提交明确的作答结果。
+      q.lastReviewedAt = Date.now()
+      q.nextReviewDate = nextErrorReviewDate(q.reviewCount, q.mastered, q.lastReviewedAt)
+    }
     touchRecord('errorQuestions', q)
     if (firstReview) this.addPoints(2, '复习错题', `error:${id}`)
     this.save()

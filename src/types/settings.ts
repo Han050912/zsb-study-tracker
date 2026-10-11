@@ -42,6 +42,8 @@ export interface Settings {
   partnerShareEnabled: boolean
   /** 允许搭子向我发送学习鼓励提醒（默认开启） */
   partnerRemindEnabled: boolean
+  /** 是否自动弹出更新提示（关闭后仍静默检查，可手动查看并通过导航 NEW 提示） */
+  autoUpdateCheck?: boolean
   /** 记录级 LWW 时间戳（settings 域键 self 的同步时间戳，运行时字段，不进 UI） */
   updatedAt?: number
 }

@@ -44,3 +44,11 @@ export async function fetchPdf(id: string): Promise<Uint8Array> {
   if (version !== getSessionVersion()) throw new ApiError('登录状态已改变，请重试', 409)
   return bytes
 }
+
+/** Used to discard newly prepared backup files when restoration cannot proceed. */
+export async function deletePdf(id: string): Promise<void> {
+  const version = getSessionVersion()
+  const res = await authFetch(`/api/pdfs/${id}`, { method: 'DELETE' })
+  await ensureOk(res, '清理临时 PDF')
+  if (version !== getSessionVersion()) throw new ApiError('登录状态已改变，请重试', 409)
+}

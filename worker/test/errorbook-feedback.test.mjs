@@ -58,6 +58,7 @@ const built = await build({
     {
       name: 'errorbook-feedback-boundaries',
       setup(builder) {
+        builder.onResolve({ filter: /^vue-router$/ }, () => ({ path: 'router', namespace: 'boundary' }))
         builder.onResolve(
           {
             filter:
@@ -84,6 +85,7 @@ const built = await build({
           return { contents: 'export default { render: () => null };' }
         })
         builder.onLoad({ filter: /.*/, namespace: 'boundary' }, ({ path }) => {
+          if (path === 'router') return { contents: 'export const useRoute = () => ({ query: {} });' }
           if (path.endsWith('stores/app'))
             return { contents: 'export const useAppStore = () => globalThis.__errorbook.store;' }
           if (path.endsWith('useToast'))
@@ -431,11 +433,18 @@ test('review schedule advances from the UTC+8 review date, persists with the rec
   assert.equal(question.nextReviewDate, '2026-10-06')
   assert.match(text(page.root), /下次复习：2026-10-06.*今天/s)
   await click(page.button('复习一次 · 0'))
+  assert.equal(question.lastReviewedAt, undefined, 'opening a review must not record an answer')
+  await click(page.button('查看解析并评价'))
+  await click(page.button('独立做对'))
+  await click(page.button('完成本轮复习'))
   assert.equal(question.lastReviewedAt, Date.now())
   assert.equal(question.nextReviewDate, '2026-10-07')
   assert.equal(__errorbook.staged.at(-1)[2].nextReviewDate, '2026-10-07')
   assert.match(text(page.root), /最近复习：2026-10-06.*下次复习：2026-10-07/s)
   await click(page.button('复习一次 · 1'))
+  await click(page.button('查看解析并评价'))
+  await click(page.button('独立做对'))
+  await click(page.button('完成本轮复习'))
   assert.equal(question.nextReviewDate, '2026-10-08')
   await click(page.button('标记已掌握'))
   assert.equal(question.nextReviewDate, '2026-10-13')
@@ -468,6 +477,39 @@ test('legacy reviews have an explicit unplanned state and deletion discloses los
   assert.equal(__errorbook.store.errorQuestions.length, 0)
   assert.equal(__errorbook.deletes[0][0], 'errorQuestions')
   assert.equal(__errorbook.deletes[0][1], 'old')
+})
+
+test('a five-question session includes overdue mastered questions, excludes future questions and resets spacing after failure', async (t) => {
+  t.mock.method(Date, 'now', () => Date.parse('2026-10-06T02:00:00Z'))
+  __errorbook.store.errorQuestions = Array.from({ length: 7 }, (_, i) => ({
+    id: 'queue-' + i,
+    subjectId: 'math',
+    type: '选择',
+    content: '复习题 ' + i,
+    answer: '解析 ' + i,
+    date: '2026-10-01',
+    reviewCount: 10,
+    mastered: i === 0,
+    reviewStreak: 8,
+    nextReviewDate: i === 6 ? '2026-10-09' : '2026-10-0' + (i + 1)
+  }))
+  const page = await mount()
+  await click(page.button('取消'))
+  await click(page.button('复习 5 题'))
+  assert.match(text(page.dialog()), /复习题 0/)
+  assert.doesNotMatch(text(page.dialog()), /解析 0/)
+  for (let i = 0; i < 5; i++) {
+    await click(page.button('查看解析并评价'))
+    await click(page.button(i === 0 ? '不会' : '独立做对'))
+  }
+  assert.match(text(page.dialog()), /本轮已复习 5 道题/)
+  const first = __errorbook.store.errorQuestions[0]
+  assert.equal(first.mastered, false)
+  assert.equal(first.reviewStreak, 0)
+  assert.equal(first.nextReviewDate, '2026-10-07')
+  assert.equal(first.lastReviewResult, 'again')
+  assert.equal(__errorbook.store.errorQuestions[5].reviewCount, 10)
+  assert.equal(__errorbook.store.errorQuestions[6].reviewCount, 10)
 })
 
 test('review due label follows the reactive business date at midnight without a record change', async () => {

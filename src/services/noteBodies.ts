@@ -9,6 +9,9 @@ interface CachedNoteBody {
   content: string
   updatedAt: number
   dirty: boolean
+  /** 冲突副本只保存在本机，不进入正文同步通道。 */
+  conflictOf?: string
+  conflictCreatedAt?: number
   /** 恢复备份的内容在冲突时保留，直到正文和元数据均被确认。 */
   restorationPending?: boolean
   /**
@@ -24,10 +27,15 @@ const PULL_BATCH = 50
 
 let activeUserId: string | null = null
 let userGeneration = 0
-let dbPromise: Promise<IDBDatabase | null> | null = null
+let dbPromise: Promise<IDBDatabase> | null = null
 const cache = new Map<string, CachedNoteBody>()
+const conflicts = new Map<string, CachedNoteBody>()
 const searchIndex = new Map<string, string>()
 const pendingWrites = new Set<Promise<void>>()
+// 按账号保留未落盘的完整正文；被其它标签页强制登出时，也不能把它随界面状态清空。
+const unpersisted = new Map<string, CachedNoteBody>()
+const failedWrites = new Set<string>()
+let retryFlight: Promise<boolean> | null = null
 
 /**
  * 服务端权威的单篇正文上限（字节），由 `GET /api/note-bodies/limit` 随登录载入。
@@ -57,11 +65,12 @@ function sizeText(bytes: number): string {
   return bytes % (1024 * 1024) === 0 ? `${bytes / (1024 * 1024)}MB` : `${Math.ceil(bytes / 1024)}KB`
 }
 
-function openDatabase(): Promise<IDBDatabase | null> {
+function openDatabase(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise
-  if (typeof indexedDB === 'undefined') return Promise.resolve(null)
-  dbPromise = new Promise((resolve) => {
+  if (typeof indexedDB === 'undefined') return Promise.reject(new Error('本机笔记存储不可用'))
+  const opening = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1)
+    let abandoned = false
     request.onupgradeneeded = () => {
       const db = request.result
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -69,18 +78,35 @@ function openDatabase(): Promise<IDBDatabase | null> {
         store.createIndex('userId', 'userId', { unique: false })
       }
     }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => {
-      console.error('打开笔记正文缓存失败', request.error)
-      resolve(null)
+    request.onsuccess = () => {
+      const db = request.result
+      if (abandoned) {
+        db.close()
+        return
+      }
+      db.onversionchange = () => {
+        db.close()
+        dbPromise = null
+      }
+      resolve(db)
     }
+    request.onblocked = () => {
+      abandoned = true
+      reject(new Error('本机笔记存储被其他页面占用，请关闭其他页面后重试'))
+    }
+    request.onerror = () => {
+      reject(request.error ?? new Error('无法打开本机笔记存储'))
+    }
+  })
+  dbPromise = opening
+  void opening.catch(() => {
+    if (dbPromise === opening) dbPromise = null
   })
   return dbPromise
 }
 
 async function rowsForUser(userId: string): Promise<CachedNoteBody[]> {
   const db = await openDatabase()
-  if (!db) return []
   return new Promise((resolve, reject) => {
     const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).index('userId').getAll(userId)
     request.onsuccess = () => resolve(request.result as CachedNoteBody[])
@@ -90,7 +116,6 @@ async function rowsForUser(userId: string): Promise<CachedNoteBody[]> {
 
 async function writeRow(row: CachedNoteBody): Promise<void> {
   const db = await openDatabase()
-  if (!db) return
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite')
     transaction.objectStore(STORE_NAME).put(row)
@@ -102,7 +127,6 @@ async function writeRow(row: CachedNoteBody): Promise<void> {
 
 async function deleteRow(userId: string, noteId: string): Promise<void> {
   const db = await openDatabase()
-  if (!db) return
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite')
     transaction.objectStore(STORE_NAME).delete(cacheKey(userId, noteId))
@@ -117,6 +141,121 @@ function track(write: Promise<void>): void {
   void write.catch((error) => console.error('写入笔记正文缓存失败', error)).finally(() => pendingWrites.delete(write))
 }
 
+function persistRow(row: CachedNoteBody): void {
+  unpersisted.set(row.key, row)
+  failedWrites.delete(row.key)
+  noteBodyIndexVersion.value++
+  const write = writeRow(row)
+    .then(() => {
+      if (unpersisted.get(row.key) === row) {
+        unpersisted.delete(row.key)
+        failedWrites.delete(row.key)
+      }
+    })
+    .catch((error) => {
+      if (unpersisted.get(row.key) === row) failedWrites.add(row.key)
+      console.error('写入笔记正文缓存失败', error)
+    })
+    .finally(() => {
+      noteBodyIndexVersion.value++
+    })
+  track(write)
+}
+
+/** 包含仍在写入的正文：关闭页面之前，必须等事务完成或云端确认。 */
+export function hasVolatileNoteBodies(allAccounts = false): boolean {
+  return [...unpersisted.values()].some(
+    (row) => (allAccounts || row.userId === activeUserId) && (row.dirty || !!row.conflictOf)
+  )
+}
+
+export const noteBodyStorageIssue = computed(() => {
+  const _version = noteBodyIndexVersion.value
+  const failed = [...unpersisted.values()].filter((row) => row.userId === activeUserId && failedWrites.has(row.key))
+  if (!failed.length) return null
+  return failed.some((row) => row.dirty || row.conflictOf)
+    ? '部分笔记仅保留在当前页面，尚未存入本机。请保持页面打开，重试保存或下载正文。'
+    : '笔记已在云端，本机缓存写入失败。请重试保存，以便下次读取。'
+})
+
+export type NoteBodySaveState = 'saving' | 'memory' | 'local' | 'synced' | 'missing'
+export function noteBodySaveState(noteId: string): NoteBodySaveState {
+  const _version = noteBodyIndexVersion.value
+  const row = cache.get(noteId)
+  if (!row) return 'missing'
+  if (!row.dirty) return 'synced'
+  if (unpersisted.has(row.key)) return failedWrites.has(row.key) ? 'memory' : 'saving'
+  return 'local'
+}
+
+/** 明确重开失败/已关闭的连接，再写入原正文；仅重新发起网络同步不能修复本机缓存。 */
+export async function retryNoteBodyStorage(): Promise<boolean> {
+  if (retryFlight) return retryFlight
+  const userId = activeUserId
+  const run = async () => {
+    await settleWrites()
+    if (![...unpersisted.values()].some((row) => row.userId === userId)) return true
+    if (dbPromise) {
+      try {
+        ;(await dbPromise).close()
+      } catch {
+        /* 下一步重新打开 */
+      }
+    }
+    dbPromise = null
+    for (const row of [...unpersisted.values()]) {
+      if (row.userId === userId && unpersisted.get(row.key) === row) persistRow(row)
+    }
+    await settleWrites()
+    return ![...unpersisted.values()].some((row) => row.userId === userId)
+  }
+  retryFlight = run()
+  try {
+    return await retryFlight
+  } finally {
+    retryFlight = null
+  }
+}
+
+export interface NoteConflict {
+  id: string
+  noteId: string
+  content: string
+  updatedAt: number
+  createdAt: number
+  persisted: boolean
+}
+export const noteConflicts = computed<NoteConflict[]>(() => {
+  const _version = noteBodyIndexVersion.value
+  return [...conflicts.values()]
+    .map((row) => ({
+      id: row.noteId,
+      noteId: row.conflictOf!,
+      content: row.content,
+      updatedAt: row.updatedAt,
+      createdAt: row.conflictCreatedAt!,
+      persisted: !unpersisted.has(row.key)
+    }))
+    .sort((a, b) => b.createdAt - a.createdAt)
+})
+
+function preserveConflict(row: CachedNoteBody): void {
+  if ([...conflicts.values()].some((copy) => copy.conflictOf === row.noteId && copy.content === row.content)) return
+  const id = `conflict-${crypto.randomUUID()}`
+  const copy = {
+    ...row,
+    key: cacheKey(row.userId, id),
+    noteId: id,
+    conflictOf: row.noteId,
+    conflictCreatedAt: Date.now(),
+    dirty: false,
+    restorationPending: false,
+    unsyncable: null
+  }
+  conflicts.set(id, copy)
+  persistRow(copy)
+}
+
 async function settleWrites(): Promise<void> {
   if (pendingWrites.size) await Promise.allSettled([...pendingWrites])
 }
@@ -125,7 +264,7 @@ function setCached(row: CachedNoteBody): void {
   cache.set(row.noteId, row)
   searchIndex.set(row.noteId, row.content.toLocaleLowerCase())
   noteBodyIndexVersion.value++
-  track(writeRow(row))
+  persistRow(row)
 }
 
 export async function setNoteBodyUser(userId: string | null): Promise<void> {
@@ -135,6 +274,7 @@ export async function setNoteBodyUser(userId: string | null): Promise<void> {
   activeUserId = userId
   maxBytes = 0
   cache.clear()
+  conflicts.clear()
   searchIndex.clear()
   noteBodyIndexVersion.value++
   if (!userId) return
@@ -151,17 +291,60 @@ export async function setNoteBodyUser(userId: string | null): Promise<void> {
     const rows = await rowsForUser(userId)
     if (generation !== userGeneration || activeUserId !== userId) return
     for (const row of rows) {
-      cache.set(row.noteId, { ...row, unsyncable: row.unsyncable ?? null })
-      searchIndex.set(row.noteId, row.content.toLocaleLowerCase())
+      if (row.conflictOf) conflicts.set(row.noteId, row)
+      else {
+        cache.set(row.noteId, { ...row, unsyncable: row.unsyncable ?? null })
+        searchIndex.set(row.noteId, row.content.toLocaleLowerCase())
+      }
     }
     noteBodyIndexVersion.value++
   } catch (error) {
     console.error('读取笔记正文缓存失败', error)
   }
+  if (generation !== userGeneration || activeUserId !== userId) return
+  for (const row of unpersisted.values()) {
+    if (row.userId !== userId) continue
+    if (row.conflictOf) conflicts.set(row.noteId, row)
+    else {
+      cache.set(row.noteId, row)
+      searchIndex.set(row.noteId, row.content.toLocaleLowerCase())
+    }
+  }
+  noteBodyIndexVersion.value++
 }
 
 export function getNoteBody(noteId: string): string {
   return cache.get(noteId)?.content ?? ''
+}
+
+/** 备份不能把尚未读取的正文当成空字符串；返回当前账号可验证的完整正文。 */
+export async function exportNoteBody(note: Note): Promise<{ content: string; updatedAt: number }> {
+  const userId = activeUserId
+  const generation = userGeneration
+  if (!userId) throw new Error('请先登录后导出笔记')
+  if (note.type === 'pdf') throw new Error('PDF 请通过文件备份导出')
+  const local = cache.get(note.id)
+  if (local && (local.dirty || local.updatedAt >= note.bodyUpdatedAt)) {
+    return { content: local.content, updatedAt: local.updatedAt }
+  }
+  const remote = (await pullNoteBodies([note.id])).find((body) => body.id === note.id)
+  if (generation !== userGeneration || userId !== activeUserId) throw new Error('账号已改变，请重新导出')
+  const latest = cache.get(note.id)
+  if (latest && (latest.dirty || latest.updatedAt >= note.bodyUpdatedAt)) {
+    return { content: latest.content, updatedAt: latest.updatedAt }
+  }
+  if (!remote || remote.updatedAt < note.bodyUpdatedAt)
+    throw new Error(`笔记「${note.title}」正文尚未完整读取，请同步后重新导出`)
+  setCached({
+    key: cacheKey(userId, note.id),
+    userId,
+    noteId: note.id,
+    content: remote.content,
+    updatedAt: remote.updatedAt,
+    dirty: false,
+    unsyncable: null
+  })
+  return { content: remote.content, updatedAt: remote.updatedAt }
 }
 
 export function noteBodyIncludes(noteId: string, keyword: string): boolean {
@@ -246,7 +429,7 @@ export async function flushPendingNoteBodies(): Promise<NoteBodyFlushResult> {
   const userId = activeUserId
   const revisions = new Map<string, { from: number; to: number }>()
   const failures: NoteBodyPushFailure[] = []
-  await settleWrites()
+  await retryNoteBodyStorage()
   if (!userId || generation !== userGeneration) return { revisions, failures }
   for (const current of [...cache.values()].filter((row) => row.dirty)) {
     if (generation !== userGeneration) return { revisions, failures }
@@ -274,6 +457,7 @@ export async function flushPendingNoteBodies(): Promise<NoteBodyFlushResult> {
         const afterPull = cache.get(current.noteId)
         if (!afterPull || afterPull !== latest || !afterPull.dirty) continue
         if (!remote) throw new Error(`服务端拒绝笔记正文 ${current.noteId}，但未返回权威正文`)
+        if (remote.content !== latest.content) preserveConflict(latest)
         setCached({
           key: cacheKey(userId, remote.id),
           userId,
@@ -321,8 +505,11 @@ export async function reconcileNoteBodies(notes: Note[]): Promise<void> {
   const liveIds = new Set(notes.map((note) => note.id))
 
   for (const row of [...cache.values()]) {
-    if (liveIds.has(row.noteId) || row.dirty) continue
+    if (liveIds.has(row.noteId) || row.restorationPending) continue
+    if (row.dirty) preserveConflict(row)
     cache.delete(row.noteId)
+    unpersisted.delete(row.key)
+    failedWrites.delete(row.key)
     searchIndex.delete(row.noteId)
     track(deleteRow(userId, row.noteId))
   }
@@ -338,6 +525,7 @@ export async function reconcileNoteBodies(notes: Note[]): Promise<void> {
     for (const body of bodies) {
       const local = cache.get(body.id)
       if (local?.restorationPending || (local?.dirty && local.updatedAt >= body.updatedAt)) continue
+      if (local?.dirty && local.content !== body.content) preserveConflict(local)
       setCached({
         key: cacheKey(userId, body.id),
         userId,
@@ -357,6 +545,8 @@ export function removeNoteBody(noteId: string): void {
   if (!activeUserId) return
   const userId = activeUserId
   cache.delete(noteId)
+  unpersisted.delete(cacheKey(userId, noteId))
+  failedWrites.delete(cacheKey(userId, noteId))
   searchIndex.delete(noteId)
   noteBodyIndexVersion.value++
   track(deleteRow(userId, noteId))
@@ -364,4 +554,11 @@ export function removeNoteBody(noteId: string): void {
 
 export function clearAllNoteBodies(): void {
   for (const noteId of [...cache.keys()]) removeNoteBody(noteId)
+  for (const row of conflicts.values()) {
+    unpersisted.delete(row.key)
+    failedWrites.delete(row.key)
+    track(deleteRow(row.userId, row.noteId))
+  }
+  conflicts.clear()
+  noteBodyIndexVersion.value++
 }

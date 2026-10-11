@@ -14,6 +14,9 @@ export interface PomodoroFull {
     minutes: number
     completed?: boolean
     description: string
+    todoId?: string
+    subjectId?: string
+    chapterId?: string
     source: string
     partnerName?: string
   }[]
@@ -28,6 +31,9 @@ export function pomodoroRecordFromRow(r: any) {
     minutes: r.minutes ?? 0,
     completed: r.completed !== 0,
     description: r.description ?? '',
+    todoId: r.todo_id || undefined,
+    subjectId: r.subject_id || undefined,
+    chapterId: r.chapter_id || undefined,
     source: r.source ?? 'solo',
     partnerName: r.partner_name || undefined
   }
@@ -175,8 +181,8 @@ export function pomodoroRecordStatement(
   stamp: { updatedAt: number; seq: number }
 ): D1PreparedStatement {
   return env.DB.prepare(
-    'INSERT INTO pomodoro_records (id, user_id, date, time, minutes, description, source, partner_name, completed, updated_at, server_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), ?, ?) ' +
-      'ON CONFLICT(user_id, id) DO UPDATE SET date = excluded.date, time = excluded.time, minutes = excluded.minutes, description = excluded.description, source = excluded.source, partner_name = excluded.partner_name, completed = COALESCE(?, pomodoro_records.completed), updated_at = excluded.updated_at, server_seq = excluded.server_seq'
+    'INSERT INTO pomodoro_records (id, user_id, date, time, minutes, description, source, partner_name, completed, updated_at, server_seq, todo_id, subject_id, chapter_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 1), ?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(user_id, id) DO UPDATE SET date = excluded.date, time = excluded.time, minutes = excluded.minutes, description = excluded.description, source = excluded.source, partner_name = excluded.partner_name, completed = COALESCE(?, pomodoro_records.completed), updated_at = excluded.updated_at, server_seq = excluded.server_seq, todo_id = COALESCE(excluded.todo_id, pomodoro_records.todo_id), subject_id = COALESCE(excluded.subject_id, pomodoro_records.subject_id), chapter_id = COALESCE(excluded.chapter_id, pomodoro_records.chapter_id)'
   ).bind(
     id,
     userId,
@@ -189,6 +195,9 @@ export function pomodoroRecordStatement(
     value.completed === undefined ? null : value.completed ? 1 : 0,
     stamp.updatedAt,
     stamp.seq,
+    value.todoId || null,
+    value.subjectId || null,
+    value.chapterId || null,
     // 旧客户端编辑描述时不携带状态：保留现有 false；旧记录首次写入默认为已完成。
     value.completed === undefined ? null : value.completed ? 1 : 0
   )

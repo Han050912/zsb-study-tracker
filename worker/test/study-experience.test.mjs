@@ -39,6 +39,11 @@ async function load(file, names, t) {
   globalThis.__studyRoute = reactive({ query: {} })
   globalThis.__studyRouter = { replace: async () => {}, push: async () => {} }
   globalThis.__studyHooks = []
+  const cleanup = globalThis.__studyHooks
+  // Register before compilation/import so failed imports cannot leave timers alive.
+  t.after(() => {
+    for (const dispose of cleanup.splice(0).reverse()) dispose()
+  })
   globalThis.__studyToasts = []
   globalThis.__studyCharts = []
   globalThis.__studyConfirm = async () => true
@@ -139,7 +144,9 @@ async function load(file, names, t) {
             if (path === 'component') return { contents: 'export default {};' }
             if (path === 'vue')
               return {
-                contents: `export {ref,computed,watch} from 'vue'; export const nextTick=(callback)=>Promise.resolve().then(callback); export const onMounted=()=>{}; export const onUnmounted=(f)=>globalThis.__studyHooks.push(f);`
+                contents: `import {watch as vueWatch} from 'vue'; export {ref,computed} from 'vue';
+                export const watch=(...args)=>{const stop=vueWatch(...args);globalThis.__studyHooks.push(stop);return stop};
+                export const nextTick=(callback)=>Promise.resolve().then(callback); export const onMounted=()=>{}; export const onUnmounted=(f)=>globalThis.__studyHooks.push(f);`
               }
             if (path.endsWith('/app')) return { contents: 'export const useAppStore=()=>globalThis.__studyStore;' }
             if (path.endsWith('/studyTimer'))
@@ -182,7 +189,10 @@ async function load(file, names, t) {
                   'export const fetchMaimemoToday=async()=>({newWords:0,reviewWords:0});export const fetchMaimemoTodayDetail=async()=>[];'
               }
             return {
-              contents: `import {ref} from 'vue'; export const getNoteBody=()=>''; export const noteBodyExcerpt=()=>'';export const noteBodyIncludes=()=>false;export const noteBodyIndexVersion=ref(0);export const pendingNoteBodyIds=ref(new Set());`
+              contents: `import {ref} from 'vue'; export const getNoteBody=()=>''; export const noteBodyExcerpt=()=>'';export const noteBodyIncludes=()=>false;export const noteBodyIndexVersion=ref(0);export const pendingNoteBodyIds=ref(new Set());
+              export const noteBodySaveState=()=> 'synced'; export const noteBodyStorageIssue=ref(null);
+              export const retryNoteBodyStorage=async()=>true; export const hasVolatileNoteBodies=()=>false;
+              export const noteConflicts=ref([]);`
             }
           })
           b.onResolve({ filter: /^vue-router$/ }, () => ({ path: 'router', namespace: 'router' }))
@@ -199,9 +209,6 @@ async function load(file, names, t) {
   await writeFile(filename, result.outputFiles[0].text)
   const app = await import(pathToFileURL(filename).href)
   await unlink(filename)
-  t.after(() => {
-    for (const f of globalThis.__studyHooks) f()
-  })
   return app
 }
 

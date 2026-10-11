@@ -198,6 +198,8 @@ CREATE TABLE IF NOT EXISTS error_questions (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  last_review_result TEXT,
+  review_streak INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, id)
 );
 -- 错题图片引用计数/清理按 (user_id, image) 定位（P5-02）：删除驱动的孤儿清理需统计同图引用数，
@@ -429,6 +431,9 @@ CREATE TABLE IF NOT EXISTS pomodoro_records (
   completed INTEGER NOT NULL DEFAULT 1 CHECK (completed IN (0, 1)), -- 是否完成；旧记录沿用完成语义
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  todo_id TEXT,
+  subject_id TEXT,
+  chapter_id TEXT,
   PRIMARY KEY (user_id, id)
 );
 
@@ -447,6 +452,8 @@ CREATE TABLE IF NOT EXISTS todos (
   due_notified_at INTEGER,         -- 截止提醒已发出时间（去重）
   updated_at INTEGER NOT NULL DEFAULT 0, -- 客户端编辑时刻(ms)，LWW 比较键
   server_seq INTEGER NOT NULL DEFAULT 0, -- 服务端单调序号，拉取游标
+  subject_id TEXT,
+  chapter_id TEXT,
   PRIMARY KEY (user_id, id)
 );
 
