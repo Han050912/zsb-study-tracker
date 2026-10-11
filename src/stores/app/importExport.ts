@@ -9,7 +9,6 @@ import { uid, today } from '../../utils/date'
 import { stageAchievements, stagePoints } from '../../services/syncOutbox'
 import { getNoteBody, queueNoteBody, clearAllNoteBodies } from '../../services/noteBodies'
 import { stageAllDeletes, stageAllUpserts, touchRecord } from './staging'
-import type { AppState } from '../../types'
 import {
   examError,
   studyMinutesError,
@@ -21,17 +20,25 @@ import {
 import { isCalendarDate, type GoalKey } from '../../utils/settingsValidation'
 import { sessionUser } from '../../services/auth'
 import { restoreOnboarding } from '../../services/onboarding'
+import { getSessionVersion } from '../../utils/session'
+import type { BackupData, CompleteBackup } from '../../services/completeBackup'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
 type ImportExportActionsShape = {
   migrateLegacyData(): void
   exportJSON(): Promise<string>
+  exportCompleteBackup(): Promise<string>
+  restoreBackup(
+    json: string,
+    preserveSnapshot: (json: string) => void,
+    progress?: (message: string) => void
+  ): Promise<boolean>
   importJSON(json: string): boolean
   clearAll(): void
 }
 
 /** 备份文本的形状：state 快照 + 笔记正文（正文不在 $state 内，导出时单独携带） */
-type Backup = AppState & { noteBodies?: Record<string, { content: string; updatedAt: number }> }
+type Backup = BackupData
 
 /** 备份必需字段：数组域（导入会逐条打删除墓碑并逐条上行） */
 const BACKUP_ARRAY_FIELDS = [
@@ -112,6 +119,8 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         typeof q.mastered === 'boolean' &&
         optional(q.lastReviewedAt, count) &&
         optional(q.nextReviewDate, isCalendarDate) &&
+        optional(q.lastReviewResult, (v) => ['again', 'hard', 'good'].includes(String(v))) &&
+        optional(q.reviewStreak, count) &&
         ['image', 'answer', 'chapter'].every((k) => optional(q[k], text))
     )
   )
@@ -158,6 +167,7 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         text(t.text) &&
         typeof t.done === 'boolean' &&
         validNumber(t.order) &&
+        ['subjectId', 'chapterId'].every((k) => optional(t[k], text)) &&
         ['startAt', 'dueAt', 'completedAt'].every((k) => optional(t[k], count))
     )
   )
@@ -213,7 +223,8 @@ function validBackupFields(data: Record<string, unknown>): boolean {
       'dndMuteMessage',
       'partnerShareEnabled',
       'shareLearningStats',
-      'partnerRemindEnabled'
+      'partnerRemindEnabled',
+      'autoUpdateCheck'
     ].every((k) => optional(settings[k], (v) => typeof v === 'boolean')) ||
     !['reminderTime', 'dndStartTime', 'dndEndTime'].every((k) =>
       optional(settings[k], (v) => v === '' || (text(v) && /^([01]\d|2[0-3]):[0-5]\d$/.test(v)))
@@ -292,6 +303,7 @@ function validBackupFields(data: Record<string, unknown>): boolean {
         text(r.description) &&
         ['solo', 'party'].includes(String(r.source)) &&
         optional(r.partnerName, text) &&
+        ['todoId', 'subjectId', 'chapterId'].every((k) => optional(r[k], text)) &&
         optional(r.completed, (v) => typeof v === 'boolean')
     )
   )
@@ -387,7 +399,176 @@ export function parseBackup(json: string): Backup | null {
   }
 }
 
+/** Complete files are verified, including every attachment digest, before showing the import preview. */
+export async function parseBackupFile(json: string): Promise<{ data: Backup; complete: CompleteBackup | null }> {
+  const { BACKUP_MAX_FILE_BYTES, validateCompleteBackup } = await import('../../services/completeBackup')
+  if (new Blob([json]).size > BACKUP_MAX_FILE_BYTES) throw new Error('备份文件超过 192MB 上限')
+  const value: unknown = JSON.parse(json)
+  if (isPlainObject(value) && 'format' in value) {
+    const complete = await validateCompleteBackup(value, isValidBackup)
+    return { data: complete.data, complete }
+  }
+  const data = parseBackup(json)
+  if (!data) throw new Error('文件不是有效的学习数据备份')
+  return { data, complete: null }
+}
+
+function accountGuard(): () => void {
+  const userId = sessionUser.value?.id
+  const version = getSessionVersion()
+  if (!userId) throw new Error('请先登录后备份或恢复数据')
+  return () => {
+    if (userId !== sessionUser.value?.id || version !== getSessionVersion()) {
+      throw new Error('登录账号已改变，已停止备份或恢复，请重新操作')
+    }
+  }
+}
+
 export const importExportActions: ImportExportActionsShape = {
+  async exportCompleteBackup(this: AppStoreThis): Promise<string> {
+    const assertAccount = accountGuard()
+    const before = JSON.stringify(this.$state)
+    const data = JSON.parse(before) as Backup
+    let readConflicts = () => ''
+    const assertCurrent = () => {
+      assertAccount()
+      if (JSON.stringify(this.$state) !== before) throw new Error('学习数据在备份期间发生变化，请重新导出')
+      if (readConflicts() !== conflictsBefore) throw new Error('冲突副本在备份期间发生变化，请重新导出')
+    }
+    const [
+      { createCompleteBackup, serializeCompleteBackup },
+      { fetchPdf },
+      { fetchErrorImage },
+      { exportNoteBody, noteConflicts }
+    ] = await Promise.all([
+      import('../../services/completeBackup'),
+      import('../../api/pdfs'),
+      import('../../api/errorImages'),
+      import('../../services/noteBodies')
+    ])
+    // Local conflict copies are valuable text too. Export them as independent
+    // ordinary notes so older restoration code also retains them after a clear.
+    const copies = noteConflicts.value.map(({ id, noteId, content, updatedAt, createdAt }) => ({
+      id,
+      noteId,
+      content,
+      updatedAt,
+      createdAt
+    }))
+    readConflicts = () =>
+      JSON.stringify(
+        noteConflicts.value.map(({ id, noteId, content, updatedAt, createdAt }) => ({
+          id,
+          noteId,
+          content,
+          updatedAt,
+          createdAt
+        }))
+      )
+    const conflictsBefore = JSON.stringify(copies)
+    const bodies: NonNullable<Backup['noteBodies']> = {}
+    for (const note of data.notes) {
+      assertCurrent()
+      if (note.type !== 'pdf') bodies[note.id] = await exportNoteBody(note)
+    }
+    for (const copy of copies) {
+      const source = data.notes.find((note) => note.id === copy.noteId)
+      const id = uid()
+      const updatedAt = Math.max(copy.updatedAt, copy.createdAt)
+      data.notes.push({
+        id,
+        title: `${source?.title || '原笔记'} · 冲突副本`,
+        subjectId: source?.subjectId || data.subjects[0]?.id || '',
+        tags: ['冲突恢复'],
+        updatedAt,
+        bodyUpdatedAt: updatedAt
+      })
+      bodies[id] = { content: copy.content, updatedAt }
+    }
+    data.noteBodies = bodies
+    const backup = await createCompleteBackup(data, { readPdf: fetchPdf, readImage: fetchErrorImage, assertCurrent })
+    assertCurrent()
+    return serializeCompleteBackup(backup)
+  },
+
+  async restoreBackup(
+    this: AppStoreThis,
+    json: string,
+    preserveSnapshot: (json: string) => void,
+    progress?: (message: string) => void
+  ): Promise<boolean> {
+    const assertAccount = accountGuard()
+    const parsed = await parseBackupFile(json)
+    assertAccount()
+    progress?.('正在确认当前修改已同步…')
+    // A delete sent before restoration could otherwise arrive after attachment
+    // upload and remove the newly prepared object's last ownership reference.
+    let synced = await this.saveAsync()
+    assertAccount()
+    if (!synced && parsed.complete) {
+      const { takeForFlush } = await import('../../services/syncOutbox')
+      const pendingImages = new Map<string, string>()
+      for (const [key, entry] of Object.entries(takeForFlush()?.upserts.errorQuestions ?? {})) {
+        const image = (entry.value as { image?: string }).image
+        if (!entry.restoration || !image?.startsWith('r2:')) continue
+        // Legacy inline images can receive a different content id after the
+        // server strips metadata. Match by question id, then verify the new id.
+        const original = parsed.data.errorQuestions.find((question) => question.id === key)?.image
+        if (!original?.startsWith('r2:')) throw new Error('待恢复图片不在该文件中，请选择上次恢复使用的完整备份')
+        const expected = image.slice(3)
+        const previous = pendingImages.get(original.slice(3))
+        if (previous && previous !== expected) throw new Error('待恢复图片与该文件不符，请选择上次恢复使用的完整备份')
+        pendingImages.set(original.slice(3), expected)
+      }
+      if (pendingImages.size) {
+        // A concurrent device may have deleted an image prepared by a previous
+        // restore. Re-upload only its still-queued references before draining;
+        // destructive batches remain blocked until the references are accepted.
+        const [{ repairBackupImages }, { uploadErrorImage }] = await Promise.all([
+          import('../../services/completeBackup'),
+          import('../../api/errorImages')
+        ])
+        await repairBackupImages(parsed.complete, pendingImages, {
+          uploadImage: uploadErrorImage,
+          assertCurrent: assertAccount,
+          progress
+        })
+        synced = await this.saveAsync()
+      }
+    }
+    if (!synced) throw new Error('当前修改尚未完成同步，已停止恢复。若图片已丢失，请重新选择原完整备份恢复')
+    assertAccount()
+    const before = JSON.stringify(this.$state)
+    const assertCurrent = () => {
+      assertAccount()
+      if (JSON.stringify(this.$state) !== before) throw new Error('当前数据已发生变化，恢复已停止，请重新选择备份')
+    }
+    assertCurrent()
+    // Snapshot failure stops the restore. Never replace data while its recovery files are unavailable.
+    progress?.('正在保存当前完整快照…')
+    const snapshot = await this.exportCompleteBackup()
+    assertCurrent()
+    preserveSnapshot(snapshot)
+    let data = parsed.data
+    if (parsed.complete) {
+      const [{ prepareBackupRestore }, { uploadPdf, deletePdf }, { uploadErrorImage }] = await Promise.all([
+        import('../../services/completeBackup'),
+        import('../../api/pdfs'),
+        import('../../api/errorImages')
+      ])
+      data = await prepareBackupRestore(parsed.complete, {
+        newPdfId: uid,
+        uploadPdf,
+        deletePdf,
+        uploadImage: uploadErrorImage,
+        assertCurrent,
+        progress
+      })
+    }
+    assertCurrent()
+    return this.importJSON(JSON.stringify(data))
+  },
+
   /** 导出/导入/清空 */
   /** 导出：状态快照 + 笔记正文（正文存 IndexedDB/云端分片，不在 $state 内，需单独收集） */
   async exportJSON(this: AppStoreThis): Promise<string> {
@@ -411,7 +592,8 @@ export const importExportActions: ImportExportActionsShape = {
       stageAllDeletes(this.$state, now)
       // 备份中的积分仅供本地暂时展示；服务端从恢复的业务记录重新计算，绝不重放备份奖励。
       stagePoints({ op: 'revoke', all: true })
-      this.$patch({ ...createDefaultState(), ...data })
+      const { noteBodies: _bodies, ...state } = data
+      this.$patch({ ...createDefaultState(), ...state })
       restoreOnboarding(sessionUser.value?.id ?? null, this.settings)
       this.migrateLegacyData()
       // 恢复笔记正文：新备份单独携带 noteBodies；旧版备份退回 Note.content 内联字段。
@@ -436,7 +618,7 @@ export const importExportActions: ImportExportActionsShape = {
         queueNoteBody(note.id, content, restoredAt, true)
       }
       // 导入后的全部记录逐条打点上行（migrateLegacyData 已补打其改写的记录与流水事件）
-      stageAllUpserts(this.$state, now)
+      stageAllUpserts(this.$state, now, true)
       // 导入的成就以只增不减并集上报（服务端成就不可移除，§5.2）
       stageAchievements([...this.gamification.achievements])
       this.save()

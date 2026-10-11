@@ -38,7 +38,7 @@ export async function uploadErrorImage(bytes: ArrayBuffer): Promise<string> {
 }
 
 /** 按内容 id 拉取错题图片字节 */
-async function fetchErrorImage(id: string): Promise<Blob> {
+export async function fetchErrorImage(id: string): Promise<Blob> {
   const version = getSessionVersion()
   const res = await authFetch(`/api/error-images/${id}`)
   if (!res.ok) {

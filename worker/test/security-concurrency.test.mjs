@@ -488,7 +488,8 @@ test('搭子推荐、已绑定列表和待接受请求遵守主页学习统计�
 })
 
 test('推荐时段使用毫秒契约，08:00/20:00分别匹配且31天前记录不参与', async (t) => {
-  t.mock.method(Date, 'now', () => Date.parse('2026-10-06T12:00:00+08:00'))
+  // JWT verification uses new Date(), so pin the whole clock together with business-time queries.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-06T12:00:00+08:00') })
   const { api, db } = await fixture(t, 4)
   const insert = db.prepare(
     'INSERT INTO study_records (id,user_id,subject_id,date,minutes,created_at) VALUES (?,?,?,?,?,?)'
@@ -498,7 +499,9 @@ test('推荐时段使用毫秒契约，08:00/20:00分别匹配且31天前记录�
   record('same', 'user1', '2026-10-05T08:00:00+08:00')
   record('different', 'user2', '2026-10-05T20:00:00+08:00')
   record('old', 'user3', '2026-09-05T08:00:00+08:00', 10000)
-  const { suggestions } = await (await api('/api/community/partners/suggestions')).json()
+  const response = await api('/api/community/partners/suggestions')
+  assert.equal(response.status, 200)
+  const { suggestions } = await response.json()
   assert.deepEqual(suggestions.find((r) => r.userId === 'user1').reasons, ['学习时段相近'])
   assert.deepEqual(suggestions.find((r) => r.userId === 'user2').reasons, [])
   assert.deepEqual(suggestions.find((r) => r.userId === 'user3').reasons, [])

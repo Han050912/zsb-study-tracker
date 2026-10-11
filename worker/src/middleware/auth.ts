@@ -61,7 +61,10 @@ async function resolveUser(request: Request, env: Env): Promise<{ userId: string
     const origin = request.headers.get('Origin')
     // 与 index.ts 的 CORS 判定一致：本机 host 或 .dev.vars 显式开关（wrangler dev 下 host 被改写时兜底）
     const allowLocal = isLocalHost(new URL(request.url).host) || env.ALLOW_LOCAL_ORIGINS === '1'
-    if (origin && !isAllowedOrigin(origin, allowLocal)) throw new HttpError(403, '请求来源不受信任')
+    // 缺少 Origin 时无法证明请求来自受信任的前端。因为生产会话 Cookie 使用
+    // SameSite=None（跨站部署需要），把缺失来源当成拒绝，避免跨站表单/旧客户端
+    // 在没有 Origin 的情况下绕过 CSRF 检查。
+    if (!origin || !isAllowedOrigin(origin, allowLocal)) throw new HttpError(403, '请求来源不受信任')
   }
   const payload = await verifyTokenFull(ext.token, env.JWT_SECRET)
   if (!payload) throw new HttpError(401, '未登录或登录已过期')

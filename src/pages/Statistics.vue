@@ -5,7 +5,7 @@ import { useAppStore } from '../stores/app'
 import { useChart, chartTextColor, chartColor } from '../composables/useChart'
 import { formatMinutes } from '../utils/date'
 import { subjectLabel } from '../utils/subject'
-import { focusMinutesOn } from '../utils/studyTime'
+import { subjectStudyRecordsOn, unassignedFocusMinutesOn } from '../utils/studyTime'
 import { escapeHtml } from '../utils/html'
 import { MOODS } from '../data/defaults'
 import { PROBLEM_TYPE_LABELS } from '../data/problemTypes'
@@ -31,7 +31,7 @@ watch(range, () => {
 /** 指定日期各科目总学习时长（hover 提示与点击详情共用口径） */
 function subjectMinutesOn(date: string) {
   const map: Record<string, number> = {}
-  for (const r of store.records.filter((x) => x.date === date)) {
+  for (const r of subjectStudyRecordsOn(store, date)) {
     map[r.subjectId] = (map[r.subjectId] || 0) + r.minutes
   }
   return map
@@ -40,7 +40,7 @@ function subjectMinutesOn(date: string) {
 /** 点击柱子后的详情卡片数据：按科目拆分，再按学习细分方向（章节/知识点/备注）聚合耗时 */
 const barDetail = computed(() => {
   const bySubject: Record<string, typeof store.records> = {}
-  for (const r of store.records.filter((x) => x.date === barDate.value)) {
+  for (const r of subjectStudyRecordsOn(store, barDate.value)) {
     ;(bySubject[r.subjectId] = bySubject[r.subjectId] || []).push(r)
   }
   return Object.entries(bySubject).map(([sid, items]) => {
@@ -92,7 +92,7 @@ const {
         const lines = [`${d}`]
         const map = subjectMinutesOn(d)
         const entries = Object.entries(map)
-        const focus = focusMinutesOn(store, d)
+        const focus = unassignedFocusMinutesOn(store, d)
         if (!entries.length && !focus) {
           lines.push('这天还没有学习记录')
         } else {
@@ -122,12 +122,15 @@ const {
 // ---- 科目占比 ----
 const subjectMinutes = computed(() => {
   const map: Record<string, number> = {}
-  for (const r of store.records.filter((r) => days.value.includes(r.date)))
-    map[r.subjectId] = (map[r.subjectId] || 0) + r.minutes
-  const subjects = store.subjects
-    .filter((s) => map[s.id])
-    .map((s) => ({ name: s.name, value: map[s.id], itemStyle: { color: s.color } }))
-  const focus = days.value.reduce((sum, date) => sum + focusMinutesOn(store, date), 0)
+  for (const date of days.value) {
+    for (const r of subjectStudyRecordsOn(store, date)) map[r.subjectId] = (map[r.subjectId] || 0) + r.minutes
+  }
+  const subjects = Object.entries(map).map(([id, minutes]) => ({
+    name: subjectLabel(store.subjectMap[id], '已删除科目'),
+    value: minutes,
+    itemStyle: { color: store.subjectMap[id]?.color || chartColor('muted') }
+  }))
+  const focus = days.value.reduce((sum, date) => sum + unassignedFocusMinutesOn(store, date), 0)
   if (focus) subjects.push({ name: '番茄专注（未分科目）', value: focus, itemStyle: { color: chartColor('muted') } })
   return subjects
 })
@@ -461,7 +464,10 @@ const report = computed(() => {
 
     <!-- 柱状图点击：当日各科目学习细分耗时详情卡片 -->
     <Modal :title="`${barDate} 学习时长细分详情`" :show="!!barDate" @close="barDate = ''">
-      <div v-if="!barDetail.length && !focusMinutesOn(store, barDate)" class="text-xs text-slate-400 text-center py-4">
+      <div
+        v-if="!barDetail.length && !unassignedFocusMinutesOn(store, barDate)"
+        class="text-xs text-slate-400 text-center py-4"
+      >
         这天还没有学习记录
       </div>
       <div v-else class="space-y-3">
@@ -488,10 +494,10 @@ const report = computed(() => {
           </div>
         </div>
       </div>
-      <div v-if="focusMinutesOn(store, barDate)" class="mt-3 rounded-xl border border-line p-3 text-sm">
+      <div v-if="unassignedFocusMinutesOn(store, barDate)" class="mt-3 rounded-xl border border-line p-3 text-sm">
         <div class="flex justify-between gap-2">
           <span class="font-semibold">番茄专注（未分科目）</span>
-          <span class="font-bold">{{ formatMinutes(focusMinutesOn(store, barDate)) }}</span>
+          <span class="font-bold">{{ formatMinutes(unassignedFocusMinutesOn(store, barDate)) }}</span>
         </div>
         <p class="mt-1 text-xs text-muted">已计入当日学习总时长，包含提前结束后保存的专注。</p>
       </div>

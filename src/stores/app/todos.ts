@@ -11,9 +11,10 @@ import type { Todo } from '../../types'
 import { isValidTodoDate } from '../../utils/todoTime'
 
 /** 显式签名（不含 this 参数）：断开 AppStoreThis 与字面量推断的类型循环，原理见 sync.ts 顶部注释 */
+type TodoLinks = Pick<Todo, 'subjectId' | 'chapterId'>
 type TodosActionsShape = {
-  addTodo(text: string, schedule?: { startAt?: number; dueAt?: number }, date?: string): void
-  updateTodo(id: string, text: string): void
+  addTodo(text: string, schedule?: { startAt?: number; dueAt?: number }, date?: string, links?: TodoLinks): void
+  updateTodo(id: string, text: string, links?: TodoLinks): void
   setTodoSchedule(id: string, schedule: { startAt?: number | null; dueAt?: number | null }): void
   markTodosNotified(ids: string[], kind: 'start' | 'due'): void
   toggleTodo(id: string): void
@@ -23,12 +24,20 @@ type TodosActionsShape = {
 
 export const todosActions: TodosActionsShape = {
   /** 新增待办；可同时指定开始时间与最晚截止时间（时间戳），到点由提醒调度器弹通知 */
-  addTodo(this: AppStoreThis, text: string, schedule?: { startAt?: number; dueAt?: number }, date = today()) {
+  addTodo(
+    this: AppStoreThis,
+    text: string,
+    schedule?: { startAt?: number; dueAt?: number },
+    date = today(),
+    links?: TodoLinks
+  ) {
     const title = text.trim()
     if (!title) throw new Error('请填写任务内容')
     if (!isValidTodoDate(date)) throw new Error('请选择有效的任务日期')
     const maxOrder = Math.max(0, ...this.todos.filter((t) => t.date === date).map((t) => t.order))
     const todo: Todo = { id: uid(), date, text: title, done: false, order: maxOrder + 1 }
+    if (links?.subjectId) todo.subjectId = links.subjectId
+    if (links?.subjectId && links.chapterId) todo.chapterId = links.chapterId
     if (schedule?.startAt) todo.startAt = schedule.startAt
     if (schedule?.dueAt) todo.dueAt = schedule.dueAt
     this.todos.push(todo)
@@ -36,13 +45,22 @@ export const todosActions: TodosActionsShape = {
     this.save()
   },
 
-  /** 只修改任务内容，保留完成状态、提醒时间与排序。 */
-  updateTodo(this: AppStoreThis, id: string, text: string) {
+  /** 修改任务内容与学习归属，保留完成状态、提醒时间与排序。 */
+  updateTodo(this: AppStoreThis, id: string, text: string, links?: TodoLinks) {
     const title = text.trim()
     if (!title) throw new Error('请填写任务内容')
     const todo = this.todos.find((t) => t.id === id)
-    if (!todo || todo.text === title) return
+    if (!todo) return
+    const subjectId = links ? links.subjectId || undefined : todo.subjectId
+    const chapterId = links ? (subjectId ? links.chapterId || undefined : undefined) : todo.chapterId
+    if (todo.text === title && todo.subjectId === subjectId && todo.chapterId === chapterId) return
     todo.text = title
+    if (links) {
+      if (subjectId) todo.subjectId = subjectId
+      else delete todo.subjectId
+      if (chapterId) todo.chapterId = chapterId
+      else delete todo.chapterId
+    }
     touchRecord('todos', todo)
     this.save()
   },

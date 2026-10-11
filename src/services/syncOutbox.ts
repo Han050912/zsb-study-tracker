@@ -7,6 +7,8 @@ const LEGACY_PREFIX = 'zsb_sync_outbox_v1:'
 export interface OutboxUpsert {
   value: unknown
   updatedAt: number
+  /** Restore prerequisites must be accepted before any destructive replacement batch. */
+  restoration?: true
 }
 export interface OutboxSnapshot {
   upserts: Record<string, Record<string, OutboxUpsert>>
@@ -16,7 +18,7 @@ export interface OutboxSnapshot {
   receipt?: { userId: string; keys: string[] }
 }
 type Change =
-  | { kind: 'upsert'; domain: string; key: string; value: unknown; updatedAt: number }
+  | { kind: 'upsert'; domain: string; key: string; value: unknown; updatedAt: number; restoration?: true }
   | { kind: 'delete'; domain: string; key: string; updatedAt: number }
   | { kind: 'points'; event: PointsEvent }
   | { kind: 'achievements'; ids: string[] }
@@ -170,8 +172,8 @@ function append(change: Change) {
   updateIssue()
 }
 
-export function stageUpsert(domain: string, key: string, value: unknown, updatedAt: number): void {
-  append({ kind: 'upsert', domain, key, value, updatedAt })
+export function stageUpsert(domain: string, key: string, value: unknown, updatedAt: number, restoration = false): void {
+  append({ kind: 'upsert', domain, key, value, updatedAt, ...(restoration ? { restoration: true as const } : {}) })
 }
 export function stageDelete(domain: string, key: string, updatedAt: number): void {
   append({ kind: 'delete', domain, key, updatedAt })
@@ -192,7 +194,28 @@ interface FlushBatchOptions {
 
 export function takeForFlush(options?: FlushBatchOptions): OutboxSnapshot | null {
   if (!currentUserId) return null
-  let entries = operations(currentUserId).filter(([key]) => !options || options.keys.has(key))
+  const all = operations(currentUserId)
+  if (options) {
+    const latest = new Map<string, [string, Operation]>()
+    for (const entry of all) {
+      const operation = entry[1]
+      if (operation.kind === 'upsert' || operation.kind === 'delete')
+        latest.set(JSON.stringify([operation.domain, operation.key]), entry)
+    }
+    // A restore may start in another tab while an older drain is running. That
+    // drain must yield to newly staged prerequisites before sending old deletes.
+    if (
+      [...latest.values()].some(
+        ([key, operation]) =>
+          operation.kind === 'upsert' &&
+          operation.restoration &&
+          (operation.domain === 'subjects' || operation.domain === 'errorQuestions') &&
+          !options.keys.has(key)
+      )
+    )
+      return null
+  }
+  let entries = all.filter(([key]) => !options || options.keys.has(key))
   if (!entries.length) return null
   if (options) {
     // Keep all revisions of one business key together so ACK cannot expose an older queued edit.
@@ -207,13 +230,23 @@ export function takeForFlush(options?: FlushBatchOptions): OutboxSnapshot | null
         records.set(identity, revisions)
       } else events.push([entry])
     }
+    const groups = [...records.values()]
+    const phase = (revisions: [string, Operation][]) => {
+      const last = revisions[revisions.length - 1][1]
+      if (last.kind !== 'upsert' || !last.restoration) return 2
+      return last.domain === 'subjects' ? 0 : last.domain === 'errorQuestions' ? 1 : 2
+    }
+    const nextPhase = groups.reduce((minimum, group) => Math.min(minimum, phase(group)), 2)
+    // Separate prerequisite batches: a rejected image/subject must never share a batch
+    // with deletes that could remove its last existing image reference.
+    const ordered = nextPhase < 2 ? groups.filter((group) => phase(group) === nextPhase) : [...groups, ...events]
     const selected: [string, Operation][] = []
     const encoder = new TextEncoder()
     let count = 0,
       bytes = 0
     // Points intents follow records. In particular, a pomodoro completion must never be ACKed
     // before its record is persisted; when space permits, the final records and events share a batch.
-    for (const revisions of [...records.values(), ...events]) {
+    for (const revisions of ordered) {
       const operation = revisions[revisions.length - 1][1]
       const cost = encoder.encode(JSON.stringify(operation)).byteLength + 256
       if (count && (count >= options.maxChanges || bytes + cost > options.maxBytes)) break
@@ -240,7 +273,7 @@ export function takeForFlush(options?: FlushBatchOptions): OutboxSnapshot | null
   for (const op of winners.values()) {
     if (op.kind === 'upsert') {
       const bucket = (snapshot.upserts[op.domain] ??= Object.create(null))
-      bucket[op.key] = { value: op.value, updatedAt: op.updatedAt }
+      bucket[op.key] = { value: op.value, updatedAt: op.updatedAt, ...(op.restoration ? { restoration: true } : {}) }
     } else {
       const bucket = (snapshot.deletes[op.domain] ??= Object.create(null))
       bucket[op.key] = op.updatedAt

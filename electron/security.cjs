@@ -12,6 +12,23 @@ const path = require('node:path')
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'ftp:'])
 
 /**
+ * 解析开发服务器地址：开发主窗口带有特权 preload，不能把它加载到任意远程 origin。
+ * 非法或非回环地址统一回退到本地 Vite 默认地址。
+ */
+function resolveDevServerUrl(rawUrl) {
+  const fallback = 'http://localhost:5173'
+  if (typeof rawUrl !== 'string' || !rawUrl) return fallback
+  try {
+    const url = new URL(rawUrl)
+    if (!['http:', 'https:'].includes(url.protocol)) return fallback
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) return fallback
+    return url.href
+  } catch {
+    return fallback
+  }
+}
+
+/**
  * 通知图标的远程来源 origin 白名单：由调用方传入的 apiBase 推导（API 域名单一来源，
  * 见 main.cjs 的 API_BASE）；开发环境额外放行本地 Worker。
  * apiBase 缺失/非法时返回空集合——fail-closed，换域名不会静默放行旧域。
@@ -131,6 +148,7 @@ function resolveAppPath(rawPathname, distRoot) {
 
 module.exports = {
   EXTERNAL_PROTOCOLS,
+  resolveDevServerUrl,
   classifyWindowOpen,
   isAllowedExternalUrl,
   isInternalAppUrl,

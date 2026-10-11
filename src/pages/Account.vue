@@ -151,20 +151,27 @@ const stats = computed(() => {
   ]
 })
 
+const exportingBackup = ref(false)
+const backupError = ref('')
 async function exportBackup() {
+  if (exportingBackup.value) return
+  exportingBackup.value = true
+  backupError.value = ''
   try {
-    const blob = new Blob([await store.exportJSON()], { type: 'application/json' })
+    const blob = new Blob([await store.exportCompleteBackup()], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
     a.download = `zsb-backup-${user.value?.username}-${today()}.json`
     document.body.appendChild(a)
     a.click()
     a.remove()
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000)
-    toast('备份已导出')
+    setTimeout(() => URL.revokeObjectURL(a.href), 60_000)
+    toast('完整备份已导出')
   } catch (e) {
     console.error('导出备份失败', e)
-    toast('导出失败，请重试')
+    backupError.value = getErrorMessage(e, '完整备份失败，请检查网络后重试')
+  } finally {
+    exportingBackup.value = false
   }
 }
 </script>
@@ -277,11 +284,14 @@ async function exportBackup() {
           <div class="min-w-0">
             <h2 class="font-semibold text-sm">数据备份</h2>
             <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
-              导出学习记录与文字笔记为 JSON，可在设置页导入。上传的 PDF、云端错题图片仅保存引用，请单独下载保留文件。
+              导出包含学习记录、文字笔记、PDF 和错题图片的完整 JSON 备份，可在设置页恢复。云端附件需要联网读取。
             </p>
           </div>
-          <button class="btn-primary !text-xs shrink-0" @click="exportBackup">导出备份</button>
+          <button class="btn-primary !text-xs shrink-0" :disabled="exportingBackup" @click="exportBackup">
+            {{ exportingBackup ? '正在导出…' : '导出完整备份' }}
+          </button>
         </div>
+        <p v-if="backupError" role="alert" class="text-sm text-correction">{{ backupError }}</p>
       </div>
     </div>
 

@@ -28,11 +28,13 @@ const {
   isAllowedExternalUrl,
   isInternalAppUrl,
   resolveNotificationIconUrl,
-  resolveAppPath
+  resolveAppPath,
+  resolveDevServerUrl
 } = require('./security.cjs')
+const { isReleaseForVersion } = require('./update-notes.cjs')
 
 const APP_NAME = '专升本学习助手'
-const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173'
+const DEV_URL = resolveDevServerUrl(process.env.VITE_DEV_SERVER_URL)
 const isDev = !app.isPackaged
 const DIST_ROOT = path.join(__dirname, '..', 'dist')
 
@@ -141,6 +143,14 @@ function setupAutoUpdater() {
   let progressWatchdog = null
   // 置位后吞掉紧随其后的「取消」类 error 事件：用户主动取消 / 超时中止不是失败
   let swallowCancelError = false
+  // electron-updater reports a successful check asynchronously through either
+  // `update-available` or `update-not-available`. Keep this state so the
+  // renderer can distinguish a check failure from a download failure and avoid
+  // overlapping manual/startup checks.
+  let checkInFlight = false
+  let checkErrorReported = false
+  let checkSource = 'automatic'
+  let checkSettleTimer = null
 
   function clearProgressWatchdog() {
     if (progressWatchdog) {
@@ -170,6 +180,48 @@ function setupAutoUpdater() {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
   }
 
+  function clearCheckState() {
+    checkInFlight = false
+    if (checkSettleTimer) {
+      clearTimeout(checkSettleTimer)
+      checkSettleTimer = null
+    }
+  }
+
+  /**
+   * Check for updates and always settle the renderer's checking state. The
+   * updater emits `error` for most failures, but the returned promise can also
+   * reject before that event reaches the renderer; handling both paths keeps a
+   * manual check from getting stuck on "正在检查更新…".
+   */
+  async function checkForUpdates(source = 'automatic') {
+    if (checkInFlight) return
+    checkInFlight = true
+    checkErrorReported = false
+    checkSource = source
+    send('update:checking', { source })
+    checkSettleTimer = setTimeout(() => {
+      if (!checkInFlight) return
+      const message = '检查更新超时，请稍后重试'
+      clearCheckState()
+      checkErrorReported = true
+      send('update:check-error', { message })
+    }, 30 * 1000)
+    try {
+      await autoUpdater.checkForUpdates()
+    } catch (err) {
+      const message = err && err.message ? err.message : String(err || '检查更新失败')
+      if (!checkErrorReported) {
+        // Mark the check as reported before settling it. electron-updater may
+        // emit its `error` event a tick after the promise rejects; the late
+        // event must be consumed instead of becoming a download error.
+        checkErrorReported = true
+        send('update:check-error', { message })
+      }
+      clearCheckState()
+    }
+  }
+
   /**
    * 从 Worker 中转接口拉取 GitHub Release 信息（releaseNotes 兜底）。
    *
@@ -177,13 +229,21 @@ function setupAutoUpdater() {
    * electron-updater 的 update-available 事件中 releaseNotes 几乎始终为空。
    *
    * 解决方案：Worker 服务端携带 GITHUB_TOKEN（PAT）请求 GitHub API，
-   * 绕过匿名限流，客户端绝不接触令牌。Worker 端点：/api/latest-release
+   * 绕过匿名限流，客户端绝不接触令牌。Worker 端点：/api/latest-release?version=...
    *
    * 使用 node:https 替代 net.fetch，避免 Electron net 模块对 HTTPS 外部请求的不稳定支持。
    * 6 秒超时 + 全量异常捕获，失败不阻塞更新弹窗。
    */
-  function fetchReleaseNotes() {
-    const url = `${API_BASE}/api/latest-release`
+  function fetchReleaseNotes(version) {
+    let url
+    try {
+      const endpoint = new URL('/api/latest-release', API_BASE)
+      endpoint.searchParams.set('version', String(version || ''))
+      url = endpoint
+    } catch (err) {
+      console.error('[fetchReleaseNotes] API_BASE 无效:', err && err.message)
+      return Promise.resolve({ notes: '', releaseDate: '' })
+    }
     return new Promise((resolve) => {
       const https = require('node:https')
       const req = https.get(
@@ -213,6 +273,13 @@ function setupAutoUpdater() {
                 return
               }
               const release = json.data
+              if (!isReleaseForVersion(release, version)) {
+                console.error(
+                  `[fetchReleaseNotes] Worker API returned release ${release.tag_name || release.version || 'unknown'}, expected v${version}`
+                )
+                resolve({ notes: '', releaseDate: '' })
+                return
+              }
               const notes = release.body || ''
               const releaseDate = release.published_at || ''
               console.log(`[fetchReleaseNotes] fetched body length: ${notes.length}, published: ${releaseDate}`)
@@ -236,7 +303,20 @@ function setupAutoUpdater() {
     })
   }
 
+  autoUpdater.on('checking-for-update', () => {
+    // Manual/startup checks announce themselves before calling electron-updater.
+    // This branch only covers an updater initiated outside our IPC wrapper and
+    // therefore does not duplicate the normal checking event.
+    if (checkInFlight) return
+    checkInFlight = true
+    checkErrorReported = false
+    checkSource = 'automatic'
+    send('update:checking', { source: checkSource })
+  })
+
   autoUpdater.on('update-available', (info) => {
+    const source = checkSource
+    clearCheckState()
     // releaseNotes 可能是字符串（Markdown）或 [{version, note}] 数组，统一规整为字符串
     let notes = ''
     if (typeof info.releaseNotes === 'string') notes = info.releaseNotes
@@ -250,7 +330,8 @@ function setupAutoUpdater() {
       version: info.version,
       releaseName: info.releaseName || '',
       releaseNotes: notes,
-      releaseDate: info.releaseDate || ''
+      releaseDate: info.releaseDate || '',
+      source
     }
 
     if (notes.trim()) {
@@ -259,13 +340,26 @@ function setupAutoUpdater() {
     }
 
     // electron-updater 未返回 releaseNotes 时，通过 Worker 中转接口兜底拉取
-    fetchReleaseNotes()
+    fetchReleaseNotes(info.version)
       .then(({ notes: fetchedNotes, releaseDate: fetchedDate }) => {
         payload.releaseNotes = fetchedNotes
         if (fetchedDate && !payload.releaseDate) payload.releaseDate = fetchedDate
         send('update:available', payload)
       })
       .catch((e) => console.error('[fetchReleaseNotes] 拉取失败', e && e.message))
+  })
+
+  autoUpdater.on('update-not-available', (info) => {
+    const source = checkSource
+    clearCheckState()
+    send('update:not-available', {
+      // `info.version` is not guaranteed on all electron-updater versions;
+      // app.getVersion() is the reliable current-version value for the UI.
+      currentVersion: app.getVersion(),
+      version: info && info.version ? info.version : app.getVersion(),
+      releaseDate: (info && info.releaseDate) || '',
+      source
+    })
   })
 
   autoUpdater.on('download-progress', (p) => {
@@ -292,16 +386,36 @@ function setupAutoUpdater() {
       swallowCancelError = false
       return
     }
+    // A rejected check can emit a late error after its promise has settled.
+    // The catch path already notified the renderer, so consume that event.
+    if (!checkInFlight && checkErrorReported) {
+      checkErrorReported = false
+      return
+    }
     endDownloadSession()
+    if (checkInFlight) {
+      clearCheckState()
+      if (!checkErrorReported) {
+        checkErrorReported = true
+        send('update:check-error', { message })
+      }
+      return
+    }
+    // Download errors keep the historical string payload consumed by the
+    // update dialog; check failures use the dedicated channel above so a
+    // manual check produces one settled toast.
     send('update:error', message)
   })
 
   ipcMain.on('update:check', () => {
-    autoUpdater.checkForUpdates().catch(() => {})
+    void checkForUpdates('manual')
   })
   ipcMain.on('update:download', () => {
     // 已有下载在途：忽略重复触发，避免叠加多个下载任务
     if (downloadToken || !UpdaterCancellationToken) return
+    // A previous check error has been settled; errors from this operation are
+    // download errors and should use the legacy update:error channel.
+    checkErrorReported = false
     swallowCancelError = false
     downloadToken = new UpdaterCancellationToken()
     lastProgressAt = Date.now()
@@ -329,7 +443,7 @@ function setupAutoUpdater() {
 
   // 启动后延迟检查，避免与启动画面争抢资源
   setTimeout(() => {
-    autoUpdater.checkForUpdates().catch(() => {})
+    void checkForUpdates('automatic')
   }, 5000)
 }
 

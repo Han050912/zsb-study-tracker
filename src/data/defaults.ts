@@ -200,7 +200,8 @@ export function createDefaultState(): AppState {
       dndMutedTypes: [],
       dndMuteMessage: false,
       partnerShareEnabled: false,
-      partnerRemindEnabled: true
+      partnerRemindEnabled: true,
+      autoUpdateCheck: true
     }
   }
 }

@@ -15,4 +15,6 @@ INSERT OR IGNORE INTO d1_migrations (name) VALUES
   ('0008_material_favorites.sql'),
   ('0009_error_review_schedule.sql'),
   ('0010_auth_sessions_reports.sql'),
-  ('0011_data_integrity.sql');
+  ('0011_data_integrity.sql'),
+  ('0012_focus_task_links.sql'),
+  ('0013_error_review_feedback.sql');

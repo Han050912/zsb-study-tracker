@@ -53,6 +53,8 @@ export interface ProblemSession {
 }
 
 /** 错题 */
+export type ErrorReviewResult = 'again' | 'hard' | 'good'
+
 export interface ErrorQuestion {
   id: string
   subjectId: string
@@ -67,6 +69,9 @@ export interface ErrorQuestion {
   mastered: boolean
   lastReviewedAt?: number
   nextReviewDate?: string // UTC+8 业务日期；旧数据未排期时为空
+  lastReviewResult?: ErrorReviewResult
+  /** 连续独立做对次数；历史复习次数不推断为做对。 */
+  reviewStreak?: number
   createdAt: number
   /** 记录级 LWW 时间戳（同步运行时字段，不进 UI） */
   updatedAt?: number
