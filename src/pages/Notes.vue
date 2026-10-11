@@ -16,7 +16,18 @@ import { subjectLabel } from '../utils/subject'
 import { getErrorMessage } from '../utils/error'
 import type { Note } from '../types'
 import { sessionUser } from '../services/auth'
-import { getNoteBody, noteBodyExcerpt, noteBodyIncludes, noteBodyIndexVersion } from '../services/noteBodies'
+import {
+  getNoteBody,
+  noteBodyExcerpt,
+  noteBodyIncludes,
+  noteBodyIndexVersion,
+  noteBodySaveState,
+  noteBodyStorageIssue,
+  retryNoteBodyStorage,
+  hasVolatileNoteBodies,
+  noteConflicts,
+  type NoteConflict
+} from '../services/noteBodies'
 
 const store = useAppStore()
 const route = useRoute()
@@ -48,6 +59,64 @@ type NoteDraft = Partial<Note> & { content?: string }
 const draft = ref<NoteDraft | null>(null)
 const dirty = ref(false)
 const previewMode = ref<'edit' | 'split' | 'preview'>('split')
+const retryingStorage = ref(false)
+const saveStateLabel = computed(() => {
+  if (dirty.value) return '有未保存修改'
+  if (!draft.value?.id) return '新笔记'
+  if (draft.value.type === 'pdf') return 'PDF 已上传'
+  return {
+    saving: '正在存入本机…',
+    memory: '仅在当前页面',
+    local: '已存本机 · 待同步',
+    synced: '正文已同步',
+    missing: '正文尚未读取'
+  }[noteBodySaveState(draft.value.id)]
+})
+
+async function retryStorage() {
+  if (retryingStorage.value) return
+  retryingStorage.value = true
+  try {
+    const stored = await retryNoteBodyStorage()
+    if (!sameAccount()) return
+    toast(stored ? '正文已存入本机，正在重试同步' : '本机保存仍失败，请下载正文并保持页面打开')
+    await store.saveAsync()
+  } finally {
+    retryingStorage.value = false
+  }
+}
+
+function downloadText(content: string, title: string) {
+  const link = document.createElement('a')
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }))
+  link.href = url
+  link.download = `${title.replace(/[\\/:*?"<>|]/g, '_') || '笔记'}.md`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function conflictTitle(copy: NoteConflict) {
+  return store.notes.find((note) => note.id === copy.noteId)?.title || '原笔记'
+}
+
+function recoverConflict(copy: NoteConflict) {
+  if (!sameAccount()) return
+  flushIfDirty()
+  const original = store.notes.find((note) => note.id === copy.noteId)
+  const savedId = store.saveNote({
+    title: `${conflictTitle(copy)} · 恢复副本`,
+    content: copy.content,
+    subjectId: original?.subjectId || store.subjects[0]?.id || '',
+    tags: ['冲突恢复']
+  })
+  if (savedId) {
+    search.value = ''
+    router.replace({ path: '/notes', query: { id: savedId } })
+    toast('已创建恢复笔记，原副本仍保留在本机')
+  }
+}
 
 /**
  * 草稿预览 HTML（两阶段渲染 + 输入防抖）：空闲后首个变更立即渲染，连续输入期间合并渲染，
@@ -58,6 +127,13 @@ const previewPending = ref(false)
 const draftHtml = useMarkdownHtml(() => draft.value?.content || '', previewPending)
 
 const selectedId = computed(() => (route.query.id as string) || '')
+
+// 自动采纳远端正文时同步更新空闲编辑器；用户正在输入的草稿继续保留。
+watch(noteBodyIndexVersion, () => {
+  if (!dirty.value && draft.value?.id && draft.value.type !== 'pdf') {
+    draft.value.content = getNoteBody(draft.value.id)
+  }
+})
 
 function subjectOf(n: Partial<Note>) {
   return store.subjectMap[n.subjectId || '']
@@ -130,19 +206,22 @@ function doSave(silent = false, navigate = true): string | null {
   dirty.value = false
   if (created) search.value = ''
   if (created && navigate) router.replace({ path: '/notes', query: { id: savedId } })
-  if (!silent) toast('笔记已保存')
+  if (!silent) toast(draft.value.type === 'pdf' ? '修改已提交，正在同步' : '正文正在存入本机，保存状态见标题旁')
   return savedId
 }
 
 async function removeNote() {
+  if (disposed || !sameAccount()) return
+  const id = draft.value?.id
   // 未保存的新草稿：直接丢弃（置 dirty=false 防止 backToList 静默保存）
-  if (!draft.value?.id) {
+  if (!id) {
     dirty.value = false
     backToList()
     return
   }
   if (!(await confirm('删除这篇笔记？', { danger: true }))) return
-  store.deleteNote(draft.value.id)
+  if (disposed || !sameAccount() || draft.value?.id !== id) return
+  store.deleteNote(id)
   dirty.value = false
   toast('笔记已删除')
   backToList()
@@ -363,12 +442,23 @@ onUnmounted(() => {
 })
 
 // 离开页面前兜底保存（teardown：不操作路由）
-function flushOnUnload() {
+function flushOnUnload(event: BeforeUnloadEvent) {
+  flushIfDirty(true)
+  if (hasVolatileNoteBodies(true)) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
+}
+function flushForAccountChange() {
   flushIfDirty(true)
 }
-onMounted(() => window.addEventListener('beforeunload', flushOnUnload))
+onMounted(() => {
+  window.addEventListener('beforeunload', flushOnUnload)
+  window.addEventListener('zsb:flush-note-drafts', flushForAccountChange)
+})
 onUnmounted(() => {
   window.removeEventListener('beforeunload', flushOnUnload)
+  window.removeEventListener('zsb:flush-note-drafts', flushForAccountChange)
   flushIfDirty(true)
   disposed = true
   pdfFetchSeq++
@@ -395,6 +485,21 @@ onUnmounted(() => {
         <button class="btn-primary" @click="newNote"><Plus :size="16" aria-hidden="true" />新建笔记</button>
       </div>
     </header>
+    <div v-if="noteBodyStorageIssue" class="notes-storage-warning" role="alert">
+      <p>{{ noteBodyStorageIssue }}</p>
+      <div class="flex flex-wrap gap-2">
+        <button class="btn-ghost" :disabled="retryingStorage" @click="retryStorage">
+          {{ retryingStorage ? '正在重试…' : '重试保存' }}
+        </button>
+        <button
+          v-if="draft && draft.type !== 'pdf'"
+          class="btn-ghost"
+          @click="downloadText(draft.content || '', draft.title || '笔记')"
+        >
+          下载当前正文
+        </button>
+      </div>
+    </div>
     <input
       ref="fileInput"
       type="file"
@@ -420,6 +525,23 @@ onUnmounted(() => {
             <input v-model="search" aria-label="搜索笔记" class="input" placeholder="搜索标题、内容或标签" />
           </div>
         </div>
+        <details v-if="noteConflicts.length" class="notes-conflicts">
+          <summary>待恢复的冲突副本（{{ noteConflicts.length }}）</summary>
+          <p class="text-xs text-muted mt-2">其他设备的新版已同步。你此前的正文保留在这里，可恢复为新笔记。</p>
+          <article v-for="copy in noteConflicts" :key="copy.id" class="notes-conflict-item">
+            <p class="font-medium break-words">{{ conflictTitle(copy) }}</p>
+            <p class="text-xs text-muted">
+              {{ new Date(copy.createdAt).toLocaleString() }} · {{ copy.persisted ? '已存本机' : '仅在当前页面' }}
+            </p>
+            <pre>{{ copy.content || '（空正文）' }}</pre>
+            <div class="flex flex-wrap gap-2">
+              <button class="btn-ghost" @click="recoverConflict(copy)">恢复为新笔记</button>
+              <button class="btn-ghost" @click="downloadText(copy.content, conflictTitle(copy) + ' · 冲突副本')">
+                下载副本
+              </button>
+            </div>
+          </article>
+        </details>
         <div class="notes-list-items">
           <div v-if="!filteredNotes.length" class="notes-list-empty">
             <FileText :size="24" aria-hidden="true" />
@@ -444,6 +566,15 @@ onUnmounted(() => {
               <span>{{ subjectOf(n)?.name || '未分类' }}</span>
               <time>{{ fmtTime(n.updatedAt) }}</time>
             </div>
+            <span v-if="n.type !== 'pdf' && noteBodySaveState(n.id) !== 'synced'" class="text-xs text-correction">
+              {{
+                noteBodySaveState(n.id) === 'memory'
+                  ? '仅在当前页面'
+                  : noteBodySaveState(n.id) === 'saving'
+                    ? '正在存入本机'
+                    : '待同步'
+              }}
+            </span>
           </button>
         </div>
       </aside>
@@ -459,7 +590,7 @@ onUnmounted(() => {
               placeholder="笔记标题"
               @input="dirty = true"
             />
-            <span class="notes-save-state" role="status">{{ dirty ? '未保存' : draft.id ? '已保存' : '新笔记' }}</span>
+            <span class="notes-save-state" role="status">{{ saveStateLabel }}</span>
           </div>
           <div class="notes-editor-toolbar">
             <template v-if="draft.type !== 'pdf'">
@@ -562,6 +693,43 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.notes-storage-warning {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  color: var(--correction);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  font-size: 14px;
+}
+.notes-conflicts {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  max-height: 45%;
+  overflow-y: auto;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+.notes-conflicts summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.notes-conflict-item {
+  padding-top: 12px;
+}
+.notes-conflict-item pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 120px;
+  overflow-y: auto;
+  margin: 8px 0;
+  font: inherit;
+}
 .notes-page-heading {
   margin-bottom: 20px;
 }

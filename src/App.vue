@@ -25,6 +25,7 @@ import { useAppReady, bootError, bootRetrying, retryBoot } from './composables/u
 import { routeLoading, routeLoadError } from './router/loading'
 import { syncIssue } from './stores/app/sync'
 import { hasVolatileOutboxChanges } from './services/syncOutbox'
+import { hasVolatileNoteBodies } from './services/noteBodies'
 import { autoUpdateEnabled, updateAvailable } from './composables/useUpdateState'
 
 // 成就分享弹窗按需异步加载：切断入口对 markdown-it/katex 依赖链（AchievementModal → PostComposer → utils/markdown）的静态引用
@@ -180,9 +181,10 @@ async function accountLogout(switchAccount: boolean) {
   const tip = switchAccount ? '切换账号？当前数据将被保存。' : '确认退出登录？数据将被保存到云端。'
   if (!(await confirmFn(tip))) return
 
-  // ① 阻塞推送全部待保存变更（含笔记正文）：resetState 会清 outbox，必须先等推送完成
+  window.dispatchEvent(new Event('zsb:flush-note-drafts'))
+  // 等待本机写入与云端推送；只有已持久保留的修改才允许随账号界面一起清空。
   await store.saveAsync()
-  if (hasVolatileOutboxChanges()) {
+  if (hasVolatileOutboxChanges() || hasVolatileNoteBodies()) {
     toastRef.value?.show('部分修改尚未写入本地或云端，请保持当前账号并重试同步后再退出。')
     return
   }

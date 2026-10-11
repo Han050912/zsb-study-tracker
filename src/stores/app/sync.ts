@@ -28,6 +28,8 @@ import {
   setNoteBodyUser,
   isNoteRestorePending,
   finishNoteRestore,
+  noteBodyStorageIssue,
+  hasVolatileNoteBodies,
   type NoteBodyPushFailure
 } from '../../services/noteBodies'
 import type { AppState, Note, Settings } from '../../types'
@@ -93,7 +95,9 @@ export const MAX_FIELD_CHARS = 1_000_000
  * 只打日志会让用户完全不知道同步已经长期停止，因此把原因留在响应式状态里供界面提示。
  */
 const pushIssue = ref<string | null>(null)
-export const syncIssue = computed(() => [outboxIssue.value, pushIssue.value].filter(Boolean).join('；') || null)
+export const syncIssue = computed(
+  () => [outboxIssue.value, noteBodyStorageIssue.value, pushIssue.value].filter(Boolean).join('；') || null
+)
 
 /** Rebuild pending edits before loading bodies, while respecting newer remote tombstones. */
 export function restorePendingState(state: AppState, pending: OutboxSnapshot | null, remote: PullResponse): void {
@@ -368,7 +372,7 @@ export const syncActions: SyncActionsShape = {
         pushIssue.value = pushIssue.value ? `${pushIssue.value}；${message}` : message
       }
       return {
-        ok: !failures.length && !restoreRejected && !outboxIssue.value,
+        ok: !failures.length && !restoreRejected && !outboxIssue.value && !hasVolatileNoteBodies(),
         applied: appliedTotal,
         rejected: rejectedTotal
       }

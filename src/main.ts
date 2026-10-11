@@ -6,6 +6,7 @@ import { router } from './router'
 import { restoreSession, isLoggedIn } from './services/auth'
 import { useAppStore } from './stores/app'
 import { hasVolatileOutboxChanges } from './services/syncOutbox'
+import { hasVolatileNoteBodies } from './services/noteBodies'
 import { APP_READY_KEY, bootError, bootRetrying, retryBoot } from './composables/useAppBoot'
 import { getErrorMessage } from './utils/error'
 import { sanitizeInternalPath } from './utils/path'
@@ -41,8 +42,9 @@ async function bootstrap() {
   const store = useAppStore(pinia)
   // 页面关闭/刷新前兜底推送防抖窗口内的未保存修改
   window.addEventListener('beforeunload', (event) => {
+    window.dispatchEvent(new Event('zsb:flush-note-drafts'))
     store.flushSave()
-    if (hasVolatileOutboxChanges(true)) {
+    if (hasVolatileOutboxChanges(true) || hasVolatileNoteBodies(true)) {
       event.preventDefault()
       event.returnValue = ''
     }
