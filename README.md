@@ -12,12 +12,12 @@
 
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)](https://vuejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Vite](https://img.shields.io/badge/Vite-5-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Vite](https://img.shields.io/badge/Vite-7-646CFF?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![Pinia](https://img.shields.io/badge/Pinia-2-FFD859?style=flat-square&logo=vuedotjs&logoColor=black)](https://pinia.vuejs.org/)
 [![Vue Router](https://img.shields.io/badge/Vue_Router-4-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)](https://router.vuejs.org/)
-[![ECharts](https://img.shields.io/badge/ECharts-5-AA344D?style=flat-square&logo=apacheecharts&logoColor=white)](https://echarts.apache.org/)
-[![KaTeX](https://img.shields.io/badge/KaTeX-0.16-222222?style=flat-square&logo=katex&logoColor=white)](https://katex.org/)
+[![ECharts](https://img.shields.io/badge/ECharts-6-AA344D?style=flat-square&logo=apacheecharts&logoColor=white)](https://echarts.apache.org/)
+[![KaTeX](https://img.shields.io/badge/KaTeX-0.19-222222?style=flat-square&logo=katex&logoColor=white)](https://katex.org/)
 [![Electron](https://img.shields.io/badge/Electron-43-47848F?style=flat-square&logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?style=flat-square&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
 [![D1](https://img.shields.io/badge/D1-Database-F38020?style=flat-square&logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/d1/)
@@ -103,8 +103,8 @@
   </tr>
   <tr>
     <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
-      <strong style="color:#f78166;">🍅 番茄钟带任务描述</strong><br/>
-      <span style="color:#8b949e;">正计时 / 倒计时两种模式，开始前可填写本次专注任务；独立的「最近完成」板块记录今日每个番茄的时刻、时长与任务，双击即可补充命名</span>
+      <strong style="color:#f78166;">🍅 从待办开始专注</strong><br/>
+      <span style="color:#8b949e;">正计时 / 倒计时两种模式，可关联待办、科目与章节；保存实际专注时长，提前结束也留记录，结束后可确认完成待办，科目统计直接汇总关联时长</span>
     </td>
     <td width="50%" valign="top" style="background-color:#0d1117;border:1px solid #21262d;border-radius:8px;padding:16px;">
       <strong style="color:#f78166;">👥 社区广场与学习搭子</strong><br/>
@@ -133,11 +133,11 @@
   <tr>
     <td width="50%" valign="top" style="padding:8px 16px;">
       <strong style="color:#58a6ff;">📚 学习记录</strong><br/>
-      <span style="color:#8b949e;">科目章节树与掌握度、学习时长记录、刷题会话、错题本、模考记录、每日待办</span>
+      <span style="color:#8b949e;">首次学习设置、科目章节树与掌握度、可调整的学习计划、每日待办、学习时长、刷题会话、错题复习与模考记录</span>
     </td>
     <td width="50%" valign="top" style="padding:8px 16px;">
       <strong style="color:#58a6ff;">📝 笔记与资料</strong><br/>
-      <span style="color:#8b949e;">Markdown + KaTeX 公式笔记、资料库、PDF 上传与分片阅读</span>
+      <span style="color:#8b949e;">Markdown + KaTeX 公式笔记、保存状态与失败重试、冲突副本恢复、资料库、PDF 上传与分片阅读、含附件的完整备份</span>
     </td>
   </tr>
   <tr>
@@ -147,7 +147,7 @@
     </td>
     <td width="50%" valign="top" style="padding:8px 16px;">
       <strong style="color:#58a6ff;">🍅 番茄专注</strong><br/>
-      <span style="color:#8b949e;">正计时 / 倒计时、任务描述、最近完成明细、中断原因记录、专注壁纸</span>
+      <span style="color:#8b949e;">正计时 / 倒计时、待办与科目章节关联、实际专注明细、中断原因记录、刷新恢复计时、专注壁纸</span>
     </td>
   </tr>
   <tr>
@@ -177,12 +177,19 @@
     </td>
     <td width="50%" valign="top" style="padding:8px 16px;">
       <strong style="color:#58a6ff;">⚙️ 个性化</strong><br/>
-      <span style="color:#8b949e;">考试日期倒计时、主题与深色模式、提醒与勿扰、头像裁剪、访客浏览模式、意见反馈直达 GitHub Issue</span>
+      <span style="color:#8b949e;">考试日期倒计时、主题与深色模式、提醒与勿扰、头像裁剪、访客浏览模式、Windows 更新提示偏好与手动检查、意见反馈直达 GitHub Issue</span>
     </td>
   </tr>
 </table>
 
 </div>
+
+### 从计划到复盘
+
+1. 首次进入可设置考试日期、科目、每日学习时长和第一项待办；可以跳过，之后继续完善。
+2. 学习计划结合科目权重、薄弱知识点、待复习错题和近两周刷题正确率分配每日时长。可调整日期、章节、分钟数和勾选项后加入待办，重复项会跳过。
+3. 从待办进入专注，关联科目与章节。计时结束保存实际时长，并单独确认是否完成任务；关联时长直接进入科目统计，无需再补一条相同时长的学习记录。
+4. 错题可按到期或逾期筛选，每次复习 5 或 10 题。根据“不会 / 勉强做对 / 独立做对”反馈安排下次复习，分别从 1 天、2 天或连续独立做对次数对应的间隔计算；已标记掌握的题目在独立做对后至少间隔 7 天。
 
 ---
 
@@ -192,8 +199,8 @@
 
 | 层次            | 技术选型                                                                                                                                    |
 | :-------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
-| 前端            | Vue 3（`<script setup>`）、TypeScript、Vite 5、Vue Router 4（hash 模式）、Pinia 2、Tailwind CSS 3                                           |
-| 可视化 / 富内容 | ECharts 5、KaTeX 0.16、markdown-it、pdfjs-dist、Lucide 图标（SVG 组件，不使用 emoji 图标）                                                  |
+| 前端            | Vue 3（`<script setup>`）、TypeScript、Vite 7、Vue Router 4（hash 模式）、Pinia 2、Tailwind CSS 3                                           |
+| 可视化 / 富内容 | ECharts 6、KaTeX 0.19、markdown-it、pdfjs-dist、Lucide 图标（SVG 组件，不使用 emoji 图标）                                                  |
 | 桌面端          | Electron 43、electron-builder、electron-updater（Windows 自动更新）、系统托盘与原生通知                                                     |
 | PWA             | vite-plugin-pwa；预缓存应用外壳，静态资源按需缓存；API 使用 `NetworkOnly`，笔记正文由 IndexedDB 缓存                                        |
 | 后端            | Cloudflare Workers（TypeScript）、自研路由与中间件；新密码使用 PBKDF2-SHA-256，兼容旧 bcrypt 哈希并在登录后升级；jose 签发有效期 3 天的 JWT |
@@ -229,19 +236,24 @@ npm ci --prefix worker
 test -f .env || cp .env.example .env
 
 # 本地开发覆盖：复制后将 VITE_API_BASE 改为 http://localhost:8787
-cp .env.example .env.development
+test -f .env.development || cp .env.example .env.development
 
 # 配置并启动下一节的 Worker 后，启动前端
 npm run dev
 ```
 
-PowerShell 首次准备默认配置可执行 `if (-not (Test-Path .env)) { Copy-Item .env.example .env }`，开发覆盖使用 `Copy-Item .env.example .env.development`；Windows cmd 对应使用 `copy`。打开 `.env.development`，将接口配置改为：
+PowerShell 首次准备配置可执行以下命令，保留已有文件；Windows cmd 可用 `if not exist` 配合 `copy`。然后打开 `.env.development`，将接口配置改为：
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+if (-not (Test-Path .env.development)) { Copy-Item .env.example .env.development }
+```
 
 ```dotenv
 VITE_API_BASE=http://localhost:8787
 ```
 
-`.env.example` 提供非敏感的线上 API 默认地址；复制后不修改会继续请求线上服务。`.env`、`.env.development` 和 `.env.desktop.local` 都是 Git 忽略的本地配置，已有文件应保留。前端开发服务器通常位于 `http://localhost:5173`，启动后按终端显示的地址打开浏览器；`npm run dev` 不会自动启动 Worker。生产 Web 构建读取本地 `.env`，CI 构建从 `.env.example` 恢复默认配置，均可通过环境变量 `VITE_API_BASE` 覆盖 API 地址。
+仓库中的 `.env` 和 `.env.example` 提供非敏感的线上 API 默认地址；不修改会继续请求线上服务。根 `.env` 已被 Git 跟踪，真实凭据或个人配置应放入被忽略的 `.env.local`、`.env.development` 或 `.env.desktop.local`，并保留已有配置。前端开发服务器通常位于 `http://localhost:5173`，启动后按终端显示的地址打开浏览器；`npm run dev` 不会自动启动 Worker。生产 Web 构建读取 `.env` 及适用的本地覆盖，CI 构建从 `.env.example` 恢复默认配置，均可通过环境变量 `VITE_API_BASE` 覆盖 API 地址。
 
 ### 启动后端 Worker（本地开发必需）
 
@@ -250,15 +262,20 @@ VITE_API_BASE=http://localhost:8787
 ```bash
 cd worker
 
-# Bash；PowerShell 使用 Copy-Item .dev.vars.example .dev.vars
-cp .dev.vars.example .dev.vars
+# Bash；保留已有配置
+test -f .dev.vars || cp .dev.vars.example .dev.vars
 
 # 仅用于新建本地数据库；已有数据库按 Worker 文档升级
 npm run init:local
+node scripts/check-migration-baseline.mjs
+npx wrangler d1 execute zsb-study-db --local --file=./schema-baseline.sql
+npx wrangler d1 migrations list zsb-study-db --local
 
 # 本地启动 Worker（默认 http://localhost:8787）
 npm run dev
 ```
+
+PowerShell 准备配置使用 `if (-not (Test-Path .dev.vars)) { Copy-Item .dev.vars.example .dev.vars }`。新库执行完整结构后还需登记迁移基线；已有数据库应应用增量迁移，当前包含 `0012` 的专注关联和 `0013` 的复习反馈字段，详见 [数据库初始化与升级](./worker/README.md#数据库初始化与升级)。
 
 后端配置通过 `worker/.dev.vars` 提供，该文件已被 Git 忽略。模板包含本地 Turnstile 测试配置：
 
@@ -272,7 +289,7 @@ npm run dev
 
 自己的 Cloudflare 部署还需替换 `worker/wrangler.toml` 中的账号、域名、D1 与 R2 绑定。生产密钥使用 `npx wrangler secret put <NAME>` 写入，完整配置与数据库步骤见 [Worker 文档](./worker/README.md)。
 
-后端改动可运行冒烟测试。先在本地 Worker 设置 `DESKTOP_TOKEN`，再在测试进程设置同值的 `SMOKE_DESKTOP_TOKEN`，具体命令与隔离数据库配置见 [Worker 冒烟测试](./worker/README.md#冒烟测试)：
+后端改动可运行冒烟测试。先在本地 Worker 设置 `DESKTOP_TOKEN`，再在测试进程设置同值的 `SMOKE_DESKTOP_TOKEN`，具体命令与隔离数据库配置见 [Worker 冒烟测试](./worker/README.md#本地-worker-集成脚本)：
 
 ```bash
 # 在 worker/ 目录，保持本地 Worker 运行
@@ -300,7 +317,7 @@ npm run dist:mac    # 打包 Mac 安装包（需要在 Mac 电脑上执行）
 npm run dist        # 自动识别你当前的系统来打包
 ```
 
-打包后的 Windows 桌面端通过已发布的 GitHub Release 检查更新。macOS 支持本地打包，当前发版工作流只生成 Windows 安装包，macOS 需手动下载更新。
+打包后的 Windows 桌面端通过已发布的 GitHub Release 检查更新。设置中可关闭自动更新弹窗，之后仍可通过导航栏 `NEW` 提示和手动检查进入更新；下载中的状态会保留。macOS 支持本地打包，当前发版工作流只生成 Windows 安装包，macOS 需手动下载更新。
 
 ### 常用检查
 
@@ -312,6 +329,7 @@ npm run lint
 npm run format:check
 npm test
 npm run typecheck --prefix worker
+node worker/scripts/check-migration-baseline.mjs
 npm run build
 ```
 
@@ -319,9 +337,11 @@ npm run build
 
 ### 数据备份与离线使用
 
-设置中的“导出完整备份”生成版本化 JSON，包含学习数据、文字笔记及本机冲突副本、PDF 原文和错题图片。导出时会读取尚未缓存的正文和云端附件；缺失或读取失败时停止导出，不生成缺少内容的备份。附件合计上限为 128MB，整个备份文件上限为 192MB，外部学习资料仍保留为链接。
+设置中的“导出完整备份”生成版本化 JSON，包含学习数据、文字笔记及本机冲突副本、PDF 原文和错题图片。导出时会读取尚未缓存的正文和云端附件；缺失或读取失败时停止导出，不生成缺少内容的备份。附件合计上限为 128 MiB，整个备份文件上限为 192 MiB（1 MiB = 1024 × 1024 字节），外部学习资料仍保留为链接。
 
-导入先校验文件内容，再确认当前修改已同步并自动下载导入前完整快照；附件准备成功后才替换学习数据。完整备份可在原附件删除后或换账号恢复，PDF 会使用新文件标识。旧版 JSON 仍可导入，但其中 PDF 和云端错题图片仅含引用，需要原账号中的文件仍然存在。清除全部数据还会删除上传的 PDF 与云端错题图片，请保留完整备份。
+导入先校验文件内容，再确认当前修改已同步并自动下载导入前完整快照；附件准备成功后才替换学习数据。恢复同步先建立科目与附件引用，再清理旧数据；遇到限流会等待后续传。完整备份可在原附件删除后或换账号恢复，PDF 会使用新文件标识。旧版 JSON 仍可导入，但其中 PDF 和云端错题图片仅含引用，需要原账号中的文件仍然存在。清除全部数据还会删除上传的 PDF 与云端错题图片，请保留完整备份。
+
+如果恢复时提示图片引用缺失，保留原完整备份和导入前快照，重新选择原完整备份可补回附件并继续同步。导入前的当前修改同步、快照导出或附件准备失败时，会停止替换；开始恢复后的云端同步可能分批成功，失败时需保留快照并重试，详见 [恢复顺序](./worker/README.md#完整备份与恢复顺序)。页面中仍未保存的笔记应先保存或下载正文。
 
 笔记标题旁会分别显示未保存、仅在当前页面、已存本机待同步和正文已同步。本机存储失败时可重试保存或下载当前正文；仅在页面内的内容尚不能保证刷新后恢复。
 
@@ -341,10 +361,10 @@ zsb-study-tracker/
 │   ├── features/            # 社区与协作功能模块
 │   ├── shared/              # 共用组件、组合式函数与样式
 │   ├── stores/              # Pinia 状态（app / studyTimer / community…）
-│   ├── services/            # 认证、通知、提醒等服务
+│   ├── services/            # 认证、完整备份、通知与提醒
 │   ├── api/                 # 前端接口封装（client / sync / community）
 │   ├── data/                # 默认状态与内置数据
-│   ├── utils/               # 工具函数
+│   ├── utils/               # 学习计划、复习间隔、时长汇总与其他工具
 │   ├── types/               # 全局类型定义
 │   └── router/              # 路由与访问守卫
 ├── electron/                # Electron 主进程、preload 与打包图标
@@ -371,14 +391,16 @@ zsb-study-tracker/
 
 项目有四条 GitHub Actions 流水线：一条 CI 检查、两条部署、一条桌面端发版。
 
-| 流水线                | 触发条件                                                                        | 行为                                                                                                                                  |
-| :-------------------- | :------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------ |
-| `ci.yml`              | 推送到 `development` / `master`、任意 PR，或其他工作流通过 `workflow_call` 调用 | 前端 typecheck、lint、format、Electron/Worker 单元测试、Web 构建与 Worker typecheck                                                   |
-| `deploy-pages.yml`    | 推送到 `master`（或手动触发）                                                   | 等待同一提交的共用 CI 门禁通过 → 构建 Web 产物 → 部署 `dist/` 到 GitHub Pages                                                         |
-| `deploy-worker.yml`   | 推送到 `master` 且 `worker/**` 有变更（或手动触发）                             | 等待共用 CI → Worker typecheck → 应用远程 D1 迁移 → 部署 Worker                                                                       |
-| `release-desktop.yml` | 打 `v*` tag（或手动触发）                                                       | 等待共用 CI → tag 触发时校验版本一致，检查 `DESKTOP_TOKEN` 非空 → 桌面构建及配置产物校验 → 发布 Windows 安装包至 GitHub Releases 草稿 |
+| 流水线                | 触发条件                                                                        | 行为                                                                                                                                         |
+| :-------------------- | :------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci.yml`              | 推送到 `development` / `master`、任意 PR，或其他工作流通过 `workflow_call` 调用 | 前端 typecheck、lint、format、Electron/Worker 单元测试、Web 构建与 Worker typecheck                                                          |
+| `deploy-pages.yml`    | 推送到 `master`（或手动触发）                                                   | 等待同一提交的共用 CI 门禁通过 → 构建 Web 产物 → 部署 `dist/` 到 GitHub Pages                                                                |
+| `deploy-worker.yml`   | 推送到 `master` 且 `worker/**` 有变更（或手动触发）                             | 等待共用 CI → Worker typecheck → 应用远程 D1 迁移 → 部署 Worker                                                                              |
+| `release-desktop.yml` | 打 `v*` tag（或手动触发）                                                       | 等待共用 CI → tag 触发时校验版本一致，检查 `DESKTOP_TOKEN` 非空 → 原生 Windows runner 构建及配置产物校验 → 发布安装包至 GitHub Releases 草稿 |
 
 Worker 自动部署需要仓库 Secrets：`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_ACCOUNT_ID`。桌面发版另需仓库 Secret `DESKTOP_TOKEN`，与 Worker 运行期配置一致；Release 草稿需手动发布后才进入自动更新渠道。
+
+日常改动先合入 `development`；发布时将验证后的改动通过 PR 合入 `master`，触发 Web 部署，并在 `worker/**` 有变更时部署后端。桌面安装包需另行打匹配 `package.json` 版本的标签或手动触发工作流，合入 `master` 本身不会生成安装包。完整发布检查见 [贡献指南](./CONTRIBUTING.md)。
 
 Worker 的 `JWT_SECRET`、`TURNSTILE_SECRET` 等运行期密钥独立配置，并绑定 D1 数据库 `zsb-study-db` 和 R2 桶 `zsb-study-images`。新库初始化与已有库升级步骤不同，直接执行 SQL 不会登记迁移状态；发布前按 [Worker 数据库说明](./worker/README.md#数据库初始化与升级) 完成检查。
 
