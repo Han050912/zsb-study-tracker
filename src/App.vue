@@ -25,6 +25,7 @@ import { useAppReady, bootError, bootRetrying, retryBoot } from './composables/u
 import { routeLoading, routeLoadError } from './router/loading'
 import { syncIssue } from './stores/app/sync'
 import { hasVolatileOutboxChanges } from './services/syncOutbox'
+import { autoUpdateEnabled, updateAvailable } from './composables/useUpdateState'
 
 // 成就分享弹窗按需异步加载：切断入口对 markdown-it/katex 依赖链（AchievementModal → PostComposer → utils/markdown）的静态引用
 const AchievementModal = defineAsyncComponent(() => import('./components/AchievementModal.vue'))
@@ -54,6 +55,15 @@ const mobileMenuGroup = computed(() => navGroups.value.find((group) => group.key
 const navigationTitle = computed(
   () => navGroups.value.find((group) => group.key === currentGroup.value)?.label || '专升本助手'
 )
+
+// 更新状态由 UpdateDialog 订阅 IPC 后写入共享状态。关闭自动弹窗后，
+// 应用壳层仍显示品牌旁的 NEW 入口，用户可随时查看发布说明。
+const showUpdateBadge = computed(
+  () => updateAvailable.value && (!autoUpdateEnabled.value || store.settings.autoUpdateCheck === false)
+)
+function openUpdateDialog() {
+  window.dispatchEvent(new Event('update:open'))
+}
 watch(
   () => route.fullPath,
   () => {
@@ -238,7 +248,30 @@ onUnmounted(() => {
     >
       <RouterLink to="/" class="app-brand" :aria-label="isLoggedIn ? '专升本助手，今天' : '专升本助手'">
         <span class="brand-symbol"><GraduationCap :size="21" aria-hidden="true" /></span>
-        <span v-if="!navCollapsed">专升本助手</span>
+        <span v-if="!navCollapsed" class="brand-label">
+          <span>专升本助手</span>
+          <span
+            v-if="showUpdateBadge"
+            class="update-new-badge"
+            role="button"
+            tabindex="0"
+            aria-label="打开新版本更新"
+            @click.stop.prevent="openUpdateDialog"
+            @keydown.enter.stop.prevent="openUpdateDialog"
+            @keydown.space.stop.prevent="openUpdateDialog"
+          >
+            NEW
+          </span>
+        </span>
+        <button
+          v-else-if="showUpdateBadge"
+          type="button"
+          class="update-new-badge update-new-badge-collapsed"
+          aria-label="打开新版本更新"
+          @click.stop.prevent="openUpdateDialog"
+        >
+          NEW
+        </button>
       </RouterLink>
       <div v-if="!navCollapsed" class="sidebar-context">
         <template v-if="isLoggedIn">
@@ -307,7 +340,21 @@ onUnmounted(() => {
         <ChevronRight :size="14" class="text-muted" aria-hidden="true" />
         <span class="header-page">{{ route.meta.title || '学习工作台' }}</span>
       </div>
-      <RouterLink to="/" class="header-brand text-lg font-bold md:hidden">专升本助手</RouterLink>
+      <RouterLink to="/" class="header-brand text-lg font-bold md:hidden">
+        <span>专升本助手</span>
+        <span
+          v-if="showUpdateBadge"
+          class="update-new-badge"
+          role="button"
+          tabindex="0"
+          aria-label="打开新版本更新"
+          @click.stop.prevent="openUpdateDialog"
+          @keydown.enter.stop.prevent="openUpdateDialog"
+          @keydown.space.stop.prevent="openUpdateDialog"
+        >
+          NEW
+        </span>
+      </RouterLink>
       <div class="flex-1"></div>
       <RouterLink v-if="isLoggedIn" to="/pomodoro" class="header-focus hidden sm:inline-flex">
         <Timer :size="15" aria-hidden="true" />开始专注

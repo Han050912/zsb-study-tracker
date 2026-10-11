@@ -4,6 +4,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Ban } from '@lucide/vue'
 import { useToast } from '../composables/useToast'
 import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismiss'
+import { useAppStore } from '../stores/app'
+import { autoUpdateEnabled, updateAvailable, updateInfo, type UpdateInfo } from '../composables/useUpdateState'
 
 /**
  * 桌面端自动更新弹窗
@@ -11,12 +13,6 @@ import { OVERLAY_LAYER, useOverlayDismiss } from '../composables/useOverlayDismi
  * 仅在 Windows 桌面端（window.updater 存在，preload 同条件暴露）下工作，Web 端与非 Windows 桌面端自动隐藏
  */
 
-interface UpdateInfo {
-  version: string
-  releaseName: string
-  releaseNotes: string
-  releaseDate: string
-}
 interface NoteSection {
   icon: string
   title: string
@@ -30,6 +26,11 @@ const updater = (window as any).updater as
       cancelDownload: () => void
       install: () => void
       onAvailable: (cb: (info: UpdateInfo) => void) => () => void
+      onChecking?: (cb: (info: { source?: 'manual' | 'automatic' }) => void) => () => void
+      onNotAvailable?: (
+        cb: (info: { currentVersion: string; version: string; releaseDate: string; source?: string }) => void
+      ) => () => void
+      onCheckError?: (cb: (info: { message: string }) => void) => () => void
       onProgress: (cb: (p: { percent: number }) => void) => () => void
       onDownloaded: (cb: (info: { version: string }) => void) => () => void
       onError: (cb: (msg: string) => void) => () => void
@@ -38,10 +39,11 @@ const updater = (window as any).updater as
 
 // 全局 Toast（App.vue 通过 provide(TOAST_KEY) 注入），用于弹窗未打开时也提示更新错误
 const toast = useToast()
+const store = useAppStore()
 
 const show = ref(false)
 const info = ref<UpdateInfo | null>(null)
-// idle: 待确认 | downloading: 下载中（弹窗可关闭，下载转后台） | downloaded: 待重启
+// idle: 待确认 | downloading: 下载中（点击更新后弹窗隐藏） | downloaded: 待重启
 const stage = ref<'idle' | 'downloading' | 'downloaded'>('idle')
 const percent = ref(0)
 const errorMsg = ref('')
@@ -63,25 +65,39 @@ const sections = computed<NoteSection[]>(() => {
   if (!md.trim()) return []
   const result: NoteSection[] = []
   let current: NoteSection | null = null
+  const ensureSection = () => {
+    if (!current) {
+      current = { icon: '', title: '更新内容', items: [] }
+      result.push(current)
+    }
+    return current
+  }
+  const cleanText = (value: string) =>
+    value
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/[*_`~]/g, '')
+      .trim()
+
   for (const raw of md.split(/\r?\n/)) {
     const line = raw.trim()
     if (!line) continue
     const h = line.match(/^#{1,4}\s*(.+)$/)
     if (h) {
-      const title = h[1].replace(/[*_`]/g, '').trim()
+      const title = cleanText(h[1])
       current = { icon: sectionIcon(title), title, items: [] }
       result.push(current)
       continue
     }
     const li = line.match(/^[-*]\s+(.+)$/) || line.match(/^\d+[.、]\s*(.+)$/)
     if (li) {
-      const text = li[1].replace(/[*_`]/g, '').trim()
-      if (!current) {
-        current = { icon: '', title: '更新内容', items: [] }
-        result.push(current)
-      }
-      current.items.push(text)
+      const text = cleanText(li[1])
+      if (text) ensureSection().items.push(text)
+      continue
     }
+    // Release authors may publish a short paragraph without a heading/list. Keep
+    // that content visible instead of treating a non-empty release as empty.
+    const text = cleanText(line.replace(/^>\s?/, ''))
+    if (text) ensureSection().items.push(text)
   }
   return result.filter((s) => s.items.length > 0)
 })
@@ -105,10 +121,13 @@ function startDownload() {
   errorMsg.value = ''
   cancelRequested.value = false
   stage.value = 'downloading'
-  show.value = true
+  // Keep the update content available to the background download completion
+  // event, but remove the blocking dialog immediately after the user accepts.
+  show.value = false
+  updateAvailable.value = false
   updater?.download()
 }
-/** 取消下载：回待确认态，经 IPC 通知主进程中止下载（之后可重新发起） */
+/** 保留取消下载能力供其它入口使用；更新弹窗在确认后会隐藏。 */
 function cancelDownload() {
   cancelRequested.value = true
   stage.value = 'idle'
@@ -120,6 +139,12 @@ function restartInstall() {
 function close() {
   // 下载中允许关闭：下载转后台继续，完成后经 update:downloaded 重新打开弹窗
   show.value = false
+}
+
+function openFromBadge() {
+  if (!updateInfo.value) return
+  info.value = updateInfo.value
+  show.value = true
 }
 
 /** 弹窗面板：焦点陷阱与 Esc 的锚点 */
@@ -136,22 +161,38 @@ const { onOverlayMousedown, onOverlayClick } = useOverlayDismiss(close, {
 const unsubscribes: Array<() => void> = []
 
 onMounted(() => {
+  window.addEventListener('update:open', openFromBadge)
   if (!updater) return
   unsubscribes.push(
     updater.onAvailable((i) => {
       info.value = i
+      updateInfo.value = i
+      updateAvailable.value = true
       stage.value = 'idle'
       percent.value = 0
       errorMsg.value = ''
       cancelRequested.value = false
-      show.value = true
+      // Automatic checks respect the user's preference. Manual checks always
+      // open the details so the user can decide whether to download.
+      show.value = i.source !== 'automatic' || (autoUpdateEnabled.value && store.settings.autoUpdateCheck !== false)
     }),
+    ...(updater.onNotAvailable
+      ? [
+          updater.onNotAvailable((result) => {
+            updateAvailable.value = false
+            updateInfo.value = null
+            if (result.source === 'manual') toast(`当前已是最新版本（v${result.currentVersion}）`)
+          })
+        ]
+      : []),
+    ...(updater.onCheckError ? [updater.onCheckError(({ message }) => toast(`检查更新失败：${message}`))] : []),
     updater.onProgress((p) => {
       percent.value = Math.min(100, Math.max(0, Math.round(p.percent)))
     }),
     updater.onDownloaded(() => {
       // 后台下载完成：重新打开弹窗进入「待重启」态
       stage.value = 'downloaded'
+      updateAvailable.value = true
       show.value = true
     }),
     updater.onError((msg) => {
@@ -162,6 +203,7 @@ onMounted(() => {
       }
       // 回到待确认态，保证可以重新发起更新（无死角）
       stage.value = 'idle'
+      updateAvailable.value = true
       if (show.value) {
         // 弹窗开着（含下载阶段出错）：就地提示，可重试
         errorMsg.value = `下载失败：${msg}`
@@ -174,6 +216,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('update:open', openFromBadge)
   unsubscribes.forEach((off) => off())
   unsubscribes.length = 0
   show.value = false
@@ -249,7 +292,7 @@ onBeforeUnmount(() => {
                   class="px-5 py-1.5 rounded-md border border-blue-500 text-blue-500 text-sm font-medium hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
                   @click="close"
                 >
-                  取消
+                  暂不更新
                 </button>
                 <button
                   class="px-5 py-1.5 rounded-md bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium transition-colors"

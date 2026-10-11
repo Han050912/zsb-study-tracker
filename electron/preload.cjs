@@ -23,6 +23,8 @@ if (process.platform === 'win32') {
     available: true,
     /** 手动检查更新 */
     check: () => ipcRenderer.send('update:check'),
+    /** 检查开始（手动检查与启动后的自动检查均会触发） */
+    onChecking: (cb) => subscribe('update:checking', cb),
     /** 开始下载更新包 */
     download: () => ipcRenderer.send('update:download'),
     /** 取消当前下载（经 IPC 通知主进程中止 electron-updater 下载令牌） */
@@ -31,12 +33,16 @@ if (process.platform === 'win32') {
     install: () => ipcRenderer.send('update:install'),
     /** 发现新版本（携带版本号/发布说明/发布日期）；返回取消订阅函数 */
     onAvailable: (cb) => subscribe('update:available', cb),
+    /** 检查完成且当前已是最新版本；返回取消订阅函数 */
+    onNotAvailable: (cb) => subscribe('update:not-available', cb),
     /** 下载进度（percent/transferred/total/bytesPerSecond）；返回取消订阅函数 */
     onProgress: (cb) => subscribe('update:progress', cb),
     /** 下载完成，可重启安装；返回取消订阅函数 */
     onDownloaded: (cb) => subscribe('update:downloaded', cb),
-    /** 更新流程出错；返回取消订阅函数 */
-    onError: (cb) => subscribe('update:error', cb)
+    /** 更新流程出错（字符串消息）；返回取消订阅函数 */
+    onError: (cb) => subscribe('update:error', cb),
+    /** 检查阶段出错（含 message）；返回取消订阅函数 */
+    onCheckError: (cb) => subscribe('update:check-error', cb)
   })
 }
 

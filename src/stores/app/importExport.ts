@@ -213,7 +213,8 @@ function validBackupFields(data: Record<string, unknown>): boolean {
       'dndMuteMessage',
       'partnerShareEnabled',
       'shareLearningStats',
-      'partnerRemindEnabled'
+      'partnerRemindEnabled',
+      'autoUpdateCheck'
     ].every((k) => optional(settings[k], (v) => typeof v === 'boolean')) ||
     !['reminderTime', 'dndStartTime', 'dndEndTime'].every((k) =>
       optional(settings[k], (v) => v === '' || (text(v) && /^([01]\d|2[0-3]):[0-5]\d$/.test(v)))

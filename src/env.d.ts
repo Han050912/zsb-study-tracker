@@ -17,19 +17,35 @@ interface Window {
   updater?: {
     available: boolean
     check: () => void
+    onChecking: (cb: (payload: { source: 'manual' | 'automatic' }) => void) => () => void
     download: () => void
     /** 取消当前下载（经 IPC 通知主进程中止 electron-updater 下载令牌） */
     cancelDownload: () => void
     install: () => void
     /** 订阅更新事件，返回取消订阅函数（组件卸载时调用，避免回调叠加） */
     onAvailable: (
-      cb: (info: { version: string; releaseName: string; releaseNotes: string; releaseDate: string }) => void
+      cb: (info: {
+        version: string
+        releaseName: string
+        releaseNotes: string
+        releaseDate: string
+        source?: 'manual' | 'automatic'
+      }) => void
+    ) => () => void
+    onNotAvailable: (
+      cb: (info: {
+        currentVersion: string
+        version: string
+        releaseDate: string
+        source?: 'manual' | 'automatic'
+      }) => void
     ) => () => void
     onProgress: (
       cb: (p: { percent: number; transferred: number; total: number; bytesPerSecond: number }) => void
     ) => () => void
     onDownloaded: (cb: (info: { version: string }) => void) => () => void
     onError: (cb: (msg: string) => void) => () => void
+    onCheckError: (cb: (payload: { message: string }) => void) => () => void
   }
   desktopNotify?: {
     available: boolean
